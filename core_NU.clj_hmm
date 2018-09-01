@@ -1,0 +1,2090 @@
+
+;; vim: set fdm=marker
+(ns afterglow-tol.core "testing stuff, based on examples file by James Elliott" {:author "Joen Tolgraven"} ;; {{{
+  (:require [afterglow.channels               :as chan]
+            [afterglow.controllers            :as ct]
+            [afterglow.controllers.tempo]
+            [afterglow.core                   :as core]
+            [afterglow.effects                :as fx] 
+            [afterglow.effects.channel        :as chan-fx]
+            [afterglow.effects.color          :as color-fx]
+            [afterglow.effects.show-variable  :as var-fx]
+            [afterglow.effects.cues           :as cues] 
+            [afterglow.effects.fun            :as fun]
+            [afterglow.effects.movement       :as move]
+            [afterglow.effects.oscillators    :as osc]
+            [afterglow.effects.params         :as params]
+            [afterglow.effects.dimmer         :as dimmer    :refer [dimmer-effect master-set-level]]
+            [afterglow.rhythm                 :as rhythm]
+            [afterglow.show                   :as show]
+            [afterglow.show-context                         :refer [*show* with-show set-default-show!]]
+            [afterglow.transform              :as tf]
+            [amalloy.ring-buffer                            :refer [ring-buffer]]
+            [clojure.math.numeric-tower       :as math]
+            [com.evocomputing.colors          :as colors    :refer [color-name create-color hue adjust-hue]]
+            [com.evocomputing.colors.palettes.core :as palette]
+            [overtone.osc                     :as osc-bind]
+            [taoensso.timbre                  :as timbre]
+            [taoensso.timbre.profiling                      :refer [pspy]]
+            [clojure.tools.namespace.repl                   :refer [refresh]]
+            [afterglow-tol.fixtures           :as tol]
+            [afterglow.examples               :as example])
+            
+  (:import [afterglow.effects Effect]
+           [javax.media.j3d Transform3D]
+           [javax.vecmath Point3d Vector3d]))
+; }}}
+; {{{ VARIABLES
+(defonce ^{:doc "Lets effects set variables in the running show."}  var-binder (atom nil))
+(defonce ^{:doc "Holds show, so can unregister if re-creating."}    tol-show (atom nil))
+
+(def rig-height       "Height of horizontal truss of main lighting rig"    2.10)
+(def stage-wall       "Wall behind the rig on the show Z axis."           -0.45)
+(def house-rear-wall  "Wall behind audience on the show Z axis."           4.00)
+(def left-wall        "House left wall on the show X axis."               -2.10)
+(def right-wall       "House right wall on the show X axis."               2.10)
+(def ceiling          "Ceiling on the show Y axis."                        2.50)
+
+(def macro-record-file  "macros.clj") ;test, def this var supposed to enable macro-writing
+(def midi-clock-bus   "IAC Bus")
+(def light-groups     "Named groups of lights for the cue grid." [:moving :moving-mini :moving-beam :wash :strip :tube]) ; :cob :milight
+(def moving-heads     "Named individual moving heads" [:moving-1 :moving-2 :moving-mini-1 :moving-mini-2 :moving-mini-3 :moving-beam-1])  ;XXX quoted statement to grab everything starting with :moving auto, eval after patching. check (move/find-moving-heads)
+        
+(def osc-types        "Types of oscillators and associated colors"
+     [{:type "sawtooth" :color "salmon"} {:type "triangle" :color "orangered"}
+      {:type "sine" :color "lightgoldenrodyellow"} {:type "square" :color "seagreen"}])
+; or done properly make defaults a map of maps and filter from that for default var-map values?
+(def default-vars {:beats   {:key "beats",    :min 1,   :max 32,  :start 4,     :type :integer, :name "Beats"}    
+                   :bars    {:key "bars"      :min 1    :max 16   :start 2      :type :integer  :name "Bars"}    
+                   :phrases {:key "phrases"   :min 1    :max 8    :start 1      :type :integer  :name "Phrases"}    
+                   :cycles  {:key "cycles",   :min 1,   :max 8,   :start 1,     :type :integer, :name "Cycles"}
+                   :max-num {:key "max",      :min 0.0, :max 1.0, :start 1.0,   :type Number,   :name "Max"}      
+                   :min-num {:key "min",      :min 0.0, :max 1.0, :start 0.0,   :type Number,   :name "Min"}      
+                   :max-dmx {:key "max",      :min 0,   :max 255, :start 255,   :type :integer, :name "Max"}      
+                   :min-dmx {:key "min",      :min 0,   :max 255, :start 0,     :type :integer, :name "Min"}      
+                   :phase   {:key "phase",    :min 0.0, :max 1.0, :start 0.0,   :type Number,   :name "Phase"}    
+                   :width   {:key "width",    :min 0.0, :max 1.0, :start 0.25,  :type Number,   :name "Width"} ;use x/cycles for width aswell  
+                   :down    {:key "down",                         :start true,  :type :boolean, :name "Down?"}    
+                   :level   {:key "level",    :min 0.0, :max 1.0, :start 0.0,   :type Number,   :name "Level"}    
+                   :fraction{:key "fraction", :min 0.0, :max 1.0, :start 0.0,   :type Number,   :name "Fraction"} 
+                   :chance  {:key "chance",   :min 0.0, :max 1.0, :start 0.0001, :type Number,  :name "Chance"}   
+                   :color   {:key "color",        :start (create-color :white), :type :color,   :name "Color"}})   
+
+(def default-lightness 50)
+(def default-saturation 80)
+(def universes        "Universes used for show"       [1 2 3 4 5 10])
+; }}}
+
+;; OSC {{{
+(defonce ^{:doc "Holds the OSC client"} osc-client (atom nil))
+(def osc-address      "IP for OSC messages"   "127.0.0.1")
+(def osc-port-receive "Port for incoming OSC control"  16010)
+(def osc-port-send    "Port for outgoing OSC state"    16011)
+(defonce ^{:doc "Keep track of any OSC cue bindings we have set up, so we can clear them out before re-creating the show."}
+  osc-cue-bindings (atom #{}))
+
+(defn add-osc-cue-binding "Set up bind so state of a cue gets sent per OSC. Record that fact, so can clean up later. Then set up so that incoming OSC messages can start and end that cue."
+  [x y path]
+  (let [binding (fn [state _ _]
+                  (case state
+                    :started (osc-bind/osc-send @osc-client path 1)
+                    :ended (osc-bind/osc-send @osc-client path 0)
+                    nil))]
+    (swap! osc-cue-bindings conj [x y binding path])
+    (ct/add-cue-fn! (:cue-grid *show*) x y binding))
+
+  (osc-bind/osc-handle @core/osc-server path
+                  (fn [msg] ; XXX set up so msg can set state of cue var(s?) so dont have to manually expose. like max.Cue
+                    (let [[cue active] (show/find-cue-grid-active-effect *show* x y)]
+                      (when cue
+                        (if (pos? (first (:args msg)))
+                          (if (and active (not (:held cue)))
+                            (show/end-effect! (:key cue))
+                            (show/add-effect-from-cue-grid! x y :velocity (first (:args msg)))) ;add :velocity and then :var-overrides
+                          (when (and active (:held cue))
+                            (show/end-effect! (:key cue)))))))))
+
+(defn- clear-osc-cue-bindings "Clear out any OSC cue bindings which have been established." []
+  (doseq [[x y f path] @osc-cue-bindings]
+    (ct/clear-cue-fn! (:cue-grid *show*) x y f)
+    (osc-bind/osc-handle @core/osc-server path
+                    (fn [msg] :done)))
+  (reset! osc-cue-bindings #{}))
+
+(defonce ^{:doc "Keep track of any OSC var bindings we have set up, so we can clear them out before re-creating the show."}
+  osc-var-bindings (atom #{}))
+
+(defn add-osc-var-binding
+  "Arrange to send an OSC message whenever the value of a show variable changes, and record that we did that so it can be cleaned up later. Then set things up so incoming OSC messages update the value of that variable.
+  If you need to do anything more complicated than send a message with the raw value of the variable, or update the variable with the raw first value from the incoming OSC message, you can pass your own functions with the optional keyword arguments `:send-fn` and `:receive-fn`. `:send-fn` will be called with the keyword identifying the variable that has changed, and its new value.  `:receive-fn` will be called with the incoming OSC message.
+  If you want this binding to not affect reception of messages on the OSC path (for example because you have another variable binding set up which processes these messages, since they contain values for multiple show variables), then pass `:none` as the value for `:receive-fn`."
+  [var-key path & {:keys [send-fn receive-fn]}]
+  (let [have-receiver (not= receive-fn :none)
+        binding (or send-fn
+                    (fn [_ v]
+                      (osc-bind/osc-send @osc-client path v)))]
+    (swap! osc-var-bindings conj [var-key binding path have-receiver])
+    (show/add-variable-set-fn! var-key binding)
+
+    (when have-receiver
+      (osc-bind/osc-handle @core/osc-server path
+                      (or receive-fn
+                          (fn [msg]
+                            (show/set-variable! var-key (first (:args msg)))))))))
+
+(defn- clear-osc-var-bindings "Clear out any OSC var bindings which have been established." []
+  (doseq [[k f path have-receiver] @osc-var-bindings]
+    (show/clear-variable-set-fn! k f)
+    (when have-receiver (osc-bind/osc-handle @core/osc-server path
+                                        (fn [msg] :done))))
+  (reset! osc-var-bindings #{}))
+
+
+(defn osc-demo "Early experiments with using OSC to control shows. This should grow into a well-defined API, with integration to show variables, cue grids, and the like." []
+  (when (nil? @core/osc-server) (core/start-osc-server osc-port-receive))
+    
+  (let [left left-wall right right-wall
+        width (- right left)
+        front stage-wall rear house-rear-wall
+        depth (- rear front)
+        height ceiling]
+    (osc-bind/osc-handle @core/osc-server "/1/aim-a" (fn [msg]
+                      (show/set-variable! :aim-group-a-x (+ left (* width (first (:args msg)))))
+                      (show/set-variable! :aim-group-a-z (+ front (* depth (second (:args msg)))))
+                      #_(timbre/info msg)))
+    (osc-bind/osc-handle @core/osc-server "/1/aim-a-y" (fn [msg]
+                      (show/set-variable! :aim-group-a-y (* height (first (:args msg))))
+                      #_(timbre/info msg)))
+    (osc-bind/osc-handle @core/osc-server "/1/aim-b" (fn [msg]
+                      (show/set-variable! :aim-group-b-x (+ left (* width (first (:args msg)))))
+                      (show/set-variable! :aim-group-b-z (+ front (* depth (second (:args msg)))))
+                      #_(timbre/info msg)))
+    (osc-bind/osc-handle @core/osc-server "/1/aim-b-y" (fn [msg]
+                      (show/set-variable! :aim-group-b-y (* height (first (:args msg))))
+                      #_(timbre/info msg))))
+  (osc-bind/osc-handle @core/osc-server "/1/sparkle" (fn [msg]
+                                                (if (pos? (first (:args msg)))
+                                                  (show/add-effect! :sparkle (fun/sparkle (show/all-fixtures)
+                                                                                          ;; :chance (* (first (:args msg)) 0.5)
+                                                                                          :chance (/ (first (:args msg)) 256.0)
+                                                                                          ;; :chance 0.1
+                                                                                          :fade-time 20))
+                                                  (show/end-effect! :sparkle))))
+  (osc-bind/osc-listen @core/osc-server (fn [msg] (timbre/info msg)) :debug)
+  (osc-bind/zero-conf-on)
+
+  (for [x (range 31) y (range 31)] (add-osc-cue-binding x y (str "/" x "/" y))))
+
+(defn osc-shutdown "Shut down osc server and clean up." []
+  (clear-osc-var-bindings)
+  (clear-osc-cue-bindings)
+  (core/stop-osc-server)
+  (swap! osc-client #(when % (osc-bind/osc-close %) nil)))
+; }}}
+
+
+; {{{ PATCHING
+(defn patch-moving []; {{{2
+  (show/patch-fixture! :moving-1 (tol/rgbw-36-moving)           5 200 :y 1.7 :x -1.5
+                       ;; :relative-rotations [ ; [:x-rotation (tf/degrees 180)]]
+                       ;;                      [:y-rotation (tf/degrees 180)]])
+                       :y-rotation (tf/degrees 0))
+                       ;; :x-rotation (tf/degrees 180) ; display facing right, panREV off (others on) and this works when it's standing. but dumb because resting position becomes opposite and shit
+                       ;; :y-rotation (tf/degrees -180))
+  (show/patch-fixture! :moving-2 (tol/rgbw-12-12-moving)        5 156 :y 1.75 :x 1.32 :z 0.0
+                       :x-rotation (tf/degrees 0)
+                       :y-rotation (tf/degrees 0))
+  (show/patch-fixture! :moving-mini-1  (tol/rgbw-7-12-moving)   5 100 :y 1.82 :x -0.95
+                       :y-rotation (tf/degrees 0))
+  (show/patch-fixture! :moving-mini-2  (tol/rgbw-7-12-moving)   5 114 :y 1.82 :x 0.0
+                       :y-rotation (tf/degrees 0))
+  (show/patch-fixture! :moving-mini-3  (tol/rgbw-7-12-moving)   5 128 :y 1.82 :x 0.75 ;:z -0.2
+                       :y-rotation (tf/degrees 0))
+
+  (show/patch-fixture! :moving-beam-1 (tol/rgbw-60-moving-beam) 5 180 :y 2.2 :x 1.60 :z 0.4 ;; XXX wtf even tho it's high up etc the second I aim higher than 0 it starts moving up. Why?
+                       ;; :z-rotation (tf/degrees 180))
+                       :y-rotation (tf/degrees 180))
+                       ;; :x-rotation (tf/degrees 180))
+  ); }}}
+(defn patch-static []; {{{2
+  (show/patch-fixture! :wash-1 (tol/rgb-54-3-par)     5   1 :y 2.2 :x -1.7) ; :z -0.3) ;not as far out but points to corner so
+  (show/patch-fixture! :wash-2 (tol/rgb-54-3-par)     5   8 :y 2.2 :x  1.7) ; :z -0.3)
+  (show/patch-fixture! :wash-3 (tol/rgbw-7-12-par)    5  15 :y 2.2 :x -1.8) ; this one seems fucked FYI, stuck on white/no response to dmx...
+  (show/patch-fixture! :wash-4 (tol/rgbw-7-12-par)    5  23 :y 2.2 :x  1.8) ;5 :z -0.2)
+
+  (show/patch-fixture! :wash-5 (tol/adj-pro-led-tol)  5  31 :y 0.0 :x -1.5)
+  (show/patch-fixture! :wash-6 (tol/rgbw-mirror)      5  37 :y 2.2 :x  0.0) ; :z 0.7)
+  (show/patch-fixture! :wash-7 (tol/rgbw-18-12-par)   5  60 :y 1.7 :x -2.1)
+  (show/patch-fixture! :wash-8 (tol/rgbwauv-5-18-par) 5  70 :y 1.6 :x  2.1)
+
+  (show/patch-fixture! :cob-1 (tol/wa-100-cob-par)    5  80 :y 2.1 :x  0.1)
+
+  (show/patch-fixture! :fogger-1 (tol/af-250-fogger)  5 512 :y 0.0 :x -1.2)
+  ); }}}
+(defn patch-strips []; {{{2
+  (show/patch-fixture! :strip-1 (tol/rgbw-pixel-strip :pixels 126 :x-start -0.5 :x-end -2.5 :y-start 2.0 :y-end 2.0 :z -0.0) 1 1)  ;; L RGBW 120strip
+  ;; (show/patch-fixture! :tube-1 (tol/rgb-pixel-strip   :pixels 144 :x-start -0.5 :x-end  0.5 :y-start 2.0 :y-end 2.0 :z -0.0) 2 1)   ;;   RGB  144, midpiece (2x 2m folded over = 576 leds)
+  ;; (show/patch-fixture! :strip-3 (tol/rgbw-pixel-strip :pixels 72  :x-start -0.5 :x-end  0.5 :y-start 2.0 :y-end 2.0 :z -0.0) 3 1) ;; R RGBW 144
+  (show/patch-fixture! :strip-3 (tol/rgbw-pixel-strip :pixels 72  :x-start -0.5 :x-end -0.5 :y-start 1.7 :y-end 0.7 :z -0.0) 4 1) ;; R RGBW 144
+  (show/patch-fixture! :strip-4 (tol/rgbw-pixel-strip :pixels 60  :x-start 0.0 :x-end  2.5 :y-start 1.2 :y-end 1.7 :z -0.0) 3 1) ;; R RGBW 144
+  ;; (show/patch-fixture! :strip-2 (tol/rgbw-pixel-strip :pixels 120 :x-start  0.5 :x-end  2.5 :y-start 2.0 :y-end 2.0 :z -0.0) 4 1) ;; R RGBW 120
+
+  ;; (show/patch-fixture! :tube-2 (tol/rgbw-pixel-strip :pixels 60  :x-start -0.5 :x-end  0.5  :y-start 0.0 :y-end 0.0 :z -0.9) 4 1)  ;; M RGBW 60
+); }}}
+; }}}
+
+
+(defn activate-show ;{{{
+  []
+  (core/init-logging)
+  (set-default-show!
+   (swap! tol-show (fn [s] (when s (with-show s (show/stop!) (show/blackout-show)) (show/unregister-show s))
+                   (show/show :description "tol show"
+                              :refresh-interval 25 ; DMX 29 to 44 hz. <=25 (40) sometimes wdt's ESP.. 20 (50) makes cpu go bananas. 25/40 default
+                              ;; :refresh-interval 50 ; DMX 29 to 44 hz. <=25 (40) sometimes wdt's ESP.. 20 (50) makes cpu go bananas. 25/40 default
+                              :universes universes))))
+  (ct/auto-bind *show*)                   ;; bind show to any compatible grid controllers connected now or in the future. CoreMidiSource.java GOES NUTS IF WAVETICK SENDS PHASE!!!
+  ;; (show/register-grid-controller) ;see if can get quicker bind if use this straight instead of autobind?
+  (when (nil? @core/osc-server) (core/start-osc-server osc-port-receive))   (clear-osc-var-bindings) (clear-osc-cue-bindings)  ;; Activate OSC server, clear any previous bindings
+  (reset! var-binder (var-fx/create-for-show *show*)) ;; Enable cues whose purpose is to set show variable values while they run.
+  (core/start-web-server 16000 false)     ;; not using webserver normally but need it for macros etc...
+  ;; (core/start-nrepl 5000)              ;; already using parent repl
+  (show/sync-to-external-clock (afterglow.midi/sync-to-midi-clock midi-clock-bus))
+  '*show*)  ;; Return the symbol *show*, rather than value itself - avoid crazy spewing REPL
+; }}}
+
+; {{{ HANDY
+;; BOOTSTRAP WHEN USING REPL: basically these below, for some reason if initing while booting repl it gets confused about which object is holding the reference. So stay manual for now.
+(defn start "bootstrap errthang" []
+  (activate-show)
+
+  (patch-moving)
+  (patch-strips)
+  (patch-static)
+
+  (osc-demo)
+  ; also use velocity for multiple things:
+  ;   velocity = desaturate, hype lightness, oscillate hue faster
+  ;   sparkle = chance up, fade down (def needs adjustable curves and limits tho)
+  ;   XXX this needed for early OSC-exposure (prior to proper/auto with libmapper)
+
+  (declare make-cues-tol)
+  (try (make-cues-tol) (catch Exception e))
+  (show/add-effect! :beam-shutter (chan-fx/function-effect "Shutter Open" :shutter-open 8 (show/fixtures-named "moving-beam")))
+  )
+
+(defn shortcuts "not for running, just easy to eval shortcuts" []
+  (show/address-map)
+  (osc-shutdown)
+  (ct/deactivate-all)
+  (for [x (range 31) y (range 31)] (show/clear-cue! x y))
+  ;; (rgb-dimmer)
+  (show/blackout-universe 2)
+  (show/unregister-show *show*)
+  (show/blackout-show)
+  (show/remove-fixture! :moving-beam-1) ; how fetch fixtures for this? since (show/all-fixtures) doesnt give names but spews everything
+
+  (eval [(show/stop!) (show/profile-show)])
+  (chan/extract-heads-with-some-matching-channel)) ;; good for using capabilities without manual grouping
+  ; }}}
+
+
+; {{{ GLOBAL BASIC EFFECTS
+(defn global-color-effect "Make a color effect which affects all lights, or :fixtures"
+  [color & {:keys [include-color-wheels? fixtures effect-name] :or {fixtures (show/all-fixtures)}}]
+  (try
+    (let [[c desc] (cond (= (type color) :com.evocomputing.colors/color)
+                       [color (color-name color)]
+                       (and (params/param? color)
+                            (= (params/result-type color) :com.evocomputing.colors/color))
+                       [color "variable"]
+                       :else
+                       [(create-color color) color])]
+      (color-fx/color-effect (or effect-name (str "Global " desc)) c fixtures, :include-color-wheels? include-color-wheels?))
+    (catch Exception e (throw (Exception. (str "Can't figure out how to create color from " color) e)))))
+
+(defn global-dimmer-effect "Return an effect that sets all dimmers. It can vary in response to a MIDI mapped show variable, an oscillator, or the location of the fixture. You can override the default name by passing in a value with :effect-name"
+  [level & {:keys [effect-name add-virtual-dimmers?]}]
+  (let [htp? (not add-virtual-dimmers?)]
+    (dimmer-effect level (show/all-fixtures) :effect-name effect-name :htp? htp?
+                   :add-virtual-dimmers? add-virtual-dimmers?)))
+
+(defn rgb-dimmer "moderate rgb pixels using a virtual dimmer with high priority, scaling other effects." []
+  (show/add-effect! :master (global-dimmer-effect 255 :htp? false :add-virtual-dimmers? true) :priority 100000))
+; }}}
+
+(defn hsl-test []; {{{
+  (use 'com.evocomputing.colors)
+  ;; (use 'com.evocomputing.colors.palettes.core)
+  (def thiscolor (create-color "purple"))
+  (def hue-param (osc/build-oscillated-param
+                  (osc/sine :interval :bar) :min -30 :max 30))
+  (def saturation-param (osc/build-oscillated-param
+                  (osc/sawtooth :interval :beat) :min -20 :max 5))
+  (def lightness-param (osc/build-oscillated-param
+                        (osc/sine :interval :phrase) :min -20 :max 20))
+  (show/add-effect! :color (global-color-effect
+                            (params/build-color-param :color thiscolor :adjust-hue hue-param :adjust-lightness lightness-param :adjust-saturation saturation-param))))
+; }}}
+
+; {{{  TRANSFORMATIONS
+; XXX make others work, use current color of head as input and then use create-color adjust-{target}... make generic build-color-transformation a la make-osc-dimmer-cue
+(defn build-saturation-transformation "Creates a color transformation for use with [[transform-colors]] which changes the saturation based on a variable parameter. If no parameter is supplied, the default is to use an oscillated parameter based on [[sawtooth]] with `:down?` set to `true` so the color is fully saturated at the start of the beat, and fully desaturated by the end. A different pattern can be created by supplying a different parameter with the `:param` optional keyword argument." {:doc/format :markdown}
+  [& {:keys [param] :or {param (osc/build-oscillated-param (osc/sawtooth :down? true) :max 90)}}]
+  (fn [color show snapshot head]
+    (let [saturation (colors/clamp-percent-float (params/resolve-param param show snapshot head))]
+      (colors/create-color {:h (colors/hue color) :s saturation :l (colors/lightness color)}))))
+
+(defn build-saturation-transformation-2 "Creates a color transformation for use with [[transform-colors]] which changes the saturation based on a variable parameter. If no parameter is supplied, the default is to use an oscillated parameter based on [[sawtooth]] with `:down?` set to `true` so the color is fully saturated at the start of the beat, and fully desaturated by the end. A different pattern can be created by supplying a different parameter with the `:param` optional keyword argument." {:doc/format :markdown}
+  [& {:keys [param] :or {param (osc/build-oscillated-param (osc/sawtooth :down? true) :min -20 :max 20)}}]
+  (fn [color show snapshot head]
+    (let [saturation (colors/clamp-percent-float (params/resolve-param param show snapshot head))]
+      (params/build-color-param :color color :adjust-saturation saturation))))
+
+(defn build-color-transformation "generalized color transform"
+  [& {:keys [hue saturation lightness] :or {hue (osc/build-oscillated-param (osc/sawtooth :down? true) :min -20 :max 20) saturation (osc/build-oscillated-param (osc/sawtooth :down? true) :min -20 :max 20) lightness (osc/build-oscillated-param (osc/sawtooth :down? true) :min -20 :max 20)}}]
+  (fn [color show snapshot head]
+    (let [hue (colors/clamp-percent-float (params/resolve-param hue show snapshot head))
+          saturation (colors/clamp-percent-float (params/resolve-param saturation show snapshot head))
+          lightness (colors/clamp-percent-float (params/resolve-param lightness show snapshot head))]
+      (params/build-color-param :color color :adjust-hue hue :adjust-saturation saturation :adjust-lightness lightness))))
+; }}}
+
+; {{{     EFFECTS
+; {{{     SPARKLE
+(defn- remove-finished-sparkles "Filters out any sparkles that were created longer ago than the fade time. `sparkles` is a map from head to the timestamp at which the sparkle was created."
+  [sparkles show snapshot fade-time]
+  (pspy :remove-finished-sparkles
+        (let [now (:instant snapshot)
+              fade-time (params/resolve-param fade-time show snapshot)]
+          (reduce
+           (fn [result [where creation-time]]
+             (if (< (- now creation-time) fade-time)
+               (assoc result where creation-time)
+               result))
+           {}
+           sparkles))))
+
+;; TODO: add off-beat-penalty that slopes the chance downwards as the beat passes,
+;; same for off-bar-penalty, so can prioritize beats and bars, perhaps pass an oscillator
+;; so they can be scaled in time too. Eventually allow randomization of fade time and perhaps
+;; hue and peak brightness, with control over how much they vary?
+(defn sparkle-tol "A random sparkling effect like a particle generator over the supplied fixture heads.
+
+  As each frame of DMX values generated, each participating fixture
+  head has a chance of being assigned a sparkle (this chance is
+  controlled by the optional keyword parameter `:chance`). Once a
+  sparkle has been created, it will fade out over the number of
+  milliseconds specified by the optional keyword parameter
+  `:fade-time`. The initial color of each sparkle can be changed with
+  the optional keyword parameter `:color`. All parameters may be
+  dynamic, including show variables with the standard shorthand of
+  passing the variable name as a keyword."
+  [fixtures & {:keys [color chance fade-time] :or {color (colors/create-color :white) chance 0.001 fade-time 500}}]
+  {:pre [(some? *show*)]}
+  (let [color (params/bind-keyword-param color :com.evocomputing.colors/color (colors/create-color :white))
+        chance (params/bind-keyword-param chance Number 0.001)
+        fade-time (params/bind-keyword-param fade-time Number 500)]
+    (let [heads (chan/find-rgb-heads fixtures)
+          running (atom true)
+          sparkles (atom {})  ; A map from head to creation timestamp for active sparkles
+          snapshot (rhythm/metro-snapshot (:metronome *show*))
+          ;; TODO: These should be per-head in case they are spatial.
+          color (params/resolve-unless-frame-dynamic color *show* snapshot)
+          chance (params/resolve-unless-frame-dynamic chance *show* snapshot)
+          fade-time (params/resolve-unless-frame-dynamic fade-time *show* snapshot)]
+      (Effect. "Sparkle"
+              (fn [show snapshot]
+                ;; Continue running until all existing sparkles fade
+                (swap! sparkles remove-finished-sparkles show snapshot fade-time)
+                (or @running (seq @sparkles)))
+              (fn [show snapshot]
+                (pspy :sparkle
+                      ;; See if we create any new sparkles (unless we've been asked to end).
+                      (when @running
+                        (doseq [head heads]
+                          (let [chance (params/resolve-param chance show snapshot head)]
+                            (when (< (rand) chance)
+                              (swap! sparkles assoc head (:instant snapshot))))))
+                      ;; Build assigners for all active sparkles.
+                      (let [now (:instant snapshot)]
+                        (for [[head creation-time] @sparkles]
+                          (let [color (params/resolve-param color show snapshot head)
+                                fade-time (max 10 (params/resolve-param fade-time show snapshot head))
+                                fraction (/ (- now creation-time) fade-time)
+                                faded (colors/darken color (* fraction (colors/lightness color)))]
+                            (fx/build-head-assigner :color head
+                                                 (fn [show snapshot target previous-assignment]
+                                                   (color-fx/htp-merge (params/resolve-param previous-assignment
+                                                                                             show snapshot head)
+                                                                       faded))))))))
+              (fn [show snapshot]
+                ;; Arrange to shut down once all existing sparkles fade out.
+                (reset! running false))))))
+; }}}
+
+; {{{     BLOOMS
+(defn bloom-dimmer "Bloom that doesn't set a color, only affecting dimmer"  ; {{{
+  [fixtures & {:keys [fraction measure]
+               :or { :fraction 0
+                    :measure (transform/build-distance-measure 0 0 0)}}]
+  (let [ fraction (params/bind-keyword-param fraction Number 0)
+        measure (params/resolve-param (params/bind-keyword-param measure :afterglow.transform/distance-measure
+                                                                 (tf/build-distance-measure 0 0 0))
+                                      *show* (rhythm/metro-snapshot (:metronome *show*)))
+        heads (chan/find-rgb-heads fixtures)
+        furthest (tf/max-distance measure heads)
+        f (fn [show snapshot target previous-assignment]
+            (let [fraction (params/resolve-param fraction show snapshot target)
+                  distance (measure target)]
+              ;; (if (<= distance (* furthest fraction))
+                previous-assignment))
+        assigners (fx/build-head-assigners :color heads f)
+        ]
+    (apply fx/scene "Bloom"
+           (concat [(Effect. "Bloom dimmer"
+                             fx/always-active
+                             (fn [show snapshot] assigners)
+                             fx/end-immediately)]
+                   (for [fixture fixtures]
+                     (let [distance (measure fixture)
+                           level (params/build-param-formula Number
+                                                             (fn [fraction]
+                                                               (if (<= distance (* furthest fraction))
+                                                                 255
+                                                                 0))
+                                                                 ;; (- 255 (* 10 distance)) ; test vary dimmer by distance, bit silly since no go per head. But nice across rig?
+                                                                 ;; (- 100 (* 10 distance))))
+                                  fraction)]
+                       (dimmer/dimmer-effect level [fixture]))
+                     )))))
+; }}}
+
+(defn bloom-tol "variable width, no dimmer action, adjustable spatial HSL" ; {{{
+  [fixtures & {:keys [measure color fraction width bleed keyhole keyhole-opacity keyhole-target hue-mod lightness-mod saturation-mod]
+               :or {:measure (transform/build-distance-measure 0 0 0)
+                    :color (colors/create-color :white), :fraction 0, :width 1
+                    :bleed 0.1  ; fraction where bloom has ended but some bleeds through/fades out
+                    :keyhole false ; creates own color or simply passes through existing within bounds? do it smarter so not passing color ensures?
+                    :keyhole-opacity 1.0 ; allow some through even outside keyhole
+                    :keyhole-target "lightness"; adjustable destination (curr simply black outside bounds, should rather mod previous-assignment)
+                    :hue-mod 50 :lightness-mod -5 :saturation-mod -20}}]
+  (let [ measure (params/resolve-param (params/bind-keyword-param measure :afterglow.transform/distance-measure
+                                                                 (tf/build-distance-measure 0 0 0))
+                                      *show* (rhythm/metro-snapshot (:metronome *show*)))
+        color (params/bind-keyword-param color :com.evocomputing.colors/color (colors/create-color :white))
+        fraction (params/bind-keyword-param fraction Number 0)
+        width (params/bind-keyword-param width Number 1.0)
+        bleed (params/bind-keyword-param bleed Number 0.1)
+        keyhole (params/bind-keyword-param keyhole Boolean false)
+        hue-mod (params/bind-keyword-param hue-mod Number 50)
+        lightness-mod (params/bind-keyword-param lightness-mod Number -5)
+        saturation-mod (params/bind-keyword-param saturation-mod Number -20)
+        ;; params [fraction width keyhole hue-mod lightness-mod saturation-mod]
+        heads (chan/find-rgb-heads fixtures)
+        furthest (tf/max-distance measure heads)
+        f (fn [show snapshot target previous-assignment]
+            (let [[fraction width keyhole hue-mod lightness-mod saturation-mod] (map #(params/resolve-param % show snapshot target) [fraction width keyhole hue-mod lightness-mod saturation-mod])
+            ;; (let [params (map #(params/resolve-param % show snapshot target) params)
+                  distance (measure target)]
+              (if (<= (* furthest (- fraction (/ width 2))) distance (* furthest (+ fraction (/ width 2))))
+               (if-not keyhole
+                       (params/build-color-param :color color ;; XXX per-head virtual dimmer (not the same as lightness)
+                                                 :adjust-lightness (* lightness-mod distance) :adjust-hue (* hue-mod distance) :adjust-saturation (* saturation-mod fraction))
+                       previous-assignment)
+                ;; (params/build-color-param :color previous-assignment ;; test use whatever color already set but adjust it
+;;  :adjust-lightness (* lightness-mod distance) :adjust-hue (* hue-mod distance) :adjust-saturation (* saturation-mod fraction))
+               (if-not keyhole previous-assignment (colors/create-color :black)))))
+                ;; (color-fx/fade-colors color previous-assignment (- fraction (/ furthest distance) ) show snapshot target)))) ; blend new and prev here ideally. just get a weird purple color now hmm
+        assigners (fx/build-head-assigners :color heads f)]
+    (apply fx/scene "Bloom"
+           (concat [(Effect. "Bloom color"
+                             fx/always-active
+                             (fn [show snapshot] assigners)
+                             fx/end-immediately)]
+                       ))))
+; }}}
+; }}}
+; {{{    CONFETTI
+(defn- remove-finished-flakes "Filters out any flakes that were created longer ago than the configured duration. `flakes` is a map from head to a tuple containing the step value after which the flake will end, followed by color and potentially aim information."
+  [flakes show snapshot step]
+  (pspy :remove-finished-flakes
+        (let [now (math/round (params/resolve-param step show snapshot))]
+          (reduce
+           (fn [result [where info]]
+             (let [final-step (first info)]
+               (if (<= now final-step)
+                 (assoc result where info)
+                 result)))
+           {}
+           flakes))))
+
+(defn- add-flakes "Create new flakes of a shared random color and individual random durations for each of the supplied heads."
+  [heads show snapshot current-step min-dur max-dur min-sat max-sat min-hue max-hue
+   & {:keys [colors] :or {colors nil}}]
+  (let [hue (+ min-hue (rand (- max-hue min-hue)))] ;XXX pass hue-range or vec of specific colors
+    (into {}
+          (map (fn [head]
+                 (let [min-dur (max 0 (math/round (params/resolve-param min-dur show snapshot head)))
+                       max-dur (max min-dur (math/round (params/resolve-param max-dur show snapshot head)))
+                       duration (+ min-dur (rand-int (inc (- max-dur min-dur))))
+                       min-sat (colors/clamp-percent-float (params/resolve-param min-sat show snapshot head))
+                       max-sat (colors/clamp-percent-float (params/resolve-param max-sat show snapshot head))
+                       saturation (colors/clamp-percent-float (- max-sat (rand (- max-sat min-sat))))]
+                   [head [(+ current-step duration) (colors/create-color :h hue :s saturation :l 50)]]))
+               heads))))
+
+(defn- aim-flakes "Chooses a random point at which the newly-created flakes shoule be aimed."
+  [flakes show snapshot min-x max-x min-y max-y min-z max-z]
+  (let [[min-x max-x min-y max-y min-z max-z] (map #((params/resolve-param % show snapshot)
+                                                     [min-x max-x min-y max-y min-z max-z]))
+        x (+ min-x (rand (- max-x min-x)))
+        y (+ min-y (rand (- max-y min-y)))
+        z (+ min-z (rand (- max-z min-z)))
+        point (Point3d. x y z)]
+    (into {} (for [[head info] flakes]
+               [head (conj info point)]))))
+
+;; XXX tol, flakes as bounds in space instead of heads. So could map over multiple heads, change size to osc n shit
+(defn confetti-tol "Mod confetti so can set max saturation, and limit colors to specific range or selection"
+  [fixtures & {:keys [step min-add max-add min-dur max-dur min-sat max-sat min-hue max-hue
+                      aim? min-x max-x min-y max-y min-z max-z]
+               :or {step (params/build-step-param)
+                    min-add 1 max-add 4 min-dur 2 max-dur 4 min-sat 40.0 max-sat 80.0 min-hue 0.0 max-hue 360.0
+                    aim? false min-x -5.0 max-x 5.0 min-y 0.0 max-y 0.0 min-z 0.5 max-z 5.0}}]
+  {:pre [(some? *show*)]}
+  (let [step (params/bind-keyword-param step Number (params/build-step-param))
+        min-add (params/bind-keyword-param min-add Number 1)
+        max-add (params/bind-keyword-param max-add Number 4)
+        min-dur (params/bind-keyword-param min-dur Number 2)
+        max-dur (params/bind-keyword-param max-dur Number 4)
+        min-sat (params/bind-keyword-param min-sat Number 40.0)
+        max-sat (params/bind-keyword-param max-sat Number 80.0)
+        min-hue (params/bind-keyword-param min-hue Number 0.0)
+        max-hue (params/bind-keyword-param max-hue Number 360.0)
+        min-x (params/bind-keyword-param min-x Number -5.0)
+        max-x (params/bind-keyword-param max-x Number 5.0)
+        min-y (params/bind-keyword-param min-y Number 0.0)
+        max-y (params/bind-keyword-param max-y Number 0.0)
+        min-z (params/bind-keyword-param min-z Number 0.5)
+        max-z (params/bind-keyword-param max-z Number 5.0)]
+    (let [heads (chan/find-rgb-heads fixtures true)
+          running (ref true)
+          current-step (ref nil)
+          flakes (ref {}) ; A map from head to [creation-step color] for active flakes
+          snapshot (rhythm/metro-snapshot (:metronome *show*))
+          ;; [min-add max-add min-x max-x min-y max-y min-z max-z]
+          ;;   (map #((params/resolve-unless-frame-dynamic % *show* snapshot) ; XXX nth not supported on this type, investigate impl diff resolve-param vs resolve-unless
+          ;;          [min-add max-add min-x max-x min-y max-y min-z max-z]))]
+          min-add (params/resolve-unless-frame-dynamic min-add *show* snapshot)
+          max-add (params/resolve-unless-frame-dynamic max-add *show* snapshot)
+          min-x (params/resolve-unless-frame-dynamic min-x *show* snapshot)
+          max-x (params/resolve-unless-frame-dynamic max-x *show* snapshot)
+          min-y (params/resolve-unless-frame-dynamic min-y *show* snapshot)
+          max-y (params/resolve-unless-frame-dynamic max-y *show* snapshot)
+          min-z (params/resolve-unless-frame-dynamic min-z *show* snapshot)
+          max-z (params/resolve-unless-frame-dynamic max-z *show* snapshot)]
+      (Effect. "Confetti"
+               (fn [show snapshot] ;; Continue running until all existing flakes fade
+                 (dosync
+                  (alter flakes remove-finished-flakes show snapshot step)
+                  (or @running (seq @flakes))))
+               (fn [show snapshot]
+                 (pspy :confetti ;; See how many flakes to create (unless we've been asked to end).
+                       (dosync
+                        (when @running
+                          (let [now (math/round (params/resolve-param step show snapshot))]
+                            (when (not= now @current-step)
+                              (ref-set current-step now)
+                              (let [min-add (max 0 (math/round (params/resolve-param min-add show snapshot)))
+                                    max-add (max min-add (math/round (params/resolve-param max-add show snapshot)))
+                                    min-hue (params/resolve-param min-hue show snapshot)
+                                    max-hue (params/resolve-param max-hue show snapshot)
+                                    add (+ min-add (rand-int (inc (- max-add min-add))))
+                                    new-flakes (add-flakes (take add (shuffle heads)) show snapshot now
+                                                           min-dur max-dur min-sat max-sat min-hue max-hue)
+                                    aimed-flakes (if aim?
+                                                   (aim-flakes new-flakes show snapshot
+                                                               min-x max-x min-y max-y min-z max-z)
+                                                   new-flakes)]
+                                (alter flakes merge aimed-flakes)))))
+                        ;; Build assigners for all active flakes.
+                        (concat (for [[head [_ color]] @flakes]
+                                  (fx/build-head-assigner :color head (fn [_ _ _ _] color)))
+                                (when aim?
+                                  (filter identity
+                                          (for [[head [_ _ point]] @flakes]
+                                            (when (seq (move/find-moving-heads [head]))
+                                              (fx/build-head-assigner :aim head (fn [_ _ _ _] point))))))))))
+               (fn [show snapshot]
+                 ;; Stop making new sparkles and arrange to shut down once all existing ones fade out.
+                 (dosync (ref-set running false)))))))
+
+; }}}
+; {{{         CAN-CAN
+(defn can-can "Moves moving head like in a kick line."
+  [& {:keys [bars cycles stagger spread pan-min pan-max tilt-min tilt-max]
+      :or {bars 1 cycles 1 stagger 0 spread 0 pan-min 0 pan-max 0 tilt-min -100 tilt-max 100}}]
+  (let [bars (params/bind-keyword-param bars Number 1)
+        cycles (params/bind-keyword-param cycles Number 1)
+        stagger (params/bind-keyword-param stagger Number 0)
+        spread (params/bind-keyword-param spread Number 0)
+        pan-min (params/bind-keyword-param pan-min Number 0)
+        pan-max (params/bind-keyword-param pan-max Number 0)
+        tilt-min (params/bind-keyword-param tilt-min Number -30)
+        tilt-max (params/bind-keyword-param tilt-max Number 30)
+        pan-ratio (params/build-param-formula Number #(/ (* 4 %1) %2) bars cycles)
+        tilt-ratio (params/build-param-formula Number #(/ %1 %2) bars cycles)
+        fx (for [head [{:key :moving-1      :phase 0.0 :pan-offset 0}
+                       {:key :moving-mini-1 :phase 0.2 :pan-offset 0}
+                       {:key :moving-mini-2 :phase 0.4 :pan-offset -0}
+                       {:key :moving-mini-3 :phase 0.6 :pan-offset -0}
+                       {:key :moving-2      :phase 0.8 :tilt-offset 0}]]
+             (let [head-phase (params/build-param-formula Number #(* % (:phase head 0)) stagger)
+                   tilt-osc (osc/sine :interval :bar :interval-ratio tilt-ratio :phase head-phase)
+                   head-tilt-min (params/build-param-formula Number #(+ % (:tilt-offset head 0)) tilt-min)
+                   head-tilt-max (params/build-param-formula Number #(+ % (:tilt-offset head 0)) tilt-max)
+                   tilt-param (osc/build-oscillated-param tilt-osc :min head-tilt-min :max head-tilt-max)
+                   pan-osc (osc/sine :interval :bar :interval-ratio pan-ratio :phase head-phase)
+                   head-pan-min (params/build-param-formula Number #(+ %1 (* (:pan-offset head 0) %2))
+                                                            pan-min spread)
+                   head-pan-max (params/build-param-formula Number #(+ %1 (* (:pan-offset head 0) %2))
+                                                            pan-max spread)
+                   pan-param (osc/build-oscillated-param pan-osc :min head-pan-min :max head-pan-max)
+                   direction (params/build-pan-tilt-param :pan pan-param :tilt tilt-param)]
+               (move/pan-tilt-effect "can can element" direction (show/fixtures-named (:key head)))))]
+    (apply fx/scene "Can Can" fx)))
+; }}}
+; }}}
+
+; {{{  HELPER FUNCTIONS
+(defn group-end-keys "Helper function to produce a vector of effect keywords to end all effects running on light groups with a given suffix."
+  [effect-suffix]
+  (mapv #(keyword (str (name %) "-" effect-suffix)) light-groups))
+
+(defn build-group-cue-elements "Helper function which builds the common variables needed to create a cue which runs on either all lights or a named group of lights."
+  [group effect-suffix name-suffix]
+  (let [effect-key (or (when group (keyword (str (name group) "-" effect-suffix))) (keyword effect-suffix))
+        fixtures   (or (when group (show/fixtures-named group)) (show/all-fixtures))
+        end-keys   (or (when group [(keyword effect-suffix)])   (group-end-keys effect-suffix))
+        effect-name (str (case group nil "All"
+                           (clojure.string/capitalize (name group)))
+                         " " (clojure.string/capitalize name-suffix))]
+    [effect-key fixtures effect-name end-keys])) ;change order because end-keys often ignored
+
+(defn x-phase "Return a value that ranges from zero for the leftmost fixture in a show to 1 for the rightmost, for staggering the phase of an oscillator in making a can-can chase."
+  [head show]
+  (let [dimensions @(:dimensions *show*)]
+    (/ (- (:x head) (:min-x dimensions)) (- (:max-x dimensions) (:min-x dimensions)))))
+
+(defn print-var-on-change
+  [key value]
+  (print key "-" value))
+;; (show/add-variable-set-fn! :thevar print-var-on-change)
+
+; }}}
+(defn make-color-cue "Create a cue-grid entry which establishes a global color effect, given a named color. Also set up a cue color parameter so the color can be tweaked in the Web UI or on the Ableton Push, and changes can be saved to persist between invocations."; {{{
+  ; XXX passing nil for group should affect all, unless :fixtures passed, in case overrides (so can control individual fixtures)
+  [group x y color-name & {:keys [include-color-wheels? held fixtures priority]
+                           :or   {include-color-wheels? true, priority 0}}]
+  (let [color (create-color color-name)
+        [effect-key fixtures effect-name] (build-group-cue-elements group "color" "color")
+        color-var {:key "color", :type :color, :start color, :name "Color"}
+        cue (cues/cue effect-key
+                      (fn [var-map]
+                       (global-color-effect (params/bind-keyword-param (:color var-map) :com.evocomputing.colors/color color)
+                                            :effect-name effect-name, :fixtures fixtures, :include-color-wheels? include-color-wheels?))
+                      :priority priority, :held held, :color color
+                      :color-fn (cues/color-fn-from-cue-var color-var x y)
+                      :variables [color-var])]
+   (show/set-cue! x y cue)))
+; }}}
+
+
+; {{{  STROBE CUE HELPERS
+
+(defn make-strobe-cue-tol "tweaks, incl uniform [group x y] params inline with other make-cues, dynamic color-var and velocity-target, evt externalize other vars (level etc), not just color"
+  [group x y & {:keys [color-show-var fixtures velocity-target]
+                :or   {color-show-var :strobe-color, velocity-target "level"}}]
+  (when-not (= (type (show/get-variable color-show-var)) :com.evocomputing.colors/color)
+    (show/set-variable! color-show-var (create-color :orangered)))
+  (let [[effect-key fixtures effect-name] (build-group-cue-elements group "strobe" "strobe") ; XXX instead concat fixture names if passed
+        color-var {:key color-show-var, :type :color, :name (name color-show-var)}]
+    (show/set-cue! x y
+      (cues/cue effect-key
+                (fn [var-map] (fun/strobe-2 effect-name fixtures (:level var-map) (:lightness var-map)))
+                :held true, :priority 11000, :color (show/get-variable color-show-var) ;:red
+                :color-fn (fn [cue active show snapshot]
+                            (if (> (rhythm/snapshot-bar-phase snapshot 0.5) 0.9)
+                              (create-color :black)
+                              (or (show/get-variable color-show-var) (:color cue))))
+                :variables [{:key "level", :min 0, :max 100, :start 80, :name "Level"
+                             :velocity (when (= velocity-target "level") true)}
+                            {:key "lightness", :min 0, :max 100, :start 90, :name "Lightness"
+                             :velocity (when (= velocity-target "lightness") true)}
+                            color-var]))))
+; }}}
+;; (defn square-tol "Extends regular square oscillator with slopes" ; XXX cant go here since uses private stuff, implement in core afterglow when my skills are up to par{{{
+;;   [& {:keys [width interval interval-ratio phase fade-fraction fade-curve] :or {width 0.5 interval :beat interval-ratio 1 phase 0.0 fade-fraction 0 fade-curve :linear}}]
+;;   (let [width (params/bind-keyword-param width Number 0.5)
+;;         fade-fraction (params/bind-keyword-param fade-fraction Number 0)
+;;         shape-fn (if (params/param? width)
+;;                    (reify osc/IVariableShape  ; The shape function changes based on the dynamic value of width
+;;                      (value-for-phase [this phase show snapshot head]
+;;                        (let [width (params/resolve-param width show snapshot head)]
+;;                          (when-not (<= 0.0 width 1.0)
+;;                            (throw (IllegalArgumentException. "width must fall between 0.0 and 1.0")))
+;;                          (if (< phase width) 1.0 0.0))) ; XXX put fade shit here
+;;                      (simplify-unless-frame-dynamic [this show snapshot head]
+;;                        (if (some? params/frame-dynamic-param? [width fade-fraction])
+;;                          this  ; Can't simplify, we depend on a frame-dynamic parameter
+;;                          (let [width (params/resolve-param [width show snapshot head])]  ; Can simplify
+;;                            (osc/build-fixed-square-shape-fn width)))))
+;;                    ;; The shape function depends on the fixed value of width, so can be finalized now
+;;                    (osc/build-fixed-square-shape-fn width))]
+;;     (osc/build-oscillator shape-fn :interval interval :interval-ratio interval-ratio :phase phase)))}}}
+
+; {{{ MAKE OSC DIMMER CUES
+(defn make-dimmer-cue "Creates a cue which lets the operator adjust the dimmer level of a group of fixtures. Group will be one of the values in [[light-groups]], or `nil` if the cue should affect all lights." ;{{{
+  [group x y color & {:keys [priority end-rest? add-virtual-dimmers? held? velocity?] :or {priority 5, add-virtual-dimmers? true}}]
+  (let [[effect-key fixtures effect-name end-keys] (build-group-cue-elements group "dimmers" "dimmers")]
+    (show/set-cue! x y
+      (cues/cue effect-key
+                (fn [var-map] (dimmer-effect (params/bind-keyword-param (:level var-map 255) Number 255)
+                                             fixtures, :effect-name effect-name, :htp? false, :add-virtual-dimmers? add-virtual-dimmers?, :held held?))
+                :variables [{:key "level", :min 0, :max 255, :start 255, :velocity velocity? :velocity-min 30 :name "Level"}]
+                :priority priority, :color color, :end-keys (if end-rest? end-keys)))))
+                             
+
+(defn build-ratio-param "Creates a dynamic parameter for setting the beat ratio of any cue containing an oscillator. Expects the cue's var-map to contain entries `:beats` and `:cycles`, defaulting to 1 if missing."
+  [var-map & {:keys [beats-alt cycles-alt] :or {beats-alt :beats, cycles-alt :cycles}}]
+  (let [beats-param  (params/bind-keyword-param (beats-alt var-map)  Number 1)
+        cycles-param (params/bind-keyword-param (cycles-alt var-map) Number 1)]  ; XXX add scale-param that goes 1/16,1/8,1/4,1/2,1,2,4,8,16
+    (params/build-param-formula Number #(/ %1 %2) beats-param cycles-param))) ;XXX clamp beats-param to 1,2,3,4,6,8 etc cycles-param same
+
+
+
+; }}} GENERALIZED OSC DIMMER FUNCTIONS
+(defn- make-osc-dimmer-param "Creates the oscillated parameter used by `make-osc-dimmer-cue` for both the actual effect and its visualizer."; {{{
+  [var-map osc-type]
+  (osc/build-oscillated-param ((ns-resolve 'afterglow-tol.core (symbol "osc" osc-type)) :interval-ratio (build-ratio-param var-map)
+                              :down? (:down var-map) :width (:width var-map) :phase (:phase var-map))
+                              :min (:min var-map) :max (:max var-map)))
+
+(defn make-osc-dimmer-cue "Create a cue which applies an oscillator, of named type, to the dimmers of the specified set of fixtures, with cue variables to adjust the oscillator parameters."
+  ;; XXX abandon directly calling dimmer-effect, as first step towards generalized oscs. instead have make-osc-dimmer-cue fun call a generic make-osc-cue, passing "dimmer" as target 
+  ;; never raw dmx 0-255 for output val, use 0.000-1.000), and add offset/scale. needed for clipped oscs, and agnostic output (each endpoint reponsible for own scale)
+  [group x y color osc-type & {:keys [priority, end-rest?] :or {priority 10}}] ;XXX handle passing "nil" as osc-type, creating straight dimmer level effect
+  (let [[effect-key fixtures effect-name end-keys] (build-group-cue-elements group "dimmers" osc-type)
+        common (map default-vars [:beats :cycles :min-dmx :max-dmx :phase])
+        extra (default-vars (case osc-type "sawtooth" :down, "square" :width, nil)) ;XXX express width as 1/cycles (+- offset for fine adj?), same concept as reg beats/cycles
+        variables (if-not (nil? extra) (merge common extra) common)
+        color-fn-param (params/build-color-param :color color :adjust-saturation (osc/build-oscillated-param (osc/sawtooth) :min -50 :max 50))] ;XXX fix resolve var-map from color-fn, also conditional so only blinks if active
+    (show/set-cue! x y
+      (cues/cue effect-key
+                (fn [var-map] (dimmer-effect (make-osc-dimmer-param var-map osc-type) fixtures
+                                             :effect-name effect-name :htp? false :add-virtual-dimmers? true))
+                :priority priority, :color color, :variables variables
+                :visualizer (fn [var-map show]
+                              (let [p (make-osc-dimmer-param var-map osc-type)]
+                                (fn [snapshot] (/ (params/evaluate p show snapshot nil) 255.0))))
+                ;; :color-fn (fn [var-map] (cues/color-fn-from-param ;XXX how create color-fn from var-map? can't access it here somehow
+                ;;                                       (let [p (make-osc-dimmer-param var-map osc-type)]
+                ;;                                         (params/build-color-param :color color :adjust-saturation p))))
+                ;; :color-fn (cues/color-fn-from-param (params/build-color-param :color color :adjust-saturation (cues/get-cue-variable )))
+                ;; :color-fn (cues/color-fn-from-param color-fn-param)
+                :end-keys (if end-rest? end-keys)))))
+                ; }}}
+; }}}
+
+(defonce ^{:doc "A step parameter for controlling example chase cues."} step-param (atom nil))
+(defonce  step-param2 (atom nil))
+
+
+; {{{     MAIN COLOR/DIMMER/STROBE CUES
+(defn make-main-color-dimmer-cues-tol "Tol make cues."
+  [& {:keys [page-x page-y] :or {page-x 0 page-y 0}}]
+  (let [x-base (* page-x 8), y-base (* page-y 8)
+        rig-width (- right-wall left-wall)
+        groups (concat [nil] light-groups)] ; nil resolves to all fixtures when passed to helper functions
+
+     ; COLOR CUES
+    (doall (map-indexed
+            (fn [i group] (make-color-cue group (+ x-base i) y-base :royalblue, :priority (if group 1 0)))
+            groups))
+
+   ; DIMMER CUES
+   (doall (map-indexed (fn [i group] (make-dimmer-cue group (+ x-base i) (+ y-base 1) :white)) groups))
+   (doall (map-indexed (fn [i group] (make-dimmer-cue group (+ x-base i) (+ y-base 6) :white, :held? true, :velocity true)) groups))
+   ; OSC DIMMER CUES
+   (doall (map-indexed
+           (fn [x group]
+             (doall (map-indexed ;what's a cleaner way for inner loops?
+                      (fn [y osc-type]
+                        (make-osc-dimmer-cue group (+ x-base x) (+ y-base 2 y) (:color osc-type) (:type osc-type)))
+                      osc-types)))
+           groups))
+   ; OVERRIDE PRIO
+   (make-dimmer-cue nil (+ x-base 7) (+ y-base 1) :white, :priority 11000) ;; Dimmer cues to turn on and set brightness of groups of lights
+   (doall (map-indexed
+           (fn [y osc-type]
+             (make-osc-dimmer-cue nil (+ x-base 7) (+ y-base 2 y) (:color osc-type) (:type osc-type), :priority 11000))
+           osc-types))
+
+  ;; Strobe cues
+   (doall (map-indexed
+           (fn [i group]
+             (make-strobe-cue-tol group (+ x-base i) (+ y-base 7) :velocity-target "lightness"))
+           groups))
+
+   (let [color-var {:key :strobe-color, :type :color, :name "Strobe Color"}
+         level-var {:key :strobe-level, :min 0.0, :max 100.0, :start 80.0, :type Number, :name "Strobe Level"}]
+    (show/set-cue! (+ x-base 7) (+ y-base 7)
+                   (cues/cue :strobe-color (fn [_] (fx/blank "Strobe Color"))
+                             :color :purple, :color-fn (cues/color-fn-from-cue-var color-var)
+                             :variables [color-var]))
+    (show/set-cue! (+ x-base 7) (+ y-base 6)
+                   (cues/cue :strobe-level (fn [_] (fx/blank "Strobe Level"))
+                             :color :white, :variables [level-var])))))
+     ; }}}
+
+; {{{  EFFECT CUES
+(defn make-effect-cues  
+  [& {:keys [page-x page-y] :or {page-x 0 page-y 0}}]
+  (let [x-base (* page-x 8) ; {{{
+        y-base (* page-y 8)
+        rig-width (- right-wall left-wall)
+
+        desat-beat  (osc/build-oscillated-param  (osc/sawtooth :down? true) :max 100)  ; Desaturate a color as a beat progresses
+        desat-bar   (osc/build-oscillated-param  (osc/sawtooth :down? true) :max 80)  ; Desaturate a color as a bar progresses
+        hue-bar     (osc/build-oscillated-param  (osc/sawtooth :interval :bar) :min 200 :max 260)  ; Spread a gradient across a bar of music
+        hue-grad    (params/build-spatial-param  (show/all-fixtures) (fn [head] (- (:x head) (:min-x @(:dimensions *show*)))) :min 200 :max 260) ; Spread a gradient across the light grid
+        rig-hue-gradient (params/build-spatial-param (show/all-fixtures) ; Spread a rainbow across just the main rig, repeating beyond that, irrespective of other lights' positions.
+                                                     (fn [head] (colors/clamp-hue (* 360 (/ (- (:x head) left-wall) rig-width)))))]
+         ; }}}
+  (show/set-cue! (+ x-base 0) (+ y-base 0)
+    (cues/cue :fog-active
+      (fn [_] (chan-fx/channel-effect "Make fog spew" :fog-level
+                                      (chan/extract-channels (show/fixtures-named :fogger)
+                                                             #(= (:type %) :fog))))
+                                      :short-name "Fog" :held true
+                                      :variables [{:key :fog-level :name "Fog Level" :min 0 :max 255 :start 30 :type :integer :velocity true}]))
+   (show/set-cue! (+ x-base 0) (+ y-base 1)
+     (cues/cue :strip-attack
+       (fn [_] (chan-fx/channel-effect "ledstrip Attack" :attack
+                                       ;; (chan/extract-channels (concat (show/fixtures-named :tube) (show/fixtures-named :strip))
+                                       (chan/extract-channels (map show/fixtures-named [:tube :strip])
+                                                              #(= (:type %) :attack))))
+                                       :short-name "Attack"
+                                       :variables [{:key :attack :name "Attack" :min 0 :max 255 :start 127 :type :integer}]))
+
+  ; USE:
+  ; (aim-fan)
+  ; (pinstripes) with higher tolerance
+  ; (dimmer-sparkle with rgb-heads true)
+  ;; rainbow bullshit{{{
+   (show/set-variable! :rainbow-sat 30)
+   (show/set-cue! (+ x-base 1) (+ y-base 0)
+                  (let [color-param (params/build-color-param :s :rainbow-sat, :l 50, :h hue-bar)]
+                    (cues/cue :all-color (fn [_] (global-color-effect color-param))
+                              :color-fn (cues/color-fn-from-param color-param)
+                              :short-name "Rainbow Bar Fade"
+                              :variables [{:key :rainbow-sat, :name "Saturation", :min 0, :max 100, :start 30, :type :integer}])))
+   (show/set-cue! (+ x-base 1) (+ y-base 1)
+                   (cues/cue :all-color (fn [_] (global-color-effect 
+                                                  (params/build-color-param :s :rainbow-sat, :l 50, :h rig-hue-gradient) :include-color-wheels? true))
+                             :short-name "Rainbow Rig"
+                             :variables [{:key :rainbow-sat, :name "Saturation", :min 0, :max 100, :start 30, :type :integer}]))
+   (show/set-cue! (+ x-base 1) (+ y-base 2)
+                   (let [color-param (params/build-color-param :s :rainbow-sat, :l 50, :h hue-grad, :adjust-hue hue-bar)]
+                     (cues/cue :all-color (fn [_] (global-color-effect color-param))
+                               :color-fn (cues/color-fn-from-param color-param)
+                               :short-name "Rainbow Grid+Bar"
+                               :variables [{:key :rainbow-sat, :name "Saturation", :min 0, :max 100, :start 30, :type :integer}])))
+   (show/set-cue! (+ x-base 1) (+ y-base 3)
+                  (let [color-param (params/build-color-param :s desat-bar, :l 80, :h hue-grad, :adjust-hue hue-bar)]
+                    (cues/cue :all-color (fn [_] (global-color-effect color-param))
+                               :priority 0, :color-fn (cues/color-fn-from-param color-param), :short-name "Rainbow Pulse")))
+; }}}
+
+  ; {{{   CHASES
+  ;; expose step-param fade-fraction in mapping to can adjust curve on fly?
+   (reset! step-param (params/build-step-param :fade-fraction 0.20, :fade-curve :sine))  ;; Set up an initial value for our step parameter
+   (reset! step-param2 (params/build-step-param :fade-fraction 0.33, :fade-curve :sine))  ;; Set up an initial value for our step parameter
+   ; XXX test using fun/random-beat-number-param as step param, would jump to a random pos in chase each beat?
+
+   (show/set-cue! (+ x-base 4) (+ y-base 0)
+                  (cues/cue :chase (fn [var-map]
+                                     (fx/chase "Chase Test 1"
+                                               [(fun/strobe-2        :strobe (show/fixtures-named "moving") 87 60)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "wash") 97 80)
+                                                (global-color-effect :royalblue :fixtures (show/fixtures-named "moving-mini"))
+                                               ;; (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving-beam") 99 100)
+                                               ;; (global-color-effect (colors/create-color :h 270 :s 30 :l 10) :fixtures (show/fixtures-named "rgb"))
+                                                (global-color-effect :lightgoldenrodyellow :fixtures (show/fixtures-named "wash"))
+                                               ;; (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving") 70 100)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))]
+                                               @step-param :beyond :loop)) :color :magenta :priority 1000))
+
+   (show/set-cue! (+ x-base 4) (+ y-base 1)
+                  (cues/cue :chase (fn [var-map]
+                                     (fx/chase "Chase Test 2"
+                                               [(fun/strobe-2        :strobe (show/fixtures-named "moving") 77 70)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving-mini") 82 50)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "wash") 97 70)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving") 60 99)
+                                                (global-color-effect :black :fixtures (show/fixtures-named "moving"))]
+                                               @step-param :beyond :bounce))
+                            :color :magenta :priority 1000))
+
+   (show/set-cue! (+ x-base 4) (+ y-base 2)
+                  (cues/cue :chase (fn [var-map]
+                                     (fx/chase "Chase Test 3"
+                                               [(fun/strobe-2        :strobe (show/fixtures-named "moving") 80 50)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+
+                                                (fun/strobe-2        :strobe (show/fixtures-named "wash") 97 100)
+                                                (global-color-effect :royalblue :fixtures (show/fixtures-named "moving-mini"))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving-beam") 47 100)
+                                               (global-color-effect :black :fixtures (show/all-fixtures))
+
+                                               (global-color-effect (colors/create-color :h 270 :s 30 :l 70) :fixtures (show/fixtures-named "moving-mini"))
+                                               (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (global-color-effect :seagreen :fixtures (show/fixtures-named "wash"))
+                                               (global-color-effect :black :fixtures (show/all-fixtures))
+
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving-mini") 70 100)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))
+                                                (fun/strobe-2        :strobe (show/fixtures-named "moving") 90 100)
+                                                (global-color-effect :black :fixtures (show/all-fixtures))]
+                                               @step-param :beyond :loop)) :color :magenta :priority 200))
+
+   (show/set-cue! (+ x-base 4) (+ y-base 3)
+                  (cues/cue :chase (fn [var-map]
+                                     (fx/chase "Chase Test cues"
+                                               []
+                                               ;; [(cues/run-cue-or-something yo yeah)]
+                                               @step-param :beyond :loop)) :color :purple, :priority 300))
+; }}}
+; {{{ TRANSFORM COLORS
+   (show/set-cue! (+ x-base 0) (+ y-base 7) (cues/cue :transform-colors 
+                                               (fn [_] (color-fx/transform-colors (show/all-fixtures)
+                                                         :transform-fn (color-fx/build-saturation-transformation
+                                                                        :param (osc/build-oscillated-param (osc/sine :interval :phrase) :max 80 :min 40)))) :priority 10000))
+   (show/set-cue! (+ x-base 0) (+ y-base 6) (cues/cue :transform-colors-2
+                                               (fn [_] (color-fx/transform-colors (show/all-fixtures)
+                                                         :transform-fn (build-saturation-transformation-2
+                                                                        :param (osc/build-oscillated-param (osc/sawtooth :interval :phrase) :max 80 :min -40)))) :priority 10000))
+
+   (show/set-cue! (+ x-base 0) (+ y-base 5) (cues/cue :transform-colors-straight
+                                               (fn [var-map] (cues/apply-merging-var-map var-map color-fx/transform-colors (show/all-fixtures)
+                                                         :transform-fn (build-saturation-transformation-2 :param (params/bind-keyword-param :adjustment Number 0))))
+                                               :variables [{:key :adjustment :min -100 :max 100 :type :integer :name "Adjustment"}]
+                                               :priority 10000))
+
+   (show/set-cue! (+ x-base 0) (+ y-base 4) (cues/cue :transform-colors-tol
+                                               (fn [var-map] (cues/apply-merging-var-map var-map color-fx/transform-colors (show/all-fixtures)
+                                                         :transform-fn (build-saturation-transformation-2
+                                                                        :param (osc/build-oscillated-param (osc/sawtooth :interval-ratio (build-ratio-param var-map))
+                                                                                                           :max (:max var-map), :min (:min var-map)))))
+                                              :variables [{:key "beats", :min 1, :max 32, :start 4, :type :integer, :name "Beats"}
+                                                          {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+                                                          {:key "max", :min -50, :max 100, :start 10, :type :integer, :name "Max"}
+                                                          {:key "min", :min -100, :max 50, :start -10, :type :integer, :name "Min"}]
+                                               :priority 10000))
+
+   ;; (show/set-cue! (+ x-base 0) (+ y-base 5) (cues/cue :transform-colors-tol-2 ;XXX sep for hue-sat-l or all in one? prob better sep so get diff lfos
+   ;;                                             (fn [var-map] (cues/apply-merging-var-map var-map color-fx/transform-colors (show/all-fixtures)
+   ;;                                                       :transform-fn (build-color-transformation
+   ;;                                                                      :hue (osc/build-oscillated-param (osc/sawtooth :interval-ratio (build-ratio-param var-map))
+   ;;                                                                                                         :max (:max-hue var-map), :min (:min-hue var-map)))))
+   ;;                                            :variables [{:key "beats", :min 1, :max 32, :start 4, :type :integer, :name "Beats"}
+   ;;                                                        {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+   ;;                                                        {:key "max", :min -50, :max 100, :start 10, :type :integer, :name "Max"}
+   ;;                                                        {:key "min", :min -100, :max 50, :start -10, :type :integer, :name "Min"}]
+   ;;                                             :priority 10000))
+; }}}
+    ;; {{{ SPARKLE
+    (let [color-var {:key "color", :type :color, :start (colors/create-color :white), :name "Color"}]
+     (show/set-cue! (+ x-base 7) (+ y-base 6) (cues/cue :sparkle   (fn [var-map] (cues/apply-merging-var-map var-map fun/sparkle (show/all-fixtures)))
+                                               :held true, :priority 100, :color "white", :color-fn (cues/color-fn-from-cue-var color-var)
+                                               :variables [{:key "chance",    :min 0.0, :max 0.2,  :start 0.0000, :velocity false}
+                                                           {:key "fade-time", :min 1,   :max 2000, :start 20, :type :integer, :velocity true, :name "Fade"}
+                                                           color-var])))
+
+    (let [color-var {:key "color", :type :color, :start (colors/create-color :red), :name "Color"}]
+     ;; (show/set-cue! (+ x-base 7) (+ y-base 5) (cues/cue :sparkle-2   (fn [var-map] (cues/apply-merging-var-map var-map sparkle-tol (show/all-fixtures)))
+     (show/set-cue! (+ x-base 7) (+ y-base 5) (cues/cue :sparkle-2   (fn [var-map] (cues/apply-merging-var-map var-map fun/sparkle (show/all-fixtures)))
+                                               :held false, :priority 2000, :color "yellow", :color-fn (cues/color-fn-from-cue-var color-var)
+                                               :variables [{:key "chance",    :min 0.0, :max 0.15,  :start 0.0000, :velocity false}
+                                                           {:key "fade-time", :min 1,   :max 2500, :start 20, :type :integer, :velocity true, :name "Fade"}
+                                                           color-var])))
+    (let [color-var {:key "color", :type :color, :start (colors/darken (colors/create-color :blue) 30), :name "Color"}]
+     (show/set-cue! (+ x-base 7) (+ y-base 4) (cues/cue :sparkle-3   (fn [var-map] (cues/apply-merging-var-map var-map fun/sparkle (show/all-fixtures)))
+                                               :held true, :priority 20000, :color "blue", :color-fn (cues/color-fn-from-cue-var color-var)
+                                               :variables [{:key "chance",    :min 0.0, :max 0.15,  :start 0.0001, :velocity true}
+                                                           {:key "fade-time", :min 1,   :max 200, :start 10, :type :integer, :velocity false, :name "Fade"}
+                                                           color-var])))
+    ;; (let [color-var {:key "color", :type :color, :start (colors/create-color :seagreen), :name "Color"}]
+    ;; (show/set-cue! (+ x-base 7) (+ y-base 1) (cues/cue :sparkle-3   (fn [var-map] (cues/apply-merging-var-map var-map fun/dimmer-sparkle  (show/fixtures-named "wash") :include-rgb-fixtures?))
+    ;;                          :held false, :priority 2000, :color "seagreen", :color-fn (cues/color-fn-from-cue-var color-var)
+    ;;                          :variables [{:key "chance",    :min 0.0, :max 0.1,  :start 0.0001, :velocity false}
+    ;;                                      {:key "fade-time", :min 1,   :max 1000, :start 20, :type :integer, :velocity true, :name "Fade"}
+    ;;                                       color-var]    )))
+;; }}}
+; {{{  BLOOMS
+    ;; BLOOM
+    (show/set-cue! (+ x-base 6) (+ y-base 7) (cues/cue :bloom     (fn [var-map] (cues/apply-merging-var-map var-map fun/bloom (show/all-fixtures)
+                                                                                 :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                                              :variables [(default-vars :color)
+                                                          {:key "width", :min 0.0, :max 1.0, :start 0.2, :type Number, :name "Width"}
+                                                          {:key "fraction", :min 0, :max 1, :start 0, :velocity true}]
+                                              :held true, :priority 1000, :color :purple))
+    ;; linked
+    (def vars (concat [{:key "color", :type :color, :start (colors/create-color :orangered), :name "Color"}]
+                                                          (map default-vars [:beats :cycles :max-num :min-num])))
+    (show/set-cue! (+ x-base 6) (+ y-base 6) (cues/cue :bloom-link2
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/triangle :interval-ratio (build-ratio-param var-map)) :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map, fun/bloom (show/all-fixtures)
+                                                           :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true) :fraction fraction)))
+                                              ;; :variables (concat [{:key "color", :type :color, :start (colors/create-color :orangered), :name "Color"}]
+                                              ;;             (map default-vars [:beats :cycles :max-num :min-num]))
+                                              :variables vars
+                                              :held false, :priority 1001, :color :red))
+    (show/set-cue! (+ x-base 6) (+ y-base 5) (cues/cue :bloom-strip     (fn [var-map] (cues/apply-merging-var-map var-map fun/bloom (map show/fixtures-named [:tube :strip])
+                                                                                 :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                                              :variables [{:key "color", :type :color, :start (colors/create-color :white), :name "Color"}
+                                                          {:key "fraction", :min 0, :max 1, :start 0, :velocity true}]
+                                              :held true, :priority 1000, :color :purple))
+    ;; linked
+    (show/set-cue! (+ x-base 6) (+ y-base 4) (cues/cue :bloom-link2-strip
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/triangle :interval-ratio (build-ratio-param var-map)) :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map, fun/bloom (map show/fixtures-named [:tube :strip])
+                                                           :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true) :fraction fraction)))
+                                              :variables (concat [{:key "color", :type :color, :start (colors/create-color :orange), :name "Color"}]
+                                                          (map default-vars [:beats :cycles :max-num :min-num]))
+                                              :held false, :priority 1001, :color :red))
+
+
+    (show/set-cue! (+ x-base 6) (+ y-base 0) (cues/cue :bloom-tol
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map)) :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map bloom-tol  (map show/fixtures-named [:tube :strip])
+                                                                                      :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true)
+                                                                                      :fraction fraction
+                                                                                      :width 1.0)))
+                                              :variables [{:key "color", :type :color, :start (colors/create-color :mediumpurple), :name "Color"}
+                                                          {:key "hue-mod" :min -180 :max 180 :start 50 :type :integer :name "Hue mod"}
+                                                          {:key "lightness-mod" :min -50 :max 50 :start -5 :type :integer :name "Lightness mod"}
+                                                          {:key "saturation-mod" :min -50 :max 50 :start 10 :type :integer :name "Saturation mod"}
+                                                          {:key "beats", :min 1, :max 32, :start 16, :type :integer, :name "Beats"}
+                                                          (map default-vars [:cycles :max-num :min-num])]
+                                              :visualizer (fn [var-map show] ;XXX make generic build-visualizer function
+                                                            (let [p (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map)) :max (:max var-map), :min (:min var-map))]
+                                                              (fn [snapshot] (params/evaluate p show snapshot nil) )))
+                                                            ;; (let [p (make-osc-dimmer-param var-map "sine")] ;XXX figure out why no go
+                                                            ;;   (fn [snapshot] (/ (params/evaluate p show snapshot nil) 255.0))))
+                                              :short-name "Bloom mod", :priority 2001, :color :seagreen))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 1) (cues/cue :bloom-stripe
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map))
+                                                                                                    :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map bloom-tol  (map show/fixtures-named [:tube :strip])
+                                                                                      :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true)
+                                                                                      :fraction fraction)))
+                                              :variables [{:key "color", :type :color, :start (colors/create-color :mediumpurple), :name "Color"}
+                                                          {:key "width", :min 0.0, :max 1.0, :start 0.1, :type Number, :name "Width"}
+                                                          {:key "hue-mod" :min -180 :max 180 :start 30 :type :integer :name "Hue mod"}
+                                                          {:key "lightness-mod" :min -50 :max 50 :start 10 :type :integer :name "Lightness mod"}
+                                                          {:key "saturation-mod" :min -50 :max 50 :start 10 :type :integer :name "Saturation mod"}
+                                                          {:key "beats", :min 1, :max 32, :start 8, :type :integer, :name "Beats"}
+                                                          {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+                                                          {:key "max", :min 0.0, :max 1.0, :start 0.7, :type Number, :name "Max"}
+                                                          {:key "min", :min 0.0, :max 1.0, :start 0.2, :type Number, :name "Min"}]
+                                              :short-name "Bloom stripe", :priority 1002, :color :orangered))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 2) (cues/cue :bloom-stripe-2
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sawtooth :interval-ratio (build-ratio-param var-map))
+                                                                                                    :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map bloom-tol  (map show/fixtures-named [:tube :strip])
+                                                                                      :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true)
+                                                                                      :fraction fraction)))
+                                              :variables [{:key "color", :type :color, :start (colors/create-color :mediumpurple), :name "Color"}
+                                                          {:key "width", :min 0.0, :max 1.0, :start 0.1, :type Number, :name "Width"}
+                                                          {:key "hue-mod" :min -180 :max 180 :start 30 :type :integer :name "Hue mod"}
+                                                          {:key "lightness-mod" :min -50 :max 50 :start 10 :type :integer :name "Lightness mod"}
+                                                          {:key "saturation-mod" :min -50 :max 50 :start 10 :type :integer :name "Saturation mod"}
+                                                          (map default-vars [:beats :cycles :max-num :min-num])]
+                                              :short-name "Bloom stripe 2", :priority 1012, :color :orange))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 3) (cues/cue :bloom-keyhole
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map)) :max (:max var-map), :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map bloom-tol  (map show/fixtures-named [:tube :strip])
+                                                                                      :measure (tf/build-distance-measure 0 rig-height 0, :ignore-z true)
+                                                                                      :fraction fraction :keyhole true)))
+                                              :variables [{:key "beats", :min 1, :max 32, :start 16, :type :integer, :name "Beats"}
+                                                          {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+                                                          {:key "max", :min 0.0, :max 1.0, :start 0.8, :type Number, :name "Max"}
+                                                          {:key "min", :min 0.0, :max 1.0, :start 0.0, :type Number, :name "Min"}
+                                                          {:key "width", :min 0.0, :max 1.0, :start 0.3, :type Number, :name "Width"}]
+                                              :short-name "Bloom keyhole", :priority 2001, :color :green))
+
+    ;; reverse
+    (show/set-cue! (+ x-base 5) (+ y-base 7) (cues/cue :bloom-reverse (fn [var-map] (cues/apply-merging-var-map var-map fun/bloom (show/all-fixtures)
+                                                                                     :color (colors/create-color :black) :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                                              :variables [ {:key "fraction", :min 0, :max 1, :start 0, :velocity true}]
+                                              :held true, :priority 1002, :color :black))
+    ;; auto, reverse
+    (show/set-cue! (+ x-base 5) (+ y-base 6) (cues/cue :bloom-link 
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map)) :max (:max var-map) :min (:min var-map))]
+                                                               
+                                                          (cues/apply-merging-var-map var-map fun/bloom (show/all-fixtures)
+                                                           :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true) :fraction fraction
+                                                           :color (colors/create-color :black))))
+                                       
+                                              :variables [{:key "beats", :min 1, :max 32, :start 4, :type :integer, :name "Beats"}
+                                                          {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+                                                          {:key "max", :min 0.0, :max 1.0, :start 0.5, :type Number, :name "Max"}
+                                                          {:key "min", :min 0.0, :max 1.0, :start 0.0, :type Number, :name "Min"}]
+                                              :held false, :priority 19999, :color :black))
+    (show/set-cue! (+ x-base 5) (+ y-base 5) (cues/cue :bloom-reverse-strip (fn [var-map] (cues/apply-merging-var-map var-map fun/bloom (map show/fixtures-named [:tube :strip])
+                                                                                     :color (colors/create-color :black) :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                                              :variables [ {:key "fraction", :min 0, :max 1, :start 0, :velocity true}]
+                                              :held true, :priority 1002, :color :black))
+    (show/set-cue! (+ x-base 5) (+ y-base 4) (cues/cue :bloom-link-strip
+                                                       (fn [var-map]
+                                                         (let [fraction (osc/build-oscillated-param (osc/sawtooth :interval-ratio (build-ratio-param var-map)) :max (:max var-map) :min (:min var-map))]
+                                                          (cues/apply-merging-var-map var-map fun/bloom (map show/fixtures-named [:tube :strip])
+                                                           :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true) :fraction fraction
+                                                           :color (colors/create-color :black))))
+                                       
+                                              :variables [{:key "beats", :min 1, :max 32, :start 8, :type :integer, :name "Beats"}
+                                                          {:key "cycles", :min 1, :max 8, :start 1, :type :integer, :name "Cycles"}
+                                                          {:key "max", :min 0.0, :max 1.0, :start 1.0, :type Number, :name "Max"}
+                                                          {:key "min", :min 0.0, :max 1.0, :start 0.0, :type Number, :name "Min"}]
+                                              :held false, :priority 1999, :color :black))
+
+    (show/set-cue! (+ x-base 5) (+ y-base 0)
+       (cues/cue :bloom-reverse-tol
+                 (fn [var-map]
+                   (cues/apply-merging-var-map var-map bloom-tol
+                                               (map show/fixtures-named [:tube :strip])
+                                               :color (colors/create-color :black), :keyhole false
+                                               :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                   :variables [{:key "fraction", :min 0, :max 1, :start 0, :velocity true}
+                               {:key "width", :min 0, :max 1, :start 0.2}]
+                   :held true, :priority 1002, :color :black))
+    (show/set-cue!
+     (+ x-base 5) (+ y-base 1)
+     (cues/cue :bloom-link-strip-tol
+              (fn [var-map]
+                (let [fraction (osc/build-oscillated-param
+                                (osc/sawtooth :interval-ratio (build-ratio-param var-map))
+                                :max (:max var-map) :min (:min var-map))]
+                 (cues/apply-merging-var-map var-map bloom-tol
+                                             (map show/fixtures-named [:tube :strip])
+                  :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true) :fraction fraction
+                  :color (colors/create-color :black))))
+     
+     :variables [{:key "beats", :min 1, :max 32, :start 8, :type :integer, :name "Beats"}
+                 default-cycles
+                 {:key "width", :min 0.0, :max 1.0, :start 0.1, :type Number, :name "Width"}
+                 {:key "max", :min 0.0, :max 1.0, :start 1.0, :type Number, :name "Max"}
+                 {:key "min", :min 0.0, :max 1.0, :start 0.0, :type Number, :name "Min"}]
+     :held false, :priority 1999, :color :black))
+; }}}
+; CONFETTI {{{
+    (show/set-cue!
+      (+ x-base 7) (+ y-base 7)
+      (cues/cue :confetti
+                (fn [var-map]
+                  (let [beats (params/bind-keyword-param (:beats var-map) Number 4)
+                        cycles (params/bind-keyword-param (:cycles var-map ) Number 1)
+                        step-ratio (params/build-param-formula Number #(/ %1 %2) beats cycles)
+                        step (params/build-step-param :interval-ratio step-ratio)]
+                    (cues/apply-merging-var-map var-map confetti-tol (show/all-fixtures) :step step)))
+                  :variables [{:key "beats" :min 1 :max 8 :start 2 :type :integer :name "Beats"}
+                              {:key "cycles" :min 1 :max 8 :start 1 :type :integer :name "Cycles"}
+                              {:key "min-added" :min 1 :max 2 :start 1 :type :integer :name "Min Add"}
+                              {:key "max-added" :min 1 :max 2 :start 4 :type :integer :name "Max Add"}
+                              {:key "min-dur" :min 1 :max 16 :start 1 :type :integer :name "Min Last"}
+                              {:key "max-dur" :min 1 :max 16 :start 4 :type :integer :name "Max Last"}
+                              {:key "min-sat" :min 0 :max 100 :start 30 :name "Min Sat"}
+                              {:key "max-sat" :min 0 :max 100 :start 70 :name "Max Sat"}
+                              {:key "min-hue" :min 0 :max 360 :start 210 :name "Min Hue"}
+                              {:key "max-hue" :min 0 :max 360 :start 260 :name "Max Hue"}]
+                  :color :red :priority 10)))
+; }}}
+  ); }}}
+
+; {{{ MOVEMENT CUES
+(defn dimmer-sweep "An effect which uses an oscillator to move a bar of light across a group of fixtures. The width of the bar, maximum dimmer level, and whether the level should fade from the center of the bar to the edge, can be controlled with optional keyword arguments."
+  [fixtures osci & {:keys [width level fade] :or {width 0.1 level 255 fade false}}]
+  (let [width (params/bind-keyword-param width Number 0.1)
+        level (params/bind-keyword-param level Number 255)
+        fade (params/bind-keyword-param fade Boolean false)
+        min-x (apply min (map :x fixtures))
+        max-x (apply max (map :x fixtures))
+        position (osc/build-oscillated-param osci :min min-x :max max-x)]
+    (apply fx/scene "Dimmer Sweep"
+           (for [fixture fixtures]
+             (let [fixture-level (params/build-param-formula
+                                  Number
+                                  (fn [position width level fade]
+                                    (let [range (/ width 2)
+                                          distance (math/abs (- position (:x fixture)))]
+                                      (if (> distance range)
+                                        0
+                                        (if fade
+                                          (* level (/ (- range distance) range))
+                                          level))))
+                                  position width level fade)]
+               (dimmer-effect fixture-level [fixture]))))))
+
+; XXX make standalone non-dimmer equivalent
+(defn color-sweep "An effect which uses an oscillator to move a bar of light across a group of fixtures. The width of the bar, color, and whether the level should fade from the center of the bar to the edge, can be controlled with optional keyword arguments."
+  [fixtures osci & {:keys [width color fade] :or {width 0.1 color (colors/create-color :white) fade true}}]
+  (let [width (params/bind-keyword-param width Number 0.1)
+        ;; color (params/bind-keyword-param color :com.evocomputing.colors/color (colors/create-color :white))
+        color (params/build-color-param color :white)
+        fade (params/bind-keyword-param fade Boolean true)
+        min-x (apply min (map :x fixtures))
+        max-x (apply max (map :x fixtures))
+        position (osc/build-oscillated-param osci :min min-x :max max-x)]
+    (apply fx/scene "Color Sweep"
+           (for [fixture fixtures] ; XXX per-head version
+             (let [fixture-color (params/build-param-formula
+                                  colors/color
+                                  (fn [position width color fade]
+                                    (let [range (/ width 2)
+                                          distance (math/abs (- position (:x fixture)))]
+                                      (if (> distance range)
+                                        (colors/create-color :black) ;XXX more like lightness down? or do want to override like this? prob not
+                                        (if fade
+                                          (params/build-color-param :color color :adjust-lightness (/ (- range distance) range))
+                                          color))))
+                                  position width color fade)]
+               (color-fx/color-effect fixture-color [fixture]))))))
+
+(defn build-cross-scene
+  "Create a scene which sets the color of one light, and aims it just below and in front of another."
+  [move-key reference-key color]
+  (fx/scene "Cross scene"
+            (move/aim-effect "Cross" (javax.vecmath.Point3d. (:x (first (show/fixtures-named reference-key))) 0.0 0.2)
+                             (show/fixtures-named move-key))
+            (color-fx/color-effect "Cross color" color (show/fixtures-named move-key) :include-color-wheels? true)))
+
+(defn crossover-chase ;{{{
+  "Create a sequential chase which gradually takes over all the moving
+  heads from whatever they were doing, changes their colors, and makes
+  them cross in an interesting pattern. By default, stages of the
+  chase advance on every beat, but you can adjust that by passing in a
+  different value for with the optional keyword argument `:beats`. To
+  add a fade between stages, pass a non-zero value (up to 1, which
+  means continually fade) with `:fade-fraction`.
+
+  The color used during the crossover stages defaults to red, but you
+  can pass a different color object to use with `:cross-color`."
+  [& {:keys [beats fade-fraction cross-color end-color]
+      :or {beats 1 fade-fraction 0 cross-color (colors/create-color :orangered) end-color (colors/create-color :orange)}}]
+  (let [beats (params/bind-keyword-param beats Number 1)
+        fade-fraction (params/bind-keyword-param fade-fraction Number 0)
+        cross-color (params/bind-keyword-param cross-color :com.evocomputing.colors/color (colors/create-color :orangered))
+        end-color (params/bind-keyword-param end-color :com.evocomputing.colors/color (colors/create-color :yellow))
+        cross-elements [(build-cross-scene :moving-1 :moving-mini-1 cross-color)
+                        (build-cross-scene :moving-mini-1 :moving-1 cross-color)
+                        (build-cross-scene :moving-mini-3 :moving-2 cross-color)
+                        (build-cross-scene :moving-2 :moving-mini-3 cross-color)]]
+    (fx/chase "Crossover"
+              (concat (for [i (range 1 (inc (count cross-elements)))]
+                        (apply fx/scene (str "Crossover Scene " i) (take i cross-elements)))
+                      [(fx/scene "Crossover End"
+                                 (move/aim-effect "Cross End Point" (Point3d. 0.0 0.0 2.5)
+                                                  (concat (show/fixtures-named "moving")
+                                                          (show/fixtures-named "moving-mini")))
+                                 (color-fx/color-effect "Cross End color" end-color
+                                                        (concat (show/fixtures-named "moving")
+                                                                (show/fixtures-named "moving-mini"))
+                                                        :include-color-wheels? true))
+                       (fx/blank)])
+              (params/build-step-param :interval-ratio beats :fade-fraction fade-fraction) :beyond :loop))) ;}}}
+
+(defn circle-chain ; {{{
+  "Create a chase that generates a series of circles on either the floor or the ceiling, causing a single head to trace out each, and passing them along from head to head.
+  The number of bars taken to trace out each circle defaults to 2 and can be adjusted by passing a different value with the optional keyword argument `:bars`. The radius of each circle defaults to one
+  meter, and can be adjusted with `:radius`. If you want each head to be tracing a different position in its circle, you can pass a value between zero and one with `:stagger`."
+  [fixtures ceiling? & {:keys [bars radius stagger] :or {bars 2 radius 1.0 stagger 0.0}}]
+  (let [bars (params/bind-keyword-param bars Number 2)
+        radius (params/bind-keyword-param radius Number 1.0)
+        stagger (params/bind-keyword-param stagger Number 0.0)
+        snapshot (rhythm/metro-snapshot (:metronome *show*))
+        bars (params/resolve-unless-frame-dynamic bars *show* snapshot)
+        radius (params/resolve-unless-frame-dynamic radius *show* snapshot)
+        stagger (params/resolve-unless-frame-dynamic stagger *show* snapshot)
+        step (params/build-step-param :interval :bar :interval-ratio bars)
+        phase-osc (osc/sawtooth :interval :bar :interval-ratio bars)
+        width (- right-wall left-wall)
+        front (if ceiling? 0.5 stage-wall)  ; The blades can't reach behind the rig
+        depth (- house-rear-wall front)
+        y (if ceiling? ceiling 0.0)
+        heads (sort-by :x (move/find-moving-heads fixtures))
+        points (ref (ring-buffer (count heads)))
+        running (ref true)
+        current-step (ref nil)]
+    (Effect. "Circle Chain"
+             (fn [show snapshot] ;; Continue running until all circles are finished
+               (dosync (or @running (seq @points))))
+             (fn [show snapshot]
+               (dosync
+                (let [now (math/round (params/resolve-param step show snapshot))
+                      phase (osc/evaluate phase-osc show snapshot nil)
+                      stagger (params/resolve-param stagger show show snapshot)
+                      head-phases (map #(* stagger %) (range))]
+                  (when (not= now @current-step)
+                    (ref-set current-step now)
+                    (if @running  ;; Either add a new circle, or just drop the oldest
+                      (alter points conj (Point3d. (+ left-wall (rand width)) y (+ front (rand depth))))
+                      (alter points pop)))
+                  (map (fn [head point head-phase]
+                         (let [radius (params/resolve-param radius show snapshot head)
+                               theta (* 2.0 Math/PI (+ phase head-phase))
+                               head-point (Point3d. (+ (.x point) (* radius (Math/cos theta)))
+                                                    (.y point)
+                                                    (+ (.z point) (* radius (Math/sin theta))))]
+                           (fx/build-head-parameter-assigner :aim head head-point show snapshot)))
+                       heads @points head-phases))))
+             (fn [show snapshot] ;; Stop making new circles, and shut down once all exiting ones have ended.
+                 (dosync (ref-set running false))))))
+; }}}
+
+
+(defn make-movement-cues "Create a page of with some large scale and layered movement effects. And miscellany which I'm not totally sure what to do with yet." ; {{{
+  [& {:keys [page-x page-y] :or {page-x 0 page-y 0}}]
+  (let [x-base (* page-x 8)
+        y-base (* page-y 8)]
+
+    (let [dimmer-sweep-fixtures (map show/fixtures-named [:moving :moving-mini :moving-beam])]
+    ;; (let [dimmer-sweep-fixtures (show/all-fixtures)]
+      (show/set-cue! x-base y-base
+                     (cues/cue :dimmers
+                               (fn [var-map] (cues/apply-merging-var-map
+                                              var-map dimmer-sweep  dimmer-sweep-fixtures
+                                              (osc/sawtooth :down? (:down var-map)
+                                                                    :interval-ratio (build-ratio-param var-map))))
+                               :color :red :short-name "Sawtooth Sweep"
+                               :variables [{:key "beats" :min 1 :max 32 :type :integer :start 2 :name "Beats"}
+                                           {:key "down" :type :boolean :start true :name "Down?"}
+                                           {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                           {:key "width" :min 0 :max 1 :start 0.1 :name "Width"}
+                                           {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                           {:key "fade" :type :boolean :start false :name "Fade?"}]))
+
+      (show/set-cue! x-base (inc y-base)
+                     (cues/cue :dimmers
+                               (fn [var-map] (cues/apply-merging-var-map
+                                              var-map dimmer-sweep dimmer-sweep-fixtures
+                                              (osc/triangle :interval-ratio (build-ratio-param var-map))))
+                               :color :red :short-name "Triangle Sweep"
+                               :variables [{:key "beats" :min 1 :max 32 :type :integer :start 2 :name "Beats"}
+                                           {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                           {:key "width" :min 0 :max 1 :start 0.25 :name "Width"}
+                                           {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                           {:key "fade" :type :boolean :start false :name "Fade?"}])))
+
+    (show/set-cue! (inc x-base) y-base
+                   (cues/cue :moving-dimmers
+                             (fn [var-map] (cues/apply-merging-var-map
+                                            var-map dimmer-sweep  (show/fixtures-named :moving)
+                                            (osc/sawtooth :down? (:down var-map)
+                                                                  :interval-ratio (build-ratio-param var-map))))
+                             :color :red :short-name "Moing Saw Sweep"
+                             :variables [{:key "beats" :min 1 :max 32 :type :integer :start 2 :name "Beats"}
+                                         {:key "down" :type :boolean :start true :name "Down?"}
+                                         {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                         {:key "width" :min 0 :max 1 :start 0.1 :name "Width"}
+                                         {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                         {:key "fade" :type :boolean :start false :name "Fade?"}]))
+
+    (show/set-cue! (inc x-base) (inc y-base)
+                   (cues/cue :moving-dimmers
+                             (fn [var-map] (cues/apply-merging-var-map
+                                            var-map dimmer-sweep (show/fixtures-named :moving)
+                                            (osc/triangle :interval-ratio (build-ratio-param var-map))))
+                               :color :red :short-name "Moving Triangle Sweep"
+                               :variables [{:key "beats" :min 1 :max 32 :type :integer :start 2 :name "Beats"}
+                                           {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                           {:key "width" :min 0 :max 1 :start 0.25 :name "Width"}
+                                           {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                           {:key "fade" :type :boolean :start false :name "Fade?"}]))
+
+    (show/set-cue! (inc x-base) (+ 2 y-base)
+                   (cues/cue :moving--mini-dimmers
+                             (fn [var-map]
+                               (let [step (params/build-step-param :interval-ratio (build-ratio-param var-map)
+                                                                   :fade-fraction (:fade-fraction var-map))]
+                                 (fx/chase "Moving Mini Cross"
+                                           (map #(dimmer-effect (:level var-map) (show/fixtures-named %))
+                                                [:moving-mini-1 :moving-mini-3 :moving-mini-2])
+                                           step :beyond :loop)))
+                               :color :red :short-name "Moving Cross"
+                               :variables [{:key "beats" :min 1 :max 32 :type :integer :start 1 :name "Beats"}
+                                           {:key "cycles" :min 1 :max 10 :type :integer :start 4 :name "Cycles"}
+                                           {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                           {:key "fade-fraction" :min 0 :max 1 :start 0 :name "Fade"}]))
+
+    (show/set-cue! (+ x-base 2) (inc y-base)
+      (cues/cue :movement (fn [var-map]
+                            (cues/apply-merging-var-map var-map fun/aim-fan
+                                                        (map show/fixtures-named :moving :moving-mini)))
+                :variables [{:key "x-scale" :min -5 :max 5 :start 1 :name "X Scale"}
+                            {:key "y-scale" :min -10 :max 10 :start 5 :name "Y Scale"}
+                            {:key "z" :min 0 :max 20 :start 4}
+                            {:key "y" :min -10 :max 10 :start rig-height}
+                            {:key "x" :min -10 :max 10 :start 0.0}]
+                :color :blue, :end-keys [:move-moving]))
+
+    (show/set-cue! (+ x-base 2) (+ y-base 2)
+                   (cues/cue :movement (fn [var-map]
+                                         (cues/apply-merging-var-map var-map fun/twirl
+                                                                     (map show/fixtures-named :moving :moving-mini)))
+                             :variables [{:key "beats" :min 1 :max 32 :type :integer :start 8 :name "Beats"}
+                                         {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                         {:key "radius" :min 0 :max 10 :start 0.25 :name "Radius"}
+                                         {:key "z" :min -10 :max 10 :start -1.0}
+                                         {:key "y" :min -10 :max 10 :start rig-height}
+                                         {:key "x" :min -10 :max 10 :start 0.0}]
+                             :color :green, :end-keys [:move-moving]))
+
+    (show/set-cue! (+ x-base 3) (+ y-base 3)
+                   (cues/cue :move-all
+                             (fn [var-map] (cues/apply-merging-var-map var-map can-can))
+                             :variables [{:key "bars" :name "Bars" :min 1 :max 8 :type :integer :start 1}
+                                         {:key "cycles" :name "Cycles" :min 1 :max 8 :type :integer :start 1}
+                                         {:key "stagger" :name "Stagger" :min 0 :max 4 :start 0.5}
+                                         {:key "spread" :name "Spread" :min -45 :max 45 :centered true :resolution 0.25 :start 0}
+                                         {:key "pan-min" :name "Pan min" :min -180 :max 180 :centered true :resolution 0.5 :start 0}
+                                         {:key "pan-max" :name "Pan max" :min -180 :max 180 :centered true :resolution 0.5 :start 0}
+                                         {:key "tilt-min" :name "Tilt min" :min -180 :max 180 :centered true :resolution 0.5 :start -60}
+                                         {:key "tilt-max" :name "Tilt max" :min -180 :max 180 :centered true :resolution 0.5 :start 100}]
+                             :color :yellow :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 3) (+ y-base 4)
+                   (cues/cue :moving-circles
+                             (fn [var-map] (cues/apply-merging-var-map
+                                            var-map circle-chain (map show/fixtures-named :moving :moving-mini) true))
+                             :variables [{:key "bars" :name "Bars" :min 1 :max 8 :type :integer :start 2}
+                                         {:key "radius" :name "Radius" :min 0.1 :max 2 :resolution 0.1 :start 1.0}
+                                         {:key "stagger" :name "Stagger" :min 0 :max 2 :start 0 :resolution 0.1}]
+                             :short-name "Moving Circles" :color :green :priority 4))
+
+    ;; A chase which overlays on other movement cues, gradually taking over the lights
+    (show/set-cue! (+ x-base 2) (+ y-base 5)
+                   (cues/cue :crossover (fn [var-map] (cues/apply-merging-var-map var-map crossover-chase))
+                             :variables [{:key "beats" :min 1 :max 8 :start 2 :type :integer :name "Beats"}
+                                         {:key "fade-fraction" :min 0 :max 1 :start 0 :name "Fade"}
+                                         {:key "cross-color" :type :color :start (colors/create-color :orangered)
+                                          :name "X Color"}
+                                         {:key "end-color" :type :color :start (colors/create-color :seagreen)
+                                          :name "End Color"}]
+                             :color :cyan :priority 5))
+(def color-cycle (map create-color [:mediumpurple :seagreen :darkblue :black]))
+    ;; Some color cycle chases
+    (let [color-cycle (map create-color [:mediumpurple :seagreen :darkblue :black])]
+          ;; [(create-color :mediumpurple)
+          ;;             (create-color :seagreen)
+          ;;             (create-color :darkblue)
+                      ;; (create-color :black)]]
+     (show/set-cue! x-base (+ y-base 7)
+       (cues/cue :all-color (fn [_] (fun/iris-out-color-cycle-chase
+                                      (show/all-fixtures), :color-cycle color-cycle
+                                      :color-index-function rhythm/snapshot-beat-within-bar))))
+     (show/set-cue! (inc x-base) (+ y-base 7)
+       (cues/cue :all-color (fn [_] (fun/wipe-right-color-cycle-chase
+                                      (show/all-fixtures), :color-cycle color-cycle
+                                     :transition-phase-function rhythm/snapshot-bar-phase))))
+     (show/set-cue! (+ x-base 2) (+ y-base 7)
+       (cues/cue :all-color (fn [_] (fun/wipe-right-color-cycle-chase
+                                     (show/all-fixtures), :color-cycle color-cycle
+                                      :color-index-function rhythm/snapshot-beat-phase
+                                      :transition-phase-function rhythm/snapshot-beat-phase
+                                      :effect-name "Wipe Right Beat")))))
+
+
+;; use below as basis for chase controller by a dynmaic variable, so runs automatically...
+  (show/set-cue! x-base (+ y-base 3) (cues/cue :chase (fn [var-map] (fx/chase "Chase Test"
+                                              [(global-color-effect :red :include-color-wheels? true)
+                                               (global-color-effect :blue :include-color-wheels? true)]
+                                              (params/bind-keyword-param (:position var-map 0) Number 0)
+                                              :beyond :bounce))
+                           :variables [{:key "position" :min -0.5 :max 10.5 :start 0.0 :name "Position"}]
+                           :color :purple))
+    ;; {{{ COMPOUND CUES urgh gross
+    (show/set-cue! (+ x-base 7) (inc y-base)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Moving Nod" *show*
+                                      [[17 15 {:pan-min 90.0 :pan-max 179.0 :pan-bars 2 :pan-phase 0.0
+                                               :tilt-min 148.0 :tilt-max 255.0 :tilt-bars 1, :tilt-phase 0.0}]
+                                       [16 15 {:pan-min 77.0 :pan-max 164.0 :pan-bars 2 :pan-phase 0.0
+                                               :tilt-min 148.0 :tilt-max 255.0, :tilt-bars 1, :tilt-phase 0.0}]]))
+                             :end-keys [:movement]))
+
+    ;; (show/set-cue! (+ x-base 7) (+ y-base 2)
+    ;;                (cues/cue :move-torrents
+    ;;                          (fn [_] (cues/compound-cues-effect
+    ;;                                   "Torrent Cross Nod" *show*
+    ;;                                   [[16 15 {:pan-min 77.0, :pan-max 164.0, :pan-bars 2, :pan-phase 0.5,
+    ;;                                            :tilt-min 148.0, :tilt-max 255.0, :tilt-bars 1, :tilt-phase 0.25}]
+    ;;                                    [17 15 {:pan-min 90.0, :pan-max 179.0, :pan-bars 2, :pan-phase 0.0,
+    ;;                                            :tilt-min 148.0, :tilt-max 255.0, :tilt-bars 1, :tilt-phase 0.0}]]))
+    ;;                          :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 6) (inc y-base)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Sync Can Can" *show*
+                                      ; below are x-y coords so obvs no work unless sort
+                                      [[22 15 {:pan-min 39.0, :pan-max 39.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 73.0, :tilt-max 248.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [21 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [20 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [19 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [18 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 216.0, :tilt-bars 1, :tilt-phase 0.0}]]))
+                             :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 2)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Spread Can Can" *show*
+                                      [[18 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 216.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [19 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.2}]
+                                       [20 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.4}]
+                                       [21 15 {:pan-min 42.0, :pan-max 42.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.6}]
+                                       [22 15 {:pan-min 39.0, :pan-max 39.0, :pan-bars 1, :pan-phase 0.0,
+                                               :tilt-min 73.0, :tilt-max 248.0, :tilt-bars 1, :tilt-phase 0.8}]]))
+                             :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 3)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Swing Can Can" *show*
+                                      [[22 15 {:pan-min 24.0, :pan-max 64.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 73.0, :tilt-max 248.0, :tilt-bars 1, :tilt-phase 0.8}]
+                                       [21 15 {:pan-min 24.0, :pan-max 64.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.6}]
+                                       [20 15 {:pan-min 23.0, :pan-max 64.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.4}]
+                                       [19 15 {:pan-min 23.0, :pan-max 64.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 197.0, :tilt-bars 1, :tilt-phase 0.2}]
+                                       [18 15 {:pan-min 23.0, :pan-max 64.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 0.0, :tilt-max 216.0, :tilt-bars 1, :tilt-phase 0.0}]]))
+                             :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 6)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Slow Ceiling LR" *show*
+                                      [[18 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 170.0, :tilt-max 170.0, :tilt-bars 1, :tilt-phase 0.0}]
+                                       [19 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 170.0, :tilt-max 170.0, :tilt-bars 1, :tilt-phase 0.2}]
+                                       [20 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 170.0, :tilt-max 170.0, :tilt-bars 1, :tilt-phase 0.4}]
+                                       [21 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 170.0, :tilt-max 170.0, :tilt-bars 1, :tilt-phase 0.6}]
+                                       [22 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 230.0, :tilt-max 230.0, :tilt-bars 1, :tilt-phase 0.8}]]))
+                             :end-keys [:movement]))
+
+    (show/set-cue! (+ x-base 6) (+ y-base 5)
+                   (cues/cue :move-moving
+                             (fn [_] (cues/compound-cues-effect
+                                      "Slow Scan LR" *show*
+                                      [[22 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.0,
+                                               :tilt-min 182.0, :tilt-max 182.0, :tilt-bars 1, :tilt-phase 0.8}]
+                                       [21 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.4,
+                                               :tilt-min 130.0, :tilt-max 130.0, :tilt-bars 1, :tilt-phase 0.6}]
+                                       [20 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.8,
+                                               :tilt-min 130.0, :tilt-max 130.0, :tilt-bars 1, :tilt-phase 0.4}]
+                                       [19 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.2,
+                                               :tilt-min 130.0, :tilt-max 130.0, :tilt-bars 1, :tilt-phase 0.2}]
+                                       [18 15 {:pan-min 12.0, :pan-max 66.0, :pan-bars 4, :pan-phase 0.6,
+                                               :tilt-min 162.0, :tilt-max 162.0, :tilt-bars 1, :tilt-phase 0.0}]]))
+                             :end-keys [:movement])))); }}}
+; }}}
+; }}}
+ ; {{{  AIM CUES
+(defn- aim-cue-var-key "Determine the cue variable key value to use for a variable being created for an aim cue page cue. `base-name` is the name that will be used for the variable if it is not part of a group of cues sharing variables; if `shared-prefix` is not blank then the variable key will refer to a show variable with that prefix identifying which group it belongs to."
+  [base-name shared-prefix]
+  (if (clojure.string/blank? shared-prefix)
+    (name base-name)
+    (keyword (str "aim-group-" shared-prefix "-" (name base-name)))))
+
+(defn- build-aim-cue "Build an aim cue for the mutiplexable fixture aiming page."
+  [fixture-key shared-prefix transform? color]
+  (let [isolated? (clojure.string/blank? shared-prefix)]
+    (cues/cue (keyword (str "aim-" (name fixture-key)))
+              (fn [var-map]
+                (let [base-aim (if isolated?
+                                 (cues/apply-merging-var-map var-map params/build-aim-param)
+                                 (params/build-aim-param :x (aim-cue-var-key "x" shared-prefix)
+                                                         :y (aim-cue-var-key "y" shared-prefix)
+                                                         :z (aim-cue-var-key "z" shared-prefix)))
+                      aim-param (if transform?
+                                  (params/build-aim-transformer base-aim
+                                                                (keyword (str "aim-group-" shared-prefix "-transform")))
+                                  base-aim)]
+                  (move/aim-effect (str "Aim " (name fixture-key)
+                                        (when-not isolated?
+                                          (str " (Group " (clojure.string/upper-case shared-prefix)
+                                               (when transform? " flip") ")")))
+                                   aim-param (show/fixtures-named fixture-key))))
+              :variables [(merge {:key (aim-cue-var-key "x" shared-prefix) :name "X" :min -20.0 :max 20.0
+                                  :centered true :resolution 0.05}
+                                 (when isolated? {:start 0.0}))
+                          (merge {:key (aim-cue-var-key "y" shared-prefix) :name "Y" :min -20.0 :max 20.0
+                                  :centered true :resolution 0.05}
+                                 (when isolated? {:start 0.0}))
+                          (merge {:key (aim-cue-var-key "z" shared-prefix) :name "Z" :min -20.0 :max 20.0
+                                  :centered true :resolution 0.05}
+                                 (when isolated? {:start 2.0}))]
+              :color color :priority 1)))
+
+(defn- make-main-aim-cues "Create a page of cues for aiming lights in particular points, individually and in groups."
+  [& {:keys [page-x page-y fixtures] :or {page-x 0 page-y 0 fixtures nil}}]
+  ;; [page-x page-y]
+  (let [x-base (* page-x 8)
+        y-base (* page-y 8)
+        fixtures (or fixtures moving-heads)
+        transform (Transform3D.)
+        width (- right-wall left-wall)
+        depth (- house-rear-wall stage-wall)]
+
+    ;; Set up default shared aiming coordinates
+    (show/set-variable! :aim-group-a-x 0.0)
+    (show/set-variable! :aim-group-a-y 0.0)
+    (show/set-variable! :aim-group-a-z 2.0)
+    (show/set-variable! :aim-group-b-x 0.0)
+    (show/set-variable! :aim-group-b-y 0.0)
+    (show/set-variable! :aim-group-b-z 2.0)
+
+    ;; Set up OSC bindings so Touch OSC can control these cues in a powerful way with XY pads.
+    (add-osc-var-binding :aim-group-a-x "/1/aim-a"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-a"
+                                                  (/ (- v left-wall) width)
+                                                  (/ (- (show/get-variable :aim-group-a-z) stage-wall) depth)))
+                         :receive-fn (fn [msg]
+                                       (show/set-variable! :aim-group-a-x
+                                                           (+ left-wall (* width (first (:args msg)))))
+                                       (show/set-variable! :aim-group-a-z
+                                                           (+ stage-wall (* depth (second (:args msg)))))))
+    (add-osc-var-binding :aim-group-a-z "/1/aim-a"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-a"
+                                                  (/ (- (show/get-variable :aim-group-a-x) left-wall) width)
+                                                  (/ (- v stage-wall) depth)))
+                         :receive-fn :none)
+
+    (add-osc-var-binding :aim-group-a-y "/1/aim-a-y"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-a-y" (/ v ceiling)))
+                         :receive-fn (fn [msg]
+                                       (show/set-variable! :aim-group-a-y (* ceiling (first (:args msg))))))
+
+    (add-osc-var-binding :aim-group-b-x "/1/aim-b"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-b"
+                                                  (/ (- v left-wall) width)
+                                                  (/ (- (show/get-variable :aim-group-b-z) stage-wall) depth)))
+                         :receive-fn (fn [msg]
+                                       (show/set-variable! :aim-group-b-x
+                                                           (+ left-wall (* width (first (:args msg)))))
+                                       (show/set-variable! :aim-group-b-z
+                                                           (+ stage-wall (* depth (second (:args msg)))))))
+    (add-osc-var-binding :aim-group-b-z "/1/aim-b"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-b"
+                                                  (/ (- (show/get-variable :aim-group-b-x) left-wall) width)
+                                                  (/ (- v stage-wall) depth)))
+                         :receive-fn :none)
+
+    (add-osc-var-binding :aim-group-b-y "/1/aim-b-y"
+                         :send-fn (fn [_ v]
+                                    (osc-bind/osc-send @osc-client "/1/aim-b-y" (/ v ceiling)))
+                         :receive-fn (fn [msg]
+                                       (show/set-variable! :aim-group-b-y (* ceiling (first (:args msg))))))
+
+    ;; Set up default transformation of a reflection over the Y axis
+    (.setScale transform (Vector3d. -1.0 1.0 1.0))
+    (show/set-variable! :aim-group-a-transform transform)
+    (show/set-variable! :aim-group-b-transform transform)
+
+    (loop [fixtures fixtures
+           index 0]
+      (when (seq fixtures)
+        (let [fixture (first fixtures)]
+          ;; Disconnected individual aim cues
+          (show/set-cue! (+ x-base index) y-base (build-aim-cue fixture nil false :white))
+          ;; Group A untransformed aim cues
+          (show/set-cue! (+ x-base index) (inc y-base) (build-aim-cue fixture "a" false :red))
+          (add-osc-cue-binding (+ x-base index) (inc y-base) (str "/1/aim-" (name fixture) "-a"))
+          ;; Group A transformed aim cues
+          (show/set-cue! (+ x-base index) (+ y-base 2) (build-aim-cue fixture "a" true :orange))
+          (add-osc-cue-binding (+ x-base index) (+ y-base 2) (str "/1/flip-" (name fixture) "-a"))
+
+          ;; Group B untransformed aim cues
+          (show/set-cue! (+ x-base index) (+ y-base 3) (build-aim-cue fixture "b" false :blue))
+          (add-osc-cue-binding (+ x-base index) (+ y-base 3) (str "/1/aim-" (name fixture) "-b"))
+          ;; Group B transformed aim cues
+          (show/set-cue! (+ x-base index) (+ y-base 4) (build-aim-cue fixture "b" true :cyan))
+          (add-osc-cue-binding (+ x-base index) (+ y-base 4) (str "/1/flip-" (name fixture) "-b")))
+        (recur (rest fixtures) (inc index))))
+
+    ;; Transformation modifiers for group A
+    (show/set-cue! (+ x-base 7) (inc y-base)
+                   (cues/cue :aim-group-a-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. 1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :aim-group-a-transform transform)))
+                             :color :cyan :short-name "Group A flip Y"))
+    (add-osc-cue-binding (+ x-base 7) (inc y-base) "/1/flip-a-y")
+    (show/set-cue! (+ x-base 7) (+ y-base 2)
+                   (cues/cue :aim-group-a-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. -1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :aim-group-a-transform transform)))
+                             :color :cyan :short-name "Group A flip XY"))
+    (add-osc-cue-binding (+ x-base 7) (+ y-base 2) "/1/flip-a-xy")
+
+    ;; Transformation modifiers for group B
+    (show/set-cue! (+ x-base 7) (+ y-base 3)
+                   (cues/cue :aim-group-b-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. 1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :aim-group-b-transform transform)))
+                             :color :orange :short-name "Group B flip Y"))
+    (add-osc-cue-binding (+ x-base 7) (+ y-base 3) "/1/flip-b-y")
+    (show/set-cue! (+ x-base 7) (+ y-base 4)
+                   (cues/cue :aim-group-b-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. -1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :aim-group-b-transform transform)))
+                             :color :orange :short-name "Group B flip XY"))
+    (add-osc-cue-binding (+ x-base 7) (+ y-base 4) "/1/flip-b-xy")))
+; }}}
+ ; {{{  DIRECTION CUES
+(defn- direction-cue-var-key "Determine the cue variable key value to use for a variable being created for an direction cue page cue. `base-name` is the name that will be used for the variable if it is not part of a group of cues sharing variables; if `shared-prefix` is not blank then the variable key will refer to a show variable with that prefix identifying which group it belongs to."
+  [base-name shared-prefix]
+  (if (clojure.string/blank? shared-prefix)
+    (name base-name)
+    (keyword (str "direction-group-" shared-prefix "-" (name base-name)))))
+
+(defn- build-direction-cue "Build a direction cue for the mutiplexable fixture direction page."
+  [fixture-key shared-prefix transform? color]
+  (let [isolated? (clojure.string/blank? shared-prefix)]
+    (cues/cue (keyword (str "dir-" (name fixture-key)))
+              (fn [var-map]
+                (let [base-direction (if isolated?
+                                       (cues/apply-merging-var-map var-map params/build-direction-param-from-pan-tilt)
+                                       (params/build-direction-param-from-pan-tilt
+                                        :pan (direction-cue-var-key "pan" shared-prefix)
+                                        :tilt (direction-cue-var-key "tilt" shared-prefix)))
+                      direction-param (if transform?
+                                        (params/build-direction-transformer
+                                         base-direction (keyword (str "direction-group-" shared-prefix "-transform")))
+                                        base-direction)]
+                  (move/direction-effect (str "P/T " (name fixture-key)
+                                              (when-not isolated?
+                                                (str " (Group " (clojure.string/upper-case shared-prefix)
+                                                     (when transform? " flip") ")")))
+                                         direction-param (show/fixtures-named fixture-key))))
+              :variables [(merge {:key (direction-cue-var-key "pan" shared-prefix) :name "Pan" :min -180.0 :max 180.0
+                                  :centered true :resolution 0.5}
+                                 (when isolated? {:start 0.0}))
+                          (merge {:key (direction-cue-var-key "tilt" shared-prefix) :name "Tilt" :min -180.0 :max 180.0
+                                  :centered true :resolution 0.5}
+                                 (when isolated? {:start 0.0}))]
+              :color color :priority 1)))
+; }}}
+
+(defn- build-pan-tilt-osc-cue "Build a raw pan/tilt oscillator cue."  ; {{{
+  [fixture-key]
+  (cues/cue (keyword (str "p-t-" (name fixture-key)))
+            (fn [var-map]
+              (let [pan-osc (osc/sine :interval :bar :interval-ratio (:pan-bars var-map) :phase (:pan-phase var-map))
+                    pan-param (osc/build-oscillated-param pan-osc :min (:pan-min var-map) :max (:pan-max var-map))
+                    tilt-osc (osc/sine :interval :bar :interval-ratio (:tilt-bars var-map) :phase (:tilt-phase var-map))
+                    tilt-param (osc/build-oscillated-param tilt-osc :min (:tilt-min var-map) :max (:tilt-max var-map))]
+                (fx/scene (str "P/T " (name fixture-key))
+                          (chan-fx/channel-effect
+                           "pan" pan-param
+                           (chan/extract-channels (chan/expand-heads
+                                                   (show/fixtures-named fixture-key))
+                                                  #(= (:type %) :pan)))
+                          (chan-fx/channel-effect
+                           "tilt" tilt-param
+                           (chan/extract-channels (chan/expand-heads (show/fixtures-named fixture-key))
+                                                  #(= (:type %) :tilt))))))
+            :variables [{:key "pan-min" :name "Pan min" :min 0 :max 255 :centered true :resolution 0.25 :start 64}
+                        {:key "pan-max" :name "Pan max" :min 0 :max 255 :centered true :resolution 0.25 :start 191}
+                        {:key "pan-bars" :name "Pan bars" :min 1 :max 16 :type :integer :start 4}
+                        {:key "pan-phase" :name "Pan phase" :min 0.0 :max 1.0 :start 0.0}
+                        {:key "tilt-min" :name "Tilt min" :min 0 :max 255 :centered true :resolution 0.25 :start 0}
+                       {:key "tilt-max" :name "Tilt max" :min 0 :max 255 :centered true :resolution 0.25 :start 127}
+                        {:key "tilt-bars" :name "Tilt bars" :min 1 :max 16 :type :integer :start 2}
+                        {:key "tilt-phase" :name "Tilt phase" :min 0.0 :max 1.0 :start 0.0}]
+            :color :dodgerblue :priority 1))
+; }}}
+(defn- build-focus-oscillator "Returns a cue which oscillates a fixture's focus between a minimum and minimum value using a sine oscillator with cue variables to adjust the range and the oscillator's parameters."  ; {{{
+  [effect-key effect-name fixtures]
+  (cues/cue effect-key
+            (fn [var-map] (afterglow.effects.channel/function-effect
+                           effect-name :focus
+                           (osc/build-oscillated-param (osc/sine :interval-ratio (build-ratio-param var-map) :phase (:phase var-map)) :min (:min var-map) :max (:max var-map))
+                           fixtures))
+            :color (create-color :yellow)
+            :variables [{:key "min", :min 0, :max 100, :start 0, :name "Min"}
+                        {:key "max", :min 0, :max 100, :start 100, :name "Max"}
+                        {:key "bars", :min 1, :max 32, :type :integer, :start 4, :name "Bars"},
+                        {:key "cycles", :min 1, :max 8, :type :integer, :start 1, :name "Cycles"}
+                        {:key "phase", :min 0, :max 1, :start 0, :name "Phase"}]))
+; }}}
+
+
+(defn- make-main-direction-cues "Create a page of cues for aiming lights in particular directions, individually and in groups."  ; {{{
+  [& {:keys [page-x page-y fixtures] :or {page-x 0 page-y 0 fixtures nil}}]
+  ;; [page-x page-y]
+  (let [x-base (* page-x 8)
+        y-base (* page-y 8)
+        fixtures (if fixtures fixtures moving-heads)
+        transform (Transform3D.)]
+
+    ;; Set up default shared direction coordinates
+    (show/set-variable! :direction-group-a-pan 0.0)
+    (show/set-variable! :direction-group-a-tilt 0.0)
+    (show/set-variable! :direction-group-b-pan 0.0)
+    (show/set-variable! :direction-group-b-tilt 0.0)
+
+    ;; Set up default transformation of a reflection over the Y axis
+    (.setScale transform (Vector3d. -1.0 1.0 1.0))
+    (show/set-variable! :direction-group-a-transform transform)
+    (show/set-variable! :direction-group-b-transform transform)
+
+    (loop [fixtures fixtures
+           index 0]
+      (when (seq fixtures)
+        (let [fixture (first fixtures)]
+          ;; Disconnected individual direction cues
+          (show/set-cue! (+ x-base index) y-base (build-direction-cue fixture nil false :white))
+
+          ;; Group A untransformed direction cues
+          (show/set-cue! (+ x-base index) (inc y-base) (build-direction-cue fixture "a" false :blue))
+          ;; Group A transformed direction cues
+          (show/set-cue! (+ x-base index) (+ y-base 2) (build-direction-cue fixture "a" true :cyan))
+
+          ;; Group B untransformed direction cues
+          (show/set-cue! (+ x-base index) (+ y-base 3) (build-direction-cue fixture "b" false :red))
+          ;; Group B transformed direction cues
+          (show/set-cue! (+ x-base index) (+ y-base 4) (build-direction-cue fixture "b" true :orange))
+
+          ;; Raw pan/tilt oscillated cues
+          (show/set-cue! (+ x-base index) (+ y-base 7) (build-pan-tilt-osc-cue fixture)))
+        (recur (rest fixtures) (inc index))))
+
+    ;; Transformation modifiers for group A
+    (show/set-cue! (+ x-base 7) (inc y-base)
+                   (cues/cue :direction-group-a-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. 1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :direction-group-a-transform transform)))
+                             :color :cyan :short-name "Group B flip Y"))
+    (show/set-cue! (+ x-base 7) (+ y-base 2)
+                   (cues/cue :direction-group-a-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. -1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :direction-group-a-transform transform)))
+                             :color :cyan :short-name "Group B flip XY"))
+
+    ;; Transformation modifiers for group B
+    (show/set-cue! (+ x-base 7) (+ y-base 3)
+                   (cues/cue :direction-group-b-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. 1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :direction-group-b-transform transform)))
+                             :color :orange :short-name "Group B flip Y"))
+    (show/set-cue! (+ x-base 7) (+ y-base 4)
+                   (cues/cue :direction-group-b-transform
+                             (fn [_]
+                               (let [transform (Transform3D.)]
+                                 (.setScale transform (Vector3d. -1.0 -1.0 1.0))
+                                 (var-fx/variable-effect @var-binder :direction-group-b-transform transform)))
+                             :color :orange :short-name "Group B flip XY"))))
+; }}}
+
+
+; {{{  fucked movement-grabbed stuff
+(defn make-movement-cues-tol "Create a page of with some large scale and layered movement effects." ; {{{
+  [& {:keys [page-x page-y] :or {page-x 0 page-y 0}}]
+  ;; [page-x page-y]
+  (let [x-base (* page-x 8), y-base (* page-y 8)]
+
+    (show/set-cue! (+ 8 2) (+ 8 7)
+                   (cues/cue :all-color (fn [_] (fun/wipe-right-color-cycle-chase, (show/all-fixtures)
+                                                 :color-cycle [(create-color :h 270 :s 50 :l 50) (create-color :h 264 :s 30 :l 50) (create-color :h 275 :s 90 :l 30)]
+                                                 ;; :color-cycle [(palette/heat-hsl 10)]
+                                                 :color-index-function rhythm/snapshot-down-beat?
+                                                 :transition-phase-function rhythm/snapshot-beat-phase
+                                                 :effect-name "Wipe Right Beat"))))
+
+    (show/set-cue! x-base (+ y-base 2)
+                   (cues/cue :bloom (fn [var-map]
+                                      (cues/apply-merging-var-map var-map fun/bloom (show/all-fixtures)
+                                       :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                             :variables [{:key "color", :type :color, :start (colors/create-color :white), :name "Color"}
+                                         {:key "fraction", :min 0, :max 1, :start 0, :velocity true}]
+                             :held true, :priority 1000, :color :purple))
+
+    (show/set-cue! x-base (+ y-base 1)
+                   (cues/cue :bloom-reverse (fn [var-map]
+                                             (cues/apply-merging-var-map
+                                              var-map fun/bloom (show/all-fixtures)
+                                              :color (colors/create-color :black) :measure (tf/build-distance-measure 0 rig-height 0 :ignore-z true)))
+                             :variables [ ;;{:key "color" :type :color :start (colors/create-color :black) :name "Color"}
+                                         {:key "fraction" :min 0 :max 1 :start 0 :velocity true}]
+                             :held true, :priority 1001, :color :purple))
+
+
+    ;; A chase which overlays on other movement cues, gradually taking over the lights
+    (show/set-cue! (+ x-base 2) (+ y-base 5)
+                   (cues/cue :crossover (fn [var-map] (cues/apply-merging-var-map var-map crossover-chase))
+                             :variables [{:key "beats" :min 1 :max 8 :start 2 :type :integer :name "Beats"}
+                                         {:key "fade-fraction" :min 0 :max 1 :start 0 :name "Fade"}
+                                         {:key "cross-color" :type :color :start (colors/create-color :red)    :name "X Color"}
+                                         {:key "end-color"   :type :color :start (colors/create-color :yellow) :name "End Color"}]
+                             :color :cyan :priority 5))
+
+    (show/set-cue! x-base (+ y-base 7)
+                   (cues/cue :all-color (fn [_] (fun/iris-out-color-cycle-chase (show/all-fixtures)))))
+    (show/set-cue! (inc x-base) (+ y-base 7)
+                   (cues/cue :all-color
+                             (fn [_] (fun/wipe-right-color-cycle-chase
+                                      (show/all-fixtures)
+                                      :transition-phase-function rhythm/snapshot-bar-phase))))
+; {{{ CONFETTI
+    (show/set-cue! (inc x-base) (+ y-base 6)
+                   (cues/cue :confetti-2
+                             (fn [var-map]
+                               (let [beats (params/bind-keyword-param (:beats var-map) Number 2)
+                                     cycles (params/bind-keyword-param (:cycles var-map ) Number 1)
+                                     step-ratio (params/build-param-formula Number #(/ %1 %2) beats cycles)
+                                     step (params/build-step-param :interval-ratio step-ratio)]
+                                 (cues/apply-merging-var-map var-map fun/confetti (show/all-fixtures)
+                                                             :step step :aim? true)))
+                             :variables [{:key "beats" :min 1 :max 8 :start 2 :type :integer :name "Beats"}
+                                         {:key "cycles" :min 1 :max 8 :start 1 :type :integer :name "Cycles"}
+                                         {:key "min-added" :min 0 :max 20 :start 1 :type :integer :name "Min Add"}
+                                         {:key "max-added" :min 1 :max 20 :start 4 :type :integer :name "Max Add"}
+                                         {:key "min-duration" :min 1 :max 16 :start 1 :type :integer :name "Min Last"}
+                                         {:key "max-duration" :min 1 :max 16 :start 4 :type :integer :name "Max Last"}
+                                         {:key "min-saturation" :min 0 :max 100 :start 100 :name "Min Sat"}]
+                             :color :orange :priority 5 :short-name "Confetti Dance"))
+; }}}
+
+    (let [dimmer-sweep-fixtures (show/all-fixtures)]
+      (show/set-cue! x-base y-base
+                     (cues/cue :dimmers
+                               (fn [var-map]
+                                (cues/apply-merging-var-map var-map dimmer-sweep dimmer-sweep-fixtures
+                                                            (osc/sawtooth :down? (:down var-map)
+                                                                          :interval-ratio (build-ratio-param var-map))))
+                               :color :red :short-name "Sawtooth Sweep"
+                               :variables [{:key "beats" :min 1 :max 32 :type :integer :start 2 :name "Beats"}
+                                           {:key "down" :type :boolean :start true :name "Down?"}
+                                           {:key "cycles" :min 1 :max 10 :type :integer :start 1 :name "Cycles"}
+                                           {:key "width" :min 0 :max 1 :start 0.1 :name "Width"}
+                                           {:key "level" :min 0 :max 255 :start 255 :name "Level"}
+                                           {:key "fade" :type :boolean :start false :name "Fade?"}]))))) ; }}}
+  ; }}}
+
+(defn make-velocity-cues "live playing yo"
+  [& {:keys [page-x page-y] :or [page-x 0 page-y 0]}]
+  (let [x-base (* page-x 8)
+        y-base (* page-y 8)
+        rig-left left-wall
+        rig-right right-wall
+        rig-width (- rig-right rig-left)]
+
+    (make-color-cue "royalblue" x-base y-base, :include-color-wheels? true, :fixtures (show/all-fixtures), :effect-key :all-color, :effect-name "Color all")
+    (doall (map-indexed (fn [i group] 
+                         (make-color-cue "royalblue" (+ x-base (inc i)) y-base, :include-color-wheels? true, :fixtures (show/fixtures-named group)
+                                         :effect-key (keyword (str (name group) "-color")) :priority 1
+                                         :effect-name (str "Color " (name group))))
+                        light-groups))
+
+   (doall (map-indexed (fn [i group]
+                         (make-dimmer-cue group (+ x-base i) (+ y-base 1)
+                                          :lightgoldenrodyellow, :end-rest false, :velocity true, :held true))
+                       (concat [nil] light-groups)))))
+
+(defn make-cues-tol []
+  (when (nil? @osc-client) (reset! osc-client (osc-bind/osc-client osc-address osc-port-send))) ;osc client outputs state of queues
+
+  (clear-osc-cue-bindings)
+  ;; (with-out-str (make-main-color-dimmer-cues-tol 0 0))
+  (make-main-color-dimmer-cues-tol :page-x 0 :page-y 0)
+  (make-effect-cues                :page-x 0 :page-y 1)
+  ;; (make-bs-cues                 :page-x   :page-y  0 2)
+  (make-movement-cues              :page-x 1 :page-y 1)  ; Creates an 8x8 page above the origin
+  (make-movement-cues-tol          :page-x 2 :page-y 1)
+  (make-main-aim-cues              :page-x 1 :page-y 0) ; XXX cant use negative values, fails check = dumb
+  (make-main-direction-cues        :page-x 2 :page-y 0)
+  ;; (make-velocity-cues              :page-x 0 :page-y 2)
+  ;; (show/set-cue! 6 5 (build-focus-oscillator :moving-1-focus "Moving Focus Sine" (show/fixtures-named "moving")))
+
+  ;; '*show*)
+  )
+
+
+;; (defn patch-pixels-tol "tol semi-generic pixel patcher"
+;;   [key, fixture, universe, start-address, count, offset & {:keys [x-start x-end y-start y-end] :or {x-start -1, x-end 1, y-start 0, y-end 0}}]
+;;     (for [i (range count)]
+;;       (with-out-str (show/patch-fixture!
+;;         (keyword (str (name key) "-" (inc i))) 
+;;         fixture
+;;         universe
+;;         (+ start-address (* i offset))
+;;         :x (+ i (- 0 (/ count 2) ))
+;;         ;; :y 0) )))  ;implement all the x-y-start-end stuff
+;;         ) )))
+
+

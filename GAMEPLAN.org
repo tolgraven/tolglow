@@ -1,0 +1,152 @@
+
+
+
+
+
+SETUP
+skip proper sacn/an4, just run 4 usual - tho better if multiple recipient units and can fiddle with geometry
+  * 4 or 8 1m144 as spokes = middle ~2 m.
+       ATX, ikea
+  * 2 x 2m60 doubled or tripled up = 4 m out each side.
+      neewer, tripled up = 0.5 x 6
+  * last??
+  * some shit further away... cmon pallets
+maybe basic M4L - levels really. over osc, hosting too unstable
+
+* ^fuckit, my beat-up ones are all ive got
+
+
+- MUST
+
+*afterglow*:
+* finish page layouts now that can automap everything (time for a cue-page helper fn helper?)
+  - **DONE**
+    * lfo pixtol
+
+  - TODO
+    * lfo gen channels (fog etc) sync up motor speed slower and attack/release strip and get it pumping...
+    * dimmer sweeps w/ lfo width/level?
+      square sweep = flip between edges. min/max adjust where proportionally in show space (x -1.0-1.0) the two points are...
+    * blooms
+    * color transforms
+
+* generalize dimmer-sparkle and dimmer-sweep so can send on any channel/fn
+  - strobe
+
+
+  - cues for new show vars for metro-scaling, lfo-noise etc
+    - maybe chases changing this scale at intervals?
+
+* FREEZE button, held, pause but dont blackout. Fulhack m trasig binding enklast?
+* OLA dmx trigger -> shell scripts running ola_play
+
+  expose color vars to run variations without global bs
+  - maybe like (volatile-color) for getting color params that will later change without input
+
+  run rand param by lfo/trigger rather than hardcoded - easiest scenario just tick on 1.0 and run off square?
+
+  lots of spatial control ch stuff, want to run arbitrary shit without proper retiming
+    * NOTE: doing this proper properly means pixtols knowing a measure of own length,
+      custom % scaling along that (faster/slower further out like)
+      then map out how far out the "wheel" (which is obvs the needed math) strip starts/ends for global coherence
+      [attack release rotation alpha/blend etc]
+    * easy (first) in-afterglow version only scales per fixture...
+  - rotate fwd offset by distance?
+    same for attack inverse - more hectic towards middle?
+  moving head aiming at/angled along border of distance measure for ledstrip blooms
+  - not too diff concept from confetti and aim-flakes
+
+  lots of one-shot chases
+  lots of blackout chases and preset intervals/fades to get more bang on each beat/bar
+
+  easiest way to toggle lfos exempt from global scaling?
+  - yet another fucker in var-map I guess. NEED multiple layers for vars / hiding cues to declutter push / show all vars for cue at once in Push interface
+
+
+
+Pixtol:
+    hue rot
+    sat cap - general bounds _important_ both to temper shitty sources,
+    and (later) runaway delts-based interpolation
+
+    FIX STROBE with or without
+    * new renderer
+      - merge frames instead of every-other
+    * ELSE
+        Receive ch ctrl over OSC from afterglow so dont have to merge dmx frames, just get all those channels elsewhere
+    * OLA/resolume/vezer etc:
+      - could send Resolume -> artnet for basic merging... but how route from there?
+
+
+practical:
+  FIX FOGGER
+    -if not, K is bringing DMX one yeah?
+    -could hard-code delay trig-reax and auto-adjust phase?
+
+  hanna synaskiiiin. eller mams
+
+
+
+
+- NICE
+
+
+
+
+- AHEAD
+
+   * dummy fixture/channel used to keep tempo info in DMX stream
+     for pixtols//for now/, changing tempo as simple as :g!/,/s/\d./[calc needed]
+     mute universes/split rec to sep files
+   * ola DMX triggers start/end recording, these through manual presses OR better yet chases
+
+
+  spin effect when really clicks... is everything.
+  Recipe: _full_ attack and release (normally stops anything from showing but sheer amount/brightness)
+  and fact we just likely came out another spin helps?
+  all the smoothing and lack of movement (apart from shifting entire canvas) makes it smooth
+  in ways otherwise not achieved with strip rotate...
+  Full release just as important, keeping stuff from fading out while being moved(usual cause of jitteriness)
+
+  90% light and having dark spot move around usually smoothest look, but opposite can work.
+  can be done VERY subtly.
+  * needs two-sided strip and long narrowish (preferably irregularly shaped) screen
+  * 60/m back to back in/under ~1m-ish ikea piece coming apart at the seams curr fav
+  *   Same type lampshade plastic actually holding together right next to it can't compete properly,
+  *   tho depends on speed...  faster moves work better on the smaller/nearer=sharper one,
+  *   in borded cases where illusion gone on larger one.
+  * VERY sensitive to too fast/slow movement, angle, 'handling' eg acc/deceleration... all needs to be just right
+  * should work as wearable too, with looser clothing - esp pants?
+  * first noticed same concept when mounted under wall shelf with 2x neewer in front
+  * flip every other "loop" = auto fits together (pass at same time), then work with spatial offsets...
+
+  Fancier / more twisty setups would be interesting. Spiral*?
+  *in turn itself moving, on motorized stick haha...
+  144/m obvs
+  antialiasing and that tambien
+  babbys first optical flow like if pixel 9 lit red, keyframe later pixel 13 -> fill in 10-12 in between...
+
+  Should basically be a standardized scene/chase 'move':
+  -Whatever is happening smooth-abruptly stops moving, eg when kick goes out or just before coming back
+    *could be done ADSR one-size fitzall or through manip speed of original animation...
+  -Either "takes over" til little non-lit left, or fades out so few lit spots
+  -The spinner starts looping with perfect timing, usually going a few loops before freezing/pausing and "reloading"
+
+   It's elusive, but hopefully others get the same click I do when it does...
+
+   FIRST THING
+   proper renderer and blending other than HTP/LTP!!!
+   much easier to achieve this when can "dig out" a hole by also removing when overdubbing
+
+
+
+Pixtol pitch for clubs:
+Overdubbing is massive part in it. No VJ/light tech? Have some buttons where you can add or subtract new overdubs
+some of which might be dynamic and connected to sensors etc.
+All in all involve your customers - makes your club feel more "theirs" = retention
+As well as a (most of the time) slightly more impressive end-result than all-out robot...
+
+More commercial places: jerry-rigg an old android with Shazam and have instant spot-on lighting to songs as they're played
+
+
+

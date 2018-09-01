@@ -1,0 +1,624 @@
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:26 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:27 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:26:28 NU.local ERROR [afterglow.midi:222] - Problem running MIDI event handler.
+                          [0mjava.lang.Thread.run[0m  [36mThread.java: 745[0m
+                                           [0m...[0m  [36m                [0m
+      [0mafterglow.midi/[34mdelegated-message-handler[0m  [36m   midi.clj: 555[0m
+           [0mafterglow.midi/[34mnote-message-handler[0m  [36m   midi.clj: 251[0m
+            [0mafterglow.midi/[34mrun-message-handler[0m  [36m   midi.clj: 216[0m
+[0mafterglow-tol.core/add-midi-callback/[34mupdate-fn[0m  [36m   core.clj: 564[0m
+                            [0mclojure.core/[34mapply[0m  [36m   core.clj: 641[0m
+                              [0mclojure.core/[34mseq[0m  [36m   core.clj: 137[0m
+                                           [0m...[0m  [36m                [0m
+[31mjava.lang.IllegalArgumentException[0m: [0mDon't know how to create ISeq from: java.lang.Integer[0m
+
+2018-Sep-01 14:27:33 NU.local INFO [afterglow.midi:390] - Opened MIDI input: {:name "CoreMIDI4J - IAC Driver", :description "IAC Driver", :vendor "Apple Inc.", :version "Unknown Version", :sources 2147483647, :sinks 0, :info #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDeviceInfo 0x20c47e04 "CoreMIDI4J - IAC Driver"], :device #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiSource 0x454b396f "uk.co.xfactorylibrarians.coremidi4j.CoreMidiSource@454b396f"], :transmitter #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiTransmitter 0x633ae82e "uk.co.xfactorylibrarians.coremidi4j.CoreMidiTransmitter@633ae82e"]}
+2018-Sep-01 14:27:33 NU.local INFO [afterglow.midi:390] - Opened MIDI input: {:name "CoreMIDI4J - Network", :description "", :vendor "", :version "Unknown Version", :sources 2147483647, :sinks 0, :info #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDeviceInfo 0x3be4eb93 "CoreMIDI4J - Network"], :device #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiSource 0x6e335cc9 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiSource@6e335cc9"], :transmitter #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiTransmitter 0x33100fe8 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiTransmitter@33100fe8"]}
+2018-Sep-01 14:27:34 NU.local ERROR [afterglow.core:252] - failed to start nREPL
+                      [0mclojure.core/[34meval[0m  [36m                    core.clj: 3105[0m
+                                    [0m...[0m  [36m                                  [0m
+           [0mafterglow-tol.core/[34meval20167[0m  [36m                   REPL Input     [0m
+               [0mafterglow-tol.core/[34mstart[0m  [36m                    core.clj:  436[0m
+       [0mafterglow-tol.core/[34mactivate-show[0m  [36m                    core.clj:  429[0m
+             [0mafterglow.core/[34mstart-nrepl[0m  [36m                    core.clj:  249[0m
+                     [0mclojure.core/[34mswap![0m  [36m                    core.clj: 2260[0m
+                                    [0m...[0m  [36m                                  [0m
+          [0mafterglow.core/start-nrepl/[34mfn[0m  [36m                    core.clj:  249[0m
+                                    [0m...[0m  [36m                                  [0m
+[0mclojure.tools.nrepl.server/[34mstart-server[0m  [36m                  server.clj:  121[0m
+[0mclojure.tools.nrepl.server/[34mstart-server[0m  [36m                  server.clj:  147[0m
+             [0mjava.net.ServerSocket.bind[0m  [36m           ServerSocket.java:  329[0m
+             [0mjava.net.ServerSocket.bind[0m  [36m           ServerSocket.java:  375[0m
+  [0mjava.net.AbstractPlainSocketImpl.bind[0m  [36mAbstractPlainSocketImpl.java:  387[0m
+    [0mjava.net.PlainSocketImpl.socketBind[0m  [36m         PlainSocketImpl.java     [0m
+[31mjava.net.BindException[0m: [0mAddress already in use (Bind failed)[0m
+
+2018-Sep-01 14:27:34 NU.local INFO [afterglow.midi:399] - Opened MIDI output: {:name "CoreMIDI4J - IAC Driver", :description "IAC Driver", :vendor "Apple Inc.", :version "Unknown Version", :sources 0, :sinks 2147483647, :info #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDeviceInfo 0x11387059 "CoreMIDI4J - IAC Driver"], :device #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination 0x2359a96f "uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination@2359a96f"], :receiver #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver 0x2f1d4693 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver@2f1d4693"]}
+2018-Sep-01 14:27:34 NU.local INFO [afterglow.midi:399] - Opened MIDI output: {:name "CoreMIDI4J - Network", :description "", :vendor "", :version "Unknown Version", :sources 0, :sinks 2147483647, :info #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDeviceInfo 0x24ae0dda "CoreMIDI4J - Network"], :device #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination 0x4b6d4a24 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination@4b6d4a24"], :receiver #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver 0x309fcd54 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver@309fcd54"]}
+2018-Sep-01 14:27:34 NU.local INFO [afterglow.midi:399] - Opened MIDI output: {:name "CoreMIDI4J - MIDI Monitor (Untitled)", :description "MIDI Monitor", :vendor "Snoize", :version "Unknown Version", :sources 0, :sinks 2147483647, :info #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDeviceInfo 0x9aec1ab "CoreMIDI4J - MIDI Monitor (Untitled)"], :device #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination 0x5939164a "uk.co.xfactorylibrarians.coremidi4j.CoreMidiDestination@5939164a"], :receiver #object[uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver 0x45eefca9 "uk.co.xfactorylibrarians.coremidi4j.CoreMidiReceiver@45eefca9"]}
