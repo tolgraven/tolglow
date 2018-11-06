@@ -1,34 +1,43 @@
 (ns tolglow.quil
- (:require [quil.core :as q]
-           [quil.middleware :as m]))
+  (:require [quil
+             [core :as q]
+             [middleware :as m]]
+            [quil.helpers
+             [calc :refer [mul-add]]
+             [drawing :refer [line-join-points]]]
+            [afterglow
+             [show-context :as show-context :refer [*show*]]]))
+
+(defonce start-state
+ {:color 0 :hue 0.3
+  :angle 0 :x 0})
 
 (defn setup []
- (q/frame-rate 60) ; Set frame rate to 30 frames per second.
- (q/color-mode :hsb) ; Set color mode to HSB (HSV) instead of default RGB.
- {:color 0 :angle 0}) ; setup function returns initial state. It contains circle color and position.
+ (q/frame-rate 40)
+ (q/color-mode :hsb 1.0)
+ (q/sphere-detail 40)
+ start-state) ; setup function returns initial state.
 
-(defn update-state [state]
- {:color (mod (+ (:color state) 0.7) 150) ; Update sketch state by changing circle color and position.
-  :angle (+ (:angle state) 0.01)})
+(defn update-state [s]
+ (println )
+ (merge s ;gotta update s, not replace, since contains more data than just ours...
+        {:color (mod (+ (:color s) 0.7) 0.01) ; Update sketch state by changing circle color and position.
+         :hue (+ 0.001 (:hue s))
+         :angle (+ (:angle s) 0.01)
+         :x (+ (:x s) 0.01)}))
 
-(defn draw-state [state]
-  (q/background 80) ; Clear the sketch by filling it with light-grey color.
-  (q/fill (:color state) 155 200) ; Set circle color.
-  (let [angle (:angle state) ; Calculate x and y coordinates of the circle.
-        x (* 100 (q/cos angle))
-        y (* 150 (q/sin angle))]
-    (q/with-translation [(/ (q/width) 2) ; Move origin point to the center of the sketch.
-                         (/ (q/height) 2)]
-      (q/ellipse x y 100 180)))) ; Draw the circle.
+(defn draw-state [s]
+  (q/background 0.13) ; Clear sketch by filling bg
+  (q/fill 0.3 #_(:hue s) 0.6 0.5) ; Set circle color.
+  (q/with-translation [(:x s) 0]
+   (q/sphere 10)))
 
 (defn init [& args]
-;;  (q/defsketch testquil
- (q/sketch
-  :host "host" ;huh
-  :title "glo quil"
-  :size [900 700]
-  :setup setup ; setup called once during sketch initialization.
-  :update update-state ;update-state called on each iteration before draw-state.
-  :draw draw-state
-  :features [:keep-on-top]
-  :middleware [m/fun-mode])) ; This sketch uses functional-mode middleware.  Check quil wiki for more info about middlewares and particularly fun-mode.
+ (q/defsketch tolglow-quil
+  :title "quil vizualiser for tolglow", :size [700 500]
+  :renderer :opengl #_:p3d ;java2d default... p2d, opengl, pdf.
+  :features [#_:keep-on-top :resizable]
+  :middleware [m/fun-mode m/navigation-3d]
+  :setup setup, :update update-state, :draw draw-state
+  ;; :mouse-wheel drag
+  :on-close #(println "CLOSING DIz" %)))

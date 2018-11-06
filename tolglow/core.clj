@@ -20,12 +20,9 @@
     [color :as color :refer [color?]]
     [config :as config :refer [at cfg venue wall]]
     [cue :as cue :refer [group-parts]]
-    [fixtures :as fixtures]
-    [fx :as fx]
-    [osc :as osc]
-    [page :as page]
-    [param :as param]
-    [setup :as setup]
+    [fixtures :as fixtures] [fx :as fx] [osc :as osc] [page :as page]
+    [param :as param] [setup :as setup]
+    [quil :as quil]
     [util :as util :refer [apply-vm avar clamp-number clear! get-channels get-map-with key-str random-in-range space-phase value x-phase]]
     [vars :as vars :refer [alt-start cue-map cue-maps]]]))
 ;; (when-not (cfg :debug :enabled)
