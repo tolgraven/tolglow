@@ -1,8 +1,4 @@
 
-
-
-
-
 SETUP
 skip proper sacn/an4, just run 4 usual - tho better if multiple recipient units and can fiddle with geometry
   * 4 or 8 1m144 as spokes = middle ~2 m.
@@ -61,6 +57,16 @@ maybe basic M4L - levels really. over osc, hosting too unstable
 
   easiest way to toggle lfos exempt from global scaling?
   - yet another fucker in var-map I guess. NEED multiple layers for vars / hiding cues to declutter push / show all vars for cue at once in Push interface
+
+CREATE BASIC STEP SEQUENCER
+    - each :beat/iteration run next cue on row
+      - continue on next row at end of row
+      - loop back at end of page
+    - at start each cue is dummy code cue
+      - does nothing when activated automatically
+    - pressing a dummy cue brings up interface to select which cue to run from it
+      - this wraps selected cue with some logic to reset it etc
+
 
 
 

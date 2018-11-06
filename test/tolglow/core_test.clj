@@ -1,6 +1,6 @@
-(ns afterglow-tol.core-test
+(ns tolglow.core-test
   (:require [clojure.test :refer :all]
-            [afterglow-tol.core :refer :all]))
+            [tolglow.core :refer :all]))
 
 (deftest a-test
   (testing "FIXME, I fail."
