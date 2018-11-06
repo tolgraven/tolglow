@@ -9,7 +9,7 @@
  {:rig 2.00 :ceiling 3.00 :wall {:stage -1.00 :rear 6.00 :left -2.50 :right 2.50}})
 
 (defonce binds ;dirty way to separate, should be auto-generated somehow...
- {:show (atom nil)
+ {:show (atom nil) ;? id or wha?
   :vars (atom nil)
   :ns (atom nil)
   :controller {:push (atom nil) :launchpad (atom nil)}
@@ -17,7 +17,8 @@
   :fixture-type {:moving (atom []), :strip (atom [])}
   :osc {:server core/osc-server, :client (atom nil)
         :vars (atom #{}) :cues (atom #{})}
-  :exceptions (atom [])})
+  :exceptions (atom [])
+  :loaded-components (atom [])})
 
 (def fixture-data "Data for fixture definition generation"
  {:strip {:pixtol
@@ -105,8 +106,7 @@
 
           :milight
           {:name "Milight RGB +W"
-           :channels {:color-wheel-hue 1, :dimmer 2, :white 3}}}}
-  )
+           :channels {:color-wheel-hue 1, :dimmer 2, :white 3}}}})
 
 (defn make-group-patcher "Generic of below"
  [group-key f]
@@ -145,10 +145,8 @@
    {:universe 4, :offset 66, :type :moving
     ;; :list [(mapv #(flatten [(:robe-1200 moving) %])
     ;;              [[-2.0 3.0 0.0], [-1.0 3.0 0.0], [1.0 3.0 0.0], [2.0 3.0 0.0]])]} ; :rotation {:y 180} ideal
-    :list [[:robe-1200 -2.0 3.0 0.0]
-           ;; [:robe-1200 -1.0 3.0 0.0]
-           ;; [:robe-1200 1.0 3.0 0.0]
-           [:robe-1200 2.0 3.0 0.0]]} ; :rotation {:y 180} ideal
+    :list [[:robe-1200 -1.0 2.0 0.0]
+           [:robe-1200 1.0 2.0 0.0]]} ; :rotation {:y 180} ideal
    ;; {:universe 10, :offset 156, :type :moving
     ;; :list '[[rgbw-36-moving -1.5 1.7 0.0]
     ;;         [rgbw-12-12-moving 1.32 1.75 0.0]
@@ -156,43 +154,30 @@
     ;;          :y-rotation (afterglow.transform/degrees 180)]
    :moving-mini
    {:universe 10, :offset 100, :type :moving
-    :list [[:rgbw-7-12-moving -2.0 4.0 0.0] ;whytf this just stop working?
-           ;; [:rgbw-7-12-moving -0.7 4.0 0.0]
-           ;; [:rgbw-7-12-moving  0.7 4.0 0.0]
-           [:rgbw-7-12-moving  2.0 4.0 0.0]]}
+    :list [[:rgbw-7-12-moving -2.0 2.0 0.0]
+           [:rgbw-7-12-moving  2.0 2.0 0.0]]}
    ;; :camera
    ;; {:universe 4, :offset 490, :type :moving
    ;;  :list [[:capture-camera 0.0 0.0 0.0]]}
    :cob
    {:universe 10, :offset 50
-    :list [[:wa-100-cob-par 0.1 3.1 0.0]]}
+    :list [[:wa-100-cob-par 0.5 1.1 0.0]]}
    :wash
    {:universe 10, :offset 65, :type :wash
     :list [[:rgbw-mini 0.0 0.0 0.0]
-           [:rgb-washy -1.0 2.0 0.0]
+           [:rgb-washy -0.0 2.0 0.0]
            [:random-wash -1.0 2.0 0.0]
-           [:random-wash -0.3 2.0 0.0]
-           ;; [:random-wash  0.3 2.0 0.0]
-           #_[:random-wash  1.0 2.0 0.0]]}
-   #_{:universe 10, :offset 1, :type :wash
-    :list '[[rgb-54-3-par -2.2 2.2 0.0]
-            [rgbw-7-12-par 1.8 4.2 0.0]]}
+           [:random-wash  1.0 2.0 0.0]]}
    :strip
    {:start-universe 1, :type :strip
     :list `[[#(tolglow.fixtures/pixel-strip
-               125, :mode :rgbw, :x [-0.2 -0.3] :y [1.7 2.7], :channels ~pixtol-chs)]
-    ;; :list `[[[tolglow.fixtures/pixel-strip
-    ;; ;; :list `[[[pixel-strip
-    ;; ;; :list [[[:pixel-strip
-    ;;           125, :mode :rgbw, :x [-1.3 -0.2] :y [0.0 2.0], :channels pixtol-chs]]
-    ;; :list `[[[pixel-strip
-    ;;           125, :mode :rgbw, :x [-0.2 -0.3] :y [1.7 2.7], :channel-map ~pixtol-chs]]
-
-           #_[#(tolglow.fixtures/pixel-strip 125 :x [1.0 0.0] :y [0.0 1.0])]]}
+               30, :mode :rgbw, :x [-3.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]]}
    :tube
    {:start-universe 2, :type :strip
     :list `[[#(tolglow.fixtures/pixel-strip
-               125, :mode :rgbw, :x [0.0 2.0] :y [0.0 2.0], :channels ~pixtol-chs)]]}
+               125, :mode :rgbw, :x [0.0 3.0] :y [0.0 3.0]
+               :channels ~pixtol-chs)]]}
    :fogger
    {:universe 10, :offset 511
     :list '[[af-250-fogger]]}})
@@ -280,6 +265,8 @@
           :force-init true #_false
           :force-cue-pages #_true false
           :auto-print-trace true} ;XXX how both catch, print, and pass to eg pst?
+  :macro {:save-file "macros.clj"}
+
   :web-server {:enabled true :port 16000}
   :nrepl {:enabled true :port 5000} ;alredy runs in lein...
   :terminal-repl {:enabled false}
@@ -295,7 +282,6 @@
   :controllers {:enabled true
                 :push {:enabled true :name "Ableton Push" }
                 :launchpad {:enabled false :name "Launchpad" }}
-  :macro {:save-file "macros.clj"}
   :midi {}
   :clock-sync {:enabled true :device "IAC Driver" :type :midi}
   :wavetick {:enabled true :device "IAC Driver" :channel 0 ;0 is midi ch 1
