@@ -8,6 +8,9 @@
     [show-context :refer [*show* set-default-show! with-show]]]
    [afterglow.effects.show-variable :as var-fx]
    [clojure.string :as string :refer [capitalize upper-case]]
+   [rebel-readline.core :as rlcore]
+   [rebel-readline.clojure.line-reader :as rlreader]
+   [rebel-readline.clojure.service.local :as rllocal]
    [tolglow
     [config :as config :refer [at cfg param-data var-data]]
     [osc :as osc]
@@ -57,9 +60,20 @@
   (core/start-web-server (cfg :web-server :port))))
 
 (defn nrepl [] (core/start-nrepl (cfg :nrepl :port)))
+(defn terminal-repl []
+ (try
+  (with-bindings
+   ;; (set! *print-level* 3) ;avoid krazy spew. hurr how set these outside of repl?
+   ;; (set! *print-length* 100)
+   (rlcore/with-readline-in
+    (rlreader/create (rllocal/create))
+    (clojure.main/repl :prompt (fn []))))
+  (catch clojure.lang.ExceptionInfo e
+    (if (-> e ex-data :type (= :rebel-readline.jline-api/bad-terminal))
+      (do (println (.getMessage e)) (clojure.main/repl))
+      (throw e)))))
 
-(defn fixture-patches
- []
+(defn fixture-patches []
  (util/patch-cfg!)
  (util/reset-fixture-binds!))
 
@@ -122,6 +136,11 @@
     (util/add-midi-callback dev ch note (partial tickers ticker) :kind :note)
     #_(println device channel note ticker)
     ))))
+
+(defn show-state "Setup vars/effects running from start of show creation, load any existing state..."
+ [& {:keys [actions] :or {actions (cfg :show-state :actions)}}]
+ (doseq [f actions]
+  (f)))
 
 ;; XXX for config/measure-data
 #_(defn make-points []

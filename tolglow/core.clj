@@ -37,8 +37,7 @@
  (print "\nInit modules..." "\tForce" (if (cfg :debug :force-init) "on" "off"))
  (setup/init-by-ks (cfg :init :modules))
  (print "\nDone setting up show, id" (:id *show*) "\t" #_"\n")
-
- #_(add-effect! :beam-on (chan-fx/function-effect "Beam on" :shutter-open 100 (fixtures-named :moving))))
+ (setup/init-by-ks (cfg :init :post))) ;finish setup, presumably by loading a terminal-repl
 
 ;; ;; (show/patch-fixture! :wash-1 (fixtures/rgbw-7-12-moving) 10 65)
 ;; (show/remove-fixture! :wash-3)

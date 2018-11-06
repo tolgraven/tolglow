@@ -282,6 +282,7 @@
           :auto-print-trace true} ;XXX how both catch, print, and pass to eg pst?
   :web-server {:enabled true :port 16000}
   :nrepl {:enabled true :port 5000} ;alredy runs in lein...
+  :terminal-repl {:enabled false}
   :logging {:enabled true}
   :ns {:base 'tolglow.core}
   :max {:enabled false, :ns 'afterglow.max.init
@@ -301,6 +302,8 @@
              :maps {:bar {:note 64 :ticker :wavetick-bars} ;change :fn -> :fns (atom []), then add watchers to that?
                     :beat {:note 65 :ticker :wavetick-beats}
                     :tatum {:note 66 :ticker :wavetick-tatums}}}
+  :show-state {:enabled false ;XXX below not ready
+               :actions `[(afterglow.show/add-effect! :beam-on (afterglow.effects.channels/function-effect "Beam on" :shutter-open 100 (fixtures-named :moving)))]}
   :channels {:global-control [:fog :movement-speed :focus]
              :pixtol [:attack :release :dimmer-attack :dimmer-release
                       :bleed :noise :rotate-back :rotate-fwd]}
@@ -316,8 +319,11 @@
   :pointing pointing-data
   :pages pages
   :init {:components [:show :vars :set-ns] ;looks in setup.clj (and later optionally elsewhere? for fns with same name)
-         :modules [:web-server :nrepl :clock-sync :wavetick :controllers
-                   :max-msp :fixture-patches :cue-pages :osc :extra-for-show] }})
+         :modules [:nrepl :web-server :controllers
+                   :max-msp :fixture-patches :cue-pages
+                   :osc :clock-sync :wavetick :extra-for-show
+                   :show-state] ;like :beam-on, but future: auto load state from last session...
+         :post [:terminal-repl]}})
 
 (defn get-getter [m] (fn [& path] (reduce #(-> %1 %2) m path)))
 
