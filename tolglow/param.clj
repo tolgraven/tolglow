@@ -513,96 +513,36 @@
      new-value
      (recur (+ min (rand range))))))
 
-;; XXX this should be implemented as an osc? picks random new values ahead, then interpolates towards...  Or just add settable interval-ratio...
+(defn or-rng []
+ {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat #_:interval-ratio #_1}})
 (defn rng "Returns a dynamic number parameter which gets a new random value on each beat."
- [& {:keys [min max min-change interval] :or {min 0 max 255 min-change 0 interval :beat}}]
+ [& {:keys [min max min-change interval #_interval-ratio] :as args}]
  {:pre [(some? *show*)]}
- (let [[min max min-change] (map #(bind-keyword-param %1 Number %2) [min max min-change] [0 255 0])
-       [last-beat last-value] (map ref [nil nil])
-       eval-fn-gen-fn (fn [min range]
-                       (fn [_ snapshot]
-                        (dosync (when (not= @last-beat (:beat snapshot)) ;should be fn
-                               (ref-set last-beat (:beat snapshot))
-                               (alter last-value pick-new-value min range min-change))
-                             @last-value)))]
-   (if-not (some params/param? [min max min-change])
-     (let [range (- max min) ;; Optimize the simple case of all constant parameters
-           eval-fn (eval-fn-gen-fn min range)]
-       (reify params/IParam
-         (params/evaluate [this show snapshot _] (eval-fn show snapshot))
-         (params/frame-dynamic? [this] true)
-         (params/result-type [this] Number)
-         (params/resolve-non-frame-dynamic-elements [this _ _ _] this)))  ; Nothing to resolve, return self
-
-     (let [eval-fn (fn [show snapshot] ;; Support the general case where we have an incoming variable parameter
-                     (let [[min max min-change] (map #(resolve-param %1 show snapshot) [min max min-change])
-                           range (- max min)]
-                       (if (neg? range) max
-                         (if (< min-change (/ range 3))
-                          ((eval-fn-gen-fn min range) show snapshot)
-                           #_(dosync (when (not= @last-beat (:beat snapshot))
-                                     (ref-set last-beat (:beat snapshot))
-                                     (alter last-value pick-new-value min range min-change))
-                                   @last-value)
-                           (do (timbre/error "Random beat number min-change > 1/3 range, returning max.") max)))))]
-       (reify params/IParam
-         (params/evaluate [this show snapshot _] (eval-fn show snapshot))
-         (params/frame-dynamic? [this] true)
-         (params/result-type [this] Number)
-         (params/resolve-non-frame-dynamic-elements [this show snapshot head]
-           (with-show show
-            (let [[min max min-change] (map #(params/resolve-unless-frame-dynamic % show snapshot head)
-                                            [min max min-change])]
-             (rng :min min :max max :min-change min-change)))))))))
-
-
-
-
-
-
-
-
-
-#_(defn rng "Returns a dynamic number parameter which gets a new random value on each beat."
- [& {:keys [min max min-change interval] :or {min 0 max 255 min-change 0 interval :beat}}]
- {:pre [(some? *show*)]}
- (let [[min max min-change] (map #(bind-keyword-param %1 Number %2) [min max min-change] [0 255 0])
-       [last-beat last-value] (map ref [nil nil])]
-   (if-not (some params/param? [min max min-change])
-
-     (let [range (- max min) ;; Optimize the simple case of all constant parameters
-           eval-fn (fn [_ snapshot]
-                     (dosync (when (not= @last-beat (:beat snapshot)) ;should be fn
-                               (ref-set last-beat (:beat snapshot))
-                               (alter last-value pick-new-value min range min-change))
-                             @last-value))]
-       (when-not (pos? range) (throw (IllegalArgumentException. "min must be less than max")))
-       (when-not (< min-change (/ range 3)) (throw (IllegalArgumentException. "min-change must be less 1/3 the range")))
-       (reify params/IParam
-         (params/evaluate [this show snapshot _] (eval-fn show snapshot))
-         (params/frame-dynamic? [this] true)
-         (params/result-type [this] Number)
-         (params/resolve-non-frame-dynamic-elements [this _ _ _] this)))  ; Nothing to resolve, return self
-
-     (let [eval-fn (fn [show snapshot] ;; Support the general case where we have an incoming variable parameter
-                     (let [[min max min-change] (map #(resolve-param %1 show snapshot) [min max min-change])
-                           range (- max min)]
-                       (if (neg? range)
-                         (do (timbre/error "Random beat number parameters min > max, returning max.") max)
-                         (if (< min-change (/ range 3))
-                             (dosync (when (not= @last-beat (:beat snapshot))
-                                       (ref-set last-beat (:beat snapshot))
-                                       (alter last-value pick-new-value min range min-change))
-                                     @last-value)
-                             (do (timbre/error "Random beat number min-change > 1/3 range, returning max.") max)))))]
-       (reify params/IParam
-         (params/evaluate [this show snapshot _] (eval-fn show snapshot))
-         (params/frame-dynamic? [this] true)
-         (params/result-type [this] Number)
-         (params/resolve-non-frame-dynamic-elements [this show snapshot head]
-           (with-show show
-            (let [[min max min-change] (map #(params/resolve-unless-frame-dynamic % show snapshot head)
-                                            [min max min-change])]
-             (rng :min min :max max :min-change min-change)))))))))
-
+ (let [p (assemble args or-rng)
+       [last-tick last-value] (map ref [nil nil])
+       get-update-fn (fn [& {:keys [min max min-change interval]}]
+                      (let [range (math/abs  (- max min)) #_(if (pos? range) (- 0 range) range)
+                            min-change (clamp-number min-change 0 0.33)]
+                       (fn [snapshot]
+                        (dosync (when (not= @last-tick (interval snapshot))
+                                 (ref-set last-tick (interval snapshot))
+                                 (alter last-value pick-new-value min range min-change))
+                                @last-value))))
+       dynamic-inputs? (#_apply some param? (map p [:min :max :min-change :interval]))
+       ;; eval-fn (if-not dynamic-inputs? ;no dynamic parameters
+       ;;          (fn [_ snapshot _]
+       ;;           ((apply get-update-fn p) snapshot))
+       ;;          (fn [show snapshot _] ;; Support the general case where we have an incoming variable parameter
+       ;;           ((apply get-update-fn (flatten (vec (auto-resolve p :show show :snapshot snapshot)))) snapshot)))
+       eval-fn  (fn [show snapshot _]
+                 (let [p-vec (flatten (vec (if dynamic-inputs?
+                                            (auto-resolve p-vec :show show :snapshot snapshot)
+                                            p)))]
+                  ((apply get-update-fn p-vec) snapshot)))
+       resolve-fn (if-not dynamic-inputs?
+                   (fn [_ _ _])
+                   (fn [show snapshot head]
+                    (with-show show ;no need or am i missing something?
+                     (apply rng (flatten (vec (auto-resolve p :dynamic false :show show :snapshot snapshot)))))))]
+  (params/->Param "RNG" true Number eval-fn resolve-fn)))
 
