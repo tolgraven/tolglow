@@ -6,6 +6,7 @@
             [com.evocomputing.colors :as colors :refer [adjust-hue color-name create-color darken desaturate hue lighten lightness saturate saturation]]
             [tolglow
              [color :as color :refer []]
+             [debug :as debug :refer [det]]
              [config :as config :refer [cfg param-data ptr-cfg var-data]]
              [util :as util :refer []]]))
 
@@ -108,9 +109,10 @@
 (defn init! "ensure any show var we'll be trying to bind to actually has a value set"
  [key default & force] ;[key & default]
  (let [default (or default 0)  ;default default is Number
-       unset (apply not= (map type [(show/get-variable key) default]))
+       unset? (apply not= (map type [(show/get-variable key) default]))
+       ;; value (show/get-variable key)
        force-reset (or (first force) false)]
-  (when (or unset force-reset)
+  (when (or unset? force-reset)
    (set-variable! key default)
    #_(println key default)))) ;and something something bind to it so can resolve but looks like hmm
 

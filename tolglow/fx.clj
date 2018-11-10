@@ -249,9 +249,9 @@
 ; ^ tho splitting fully like that seems prob foolish as most(?) fx not using always-active/end-immediately
 ; have some interdependency
 
-(defn bloom "XXX should be [fixtures fraction & ] prob...?   variable width, no dimmer action, adjustable spatial HSL" ;FIXME: doesnt handle fixtures spanning across 0?
+(defn bloom "yo" ;FIXME: doesnt handle fixtures spanning across 0?
  [fixtures & {:keys [measure color fraction width halo keyhole? keyhole-opacity keyhole-target
-                     hue-mod lightness-mod saturation-mod] :as all}]
+                     hue-mod lightness-mod saturation-mod] :as all}] ;XXX move to [vars]
  (let [p (param/assemble all or-bloom)
        heads (chan/find-rgb-heads fixtures)
        furthest (tf/max-distance (:measure p) heads)
@@ -264,19 +264,22 @@
                                           (flatten (map #(when (not= 0 %2) [%1 %2])
                                                         [:adjust-hue :adjust-saturation :adjust-lightness]
                                                         [h s l]))))) ;; XXX per-head virtual dimmer (not the same as lightness) (how not the same?)
-                 [<bound bound>] (map #(->> (/ (:width r) 2)
-                                            (% (:fraction r))
-                                            #_(* furthest))
-                                      [- +])
-                 [<halo halo>] (map (fn [op side] (op side (* (:halo r) (:width r) #_furthest))) [- +] [<bound bound>])]
+                 ;; [<bound bound>] (map #(->> (/ (:width r) 2)
+                 ;;                            (% (:fraction r)))
+                 [<bound bound>] (map #(% (:fraction r) (/ (:width r) 2)) [- +])
+                 [<halo halo>] (map #(%1 %2 (* (:halo r) (:width r))) [- +] [<bound bound>])
+                 bounded (fn [point near far] (<= near point far))
+                 bounds (map #(% (:fraction r) (/ (:width r) 2)) [- +])
+                 halos (for [[b op] [bounds [- +]]] (op b (* (:halo r) (:width r))))]
              (if (<= <bound distance bound>) ;within bounds = bloom color normal, was color (modded) keyhole
+             ;; (if (apply bounded distance bounds) ;within bounds = bloom color normal, was color (modded) keyhole
               (color-fn (if-not (:keyhole? r) (:color r) was))
               (let [level (cond (<= <halo distance <bound) (/ (- distance <halo) (- <bound <halo))
-                                (>= bound> distance halo>) (/ (- halo> distance) (- halo> bound>))
-                                :else 0.0) ;zero outside halo
-                    #__ #_(when (> level 0.8)
-                        (printf "< halo bound %2f %2f  [%2f / %2f]  %2f %2f bound halo >\n"
-                               <halo <bound distance level bound> halo>))]
+                                (<= bound> distance halo>) (/ (- halo> distance) (- halo> bound>))
+              ;; (let [[near far] (map #(map % [halos bounds]) [first second])
+              ;;       level (cond (bounded distance near) (/ (- distance <halo) (apply - (reverse near)))
+              ;;                   (bounded distance (reverse far)) (/ (- halo> distance) (apply - far))
+                                :else 0.0)] ;zero outside halo
                (if-not (:keyhole? r)
                 (color-fx/fade-colors was (:color r) level show snap head) ;halo should fade out linearly...
                 (color-fx/fade-colors was nil (* level (- 1.0 (:keyhole-opacity r))) show snap head))))))]

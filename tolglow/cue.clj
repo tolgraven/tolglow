@@ -135,10 +135,8 @@
 (defn strobe "tweaks, incl uniform [group x y] params inline with other make-cues, dynamic color-var and velocity-target, evt externalize other vars (level etc), not just color"; {{{
   [group x y & {:keys [strobe-color fixtures velocity-target]
                 :or   {strobe-color :strobe-color, velocity-target :level}}]
-  (vars/init! strobe-color (color/create :purple))
-  #_(when-not (= (type (get-variable strobe-color)) ::colors/color)
-    (set-variable! strobe-color (color/like :mediumpurple2)))
-  (det #_let [[fx-key fixtures fx-name] (group-parts group "strobe" "strobe") ; XXX check group for vec of fixture names as well...
+  (vars/init! strobe-color (color/like :mediumpurple2))
+  (let [[fx-key fixtures fx-name] (group-parts group "strobe" "strobe") ; XXX check group for vec of fixture names as well...
         color-var {:key strobe-color, :type :color, :name (name strobe-color)}
         [level-var lightness-var] (map #(vars/cue-map [%1 (if (= velocity-target %1) true %2) 0 100])
                                   [:level :lightness] [80 100])]
@@ -147,8 +145,8 @@
         ;; vars (vars/auto :level-percent :lightness-percent)]
     (set-cue! x y
       (cue fx-key
-           ;; (fn [vm] (fun/strobe-2 fx-name fixtures (:level vm) (:lightness vm)))
-           (fn [vm] (fun/strobe-2 fx-name fixtures
+           (fn [vm] (fun/strobe-2 fx-name fixtures (:level vm) (:lightness vm)))
+           #_(fn [vm] (fun/strobe-2 fx-name fixtures
                                   (bind-keyword-param (:level vm) Number 80)
                                   (bind-keyword-param (:lightness vm) Number 80)))
            ;; (fn [vm] (tolfx/strobe (bind-keyword-param (:level vm) Number 80) fixtures :name fx-name :lightness (:lightness vm)))

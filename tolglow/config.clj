@@ -269,7 +269,7 @@
 
   :web-server {:enabled true :port 16000}
   :nrepl {:enabled true :port 5000} ;alredy runs in lein...
-  :terminal-repl {:enabled false}
+  :terminal-repl {:enabled true}
   :logging {:enabled true}
   :ns {:base 'tolglow.core}
   :max {:enabled false, :ns 'afterglow.max.init
@@ -303,7 +303,7 @@
                     :names [:strip-1 :tube-1]}}
     :defs patches}
   :pointing pointing-data
-  :pages pages
+:pages pages
   :init {:components [:show :vars :set-ns] ;looks in setup.clj (and later optionally elsewhere? for fns with same name)
          :modules [:nrepl :web-server :controllers
                    :max-msp :fixture-patches :cue-pages
@@ -373,6 +373,7 @@
   :color         ["color" "antiquewhite2"]}) ;nice if :color type could also take min/max, as colors, bounds per hsl (:min :black :max :white = full range)
   ;; :color-rand    ["color"   (color-like nil)]   ;nicer yet if color picker overlay reflected this XXX first fix overlay less rigid using (color-like)
 
+;; (defrecord CueParam) ;makes sense no? not from IParam maybe but in some sense...
 (def param-data "Types of oscillators and associated data - colors, cue-vars etc" ;XXX put fns for building here as well...
  (let [common [:beats :cycles :min-dmx :max-dmx :phase]
        scale  [:lfo-gain :lfo-offset]

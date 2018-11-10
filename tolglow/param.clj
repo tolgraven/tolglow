@@ -18,7 +18,7 @@
              [debug :as debug :refer [det]]
              [vars :as vars]])
   (:import afterglow.rhythm.Metronome
-           afterglow.effects.params.IParam))
+           [afterglow.effects.params IParam]))
 
 
 (def types (for [m config/param-data]
@@ -106,12 +106,13 @@
     (reduce f {} p-or-m)))))
 
 (defn assemble "Assemble params from map of arguments sent to Effect. creator from those passed, and defaults, bound to keywords ready for cue-var. Also resolves non-dynamic params. Returns pm (param-map) for usage in function"
- [args arg-spec]
+ [args arg-spec] ;XXX make compat diff lengths args/arg-spec? like could have a fallback with lots of stuff used for multiple things
  (let [[vars opts] (map #(util/ks-show-ks-defaults args %)
                         (map (arg-spec) [:vars :opts]))] ;align fallback map
-  (merge (bind-vars vars)
+  (merge (auto-resolve (bind-vars vars) :dynamic false) ; (bind-vars vars)
          (auto-resolve (bind-vars opts)))
   #_OR
+  ;; (apply merge (map #(auto-resolve (bind-vars %1) :dynamic %2) [vars opts] [false true]))
   #_(apply merge (map #(auto-resolve (bind-vars %) :dynamic false) [:vars :opts])) ;regardless of final spec, maybe best just run all early? if not dynamic won't change anyways...
   ))
 
@@ -135,7 +136,8 @@
   [vm & {:keys [prefix]}] ;XXX should be a display overlay (add-control-held-feedback-overlay) touching "beats" brings up cycles...
   ; AND rows of 12345678 beats, 12345678 cycles, mult, div, maybe presets? instant 8/3 etc
   ;; (util/dlet [candidates (set (prefix-ks prefix (config/values-data :time-unit)))
-  (let #_util/dlet [candidates #_(set (map #(key-str (when prefix (str prefix "-")) %) (config/values-data :time-unit)))
+  (let [candidates
+        #_(set (map #(key-str (when prefix (str prefix "-")) %) (config/values-data :time-unit)))
               (prefix-set prefix (config/values-data :time-unit))
         k (some candidates (flatten (seq vm)))
         [ticks cycles mul div] (bind-keys (get vm k) 4, (:cycles vm ((prefix-set prefix #{:cycles}) vm)) 1
@@ -302,43 +304,17 @@
 
  (let [vm (or vm (starting-vm-for param-name))
        p '[min max phase down width gain offset level min-change]
-       ;; pre #(if vm-prefix (str vm-prefix "-" %) %)
-       ;; ks (map #(keyword (pre %)) p) #_(if-not vm-prefix p (map #(str vm-prefix "-" %) p))
        ks (map keyword p)
-       syms (map symbol p)
        [min max phase down width gain offset level min-change] (map #(or (% all) (% vm)) ks)
        params [min max phase gain offset level min-change]
        [min max phase gain offset level min-change]
        (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ;actually: grab the standard :start val...
-
-       ;; m (interleave ks (map vm ks))
-       ;; m (interleave ks (for [[k default] [ks #_(map vm ks) [0 255 0 true 1 1 0 255 0.1]]]
-       ;;                   #_(println k default)
-       ;;                        (vm k default)))
-       ;; m (interleave ks (map #(%1 vm %2) ks [0 255 0 true 1 1 0 255 0.1]) ) ;XXX get defaults from var defs...
-
-       [noise smoothing] (map (fn [k]
-                               (vars/init! k 0.0)
-                               (bind-keyword-param k Number 0.0)) ;utility fn for this, have map of globals and defaults duh
-                              [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
-
-       ;; binds (zipmap ks (apply bind-keys m)) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise #_:smoothing #_smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; b #(binds (pre %))
-
-       ;; lfo (ns-resolve @(at :ns) (symbol "lfo" param-name)) ;max binding workaround...
+       ;; [noise smoothing] (map #((vars/init! % 0.0)
+       ;;                          (bind-keyword-param % Number 0.0)) ;utility fn for this, have map of globals and defaults duh
+                               ;; [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
        lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
-       ;; lfo (resolve (symbol "lfo" param-name)) ;max binding workaround...
 
-       ; hmm gotta change eg (ratio) (fraction) to handle prefix no?
        raw (case param-name ;XXX param handling should be specified in param/types def
-            ;; ("level" "held") (b :level)  ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-            ;; ("level" "held") ( :level)  ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-            ;;  "random" (rng :min (b :min) :max (b :max) :min-change (b :min-change))
-            ;; (build-oscillated-param (apply lfo :interval-ratio (ratio vm) :phase (b :phase)
-            ;;                          (cond (= param-name "sawtooth") [:down? (b :down)]
-            ;;                                (= param-name "square")   [:width (fraction vm :width)]))
-                                    ;; :min (b :min) :max (b :max)))
             ("level" "held") #_level (bind-keyword-param (:level vm level) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
              "random" (rng :min min :max max :min-change min-change)
             (if lfo
@@ -348,37 +324,54 @@
                                     :min min :max max)
              (do (println "Can't resolve" param-name "to function:")
               (clojure.pprint/pprint vm))))
-       ;; raw-future (resolve-param raw *show* (metro-snapshot (:metronome *show*)))
-       ;; final {:type param-name :param raw :min min :max max :gain gain :off offset :noise noise :vm vm}
 
-       f (fn [param min max gain offset noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
+       f (fn [param min max gain offset #_noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
           (let [offset (* max offset)
-                noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
-                noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
-                result (+ offset noise (* gain param))]
+                ;; noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
+                ;; noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
+                result (+ offset #_noise (* gain param))]
            (clamp-number result min max)))
        #_args #_(map b [:min :max :gain :offset :noise])] ;clamp final
   ;; (println raw f (map value args))
   #_(println param-name (map value [raw min max gain offset noise]))
-  (build-param-formula Number f raw min max gain offset noise)))
+  (build-param-formula Number f raw min max gain offset #_noise)))
+;; (util/value (rng :min 0 :max 100 :min-change 20))
 
+(defn or-auto-vm "Defaults for auto-vm..." []
+ {:vars {:min 0 :max 255 :phase 0 :down true :width 0.25 :gain 1.0 :offset 0.0 :level 255
+         :smoothing 0.0 :noise 0.0 :min-change 0}})
 (defn auto-vm-dev "Create parameter from var-map and name (looked up against types) for use with `cue/auto` for both the actual effect and its visualizer/color-fn"
  [vm param-name & {:keys [override like vm-prefix param-defs scale] :as all}] ;so can set these without them being present in var-map
- (let #_util/dlet [vm (or vm (starting-vm-for param-name))
+ (det [vm (or vm (starting-vm-for param-name))
        pre #(if vm-prefix (str vm-prefix "-" %) %)
        [noise ] (map #((vars/init! % 0.0)
-                                #_(bind-keys % 0.0) (bind-keyword-param % Number 0.0)) ;utility fn for this, have map of globals and defaults duh
+                                #_(bind-keys % 0.0) (bind-keyword-param % Number 0.0)
+                                {}) ;utility fn for this, have map of globals and defaults duh
                               [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
-       got-ks (set (concat (keys vm) (keys (filter (fn [[k v]] (some? v)) all))))
+       ;; pre #(if vm-prefix (str vm-prefix "-" %) %)
+       ;; ks (map #(keyword (pre %)) p) #_(if-not vm-prefix p (map #(str vm-prefix "-" %) p))
+       ;; syms (map symbol p)
+       got-ks (set (concat (keys vm)
+                           (keys (filter (fn [[k v]] (some? v)) all))))
        got-vs (mapv #(% all (% vm)) got-ks)
        ;; params (mapv #(bind-keyword-param %1 Number %2) got-ks got-vs)
        params (merge (zipmap got-ks (map #(bind-keyword-param %1 Number %2) got-ks got-vs)) {:noise noise})
        ;; (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ; XXX get defaults from var defs...
        ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
        ;; b #(binds (pre %))
+       ;; binds (zipmap ks (apply bind-keys m)) ;then look up below so like (get-with-prefix binds :min vm-prefix)
+       ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise #_:smoothing #_smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
+       ;; b #(binds (pre %))
+
+       ;; m (interleave ks (map vm ks))
+       ;; m (interleave ks (for [[k default] [ks #_(map vm ks) [0 255 0 true 1 1 0 255 0.1]]]
+       ;;                   #_(println k default)
+       ;;                        (vm k default)))
+       ;; m (interleave ks (map #(%1 vm %2) ks [0 255 0 true 1 1 0 255 0.1]) ) ;XXX get defaults from var defs...
+
 
        lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
-       ; hmm gotta change eg (ratio) (fraction) to handle prefix no?
+       ; hmm gotta change eg (ratio) (fraction) to handle prefix no?u-
        raw (case param-name ;XXX param handling should be specified in param/types def
             ("level" "held") (:level params) ;but prefix, duh...
              "random" (apply rng params) ;:min min :max max :min-change min-change)
@@ -390,6 +383,8 @@
                                            (= param-name "square")   [:width (apply fraction vm :width (when vm-prefix [:prefix vm-prefix]))]))
                                     :min (:min params) :max (:max params))
              #_(println "Can't resolve" param-name "to function")))
+       ;; raw-future (resolve-param raw *show* (metro-snapshot (:metronome *show*)))
+       ;; final {:type param-name :param raw :min min :max max :gain gain :off offset :noise noise :vm vm}
 
        f (fn [param min max gain offset noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
        ;; f (fn [param & {:keys [min max gain offset noise] :as args}] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
@@ -505,44 +500,46 @@
 
 
 ;  RANDOM NUMBER PARAM
-(defn- pick-new-value "Helper for random-params, pick new value with min difference from last value."
- [old-value min range min-change]
- (loop [new-value (+ min (rand range))]
-   (if (or (nil? old-value)
-           (>= (math/abs (- new-value old-value)) min-change))
-     new-value
-     (recur (+ min (rand range))))))
+
+(defn any-dynamic? "Check whether any params in assembled map are frame-dynamic"
+ [pm]
+ ; dynamic-inputs? (#_apply some param? (map p [:min :max :min-change :interval]))
+ ; ^^ but stuff can be param (bound/unresolved) without being dynamic tho, right? so further check needed,
+ ; any existing in params?
+ (some param? (vals pm)))
+
+(defn get-range "Get absolute difference between max and min"
+ [min max]
+ (math/abs (- max min)))
+
+(defn pick-new-value "Helper forrandom-params, pick new value with min difference (as fraction) from last value."
+ [current min max min-change]
+ (let [range (get-range min max)
+       min-change (clamp-number min-change 0 0.33)]
+  (loop [candidate (+ min (rand range))]
+   (if (or (nil? current) (>= (get-range current candidate) min-change))
+     candidate
+     (recur (+ min (rand range)))))))
 
 (defn or-rng []
  {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat #_:interval-ratio #_1}})
-(defn rng "Returns a dynamic number parameter which gets a new random value on each beat."
+(defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX ratio + fade to new value"
  [& {:keys [min max min-change interval #_interval-ratio] :as args}]
  {:pre [(some? *show*)]}
- (let [p (assemble args or-rng)
+ (let [pm (assemble args or-rng)
        [last-tick last-value] (map ref [nil nil])
-       get-update-fn (fn [& {:keys [min max min-change interval]}]
-                      (let [range (math/abs  (- max min)) #_(if (pos? range) (- 0 range) range)
-                            min-change (clamp-number min-change 0 0.33)]
-                       (fn [snapshot]
-                        (dosync (when (not= @last-tick (interval snapshot))
-                                 (ref-set last-tick (interval snapshot))
-                                 (alter last-value pick-new-value min range min-change))
-                                @last-value))))
-       dynamic-inputs? (#_apply some param? (map p [:min :max :min-change :interval]))
-       ;; eval-fn (if-not dynamic-inputs? ;no dynamic parameters
-       ;;          (fn [_ snapshot _]
-       ;;           ((apply get-update-fn p) snapshot))
-       ;;          (fn [show snapshot _] ;; Support the general case where we have an incoming variable parameter
-       ;;           ((apply get-update-fn (flatten (vec (auto-resolve p :show show :snapshot snapshot)))) snapshot)))
-       eval-fn  (fn [show snapshot _]
-                 (let [p-vec (flatten (vec (if dynamic-inputs?
-                                            (auto-resolve p-vec :show show :snapshot snapshot)
-                                            p)))]
-                  ((apply get-update-fn p-vec) snapshot)))
-       resolve-fn (if-not dynamic-inputs?
+       eval-fn (fn [show snapshot _]
+                (let [pm (if-not (any-dynamic? pm)
+                         pm
+                         (auto-resolve pm :show show :snapshot snapshot))]
+                 (dosync (when (not= @last-tick ((:interval pm) snapshot))
+                          (ref-set last-tick ((:interval pm) snapshot))
+                          (alter last-value pick-new-value (:min pm) (:max pm) (:min-change pm)))
+                         @last-value) snapshot))
+       presolve-fn (if-not (any-dynamic? pm)
                    (fn [_ _ _])
                    (fn [show snapshot head]
                     (with-show show ;no need or am i missing something?
-                     (apply rng (flatten (vec (auto-resolve p :dynamic false :show show :snapshot snapshot)))))))]
-  (params/->Param "RNG" true Number eval-fn resolve-fn)))
+                     (apply rng (flatten (vec (auto-resolve pm :dynamic false :show show :snapshot snapshot)))))))]
+  (params/->Param "RNG" true Number eval-fn presolve-fn)))
 

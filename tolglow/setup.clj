@@ -39,6 +39,7 @@
     (init f k required)
     (println "\nCouldn't resolve setup fn for key" k)))))
 
+
 (defn osc []
  (osc/start-server)
  (osc/clear-var-bindings)
@@ -48,14 +49,12 @@
  (apply require (cfg :max :require))
  (reset! (cfg :ns :active) (cfg :max :ns)))
 
-(defn clock-sync "Gracefully attempt to init sync..."
- []
+(defn clock-sync "Gracefully attempt to init sync..." []
  (try (sync-to-external-clock (sync-to-midi-clock)) ; throws a shitty assertion, nuke ffs
       (catch IllegalArgumentException e
        (print "No sync sources..."))))
 
-(defn web-server "Wrap since built-in swap! is broken"
- []
+(defn web-server "Wrap since built-in swap! is broken" []
  (when (nil? @core/web-server)
   (core/start-web-server (cfg :web-server :port))))
 
@@ -70,7 +69,8 @@
     (clojure.main/repl :prompt (fn []))))
   (catch clojure.lang.ExceptionInfo e
     (if (-> e ex-data :type (= :rebel-readline.jline-api/bad-terminal))
-      (do (println (.getMessage e)) (clojure.main/repl))
+      (do (println (.getMessage e))
+          #_(clojure.main/repl)) ;skip fallback repl as likely due to running lein repl yeah?
       (throw e)))))
 
 (defn fixture-patches []
@@ -93,7 +93,6 @@
 
  #_(osc/refresh-cues) ;prob shouldn't go here, rather modules add hooks to various actions?
  #_(set-view-position (or saved-pos (repeat 2 origin-page))))
-
 
 (defn controllers "Init controllers from config" ;XXX make actual proper
  []
