@@ -20,20 +20,28 @@
   :exceptions (atom [])
   :loaded-components (atom [])})
 
+ (def pixtol-chs
+  {:dimmer 1
+   :strobe [2 :hz [0.5 7.0]] :strobe-curve 3
+   :attack 4 :release 5
+   :bleed 6, :noise 7
+   :rotate-back 8, :rotate-fwd 9
+   :dimmer-attack 10 :dimmer-release 11
+   :control 12})
 (def fixture-data "Data for fixture definition generation"
  {:strip {:pixtol
           {:name "pixTol RGBW"
-           :channels
-           {:dimmer 1
-            :strobe [2 :hz [0.5 7.0]] :strobe-curve 3
-            :attack 4 :release 5
-            :bleed 6, :noise 7
-            :rotate-back 8, :rotate-fwd 9
-            :dimmer-attack 10 :dimmer-release 11
-            :control 12}}
+           :mode :rgbw
+           :pixels 125
+           :channels pixtol-chs}
+          :pixtol-bulb
+          {:name "pixTol RGB Bulbs"
+           :mode :rgb
+           :pixels 40
+           :channels pixtol-chs}
 
-          :opc {:name "Fadecandy/OPC RGB"
-                :mode :rgb}}
+          :opc
+          {:name "Fadecandy/OPC RGB" :mode :rgb}}
 
   :moving {:rgbw-36
            {:name "RGBW 108/36 moving head"
@@ -119,8 +127,11 @@
 (def wash ;[]
  (into {} (for [fix (:wash fixture-data)]
              {(key fix) (tolglow.fixtures/create (val fix))})))
+(def strip ;[]
+ (into {} (for [fix (:strip fixture-data)]
+             {(key fix) (tolglow.fixtures/strip-from-data (val fix))})))
 ;; (def strips (make-group-patcher ))
-(def fixture-types (merge moving wash)) ;add other defs later
+(def fixture-types (merge moving wash #_strip)) ;add other defs later
 
 (def test-patches
    {:moving
@@ -169,14 +180,41 @@
            [:random-wash -1.0 2.0 0.0]
            [:random-wash  1.0 2.0 0.0]]}
    :strip
-   {:start-universe 1, :type :strip
-    :list `[[#(tolglow.fixtures/pixel-strip
-               30, :mode :rgbw, :x [-3.0 -0.0] :y [2.0 2.0]
-               :channels ~pixtol-chs)]]}
-   :tube
    {:start-universe 2, :type :strip
     :list `[[#(tolglow.fixtures/pixel-strip
-               125, :mode :rgbw, :x [0.0 3.0] :y [0.0 3.0]
+               20 :mode :rgb, :x [-3.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-2.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-1.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-0.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-1.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-2.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-3.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20 :mode :rgb, :x [-4.0 -0.0] :y [2.0 2.0]
+               :channels ~pixtol-chs)]]}
+   :tube
+   {:start-universe 10, :type :strip
+    :list `[[#(tolglow.fixtures/pixel-strip
+               20, :mode :rgbw, :x [-1.0 3.0] :y [0.0 3.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20, :mode :rgbw, :x [ 0.0 3.0] :y [0.0 3.0]
+               :channels ~pixtol-chs)]
+            [#(tolglow.fixtures/pixel-strip
+               20, :mode :rgbw, :x [ 1.0 3.0] :y [0.0 3.0]
                :channels ~pixtol-chs)]]}
    :fogger
    {:universe 10, :offset 511
