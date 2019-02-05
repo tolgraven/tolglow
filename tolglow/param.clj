@@ -521,7 +521,7 @@
      candidate
      (recur (+ min (rand range)))))))
 
-(defn or-rng []
+(defn or-rng "Defaults for random number generator" []
  {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat #_:interval-ratio #_1}})
 (defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX ratio + fade to new value"
  [& {:keys [min max min-change interval #_interval-ratio] :as args}]
@@ -535,7 +535,7 @@
                  (dosync (when (not= @last-tick ((:interval pm) snapshot))
                           (ref-set last-tick ((:interval pm) snapshot))
                           (alter last-value pick-new-value (:min pm) (:max pm) (:min-change pm)))
-                         @last-value) snapshot))
+                         @last-value)))
        presolve-fn (if-not (any-dynamic? pm)
                    (fn [_ _ _])
                    (fn [show snapshot head]
