@@ -309,14 +309,15 @@
        params [min max phase gain offset level min-change]
        [min max phase gain offset level min-change]
        (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ;actually: grab the standard :start val...
-       ;; [noise smoothing] (map #((vars/init! % 0.0)
-       ;;                          (bind-keyword-param % Number 0.0)) ;utility fn for this, have map of globals and defaults duh
-                               ;; [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
+       [noise smoothing] (map (fn [k]
+                               (vars/init! k 0.0)
+                               (bind-keyword-param k Number 0.0)) ;utility fn for this, have map of globals and defaults duh
+                               [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
        lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
 
        raw (case param-name ;XXX param handling should be specified in param/types def
-            ("level" "held") #_level (bind-keyword-param (:level vm level) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-             "random" (rng :min min :max max :min-change min-change)
+            ("level" "held") (bind-keyword-param (:level vm level) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
+             "random" (rng :min min :max max :min-change min-change :interval-ratio (ratio vm))
             (if lfo
              (build-oscillated-param (apply lfo :interval-ratio (ratio vm) :phase phase
                                      (cond (= param-name "sawtooth") [:down? down]
@@ -325,17 +326,16 @@
              (do (println "Can't resolve" param-name "to function:")
               (clojure.pprint/pprint vm))))
 
-       f (fn [param min max gain offset #_noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
+       f (fn [param min max gain offset noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
           (let [offset (* max offset)
-                ;; noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
-                ;; noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
-                result (+ offset #_noise (* gain param))]
+                noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
+                noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
+                result (+ offset noise (* gain param))]
            (clamp-number result min max)))
        #_args #_(map b [:min :max :gain :offset :noise])] ;clamp final
   ;; (println raw f (map value args))
   #_(println param-name (map value [raw min max gain offset noise]))
-  (build-param-formula Number f raw min max gain offset #_noise)))
-;; (util/value (rng :min 0 :max 100 :min-change 20))
+  (build-param-formula Number f raw min max gain offset noise)))
 
 (defn or-auto-vm "Defaults for auto-vm..." []
  {:vars {:min 0 :max 255 :phase 0 :down true :width 0.25 :gain 1.0 :offset 0.0 :level 255
@@ -522,24 +522,24 @@
      (recur (+ min (rand range)))))))
 
 (defn or-rng "Defaults for random number generator" []
- {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat #_:interval-ratio #_1}})
+ {:vars {:min 0 :max 255 :min-change 0.1 :interval :bar :interval-ratio 1}})
 (defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX ratio + fade to new value"
- [& {:keys [min max min-change interval #_interval-ratio] :as args}]
+ [& {:keys [min max min-change interval interval-ratio] :as args}]
  {:pre [(some? *show*)]}
  (let [pm (assemble args or-rng)
-       [last-tick last-value] (map ref [nil nil])
+       step (build-step-param :interval (:interval pm) :interval-ratio (:interval-ratio pm))
+       [current-step last-value] (map ref [nil nil])
        eval-fn (fn [show snapshot _]
                 (let [pm (if-not (any-dynamic? pm)
-                         pm
-                         (auto-resolve pm :show show :snapshot snapshot))]
-                 (dosync (when (not= @last-tick ((:interval pm) snapshot))
-                          (ref-set last-tick ((:interval pm) snapshot))
+                           pm
+                          (auto-resolve pm :show show :snapshot snapshot))
+                      now (math/round (params/resolve-param step show snapshot))]
+                 (dosync (when (not= now @current-step) ;here can test divide metro or whatever but makes more sense relying on a step param no?
+                          (ref-set current-step now)
                           (alter last-value pick-new-value (:min pm) (:max pm) (:min-change pm)))
                          @last-value)))
        presolve-fn (if-not (any-dynamic? pm)
                    (fn [_ _ _])
                    (fn [show snapshot head]
-                    (with-show show ;no need or am i missing something?
-                     (apply rng (flatten (vec (auto-resolve pm :dynamic false :show show :snapshot snapshot)))))))]
+                    (apply rng (flatten (vec (auto-resolve pm :dynamic false :show show :snapshot snapshot))))))]
   (params/->Param "RNG" true Number eval-fn presolve-fn)))
-
