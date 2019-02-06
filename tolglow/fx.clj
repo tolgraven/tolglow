@@ -577,82 +577,75 @@
              (fn [show snapshot] (fx/end function show snapshot)))))
 
 ;           CROSSOVER CHASE
-(defn build-cross-scene
-  "Create a scene which sets the color of one light, and aims it just below and in front of another."
+(defn shift [coll] (->> coll cycle (drop 1) (take (count coll))))
+
+(defn build-cross-scene "Create scene setting color of a light while aiming it just below and in front of another."
   [move-key reference-key color]
   (fx/scene "Cross scene"
             (move/aim-effect "Cross" (javax.vecmath.Point3d. (:x (first (fixtures-named reference-key))) 0.0 0.2)
                              (fixtures-named move-key))
             (color-fx/color-effect "Cross color" color (fixtures-named move-key) :include-color-wheels? true)))
 
-(defn crossover-chase
-  "Create a sequential chase which gradually takes over all the moving heads from whatever they were doing, changes their colors, and makes
+(defn or-crossover-chase []
+ {:vars {:beats 1, :fade-fraction 0, :cross-color (color/like :orangered), :end-color (color/like :orange)}})
+(defn crossover-chase "Create a sequential chase which gradually takes over all the moving heads from whatever they were doing, changes their colors, and makes
   them cross in an interesting pattern. By default, stages of the chase advance on every beat, but you can adjust that by passing in a
   different value for with the optional keyword argument `:beats`. To add a fade between stages, pass a non-zero value (up to 1, which
   means continually fade) with `:fade-fraction`.
   The color used during the crossover stages defaults to red, but you can pass a different color object to use with `:cross-color`."
-  [& {:keys [beats fade-fraction cross-color end-color]
-      :or {beats 1 fade-fraction 0 cross-color (color/like :orangered) end-color (color/like :orange)}}]
-  (let [[beats fade-fraction] (map #(bind-keyword-param %1 Number %2) [beats fade-fraction])
-        [cross-color end-color] (map #(bind-keyword-param %1 ::colors/color %2) [beats fade-fraction] (map color/like [:orangered :orange]))
-        cross-elements (mapv #(build-cross-scene %1 %2 cross-color)
-                             [:moving-1 :moving-mini-1 :moving-mini-3 :moving-2]
-                             [:moving-mini-1 :moving-1 :moving-2 :moving-mini-3])]
+  [fixture-keys & {:keys [beats fade-fraction cross-color end-color] :as all}]
+  (let [p (param/assemble all or-crossover-chase :resolve-vars true)
+        cross-elements (map #(build-cross-scene %1 %2 (:cross-color p)) fixture-keys (shift fixture-keys))
+        fixtures (mapcat fixtures-named fixture-keys)
+        step (build-step-param :interval-ratio (:beats p) :fade-fraction (:fade-fraction p))]
     (chase "Crossover"
-              (concat (for [i (range 1 (inc (count cross-elements)))]
-                        (apply fx/scene (str "Crossover Scene " i) (take i cross-elements)))
-                      [(fx/scene "Crossover End"
-                                 (move/aim-effect "Cross End Point" (Point3d. 0.0 0.0 2.5)
-                                                  (mapcat fixtures-named [:moving :moving-mini]))
-                                 (color-fx/color-effect "Cross End color" end-color
-                                                        (mapcat fixtures-named [:moving :moving-mini])
-                                                        :include-color-wheels? true))
-                       (fx/blank)])
-              (build-step-param :interval-ratio beats :fade-fraction fade-fraction) :beyond :loop))) ;}}}
+           (concat (for [i (range 1 (inc (count cross-elements)))]
+                     (apply fx/scene (str "Crossover Scene " i) (take i cross-elements)))
+                   [(fx/scene "Crossover End"
+                              (move/aim-effect "Cross End Point" (Point3d. 0.0 0.0 2.5) fixtures)
+                              (color-fx/color-effect "Cross End color" (:end-color p) fixtures :include-color-wheels? true))
+                    (fx/blank)])
+           step :beyond :loop)))
 ;
  ;          CIRCLE CHAIN
-(defn circle-chain
-  "Create a chase that generates a series of circles on either the floor or the ceiling, causing a single head to trace out each, and passing them along from head to head.
+(defn or-circle-chain []
+ {:vars {:bars 2 :radius 1.0 :stagger 0.0}
+  :opts {:right-wall -5 :left-wall 5 :rear-wall 10 :stage-wall -2 :ceiling 4}}) ;temp, shouldnt be in hurrr
+(defn circle-chain "Create a chase that generates a series of circles on either the floor or the ceiling, causing a single head to trace out each, and passing them along from head to head.
   The number of bars taken to trace out each circle defaults to 2 and can be adjusted by passing a different value with the optional keyword argument `:bars`. The radius of each circle defaults to one
   meter, and can be adjusted with `:radius`. If you want each head to be tracing a different position in its circle, you can pass a value between zero and one with `:stagger`."
-  [fixtures ceiling? & {:keys [bars radius stagger right-wall left-wall rear-wall stage-wall ceiling] :or {bars 2 radius 1.0 stagger 0.0}}]
-  (let [[bars radius stagger] (map #(bind-keyword-param %1 Number %2) [bars radius stagger] [2 1.0 0.0])
-        snapshot (metro-snapshot (:metronome *show*))
-        [bars radius stagger] (map #(params/resolve-unless-frame-dynamic % *show* snapshot) [bars radius stagger])
-        step (build-step-param :interval :bar :interval-ratio bars)
-        phase-osc (sawtooth :interval :bar :interval-ratio bars)
-        width (- right-wall left-wall)
-        front (if ceiling? 0.5 stage-wall)  ; The blades can't reach behind the rig
-        depth (- rear-wall front)
-        y (if ceiling? ceiling 0.0)
+  [fixtures ceiling? & {:keys [bars radius stagger, right-wall left-wall rear-wall stage-wall ceiling] :as all}]
+  (let [p (param/assemble all or-circle-chain :resolve-vars true)
+        step (build-step-param :interval :bar :interval-ratio (:bars p))
+        phase-osc (sawtooth :interval :bar :interval-ratio (:bars p))
+        width (- (:right-wall p) (:left-wall p))
+        front (if ceiling? 0.5 (:stage-wall p))  ; The blades can't reach behind the rig
+        depth (- (:rear-wall p) front)
+        y (if ceiling? (:ceiling p) 0.0)
         heads (sort-by :x (move/find-moving-heads fixtures))
-        points (ref (ring-buffer (count heads)))
-        running (ref true)
-        current-step (ref nil)]
+        [points running current-step] (map ref [(ring-buffer (count heads)) true nil]) ]
     (Effect. "Circle Chain"
-             (fn [show snapshot] ;; Continue running until all circles are finished
-               (dosync (or @running (seq @points))))
+             (fn [_ _] (dosync (or @running (seq @points)))) ;; Continue running until all circles are finished
              (fn [show snapshot]
                (dosync
                 (let [now (math/round (resolve-param step show snapshot))
                       phase (lfo/evaluate phase-osc show snapshot nil)
-                      stagger (resolve-param stagger show show snapshot)
-                      head-phases (map #(* stagger %) (range))]
+                      stagger (resolve-param (:stagger p) show snapshot) ;; stagger (resolve-param stagger show show snapshot) ;ehh sloppy double thing
+                      head-phases (map #(* stagger %) (range))] ;well no need i guess since lazy but
                   (when (not= now @current-step)
                     (ref-set current-step now)
                     (if @running  ;; Either add a new circle, or just drop the oldest
-                      (alter points conj (Point3d. (+ left-wall (rand width)) y (+ front (rand depth))))
+                      (alter points conj (Point3d. (+ (:left-wall p) (rand width)) y (+ front (rand depth))))
                       (alter points pop)))
                   (map (fn [head point head-phase]
-                         (let [radius (resolve-param radius show snapshot head)
+                         (let [radius (resolve-param (:radius p) show snapshot head)
                                theta (* 2.0 Math/PI (+ phase head-phase))
                                head-point (Point3d. (+ (.x point) (* radius (Math/cos theta)))
                                                     (.y point)
                                                     (+ (.z point) (* radius (Math/sin theta))))]
                            (fx/build-head-parameter-assigner :aim head head-point show snapshot)))
                        heads @points head-phases))))
-             (fn [show snapshot] ;; Stop making new circles, and shut down once all exiting ones have ended.
-                 (dosync (ref-set running false))))))
+             (fn [_ _] (dosync (ref-set running false)))))) ;; Stop making new circles, and shut down once all exiting ones have ended.
 
 
 ;           CHANNEL / FUNCTION effects
