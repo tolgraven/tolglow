@@ -293,18 +293,16 @@
 
 
 ;     CONFETTI
-(defn- remove-finished-flakes "Filters out any flakes that were created longer ago than the configured duration. `flakes` is a map from head to a tuple containing the step value after which the flake will end, followed by color and potentially aim information."
+(defn- clean-flakes "Filters out any flakes that were created longer ago than the configured duration. `flakes` is a map from head to a tuple containing the step value after which the flake will end, followed by color and potentially aim information."
   [flakes show snapshot step]
-  (pspy :remove-finished-flakes
-        (let [now (math/round (resolve-param step show snapshot))]
-          (reduce
-           (fn [result [where info]]
-             (let [final-step (first info)]
-               (if (<= now final-step)
-                 (assoc result where info)
-                 result)))
-           {}
-           flakes))))
+  (pspy :clean-flakes
+        (let [now (math/round (resolve-param step show snapshot))
+              result-fn (fn [result [where info]]
+                         (let [final-step (first info)]
+                          (if (<= now final-step)
+                           (assoc result where info)
+                           result)))]
+          (reduce result-fn {} flakes))))
 
 (defn- get-min-max "Get resolved, correct, positive params for making randem babbys"
  [show snapshot min-param max-param]
@@ -337,25 +335,23 @@
   :vars {:step (build-step-param) :min-add 1 :max-add 4 :min-dur 2 :max-dur 4
          :min-sat 40.0 :max-sat 80.0 :min-hue 0.0 :max-hue 360.0}
   :opts {:aim? false :min-x -5.0 :max-x 5.0 :min-y 0.0 :max-y 2.0 :min-z 0.5 :max-z 5.0}})
-;; (map (:vars (or-confetti)) [:min-sat :max-sat])
 ;; XXX tol, flakes as bounds in space instead of heads. So could map over multiple heads, change size to osc n shit
 (defn confetti "Mod confetti so can set max saturation, and limit colors to specific range or selection"
   [fixtures & {:keys [step min-add max-add min-dur max-dur min-sat max-sat min-hue max-hue
                       aim? min-x max-x min-y max-y min-z max-z] :as all}]
   {:pre [(some? *show*)]}
-  (let [[vars opts] (map #(util/ks-show-ks-defaults all %) (map (or-confetti) [:vars :opts])) ;align fallback map
-        p (merge (param/bind-vars vars) (param/auto-resolve (param/bind-vars opts)))
+  (let [p (param/assemble all or-confetti)
         heads (chan/find-rgb-heads fixtures true)
         [running current-step flakes] (map ref [true nil {}]) ; A map from head to [creation-step color] for active flakes
         active-fn (fn [show snapshot] ;; Continue running until all existing flakes fade
                    (dosync
-                    (alter flakes remove-finished-flakes show snapshot (param/auto-resolve (:step p)))
+                    (alter flakes clean-flakes show snapshot (param/auto-resolve (:step p)))
                     (or @running (seq @flakes))))
         gen-fn (fn [show snapshot]
                   (pspy :confetti ;; See how many flakes to create (unless we've been asked to end).
                         (dosync
                          (when @running
-                          (let [now (math/round (param/auto-resolve (:step p) show snapshot))]
+                          (let [now (math/round (param/auto-resolve (:step p) :show show :snapshot snapshot))] ;; (let [now (math/round (param/auto-resolve (:step p) show snapshot))] ;<-- wrong callll
                            (when (not= now @current-step)
                             (ref-set current-step now)
                             (let [p (update p :min-add #(max 0 (math/round (resolve-param % show snapshot))))
