@@ -106,10 +106,13 @@
     (reduce f {} p-or-m)))))
 
 (defn assemble "Assemble params from map of arguments sent to Effect. creator from those passed, and defaults, bound to keywords ready for cue-var. Also resolves non-dynamic params. Returns pm (param-map) for usage in function"
- [args arg-spec] ;XXX make compat diff lengths args/arg-spec? like could have a fallback with lots of stuff used for multiple things
+ [args arg-spec & {:keys [resolve-vars] :or {resolve-vars false}}] ;XXX make compat diff lengths args/arg-spec? like could have a fallback with lots of stuff used for multiple things
  (let [[vars opts] (map #(util/ks-show-ks-defaults args %)
                         (map (arg-spec) [:vars :opts]))] ;align fallback map
-  (merge (auto-resolve (bind-vars vars) :dynamic false) ; (bind-vars vars)
+  (merge (let [vars (bind-vars vars)]
+          (if resolve-vars
+           (auto-resolve vars :dynamic false)
+           vars)) ;theoretically should work fine as avoids preemptively resolving what shouldnt. but dunno
          (auto-resolve (bind-vars opts)))
   #_OR
   ;; (apply merge (map #(auto-resolve (bind-vars %1) :dynamic %2) [vars opts] [false true]))
