@@ -449,38 +449,34 @@
 )
 
 
-
 ;  METRONOME EFFECT
 (defn or-metronome-effect []
- {:vars {:down-color (color/like :red) :other-color (color/like :yellow)}
+ {:vars {:down-color (color/like :red) :other-color (color/like :purple)}
   :opts {:metronome (:metronome *show*)}})
-
 (defn metronome-effect "Flashes the supplied fixtures to the beats of the show metronome, emphasizing the down beat, and colored by `:down-color` /
  `:other-color` optional keyword arguments. If desired, a Metronome other than the default show one kan be used."
  [fixtures & {:keys [down-color other-color metronome] :as all}]
  {:pre [(some? *show*)]}
- (let [[vars opts] (map #(util/ks-show-ks-defaults all %) (map (or-metronome-effect) [:vars :opts])) ;align fallback map
-       p (param/bind-vars (concat vars opts))]
-   (let [heads (chan/find-rgb-heads fixtures)
-         [running local-snapshot] (map atom [true nil]) ; Need to set up a snapshot at start of each run for all assigners
-         metronome (param/auto-resolve (:metronome p))
-         snapshot (metro-snapshot metronome) ;; Need to use the show metronome as a snapshot to resolve our metronome parameter first
-         [down-color other-color] (map #(params/resolve-unless-frame-dynamic % *show* snapshot) (map p [:down-color :other-color]))
-         f (fn [show snapshot target was]
-             (pspy :metronome-effect
-                   (let [raw-intensity (* 2 (- (/ 1 2) (snapshot-beat-phase @local-snapshot 1)))
-                         intensity (if (neg? raw-intensity) 0 raw-intensity)
-                         base-color (if (snapshot-down-beat? @local-snapshot)
-                                      (resolve-param down-color show @local-snapshot)
-                                      (resolve-param other-color show @local-snapshot))]
-                     (color/create (color/h base-color) (color/s base-color) (* (color/l base-color) intensity)))))
-         assigners (fx/build-head-assigners :color heads f)]
-     (Effect. "Metronome"
-              (fn [show snapshot]  ;; Continue running until the end of a measure Also need to set up the local snapshot based on our private metronome for the assigners to use.
-                (reset! local-snapshot (metro-snapshot metronome))
-                (or @running (< (snapshot-bar-phase @local-snapshot) 0.9)))
-              (fn [show snapshot] assigners)
-              (fn [snow snapshot] (reset! running false))))))  ;; Arrange to shut down at the end of a measure
+  (let [p (param/assemble all or-metronome-effect)
+        heads (chan/find-rgb-heads fixtures)
+        [running local-snapshot] (map atom [true nil]) ; Need to set up a snapshot at start of each run for all assigners
+        snapshot (metro-snapshot (:metronome p)) ;; Need to use the show metronome as a snapshot to resolve our metronome parameter first
+        [down-color other-color] (map #(params/resolve-unless-frame-dynamic % *show* snapshot) (map p [:down-color :other-color]))
+        f (fn [show snapshot target was]
+           (pspy :metronome-effect
+                 (let [raw-intensity (* 2 (- (/ 1 2) (snapshot-beat-phase @local-snapshot 1)))
+                       intensity (if (neg? raw-intensity) 0 raw-intensity)
+                       base-color (if (snapshot-down-beat? @local-snapshot)
+                                   (resolve-param down-color show @local-snapshot)
+                                   (resolve-param other-color show @local-snapshot))]
+                  (color/create (color/h base-color) (color/s base-color) (* (color/l base-color) intensity)))))
+        assigners (fx/build-head-assigners :color heads f)]
+   (Effect. "Metronome"
+            (fn [show snapshot]  ;; Continue running until the end of a measure Also need to set up the local snapshot based on our private metronome for the assigners to use.
+             (reset! local-snapshot (metro-snapshot (:metronome p)))
+             (or @running (< (snapshot-bar-phase @local-snapshot) 0.9)))
+            (fn [_ _] assigners)
+            (fn [_ _] (reset! running false)))))  ;; Arrange to shut down at the end of a measure
 
 
 ;           DIMMER SWEEP
