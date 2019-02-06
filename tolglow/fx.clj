@@ -221,9 +221,10 @@
                                   fraction)]
                        (dimmer/dimmer-effect level [fixture])))))))
 
+;      BLOOMS
 (defn or-bloom []
- {:vars {:color (color/create :white), :fraction 0, :width 1
-         :halo 0.1  ;part, as fraction of width, where bloom has ended but some bleeds through/fades out
+ {:vars {:color (color/create :white), :fraction 0, :width 0.5
+         :halo 0.2  ;part, as fraction of width, where bloom has ended but some bleeds through/fades out
          :keyhole? false, :keyhole-opacity 0.8 ; allow some through even outside keyhole
          :hue-mod 0 :lightness-mod 0 :saturation-mod 0}
  :opts {:measure (tf/build-distance-measure 0 0 0 :ignore-z true) ;; :keyhole-target "lightness"; adjustable destination (curr simply black outside bounds, should rather mod was)
@@ -237,7 +238,7 @@
 (defn bloom "yo" ;FIXME: doesnt handle fixtures spanning across 0?
  [fixtures & {:keys [measure color fraction width halo keyhole? keyhole-opacity keyhole-target
                      hue-mod lightness-mod saturation-mod] :as all}] ;XXX move to [vars]
- (let [p (param/assemble all or-bloom)
+ (let [p (param/assemble all or-bloom :resolve-vars true)
        heads (chan/find-rgb-heads fixtures)
        furthest (tf/max-distance (:measure p) heads)
        fx (fn [show snap head was]
@@ -249,11 +250,9 @@
                                           (flatten (map #(when (not= 0 %2) [%1 %2])
                                                         [:adjust-hue :adjust-saturation :adjust-lightness]
                                                         [h s l]))))) ;; XXX per-head virtual dimmer (not the same as lightness) (how not the same?)
-                 ;; [<bound bound>] (map #(->> (/ (:width r) 2)
-                 ;;                            (% (:fraction r)))
                  [<bound bound>] (map #(% (:fraction r) (/ (:width r) 2)) [- +])
                  [<halo halo>] (map #(%1 %2 (* (:halo r) (:width r))) [- +] [<bound bound>])
-                 bounded (fn [point near far] (<= near point far))
+                 ;; bounded (fn [point near far] (<= near point far))
                  bounds (map #(% (:fraction r) (/ (:width r) 2)) [- +])
                  halos (for [[b op] [bounds [- +]]] (op b (* (:halo r) (:width r))))]
              (if (<= <bound distance bound>) ;within bounds = bloom color normal, was color (modded) keyhole
@@ -275,6 +274,8 @@
 ;;          (for [[head [_ _ point]] @flakes]
 ;;            (when (seq (move/find-moving-heads [head]))
 ;;              (fx/build-head-assigner :aim head (fn [_ _ _ _] point))))))
+;;
+;; XXX also todo: mod or clone bloom to only affect dimmers (a la sweep), not put color...
 
 
 ;     CONFETTI
