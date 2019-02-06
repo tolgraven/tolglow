@@ -141,69 +141,54 @@
 ;;  [])
 
 ;      SPARKLE
-(defn- remove-finished-sparkles "Filters out any sparkles that were created longer ago than the fade time. `sparkles` is a map from head to the timestamp at which the sparkle was created."
+(defn- clean-sparkles "Filters out any sparkles that were created longer ago than the fade time. `sparkles` is a map from head to the timestamp at which the sparkle was created."
   [sparkles show snapshot fade-time]
-  (pspy :remove-finished-sparkles
+  (pspy :clean-sparkles
         (let [now (:instant snapshot)
-              fade-time (resolve-param fade-time show snapshot)]
-          (reduce
-           (fn [result [where creation-time]]
-             (if (< (- now creation-time) fade-time)
-               (assoc result where creation-time)
-               result))
-           {}
-           sparkles))))
+              fade-time (resolve-param fade-time show snapshot)
+              updater (fn [result [where creation-time]]
+                       (if (< (- now creation-time) fade-time)
+                        (assoc result where creation-time)
+                        result))]
+          (reduce updater {} sparkles))))
 
 (defn or-sparkle []
  {:vars {:color (color/like :white), :chance 0.001, :fade-time 500}})
-;; brunch's todo: add off-beat-penalty that slopes the chance downwards as the beat passes,
-;; same for off-bar-penalty, so can prioritize beats and bars, perhaps pass an oscillator
-;; so they can be scaled in time too. Eventually allow randomization of fade time and perhaps
-;; hue and peak brightness, with control over how much they vary?
-;; joe's take: eh just do that in the actual cue or even further down (live/max)
-;; but do sort larger sparkles, and vary intensity for new ones, + work with lightness...
+;; joe's take: eh just do brunch's ideas in actual cue or even further down (live/max)
+;; but DO sort larger sparkles, and vary intensity for new ones, + work with lightness...
 (defn sparkle "A random sparkling effect like a particle generator over the supplied fixture heads.
   As each frame of DMX values generated, each participating fixture head has a chance of being assigned a sparkle (this chance is
   controlled by the optional keyword parameter `:chance`). Once a sparkle has been created, it will fade out over the number of
   milliseconds specified by the optional keyword parameter `:fade-time`. The initial color of each sparkle can be changed with
   the optional keyword parameter `:color`. All parameters may be dynamic, including show variables with the standard shorthand of
   passing the variable name as a keyword."
-  [fixtures & {:keys [color chance fade-time] :as arg-spec}] ; :or {color (color/create :white) chance 0.001 fade-time 500}}]
+  [fixtures & {:keys [color chance fade-time] :as all}] ; :or {color (color/create :white) chance 0.001 fade-time 500}}]
   {:pre [(some? *show*)]}
-  (let [color (bind-keyword-param color ::colors/color (color/create :white))
-        chance (bind-keyword-param chance Number 0.001)
-        fade-time (bind-keyword-param fade-time Number 500)]
-    (let [heads (chan/find-rgb-heads fixtures)
-          running (atom true)
-          sparkles (atom {})  ; A map from head to creation timestamp for active sparkles
-          snapshot (metro-snapshot (:metronome *show*))
-          [color chance fade-time] (map #(params/resolve-unless-frame-dynamic % *show* snapshot) [color chance fade-time])] ;; TODO: These should be per-head in case they are spatial.
-      (Effect. "Sparkle"
-              (fn [show snapshot]
-                (swap! sparkles remove-finished-sparkles show snapshot fade-time) ;; Continue running until all existing sparkles fade
-                (or @running (seq @sparkles)))
-              (fn [show snapshot]
-                (pspy :sparkle
-                      (when @running ;; See if we create any new sparkles (unless we've been asked to end).
-                        (doseq [head heads]
-                          (let [chance (resolve-param chance show snapshot head)]
-                            (when (< (rand) (/ chance 10)) ; also hype likelihood that next head will also sparkle?
-                              (swap! sparkles assoc head (:instant snapshot))))))
-                      (let [now (:instant snapshot)]
-                        (for [[head creation-time] @sparkles] ;; Build assigners for all active sparkles.
-                          (let [color (resolve-param color show snapshot head)
-                                fade-time (max 10 (resolve-param fade-time show snapshot head))
-                                fraction (/ (- now creation-time) fade-time)
-                                colormod (->> color
-                                              (color/h (- (rand 70) 35))
-                                              (color/l (* fraction (color/l color))))]
-                            (fx/build-head-assigner
-                             :color head
-                             (fn [show snapshot target was] ;; can get black/darker sparkles by changing merge mode from htp
-                               (color-fx/fade-colors colormod was fraction
-                                                     show snapshot target))))))))
-              (fn [show snapshot]
-                (reset! running false)))))) ;; Arrange to shut down once all existing sparkles fade out.
+  (let [p (param/assemble all or-sparkle :resolve-vars true)
+        heads (chan/find-rgb-heads fixtures) ;; TODO: shit should be per-head in case stuff spatial
+        [running sparkles] (map atom [true {}]) ; whether active, and a map from head to creation timestamp for active sparkles
+        active-fn (fn [show snapshot]
+                  (swap! sparkles clean-sparkles show snapshot (:fade-time p)) ;; Continue running until all existing sparkles fade
+                  (or @running (seq @sparkles)))
+        gen-fn (fn [show snapshot]
+                  (pspy :sparkle
+                        (when @running ;; See if we create any new sparkles (unless ending)
+                         (doseq [head heads] ;XXX either make sure to utilize per-head chance, or resolve just once...
+                          (when (< (rand) (* 0.1 (resolve-param (:chance p) show snapshot head))) ; also hype likelihood that next head will also sparkle?
+                           (swap! sparkles assoc head (:instant snapshot)))))
+                        (let [now (:instant snapshot)]
+                         (for [[head creation-time] @sparkles] ;; Build assigners for all active sparkles.
+                          (let [r (param/auto-resolve p :show show :snapshot snapshot :head head) ;XXX either make sure to utilize spatial color and fade, or resolve just once...
+                                fraction (/ (- now creation-time) (max 10 (:fade-time r)))
+                                colormod (->> (:color r)
+                                              (color/h (- (rand 70) 35)) ;XXX dont vary every fucking update...
+                                              (color/l (* fraction (color/l (:color r)))))]
+                           (fx/build-head-assigner
+                            :color head
+                            (fn [show snapshot target was] ;; can get black/darker sparkles by changing merge mode from htp
+                             (color-fx/fade-colors colormod was fraction show snapshot target))))))))
+        end-fn (fn [_ _] (reset! running false))]
+    (Effect. "Sparkle" active-fn gen-fn end-fn))) ;; Arrange to shut down once all existing sparkles fade out.
 
 ;      BLOOMS
 (defn bloom-dimmer "Bloom that doesn't set a color, only affecting dimmer"
