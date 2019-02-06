@@ -421,7 +421,8 @@
 ;  PINSTRIPE
 (defn- gather-stripes "Gathers heads into the groups that will be assigned particular colors by the pinstripes effect."
   [heads group-fn num-colors]
-  (let [head-groups (partition-all num-colors (sort-by #(:x (first %)) (vals (group-by group-fn (sort-by :x heads)))))
+  (let [head-groups (partition-all num-colors (sort-by #(:x (first %))
+                                                       (vals (group-by group-fn (sort-by :x heads)))))
         stripe-groups (for [i (range num-colors)] [])]
     (loop [remaining head-groups, result stripe-groups]
       (let [[current remaining] (map #(% remaining) [first rest])
@@ -430,8 +431,6 @@
           result
           (recur remaining result))))))
 
-(def or-pinstripe-colors "The set of colors that will be used by a pinstripe effect if no `:colors` parameter is supplied."
-  [(color/like :royalblue) (color/like :orangered4)])
 (defn or-pinstripes "Default map for [[pinstripes]]" []
  {:vars {:colors [(color/like :royalblue) (color/like :orangered4)], :step (build-step-param)}
   :opts {:tolerance 0}})
@@ -450,15 +449,12 @@
   spatial parameters. The colors can be, however, so for example saturations can vary over the rig."
   [fixtures & {:keys [step tolerance colors] :as all}]
   {:pre [(some? *show*)]}
-  (let [[vars opts] (map #(util/ks-show-ks-defaults all %) (map (or-pinstripes) [:vars :opts])) ;align fallback map
-        p (merge (param/bind-vars vars) (param/auto-resolve (param/bind-vars opts)))
-  ;;       colors (bind-keyword-param colors java.util.List or-pinstripe-colors)]
+  (let [p (param/assemble all or-pinstripes)
         heads (chan/find-rgb-heads fixtures)
-        colors (map #(param/bind-default :color %) (param/auto-resolve (:colors p)))
         group-fn (if (< (:tolerance p) 0.00001) :x #(math/round (/ (:x %) (:tolerance p))))
-        stripes (gather-stripes heads group-fn (count colors))
+        stripes (gather-stripes heads group-fn (count (:colors p)))
         chases (map (fn [i stripe-heads]
-                     (let [effects (map #(color-fx/color-effect "pin color" % stripe-heads) colors)
+                     (let [effects (map #(color-fx/color-effect "pin color" % stripe-heads) (:colors p))
                            pin-step (build-param-formula Number #(- % i) (:step p))]
                       (chase "Pinstripe" effects pin-step :beyond :loop)))
                     (range) stripes)]
