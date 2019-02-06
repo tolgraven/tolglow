@@ -229,22 +229,41 @@
           :held held?
           :end-keys (if end-rest? end-keys)))))
 
-#_(defn sparkle "build cue for sparkle effect"
- [group x y color & {:keys [param-target param-type priority end-rest?]
+(defn sparkle "build cue for sparkle effect"
+ [group x y color & {:keys [param-target param-type priority custom-measure end-rest?]
                      :or {param-target "chance", param-type "sine", priority 20, end-rest? false}}]
   (let [[fx-key fixtures fx-name end-keys] (group-parts group "sparkle" "sparkle" :end-rest? end-rest?) ; = makes not end-rest by default
         color (color/create color)
-        variables (vars/auto :chance :fade-time (vars/cue-map ["color" color])) ;XXX allow put lfo if wish...
+        variables (vars/auto :chance :fade-time (vars/cue-map ["color" color]) :alpha) ;XXX allow put lfo if wish...
         ;; visualizer (fn [vm show] (lfo-viz vm show param-type 1.0))
-        f #(apply-vm % tolfx/sparkle fixtures)
+        f #(tolfx/effect (apply-vm % tolfx/sparkle fixtures) (param/fraction % :alpha))
         #_f #_(fn [vm]
              (let [chance (or chance-param chance #_(param/auto-vm vm param-type))]
               (apply-vm vm tolfx/sparkle fixtures :fraction fraction :measure measure)))]
    (set-cue! x y
       (cue fx-key f
            :variables variables, ;:visualizer visualizer
+           ;:color-fn (color-fn-from-cue-var (:color variables) #_color)
            :short-name fx-name, :priority priority, :color color
            :end-keys end-keys))))
+
+(defn confetti "cue for confetti effect"
+ [group x y color & {:keys [priority end-rest?] :or {priority 10, end-rest? false}}]
+ (let [[fx-key fixtures fx-name end-keys] (group-parts group "confetti" "confetti" :end-rest? end-rest?)
+       f (fn [vm]
+          (tolfx/effect (apply-vm vm tolfx/confetti fixtures :step (param/step vm) :aim? true)
+                            (param/fraction vm :alpha)))
+       variables (vars/auto :beats :cycles
+                            (map #(vars/cue-map [%1 %2 %3 %4])
+                                 (for [t ["add" "dur" "sat" "hue"] a ["min" "max"]]
+                                   (str a "-" t)) [1 4 1 4 30 70 210 260]
+                                 [1 1 1 1 0 0 0 0] [4 8 16 16 100 100 360 360])
+                            :alpha)]
+  (set-cue! x y
+     (cue fx-key f
+          :variables variables
+          :short-name fx-name
+          :color color, :priority priority, :end-keys end-keys))))
 
 
 (defn bloom "build cue for bloom effect"
@@ -265,8 +284,7 @@
                             (param/fraction vm :alpha))))]
    (set-cue! x y
       (cue fx-key f
-           :variables variables
-           :visualizer visualizer
+           :variables variables, :visualizer visualizer
            :short-name fx-name, :priority priority, :color color
            :end-keys end-keys))))
 
@@ -297,7 +315,23 @@
 
 (defn pinstripe "Pinstripe cues, try turn into more generic n-color base..."
  [group x y colors & {:keys [tolerance?]}]
- (let [[fx-key fixtures fx-name end-keys] (group-parts group "pinstripe" "pinstripe")]
+ (let [[fx-key fixtures fx-name end-keys] (group-parts group "pinstripe" "pinstripe")
+       fx-fn (fn [vm]
+                 (let [colors (map #((keyword (str "color-" %)) vm) (range 1 (inc (count colors))))]
+                  (tolfx/effect (fun/pinstripes fixtures :step (param/step vm) :colors colors)
+                                (param/fraction vm :alpha))))
+       variables (vars/auto :beats :cycles
+                            (apply vars/colors (or colors [:coral1 :aquamarine])) ;tho check for incoming color params hmm
+                            (vars/cue-map ["fade" 0.0 0 1])
+                            (when tolerance? (vars/cue-map ["tolerance" 0.0 0 1]))
+                            :alpha)
+       color-fn (fn [cue active show snapshot]
+                 (let [vm (:variables active)]
+                  (if (> (snapshot-bar-phase snapshot 0.5) 0.5) ;XXX fix support >2, fade, and get from var not start
+                   (color/create (colors 0)) #_(:start (colors)) #_(get-variable (:color-1 vm))
+                   (color/create (colors 1)) #_(:start color-2) #_(get-variable (:color-2 vm)))))]
+                   ;; (:color-1 vm (color/create (colors 0)) #_(:start (colors))) #_(get-variable (:color-1 vm))
+                   ;; (:color-2 vm (color/create (colors 1)) #_(:start color-2)) #_(get-variable (:color-2 vm)))))]
  (set-cue! x y
            (cue :pinstripes
                 (fn [vm]

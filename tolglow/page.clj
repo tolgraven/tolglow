@@ -150,6 +150,13 @@
   ;;                    color])))
   ;; BLOOM
 
+  ;; (cue/sparkle nil (+ xb 7) (+ yb 6) (color/like :green))
+  (cue/sparkle nil (+ xb 7) (+ yb 6) (color/like (color/s -20 (color/h 30 :purple))))
+  (cue/sparkle nil (+ xb 7) (+ yb 5) (color/like (color/s -30 (color/like :red))))
+  (cue/sparkle nil (+ xb 7) (+ yb 4) (color/like (color/l -20 (color/like :blue))))
+
+  ;; BLOOM
+  ;; XXX mixing lfos def the shit for blooms etc if nothing else...
   (cue/bloom nil (+ xb 0) (+ yb 7) (color/like :green))
   (cue/bloom nil (+ xb 0) (+ yb 6) (color/like :blue) :keyhole? true)
   (cue/bloom :tube (+ xb 0) (+ yb 5) (color/like :blue) :param-type "sawtooth")
@@ -298,60 +305,11 @@
    :priority 1999, :color :black))))
 
 
+  (cue/confetti nil (+ xb 5) (+ yb 2) :red)
 
-;CONFETTI
-   (set-cue! (+ xb 5) (+ yb 2)
-     (cue :confetti
-          (fn [vm] (apply-vm vm tolfx/confetti (all-fixtures) :step (param/step vm) :aim? true))
-          :variables (vars/auto :beats :cycles
-                                (map #(vars/cue-map [%1 %2 %3 %4])
-                                     (for [t ["add" "dur" "sat" "hue"] a ["min" "max"]]
-                                       (str a "-" t)) [1 4 1 4 30 70 210 260]
-                                     [1 1 1 1 0 0 0 0] [4 8 16 16 100 100 360 360]))
-          :color :red :priority 10))
-
-;           PINSTRIPES
-   (let [colors (vars/colors :coral1 :aquamarine)]
-    (set-cue! (+ xb 4) yb
-    (cue :pinstripes
-              (fn [vm]
-                ;; (let [colors (map vm (map keyword (map :key colors))) #_[(:color-1 vm) (:color-2 vm)]]
-                (let [colors [(:color-1 vm) (:color-2 vm)]]
-                  (tolfx/effect (fun/pinstripes (all-fixtures) :step (param/step vm) :colors colors)
-                                (param/fraction vm :alpha))))
-              :variables (vars/auto :beats :cycles
-                                    (vars/cue-maps [["fade" 0.0 0.0 1.0] ["tolerance" 0.1 0 1]])
-                                   colors :alpha)
-              ;; :color-fn (fn [cue active show snapshot]
-              ;;       (let [vm (:variables active)]
-              ;;        ;; (if (> (snapshot-bar-phase snapshot 0.5) 0.5)
-              ;;        ;;  (map :start colors))))))) ;works? apply fucks
-              ;;        (if (> (snapshot-bar-phase snapshot 0.5) 0.5)
-              ;;         (:start (colors 0)) #_(get-variable (:color-1 vm))
-              ;;         (:start (colors 1)) #_(get-variable (:color-2 vm)))))
-              )))
-
-   (set-cue! (+ xb 4) (inc yb)
-             (cue :pinstripes
-                  (fn [vm]
-                         (let [fixtures (clojure.set/difference (set (all-fixtures)) (set (fixtures-named :moving)))
-                               colors [(:color-1 vm) (:color-2 vm) (:color-3 vm)]]
-                           (fun/pinstripes fixtures :step (param/step vm) :colors colors)))
-                       :variables (vars/auto :beats :cycles
-                                            (vars/colors "indianred" "khaki" "cadetblue")
-                                            (vars/cue-map ["fade" 0.0 0 1]))
-                       :color :orange, :short-name "Pin 3"))
-
-   (set-cue! (+ xb 4) (+ 2 yb)
-             (cue :pinstripes
-                            (fn [vm]
-                              (let [fixtures (clojure.set/difference (set (all-fixtures)) (set (fixtures-named :strip)))
-                                    colors [(:color-1 vm) (:color-2 vm) (:color-3 vm) (:color-4 vm)]]
-                                (fun/pinstripes fixtures :step (param/step vm) :colors colors)))
-                            :variables (vars/auto :beats :cycles
-                                                 (vars/colors "lightpink1" "orchid2" "white" "lightsalmon1")
-                                                 (vars/cue-map ["fade" 0.0 0 1]))
-                            :color :orange :short-name "Pin 4")))))
+  (cue/pinstripe nil (+ xb 4) (+ yb 3) ["blue" "red"])
+  (cue/pinstripe nil (+ xb 4) (+ yb 4) ["indianred" "khaki" "cadetblue"])
+  (cue/pinstripe nil (+ xb 4) (+ yb 5) ["lightpink1" "orchid2" "white" "lightsalmon1"]))))
 
 
 (defn chase-fn
