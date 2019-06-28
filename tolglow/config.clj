@@ -303,7 +303,9 @@
           :force-init true #_false
           :force-cue-pages #_true false
           :auto-print-trace true} ;XXX how both catch, print, and pass to eg pst?
-  :macro {:save-file "macros.clj"}
+  :macro {:save-file "macros.clj"
+          :save-enabled true, :restore-enabled false} ;first gotta make it work hehe
+  :auto-save-cue-vars true ;implement, then create proper toggle. and reset button :P
 
   :web-server {:enabled true :port 16000}
   :nrepl {:enabled true :port 5000} ;alredy runs in lein...
@@ -341,8 +343,10 @@
                     :names [:strip-1 :tube-1]}}
     :defs patches}
   :pointing pointing-data
-:pages pages
-  :init {:components [:show :vars :set-ns] ;looks in setup.clj (and later optionally elsewhere? for fns with same name)
+  :pages pages
+  ; or like  :cues {:pages pages
+  ;                 :auto-save-vars true}
+  :init {:components [:show :vars :set-ns :set-macro-path] ;looks in setup.clj (and later optionally elsewhere? for fns with same name)
          :modules [:nrepl :web-server :controllers
                    :max-msp :fixture-patches :cue-pages
                    :osc :clock-sync :wavetick :extra-for-show

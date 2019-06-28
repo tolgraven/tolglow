@@ -121,6 +121,9 @@
 (defn set-ns []
  (reset! (at :ns) (cfg :ns :base)))
 
+(defn set-macro-path
+ [& {:keys [path] :or {path (cfg :macro :save-file)}}]
+ (reset! afterglow.web.routes.show-control/macro-record-file path))
 
 (defn wavetick "Updates var and runs some shit on incoming midi"
  []
