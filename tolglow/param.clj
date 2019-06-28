@@ -18,7 +18,7 @@
              [debug :as debug :refer [det]]
              [vars :as vars]])
   (:import afterglow.rhythm.Metronome
-           [afterglow.effects.params IParam]))
+           [afterglow.effects.params IParam Param]))
 
 
 (def types (for [m config/param-data]
@@ -515,34 +515,41 @@
  [min max]
  (math/abs (- max min)))
 
-(defn pick-new-value "Helper forrandom-params, pick new value with min difference (as fraction) from last value."
+(defn pick-new-value "Helper for random-params, pick new value with min difference (as fraction) from last value."
  [current min max min-change]
  (let [range (get-range min max)
-       min-change (clamp-number min-change 0 0.33)]
+       min-change (clamp-number min-change 0 0.33)] ;prob shouldn't be hardcoded here...
   (loop [candidate (+ min (rand range))]
    (if (or (nil? current) (>= (get-range current candidate) min-change))
      candidate
      (recur (+ min (rand range)))))))
 
 (defn or-rng "Defaults for random number generator" []
- {:vars {:min 0 :max 255 :min-change 0.1 :interval :bar :interval-ratio 1}})
-(defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX ratio + fade to new value"
- [& {:keys [min max min-change interval interval-ratio] :as args}]
+ {:vars {:min 0 :max 255 :min-change 0.1 :interval :bar, :interval-ratio 1, :fade-fraction 0.25, :fade-curve :sine}})
+(defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX fade to new value"
+ [& {:keys [min max min-change interval interval-ratio fade-fraction fade-curve] :as args}] ;to skip or not skip listing possible keys...
  {:pre [(some? *show*)]}
  (let [pm (assemble args or-rng)
-       step (build-step-param :interval (:interval pm) :interval-ratio (:interval-ratio pm))
-       [current-step last-value] (map ref [nil nil])
+       step (apply build-step-param (flatten (seq pm)))
+       [current-step last-value coming-value] (map ref (repeat nil))
        eval-fn (fn [show snapshot _]
-                (let [pm (if-not (any-dynamic? pm)
-                           pm
-                          (auto-resolve pm :show show :snapshot snapshot))
-                      now (math/round (params/resolve-param step show snapshot))]
-                 (dosync (when (not= now @current-step) ;here can test divide metro or whatever but makes more sense relying on a step param no?
-                          (ref-set current-step now)
-                          (alter last-value pick-new-value (:min pm) (:max pm) (:min-change pm)))
-                         @last-value)))
-       presolve-fn (if-not (any-dynamic? pm)
-                   (fn [_ _ _])
-                   (fn [show snapshot head]
-                    (apply rng (flatten (vec (auto-resolve pm :dynamic false :show show :snapshot snapshot))))))]
-  (params/->Param "RNG" true Number eval-fn presolve-fn)))
+                (let [pm (auto-resolve pm :show show :snapshot snapshot)
+                      now (params/resolve-param step show snapshot)]
+                 (dosync (when (not= (int now) @current-step) ;only update target when reaches new whole number
+                          (ref-set current-step (int now))
+                          (ref-set last-value (or @coming-value 0))
+                          (apply alter coming-value pick-new-value (map pm [:min :max :min-change])))
+                         (+ @last-value (* (- now @current-step) (- @coming-value @last-value)))))) ;return faded value
+       presolve-fn (fn [show snapshot head]
+                    (apply rng (flatten (seq (auto-resolve pm :dynamic false :show show :snapshot snapshot)))))]
+  (Param. "RNG" true Number eval-fn presolve-fn)))
+
+; XXX how look ahead to show graphically like an lfo? means different approach since same step
+; in a particular step-param run
+; should always resolve to same random nr. So we use what, a rolling list being filled and purged from back
+; as we go? gotta cache, but also recompute future numbers as params change... good challenge!
+
+(defn smoother "Returns a dynamic number parameter which smoothes the response of another one"
+ ;; thinking mainly for smoothed squares and stuff. how best? or put straight in an osc?
+ []
+ (let []))
