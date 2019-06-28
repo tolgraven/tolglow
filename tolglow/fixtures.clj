@@ -20,17 +20,28 @@
                        [0 nil])
                       start (shutter-strobe-map :hz hz)])]
   (apply functions kind offset args))) ;or use :strobe?
-(strobe 7 :start 10 :hz [1 10])
-(strobe 7 :open 0 :hz [1 10])
-;; (shutter-strobe-map :hz [1 10])
-;; (shutter-strobe-map)
-;; (def hz nil)
+
+(defn scaler "wrap function-value-scaler"
+ [low high]
+ (partial function-value-scaler low high))
 
 (defn color
  [color offset & {:keys [hue fine]}]
  (let [hue (when hue [:hue hue])
        fine (when fine [:fine-channel fine]) ]
   (apply chan/color offset color (into hue fine))))
+
+(defn colors
+ [mode & offsets]
+ (let [color-keys (case mode
+                   :rgb [:red :green :blue] ;XXX add BRG etc
+                   :rgbw [:red :green :blue :white])
+       offsets (flatten offsets)
+       offsets (if (= 1 (count offsets))
+                (range (first offsets)
+                       (+ (first offsets) (count color-keys)))
+                offsets)]
+  (map color color-keys offsets)))
 
 (declare pixel-strip)
 (defn strip "Easy helper wrapper for pixel-strip"
@@ -54,29 +65,31 @@
  (+ start (* index (/ (- end start) pixels))))
 
 (defn resolve-channel "Automap key to appropriate channel def" ;XXX how map to functions?
- [type offset & {:keys [args]}]
- (let [f (or (ns-resolve 'afterglow.channels (symbol (name type)))
-             (ns-resolve 'tolglow.fixtures (symbol (name type)))
-             ;; (if-let [k (some #{:red :green :blue :white :amber :cyan :magenta :yellow} [type])]
-             (if (some #{:red :green :blue :white :amber :cyan :magenta :yellow} [type])
-              ;; (println "COLOR" k offset)
-              (partial color type))
-              ;; #(name type)
-              ;; (fn [offset & args] (afterglow.channels/color offset type args))
-             #_(ns-resolve 'afterglow.channels (symbol "color"))
-             (partial fine-channel type))]
-  ;; (println f type offset)
-  ;; (println (apply f offset args))
-  (apply f offset args)))
+ [ch-key index & args]
+ (let [f (or (ns-resolve 'afterglow.channels (symbol (name ch-key)))
+             (ns-resolve 'tolglow.fixtures (symbol (name ch-key)))
+             (if (some #{:red :green :blue :white :amber :cyan :magenta :yellow} [ch-key])
+              (partial color ch-key)) ;XXX add :rgb [3 4 5] :rgbw [4 5 6 7] support...
+             (if (some #{:rgb :rgbw} [ch-key])
+              (partial colors ch-key))
+             (partial fine-channel ch-key))]
+  (apply f index args)))
 
-(defn make-channels "Create channels from ks, sequentially from offset" ;XXX lookup ks to chan/ fns. if not, use fine-channel
- [channels & offset]
- (let [offset (or (first offset) 0)]
-  (for [[ch args] channels]
-   (#_tolglow.debug/det let [args (if (coll? args) args [args]) ;ensure vec
-         i (+ offset (first args))
-         args (rest args)]
-    (resolve-channel ch i :args args)))))
+(defn merge-vec "Magically tidies up vector to one 'base' layer"
+ [& v-or-vs]
+ (apply (comp vec flatten vector) v-or-vs))
+
+(defn make-channels "Create channels from ks, sequentially from offset. Empty coll if none valid" ;XXX lookup ks to chan/ fns. if not, use fine-channel
+ [channels & global-offset] ;bit weird maybe why'd we need a global global-offset like this?
+ (let [global-offset (or (first global-offset) 0)]
+  (merge-vec
+   (for [[ch args] channels]
+   (#_tolglow.debug/det
+    let [args (if (coll? args) args [args]) ;ensure vec
+           ;; [i & args] args]
+           i (+ global-offset (first args))
+           args (rest args)]
+    (apply resolve-channel ch i args)))))) ;needed apply here since resolve got rest arg
 
 ; XXX make helpers and turn everything proper abstracted. xyz-bounds (vec? map?) and geometry (function) optional
 (defn pixel-strip "one strip as one head per pixel, supports RGB or RGBW."
@@ -96,32 +109,30 @@
              (color-head c mode x y z)))}))
 
 
-;; (defn capture-camera "Capture viewport control" []
-;;  {:name "Capture viewport"
-;;   :channels [(fine-channel :x 1 :fine-offset 2)
-;;              (fine-channel :y 3 :fine-offset 4)
-;;              (fine-channel :z 5 :fine-offset 6)
-;;              (pan 7 8)
-;;              (tilt 9 10)
-;;              (fine-channel :pitch 11 :fine-offset 12)
-;;              (functions :ambient 14)
-;;              (functions :lighting 15)
-;;              (functions :atmosphere 16)
-;;              (functions :layers 17) ;A total of 64 slots each occupying 4 DMX steps, ie. 0-3, 4-7, 8-11 and so on.
-;;              (functions :scene 18)]}) ;see below
+;; ; pixel heads should be relative and mapped onto actual xyz shit only at patch-time
+;;anything like that in brunch code with heads?
+(defn strip-from-data "temp strip fixture map creator"
+ [data]
+ (let [subpixels (case (:mode data) :rgb 3 :rgbw 4)
+       channels (make-channels (:channels data))]
+  (merge {:name (:name data "Unknown Strip")
+          :head-offsets "maybe use :pixels and density?"}
+          (when (:channels data) channels)))) ;etc
 
-;; (defn random-wash []
-;;  {:name "bs"
-;;   :channels (make-channels
-;;              {:dimmer 1 :red 2 :green 3 :blue 4 :amber [5 :hue 45]
-;;              :strobe 6 :bs 7 :bs2 8 :bs3 9 :bs4 10})})
+(defn patch-strip! ;will have to wrap reg patcher to add :heads?
+ [data & {:keys [x y z] :or {x [0 0] y [0 0] z [0 0]}}]
+ (let [subpixels (case (:mode data) :rgb 3 :rgbw 4)
+       channels (make-channels (:channels data))
+       [x-base y-base z-base] (map #(/ (apply + %) 2) [x y z])]
+  (merge {:name (:name data "Unknown Strip")
+          :x x-base, :y y-base, :z z-base
+          :heads (for [i (range (:pixels data))]
+                  (let [[x y z] (map #(apply pos-for-head (:pixels data) i %) [x y z])
+                        c (+ (inc (count channels)) (* i subpixels))] ;; offset for fn channels
+                   (color-head c (:mode data) x y z)))}
+         (when (:channels data) {:channels channels}))))
 
-
-(defn af-250-fogger "Stairville AF-250 1300 W DMX Fogger" []
-  {:name "Fogger"
-   :channels [(functions :fog 1 0 nil 1 {:type :fog :label "Fog (Min->Max)" :range :variable})]})
-
-
+;; parser like [x y] -> *-center *-half-circle...
 (defn create "Generic fixture map creator"
  [data]
  (let [[pan-center pan-half-circle] (-> data :calibration :pan)
