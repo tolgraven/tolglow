@@ -43,78 +43,120 @@
           :opc
           {:name "Fadecandy/OPC RGB" :mode :rgb}}
 
-  :moving {:rgbw-36
-           {:name "RGBW 108/36 moving head"
-            :channels
-            {:pan [1 13] :tilt [2 14] :movement-speed 3
-             :dimmer 4 :red 5 :green 6 :blue 7 :white 8 ;; :rgbw [5 6 7 8] ;XXX impl support
-             :strobe [9 :start 10 :hz [1.0 30.0]]
-             :focus 10 :auto 11 :speed 12}
-            :calibration {:pan [127 85] :tilt [35 188]} ;-center, -half-circle
-            :size 3.14 ;XXX do, one of diameter or length/height?
-            :strength 360 ;XXX watts, lm, approximation?
-            :beam 15} ;XXX angle
+   :moving {:rgbw-36-moving
+            {:name "RGBW 108/36 moving head"
+             :channels
+             {:pan [1 13] :tilt [2 14] :movement-speed 3 ;should take a :function-name too
+              :dimmer 4  :red 5 :green 6 :blue 7 :white 8
+              ;; :dimmer 4 :rgbw [5 6 7 8]
+              :strobe [9 :start 10 :hz [1.0 30.0]]
+              :focus 10 :auto 11 :speed 12}
+             :calibration {:pan [127 85] :tilt [35 188]} ;-center, -half-circle
+             :size 3.14 ;XXX do, one of diameter or length/height?
+             :strength 360 ;XXX watts, lm, approximation?
+             :beam 15} ;XXX angle
 
-           :rgbw-7-12-moving
-           {:name "LED MOVING HEAD 7x12W"
-            :channels
-            {:pan [1 2] :tilt [3 4] :movement-speed 5
-             :dimmer 6 :strobe [7 :start 10]
-             :auto 8 :speed 9
-             :red 10 :green 11 :blue 12 :white 13
-             :reset 14}
-            :calibration {:pan [127 85] :tilt [0 256]}} ;fix so can fancy map here as well, eg reset offset 255...
+            :rgbw-7-12-moving
+            {:name "LED MOVING HEAD 7x12W"
+             :channels
+             {:pan [1 2] :tilt [3 4] :movement-speed 5
+              :dimmer 6 :strobe [7 :start 10 :hz [1 10]]
+              :auto 8 :speed 9
+              :red 10 :green 11 :blue 12 :white 13
+              ;; :rgbw 10
+              :reset 14} ;14 255...
+             ;; :calibration {:pan [221 60] :tilt [0 256]}} ;fix so can fancy map here as well, eg reset offset 255...
+             :calibration {:pan [127 85] :tilt [0 256]}} ;only 180 deg. fix so can fancy map here as well, eg reset offset 255...
 
-           :rgbw-12-12-moving
-           {:name "HY12x12 MOVING HEAD BEAM"
-            :channels
-            {:pan [1 14] :tilt [2 15] :movement-speed 9
-             :dimmer 3 :red 4 :green 5 :blue 6 :white 7
-             :strobe [8 :start 10]
-             :auto 10 :speed 11 :control 12 :sound-sensitivity 13 :reset 16} ;16 150
-            :calibration {:pan [102 73] :tilt [0 256]}}
+            :rgbw-12-12-moving
+            {:name "HY12x12 MOVING HEAD BEAM"
+             :channels
+             {:pan [1 14] :tilt [2 15] :movement-speed 9
+              :dimmer 3 :red 4 :green 5 :blue 6 :white 7
+              ;; :dimmer 3 :rgbw [4 5 6 7]
+              :strobe [8 :start 10]
+              :auto 10 :speed 11 :control 12 :sound-sensitivity 13 :reset 16} ;ch16 val150 actually
+             :calibration {:pan [102 73] :tilt [0 256]}}
 
-           :robe-1200
-           {:name "Robe 1200"
-            :channels
-            {:pan [1 2] :tilt [3 4] :movement-speed 5
-             :bs 6 :color-wheel 7 :color-wheel-2 8
-             ;; :cyan [9 :hue 180] :magenta [10 :hue 300] :yellow [11 :hue 55]
-             :blue 9 :red 10 :green 11 ;temp, dunno why no work above?
-             :color-filter 12 :effect-speed 13 :fresnels 14
-             :zoom 15 :strobe [16 :open 50 :start 64]
-             :dimmer 17}
-            :calibration {:pan [127 85] :tilt [35 188]} ;guessing
-            }}
+            ;; :rgbw-60-moving-beam
+            ;; {:name "60w Beam MOVING HEAD LIGHT"
+            ;;  :channels
+            ;;  {:pan [1 2] :tilt [3 4] :movement-speed 5
+            ;;   :dimmer 6 :strobe [7 ] ;here needs better shutter-builder...
+            ;;   }}
 
-  :wash {:random-wash
-         {:name "bs"
-          :channels {:dimmer 1 :red 2 :green 3 :blue 4 :amber [5 :hue 45]
-                     :strobe 6 :bs 7 :bs2 8 :bs3 9 :bs4 10}}
-         :rgb-washy
-         {:name "uganda"
-          :channels {:dimmer 1 :red 2 :green 3 :blue 4 :strobe 5}}
-         :rgbw-mini
-         {:name "Tiny RGBW split like"
-          :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :auto 6 :strobe 7}}}
+            :robe-1200
+            {:name "Robe 1200"
+             :channels
+             {:pan [1 2] :tilt [3 4] :movement-speed 5
+              :bs 6 :color-wheel 7 :color-wheel-2 8
+              ;; :cyan [9 :hue 180] :magenta [10 :hue 300] :yellow [11 :hue 55]
+              :blue 9 :red 10 :green 11 ;temp, dunno why no work above?
+              :color-filter 12 :effect-speed 13 :fresnels 14
+              :zoom 15 :strobe [16 :open 50 :start 64]
+              :dimmer 17}
+             :calibration {:pan [127 85] :tilt [35 188]} ;guessing
+             }}
 
-  :other {:capture-camera
-          {:name "Capture viewport"
-           :channels {:x [1 2] :y [3 4] :z {5 6}
-                      :pan [7 8] :tilt [9 10] :pitch [11 12]
-                      :ambient 14 :lighting 15 :atmosphere 16
-                      :layers 17 :scene 18}};layers: total of 64 slots each occupying 4 DMX steps, ie. 0-3, 4-7, 8-11 and so on.
-          :processing-camera
-          {:name "Processing viewport"
-           :channels {:x [1 2] :y [3 4] :z {5 6}
-                      :pan [7 8] :tilt [9 10] :pitch [11 12]}}
-          :processing-color-1
-          {:name "Processing dominant color"
-           :channels {:red 1 :green 2 :blue 3}}
+   :wash {:rgb-54-3-par {:name "54 LED RGB PAR"
+           :channels {:dimmer 1 :rgb 2 :strobe [5 :start 10 :hz [0.2 10]] :control 6 :speed 7}}
 
-          :milight
-          {:name "Milight RGB +W"
-           :channels {:color-wheel-hue 1, :dimmer 2, :white 3}}}})
+          :rgbw-7-12-par {:name "LED RGBW Par Light"
+           :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 10 :hz [0.5 10]] :control 7 :speed 8}}
+
+          :rgbw-18-12-par {:name "18x12 RGBW, 200+ W"
+           :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 10 #_:hz #_[0.5 10]] :control 7}}
+
+          :rgbwauv-5-18-par {:name "5x18 RGBWA+UV, ? W"
+           :channels {:dimmer 1 :rgbw 2 :amber [6 :hue 45] :uv [7 :hue 270]
+                      :strobe [8 :start 10 #_:hz #_[0.5 10]] :control 9 :speed 10}}
+
+          :wa-100-cob-par {:name "100Watt W/A LED COB PAR Light"
+           :channels {:dimmer 1 :white 2 :amber [3 :hue 40] :strobe [4 :start 10 :hz [0.45 10]]}}
+
+          :adj-pro-led-tol {:name "ADJ 64B LED PRO"
+                            :channels {:rgb 1 :color-macros 4 :strobe [5 :start 16 :hz [1.12 32]]
+                                       :speed 6}}
+          :rgbw-mirror {:name "RGBW churchy window thing"
+           :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 16 :hz [0.2 10]]
+                      :movement-speed 7}}
+
+
+          :random-wash {:name "bs"
+           :channels {:dimmer 1 :rgb 2 :amber [5 :hue 45] :strobe 6 :bs 7 :bs2 8 :bs3 9 :bs4 10}}
+          :rgb-washy {:name "uganda"
+           :channels {:dimmer 1 :rgb 2 :strobe 5}}
+          :rgbw-mini {:name "Tiny RGBW split like"
+           :channels {:dimmer 1 :rgbw 2 :auto 6 :strobe 7}}
+          :rgb-wash-pos {:name "RGB POS wash"
+           :channels {:dimmer 1 :rgb 2 :strobe 5 :maybe 6 :mybe 7 :mbe 8 :me 9 :muybe 10}}
+          :hollywood-par {:name "Hollywood PAR"
+           :channels {:dimmer 1 :strobe 2 :auto 3 :whatever 4 :rgb 5}}}
+
+   :other {:capture-camera
+           {:name "Capture viewport"
+            :channels {:x [1 2] :y [3 4] :z {5 6}
+                       :pan [7 8] :tilt [9 10] :pitch [11 12]
+                       :ambient 14 :lighting 15 :atmosphere 16
+                       :layers 17 :scene 18}};layers: total of 64 slots each occupying 4 DMX steps, ie. 0-3, 4-7, 8-11 and so on.
+           :processing-camera
+           {:name "Processing viewport"
+            :channels {:x [1 2] :y [3 4] :z {5 6}
+                       :pan [7 8] :tilt [9 10] :pitch [11 12]}}
+           :processing-color-1
+           {:name "Processing dominant color"
+            ;; :channels {:red 1 :green 2 :blue 3}}
+            :channels {:rgb 1}}
+
+           :milight
+           {:name "Milight RGB +W"
+            :channels {:color-wheel-hue 1, :dimmer 2, :white 3}}
+           :milight-new
+           {:name "Milight RGBW"
+            :channels {:color-wheel-hue 1, :dimmer 2, :white 3, :amber [4 :hue 45] :saturation 5}}
+           :af-250-fogger
+           {:name "Fogger"
+            :channels {:fog 1}}}})
 
 (defn make-group-patcher "Generic of below"
  [group-key f]

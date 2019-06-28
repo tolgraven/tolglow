@@ -377,24 +377,6 @@
 
 
 
-; OLD GET GOTTEN RID OF
-#_(defn opc-strip "fadecandy rgb"
-  [& {:keys [pixels x-start x-end y y-start y-end z-start z-end]
-      :or {pixels 144 x-start -2.5 x-end 2.5 y-start 0.0 y-end 0.0 z-start 0.0 z-end 0.0}}]
-  {:name "WS2812b RGB"
-   :x (/ (+ x-start x-end) 2)
-   :y (/ (+ y-start y-end) 2)
-   :z (/ (+ z-start z-end) 2)
-   :heads (for [i (range pixels)]
-            (let [x (+ x-start (* i (/ (- x-end x-start) pixels)))
-                  y (+ y-start (* i (/ (- y-end y-start) pixels)))
-                  z (+ z-start (* i (/ (- z-end z-start) pixels)))
-                  c (+ (* i 3) 1)]
-              {:channels [(chan/color c :red)
-                          (chan/color (inc c) :green)
-                          (chan/color (+ 2 c) :blue)]
-               :x x :y y :z z}))})
-
 ;; (defn robe-1200 [channels]
 ;;  {:name "Robe 1200 w/e"
 ;;   :channels (make-channels channels)
