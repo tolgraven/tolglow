@@ -381,67 +381,35 @@
   #_(println param-name (map value [raw min max gain offset noise]))
   (build-param-formula Number f raw min max gain offset noise)))
 
-(defn or-auto-vm "Defaults for auto-vm..." []
- {:vars {:min 0 :max 255 :phase 0 :down true :width 0.25 :gain 1.0 :offset 0.0 :level 255
-         :smoothing 0.0 :noise 0.0 :min-change 0}})
+
 (defn auto-vm-dev "Create parameter from var-map and name (looked up against types) for use with `cue/auto` for both the actual effect and its visualizer/color-fn"
- [vm param-name & {:keys [override like vm-prefix param-defs scale] :as all}] ;so can set these without them being present in var-map
- (det [vm (or vm (starting-vm-for param-name))
-       pre #(if vm-prefix (str vm-prefix "-" %) %)
-       [noise ] (map #((vars/init! % 0.0)
-                                #_(bind-keys % 0.0) (bind-keyword-param % Number 0.0)
-                                {}) ;utility fn for this, have map of globals and defaults duh
-                              [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
+ [vm param-name & {:keys [ncvm like vm-prefix param-defs scale] :or {param-defs types} :as input}] ;so can set these without them being present in var-map
+ (let [defaults {:vars (starting-vm-for param-name)}
+       vm (or vm (:vars defaults))
+       pm (assemble (merge vm ncvm input) defaults) ;so with :input we get all other potential passed crap but whats the harm really? will only get passed once and discarded right?
+       ;btw should assemble also like put an :interval-ratio (ratio pm...) when finds right pieces? probably
        ;; pre #(if vm-prefix (str vm-prefix "-" %) %)
-       ;; ks (map #(keyword (pre %)) p) #_(if-not vm-prefix p (map #(str vm-prefix "-" %) p))
-       ;; syms (map symbol p)
-       got-ks (set (concat (keys vm)
-                           (keys (filter (fn [[k v]] (some? v)) all))))
-       got-vs (mapv #(% all (% vm)) got-ks)
-       ;; params (mapv #(bind-keyword-param %1 Number %2) got-ks got-vs)
-       params (merge (zipmap got-ks (map #(bind-keyword-param %1 Number %2) got-ks got-vs)) {:noise noise})
-       ;; (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ; XXX get defaults from var defs...
-       ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; b #(binds (pre %))
-       ;; binds (zipmap ks (apply bind-keys m)) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise #_:smoothing #_smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; b #(binds (pre %))
+       [noise smooth] (map #(bind-keyword-param (vars/init! % 0.0) Number 0.0) [:param-noise-all :param-smooth-all]) ;utility fn for this, have map of globals and defaults duh
+       param-f (eval (:fn (util/get-map-for-param param-name param-defs))) ;then fix (how?) so can simply apply. will likely need a (build-oscillated-param) wrapper/mod that can pass through and create lfo itself
+       interval-ratio (apply ratio pm (when vm-prefix [:prefix vm-prefix])) ;for now
 
-       ;; m (interleave ks (map vm ks))
-       ;; m (interleave ks (for [[k default] [ks #_(map vm ks) [0 255 0 true 1 1 0 255 0.1]]]
-       ;;                   #_(println k default)
-       ;;                        (vm k default)))
-       ;; m (interleave ks (map #(%1 vm %2) ks [0 255 0 true 1 1 0 255 0.1]) ) ;XXX get defaults from var defs...
-
-
-       lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
-       ; hmm gotta change eg (ratio) (fraction) to handle prefix no?u-
        raw (case param-name ;XXX param handling should be specified in param/types def
-            ("level" "held") (:level params) ;but prefix, duh...
-             "random" (apply rng params) ;:min min :max max :min-change min-change)
-            (let [lfo (resolve (symbol "afterglow.effects.oscillators" param-name))] ;max binding workaround...
-             (build-oscillated-param
-              (apply lfo :interval-ratio (apply ratio vm (when vm-prefix [:prefix vm-prefix]))
-                     :phase (:phase params)
-                                     (cond (= param-name "sawtooth") [:down? (:down params)]
-                                           (= param-name "square")   [:width (apply fraction vm :width (when vm-prefix [:prefix vm-prefix]))]))
-                                    :min (:min params) :max (:max params))
-             #_(println "Can't resolve" param-name "to function")))
-       ;; raw-future (resolve-param raw *show* (metro-snapshot (:metronome *show*)))
-       ;; final {:type param-name :param raw :min min :max max :gain gain :off offset :noise noise :vm vm}
-
-       f (fn [param min max gain offset noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
-       ;; f (fn [param & {:keys [min max gain offset noise] :as args}] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
-          (let [[min max gain offset noise] (map #(or %1 %2) [min max gain offset noise] [0 255 1 0 0])
+            ("level" "held") (:level pm) ;but prefix, duh... also bind dunno?
+             "random" (apply param-f :interval-ratio interval-ratio (flatten (seq pm)))
+             (apply build-oscillated-param
+                    (apply param-f :interval-ratio interval-ratio :phase (:phase pm)
+                           (cond (= param-name "sawtooth") [:down? (:down pm)]
+                                 (= param-name "square")   [:width (apply fraction pm :width (when vm-prefix [:prefix vm-prefix]))]))
+                    (flatten (seq pm)))) ;passing all but only min/max should actually get use no?
+       f (fn [param min max gain offset #_noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
+          (let [[min max gain offset #_noise] (map #(or %1 %2) [min max gain offset #_noise] [0 255 1 0 #_0])
                 offset (* max offset) ;tho should scale by max-max not curr...
-                noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
-                noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
-                result (+ offset noise (* gain param))]
+                #_noise-base #_(* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
+                #_noise #_(if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
+                result (+ offset #_noise (* gain param))]
            (clamp-number result min max)))]
-  ;; (build-param-formula Number f raw min max gain offset noise)))
-  (apply build-param-formula Number f raw (map params [:min :max :gain :offset :noise]))))
-  ;; (build-param-formula Number f raw (vals params))))
-;; (auto-vm-dev nil "sawtooth" :vm-prefix "pan")
+  (apply build-param-formula Number f raw (map pm [:min :max :gain :offset #_:noise]))))
+
 
 (defn lfo-color-fn
  "Stripped down version. But only reasonable way I think is for all cues
