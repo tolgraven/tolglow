@@ -167,30 +167,55 @@
               (- (/ 1 fraction) offset))
              fraction))]
     (build-param-formula Number f fraction-param offset-param))
-   (bind-keyword-param 1 Number 1)))
+   1 #_(bind-keyword-param 1 Number 1))) ;eh why not just return 1??
 
-(defn sum
- [& vs]
- (apply + vs))
-(defn avg
- [& vs]
-;;  (/ (apply + vs) (count vs)))
- (/ (apply sum vs) (count vs)))
+(defn sum "Get total from values" [& vs] (apply + vs))
+(defn sub "Subtract values from first" [& vs] (apply - vs))
+(defn avg "Get average of values" [& vs] (/ (apply + vs) (count vs)))
+(defn div "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply / (map #(util/clamp-number % 0.1 10) vs)))
+(defn mul "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply * vs))
+
+(defn extremes "Get lowest / highest result possible (assuming linear) from running f on all combinations of min/max input, summing for however many invocations. So can normalize ahead of time."
+ ([f pairs] (extremes f (first pairs) (rest pairs)))
+ ([f coll pairs]
+  (let [coll (for [x (range (count coll))
+                   y [first second]]
+               (f ((vec coll) x) (y (first pairs))))]
+   (if (next pairs)
+    (extremes f coll (next pairs))
+    (map #(apply % coll) [min max])))))
 
 (defn mix "Mix params by applying f"
- [params f & {:keys [min max]}]
- (apply build-param-formula Number f params))
+ [params f & {:keys [min max normalize? reflect? clip?]}] ;or single scale number showing whether 0.0-1.0 or 0-255...
+ (when *show*
+  (let [wrapped-fn (cond
+                    normalize?
+                    (let [candidates (repeat (count params) [min max])
+                          [lo hi] (extremes f candidates)]
+                      (fn [& params]
+                       (util/scale-number (apply f params) min max :old-low lo :old-high hi)))
+                    #_reflect?
+
+                    (and min max)
+                    (fn [& params]
+                     (util/clamp-number (apply f params) min max))
+                   :else f)]
+   (apply build-param-formula Number wrapped-fn params))))
+(def mix-dmx #(mix %1 %2 :min 0 :max 255))
+(def mix-dmx-funky #(mix %1 %2 :min 0 :max 255 :scale? true))
 
 (defn average "Average value from any number of input params"
- [& params]
- (mix params avg))
-;; (defn average "Average value from any number of input params"
-;;  [& params]
-;;  (let [f (fn [& vs] (/ (reduce + (first vs) (rest vs)) (count vs)))]
-;;   (apply build-param-formula Number f params)))
-;; (value (average (ratio nil) (fraction nil)))
-;; (value (mix [(auto-vm nil "sine") (auto-vm nil "sawtooth")] avg))
-;;
+ [& params] (mix params avg))
+
+(defn any-lfo
+ [chooser & {:keys [min max beats blend-shite] :or {min 0 max 255 beats 4}}]
+ ;;  (let [lfos (build-oscillated-param % :min min :max max)]))
+ (let [syms (mapv #(ns-resolve @(at :ns) (symbol "lfo" %)) ["sine" "square" "sawtooth" "triangle"])
+       lfos (mapv #(build-oscillated-param (% :interval-ratio beats) :min min :max max) syms)
+       f (fn [chooser lfos]
+          (auto-resolve (lfos (clojure.core/min 3 (int chooser)))))] ; modulo fix so loops
+  (build-param-formula Number f chooser lfos)))
+
 ; to smooth without keeping track of earlier values, just use rolling average as output? would also work for others
 ; but we still gotta count invocations to hmm wait... create a unique var to hold vector of last x values?
 (defn noise "Random noise param, with options for smoothing (rolling average) and min/max volatility"
@@ -218,6 +243,22 @@
        f ()]
   (build-param-formula Number f square :last-random-wrap-test)))
 
+(defn quick-lfo "quick wrapper around lfo-param, to make lots"
+ [kind & {:keys [opts beats low high] :or {beats 4 low 0 high 255}}]
+ (when *show* ;;  {:pre [(some? *show*)]} ;pre fucks repl start if got loose invocations around code we forgot to clean up. when much better...
+  (let [lfo-sym (ns-resolve @(at :ns) (symbol "lfo" kind))
+        lfo (apply lfo-sym :interval-ratio beats (flatten (seq opts)))]
+  (build-oscillated-param lfo :min low :max high))))
+;; (def tall (map quick-lfo ["sine" "square" "sawtooth" "triangle"]))
+;; (def tallvg (apply average tall))
+;; (def tsub (mix-dmx (map quick-lfo ["sine" "sawtooth"]) sub))
+
+;;XXX a workflow of independently existing/created params (just running as sep cues I guess for now)
+;; that are merely selected *from* the effect makes most sense?  synth-like...
+;; then can have the same param swapping between different effects, like a synth
+;; (melody/rhythm stays the same, sound changes)
+;; or same effect and swapping "melody"
+;; basically we need a list selector for the cue vars/interface...
 
 (defn starting-vm-for "Lookup starting/default values for param-name, for visualizing before actually running. Only supports number values"
  [param-name]
