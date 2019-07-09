@@ -562,3 +562,81 @@
  ;; thinking mainly for smoothed squares and stuff. how best? or put straight in an osc?
  []
  (let []))
+
+; CHANGE:
+; (Param) - DONE
+; refactor / make smaller - halfday there
+; no atoms - DONE
+; fix bugs
+; alpha as a first class member influencing any assignments
+; optimize if possible - likely switch color lib? this one recreates on each adjustment
+; (which given spatial stuff, bloom... can be lots of) running through whole dispatch thing
+; if we did a color record could just assoc change to map right? and also keep copy-on-write memory benefits...
+(defn color
+  "Send a color (name, object...) and create a base param to which other
+  arguments are applied. The default base color is black, in the form
+  of all zero values for `r`, `g`, `b`, `h`, `s`, and `l`. To this
+  base it will then assign values passed in for individual color
+  parameters.
+
+  All incoming parameter values may be literal or dynamic, and may be
+  keywords, which will be dynamically bound to variables in [[*show*]]."
+  [& {:keys [color r g b h s l adjust-hue adjust-saturation adjust-lightness frame-dynamic]
+      :or {frame-dynamic :default}}]
+  {:pre [(some? *show*)]}
+  (let [c (bind-keyword-param (params/interpret-color color) ::colors/color (color/create :black) "color")
+        [r g b h s l ah as al] (map #(bind-keyword-param % Number 0)
+                                     [r g b h s l adjust-hue adjust-saturation adjust-lightness])
+        params [c r g b h s l ah as al]
+        fit-rgb (fn [i & tf]
+                 (when i (colors/clamp-rgb-int (math/round (if (first tf) ((first tf) i) i)))))
+        fit-sl (fn [f] (when f (colors/clamp-percent-float (double f))))
+        ;; update-color (fn [current run? f] (if run? (f current) current))]
+        update-color (fn [current [run? f]] (if run? (f current) current))]
+    (if (not-any? param? params) ;; Optimize the degenerate case of all constant parameters
+      (reduce
+       update-color c
+       [[(seq (filter identity [r g b]))
+         (fn [c]
+          (let [[r g b] (map fit-rgb [r g b])]
+           (colors/create-color {:r (or r (colors/red c)) :g (or g (colors/green c))
+                                 :b (or b (colors/blue c)) :a (colors/alpha c)})))] ;alpha lookup throws nullptr if no base c...
+        [(seq (filter identity [h s l]))
+         (fn [c]
+          (let [h (when h (colors/clamp-hue (double h)))
+                [s l] (map fit-sl [s l])]
+           (colors/create-color {:h (or h (colors/hue c)) :s (or s (colors/saturation c)) :l (or l (colors/lightness c))})))]
+        [ah #(colors/adjust-hue % (double ah))]
+        [as #(colors/saturate % (double as))]
+        [al #(colors/lighten % (double al))]])
+      ;; Handle the general case of some dynamic parameters
+      (let [dyn (boolean (if (= :default frame-dynamic)
+                          (some frame-dynamic-param? params) ;; Default means incoming args control how dynamic we should be
+                          frame-dynamic)) ;; We were given an explicit val e for frame-dynamic
+            eval-fn (fn [show snapshot head]
+                     (reduce ;so since this is identical to above except for the resolving, how can we fwd that call (without invoking it unecessarily)
+                      update-color (resolve-param c show snapshot head)
+                      [[(seq (filter identity [r g b]))
+                        (fn [c]
+                         (let [[r g b] (map (fn [part] (fit-rgb part #(resolve-param % show snapshot head))) [r g b])] ;slightly less optimal I guess cause nil vals get an extra fn call and check but eh
+                          (colors/create-color {:r (or r (colors/red c)) :g (or g (colors/green c))
+                                                :b (or b (colors/blue c)) :a (colors/alpha c)})))]
+                       [(seq (filter identity [h s l]))
+                        (fn [c]
+                         (let [h (when h (colors/clamp-hue (double (resolve-param h show snapshot head))))
+                               [s l] (map #(when % (colors/clamp-percent-float
+                                                    (double (resolve-param % show snapshot head))) [s l]))]
+                          (colors/create-color {:h (or h (colors/hue c)) :s (or s (colors/saturation c))
+                                                :l (or l (colors/lightness c))})))]
+                       [ah #(colors/adjust-hue % (double (resolve-param ah show snapshot head)))]
+                       [as #(colors/saturate % (double (resolve-param as show snapshot head)))]
+                       [al #(colors/lighten % (double (resolve-param al show snapshot head)))]]))
+
+            resolve-fn (fn [show snapshot head]
+                         (with-show show
+                           (let [[c r g b h s l ah as al]
+                                 (map #(resolve-unless-frame-dynamic % show snapshot head) params)]
+                            (build-color-param :color c :r r :g g :b b :h h :s s :l l
+                                               :adjust-hue ah :adjust-saturation as :adjust-lightness al
+                                               :frame-dynamic dyn))))]
+       (Param. "Color" dyn ::colors/color eval-fn resolve-fn)))))
