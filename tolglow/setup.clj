@@ -77,22 +77,27 @@
  (util/patch-cfg!)
  (util/reset-fixture-binds!))
 
+;; XXX we want (here, as elsewhere) fully transparent reloading, so that a change in
+;; an fx, fixture, cue def can be reloaded in one go, without having to relaunch cues,
+;; restore values etc...
 (defn cue-pages
- [& {:keys [origin-page page-data] :or {origin-page 0 #_[0 0] page-data (cfg :pages)}}] ; prob have main page/startup at like 2 2 so plenty space in all directions...
+ [& {:keys [origin-page page-data relaunch-active-cues?]
+     :or {origin-page 0 #_[0 0] page-data (cfg :cue-pages :definitions)}}] ; prob have main page/startup at like 2 2 so plenty space in all directions...
  {:pre [(some? *show*)]}
- (let [#_saved-pos #_(save-view-position)])
+ (let [force (cfg :debug :force-cue-pages)
+       #_saved-pos #_(save-view-position)]
 
- (println "Force" (if (cfg :debug :force-cue-pages) "on" "off"))
- (doseq [[fn-key pages] page-data
+ (print "Force" (if force "on" "off"))
+ (doseq [[fn-key pages] (partition 2 page-data)
          [xb yb & opts] (if (set? pages) pages #{pages})] ;XXX or use whatever :while alternative binding thing...
-  (let [[x y] (map #(+ origin-page %) [xb yb])]
+  (let [[x y] (map #(+ origin-page %) [xb yb])
+        f #(apply page/create (name fn-key) x y opts)]
    (print "\n" (name fn-key) "\t" x y (or opts "")) ;log
    ;; (puget.printer/cprint (str "\n" (name fn-key) "\t" x y (or opts ""))) ;log
    ;; (pr (puget.printer/cprint-str (str "\n" (name fn-key) "\t" x y (or opts "")))) ;log
-   (apply page/create (name fn-key) x y opts))) ;XXX should only generate defs, compare those with saved map, only change updated ones (so dont overwrite active cues)
+   (if force (util/catchall f) (f)))) ;XXX should only generate defs, compare those with saved map, only change updated ones (so dont overwrite active cues)
 
- #_(osc/refresh-cues) ;prob shouldn't go here, rather modules add hooks to various actions?
- #_(set-view-position (or saved-pos (repeat 2 origin-page))))
+ #_(set-view-position (or saved-pos (repeat 2 origin-page)))))
 
 (defn controllers "Init controllers from config" ;XXX make actual proper
  []
