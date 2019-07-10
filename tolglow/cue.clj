@@ -317,8 +317,9 @@
  [group x y colors & {:keys [tolerance?]}]
  (let [[fx-key fixtures fx-name end-keys] (group-parts group "pinstripe" "pinstripe")
        fx-fn (fn [vm]
-                 (let [colors (map #((keyword (str "color-" %)) vm) (range 1 (inc (count colors))))]
-                  (tolfx/effect (fun/pinstripes fixtures :step (param/step vm) :colors colors)
+                 (let [values (map #((keyword (str "color-" %)) vm) (range 1 (inc (count colors))))]
+                  ;; (tolfx/effect (apply-vm vm tolfx/pinstripes fixtures :step (param/step vm) :colors colors)
+                  (tolfx/effect (apply-vm vm tolfx/stripes fixtures target-fn :step (param/step vm) :values values)
                                 (param/fraction vm :alpha))))
        variables (vars/auto :beats :cycles
                             (apply vars/colors (or colors [:coral1 :aquamarine])) ;tho check for incoming color params hmm
@@ -333,30 +334,100 @@
                    ;; (:color-1 vm (color/create (colors 0)) #_(:start (colors))) #_(get-variable (:color-1 vm))
                    ;; (:color-2 vm (color/create (colors 1)) #_(:start color-2)) #_(get-variable (:color-2 vm)))))]
  (set-cue! x y
-           (cue :pinstripes
-                (fn [vm]
-                 (let [colors (map #((keyword (str "color-" %)) vm) (range (count colors)))]
-                  (fun/pinstripes fixtures :step (param/step vm) :colors colors)))
-                :variables (vars/auto :beats :cycles
-                                      (apply vars/colors (or colors [:coral1 :aquamarine])) ;tho check for incoming color params hmm
-                                      (vars/cue-map ["fade" 0.0 0 1])
-                                      (when tolerance? (vars/cue-map ["tolerance" 0.0 0 1])))
-                :color :orange :short-name "Pinstripes"
-                :color-fn (fn [cue active show snapshot]
-                           (let [vm (:variables active)]
-                            (if (> (snapshot-bar-phase snapshot 0.5) 0.5)
-                             (:color-1 vm (color/create (colors 0)) #_(:start (colors))) #_(get-variable (:color-1 vm))
-                             (:color-2 vm (color/create (colors 1)) #_(:start color-2)) #_(get-variable (:color-2 vm)))))))))
+           (cue fx-key fx-fn :variables variables, :short-name (str fx-name " " (count colors))
+                :color (colors 0), :color-fn color-fn))))
+
+; Fix prefab getters Color, Pointing, Dimmer, strobe(?),
+; XXX this should really be turned into a stripe spatial param? then connect that to alpha,
+; use it to scale whatever, put as conditional-effect param etc...
+(defn stripe "tripe cue, try turn into more generic to use for pins as well.."
+ [group x y values target-fn & {:keys [id tolerance? color cue-vars] :or {tolerance? true color :aquamarine}}]
+ (let [[fx-key fixtures fx-name end-keys] (group-parts group "stripe" (str id "-stripe"))
+       target-fn #(move/pan-tilt-effect "stripe pan" %2 %1)
+       fx-fn (fn [vm]
+                 ;; (let [values (map #(params/build-pan-tilt-param :pan %1 :tilt %2) [-30 30] [30 45])]
+                 (let [values (map #(params/build-pan-tilt-param :pan %1 :tilt %2) [-0 0] [10 45])]
+                  (tolfx/effect (apply-vm vm tolfx/stripes fixtures target-fn :step (param/step vm) :values values)
+                                (param/fraction vm :alpha))))
+       variables (vars/auto :beats :cycles
+                            ;; (get-vars-for-target-fn-values ctrl... eg pan/tilt in this case)
+                            ;; (apply vars/colors (or colors [:coral1 :aquamarine])) ;tho check for incoming color params hmm
+                            (vars/cue-map ["fade" 0.0 0 1])
+                            (when tolerance? (vars/cue-map ["tolerance" 0.0 0 1]))
+                            :alpha)]
+ (set-cue! x y (cue fx-key fx-fn :variables variables, :short-name fx-name :color color))))
 
 
-(defn color-cycle-chase "Color cycle cues" ;XXX
- [group x y colors &
-  {:keys [chase-fn index-fn transition-fn fx-name]
-   :or {chase-fn fun/iris-out-color-cycle-chase, index-fn rhythm/snapshot-bar-within-phrase, rhythm/transition-fn snapshot-beat-phase}}]
- (let [[fx-key fixtures fx-name end-keys] (group-parts group "color-cycle" "color-cycle")]
- #_(set-cue! x y (cue ))))
+#_(defn or-color-cycle-chase []
+ {:vars {:colors (map #(color/s -18 %) ["mediumpurple" "seagreen" "darkblue" "black"])
+         }
+  :opts {:chase-fn fun/iris-out-color-cycle-chase, :index-fn rhythm/snapshot-bar-within-phrase
+         :transition-fn rhythm/transition-fn}})
+#_(defn color-cycle-chase "Color cycle cues" ;XXX
+ [group x y & {:keys [colors chase-fn index-fn transition-fn fx-name]
+               :or {colors (map #(color/s -18 %) ["mediumpurple" "seagreen" "darkblue" "black"])
+                    chase-fn fun/iris-out-color-cycle-chase, index-fn rhythm/snapshot-bar-within-phrase
+                    transition-fn rhythm/snapshot-bar-phase}}]
+ (let [[fx-key fixtures fx-name end-keys] (group-parts group "color-cycle" "color-cycle")
+       variables (vars/auto (vars/colors (:colors p)))
+       fx-fn (fn [vm] (chase-fn fixtures, :color-cycle colors
+                                :color-index-function index-fn
+                                :transition-phase-function transition-fn
+                                :effect-name fx-name))]
+ (set-cue! x y (cue fx-key fx-fn :variables variables, :short-name fx.name
+                    #_:color-fn #_color-fn, :color (first (:colors p))))))
 
-(defn blank "cue that runs a scene, including taking input from operator, but also running code to replace itself, with a new cue, taking more input, eventually spawning an effect cue"
+
+(defn auto-chase "Not sure if belongs here since returns fn... move to cue?"
+ [chase-key x y effects & {:keys [name playback param-type pad? pad]
+                            :or {name "Chase" playback :loop pad [(fx/blank) (fx/blank) (tolfx/color :black)] #_param-type #_"step"}}] ;#_eventually,fixsupport!!
+ (let [id (or (key-str chase-key) :chase)
+       f  (fn [vm]
+           (let [effects (if pad? (apply interleave effects (map repeat pad)) effects)
+                 ;amount (count effects) ;need if using non-step params so know where to cap (unless :loop/:bounce...)
+                 position (param/step vm) #_(param/auto-vm vm "step" #_param-type)]
+            (chase name effects position :beyond playback)))
+       variables (vars/auto (:variables (util/get-map-for-param "random" param/types)))]
+  (set-cue! x y (cues/cue id f :variables variables))))
+
+(defn one-shot "Runs an effect for x beats, then finishes"
+ [k x y effect & {:keys [ticks envelope] :or {ticks 4}}]
+ (let [f (fn [vm]
+          (let [effects [(fx/blank) effect (fx/blank)]
+                steps  [(build-step-param :interval-ratio 1 :fade-fraction 1.0 :fade-curve :sine)
+                        (build-step-param :interval-ratio ticks :fade-fraction 0.1)
+                        (build-step-param :interval-ratio 1 :fade-fraction 1.0)]
+                chooser  (fn [in on out]
+                          (cond
+                           (< in 2) in
+                           (< on 2) (+ on 1)
+                           :else out))
+                pos (apply build-param-formula Number chooser steps)
+                name (str "One-shot " (:name effect))
+                #_variables #_(vars/auto ())]
+          (chase name effects pos)))]
+  (set-cue! x y (cues/cue k f #_:variables #_variables :priority 100000))))
+;; or do we use a regular fade thing instead like not sure how to play it...
+;; also for something like this cool with scaling pos through spatial param and slightly staggered invocation
+;; so do we create three different one-step steppers?
+;; fade-in
+;; effect (with :starting quantized, optionally)
+;; fade-out
+;; and which one is in use depends on value
+;; (def steps [(build-step-param :interval-ratio 1 :fade-fraction 1.0 :fade-curve :sine)
+;;             (build-step-param :interval-ratio 2)
+;;             (build-step-param :interval-ratio 1)])
+;; (defn choose-step
+;;  [in on out]
+;;  (cond
+;;   (< in 2) in
+;;   (< on 2) (+ on 1)
+;;   :else out
+;;   ))
+;; (apply build-param-formula Number f steps)
+
+
+(defn gen "cue that runs a scene, including taking input from operator, but also running code to replace itself, with a new cue, taking more input, eventually spawning an effect cue"
  []
  (code-cue))
 

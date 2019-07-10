@@ -443,10 +443,22 @@
   (apply fx/scene "Pinstripes" chases)))
 
 
-
-(defn stripes "Pinstripes for generic params";XXX makes sense, other stuff than colors? dimmer, aim, some random effect's alpha, which lfo/param should drive whatever effect's whatever, etc, could all work.
- [fixtures target & {:keys [step tolerance values] :as all}]
-)
+(defn or-stripes "Default map for [[stripes]]" []
+ {:vars {:step (build-step-param), :values [(color/like :royalblue) (color/like :orangered4)]}
+  :opts {:tolerance 0}})
+(defn stripes "Pinstripes for generic params" ;works already. for color anyways...
+ [fixtures target-fn & {:keys [step tolerance values] :as all}] ;prob want to also have multiple target fns? like every other strobes and colors, etc
+(let [p (param/assemble all or-stripes)
+      ;; heads (chan/extract-heads-with-some-matching-channel fixtures #(= % target-fn)) ;eh tricky, pass as extra arg?
+      heads fixtures
+      group-fn (if (< (:tolerance p) 0.00001) :x #(math/round (/ (:x %) (:tolerance p))))
+      stripes (gather-stripes heads group-fn (count (:values p)))
+      chases (map (fn [i stripe-heads]
+                   (let [effects (map #(target-fn stripe-heads %) (:values p)) ;just wrap fx-fn if not [fixtures level]
+                         stripe-step (build-param-formula Number #(- % i) (:step p))]
+                    (chase "Stripe" effects stripe-step :beyond :loop)))
+                  (range) stripes)]
+  (apply fx/scene "Stripes" chases)))
 
 
 ;  METRONOME EFFECT
