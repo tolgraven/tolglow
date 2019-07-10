@@ -83,83 +83,68 @@
 (defn bind-vars "Bind args to keyword params, ensuring nil never results"
  [m]
  {:pre [(map? m)]}
- (let [f (fn [mp [k _]]
-          (assoc mp k
-                 (let [default (util/default m k)
-                       v (or (util/arg m k) default) ;bind-keyword-param dumb and nil as first arg resolves to nil, not default, so...
-                       kind (condp = (type default)
-                             Long Number, Double Number
+ (let [f (fn [pm [id _]]
+          (assoc pm id
+                 (let [default (util/default m id)
+                       param (or (util/arg m id) default) ;bind-keyword-param dumb and nil as first arg resolves to nil, not default, so...
+                       kind  (cond (number? default) Number
+                                   (or (seq? default) (vector? default)) java.util.List
                              ;maybe need vector -> java.util.List per pinstripes?
-                             (type default))]
-                  (if (params/param? v) ;; (if (instance? IParam v) ;temp prob, as step-param bugs out...
-                   v
-                   (bind-keyword-param v kind default (name k))))))]
+                                   ;; (boolean? default) Boolean
+                                   ;; (color/color? default) ::colors/color
+                                   :else (type default))]
+                  (if (params/param? param)
+                   param ;just return if already a param. tho that's what bind-keyword-param already does right so why not just pass through?
+                   (bind-keyword-param param kind default (name id))))))]
   (reduce f {} m)))
 
-(defn auto-resolve "Resolve param to *show* and now"
- [p-or-m & {:keys [target-key dynamic show snapshot head] ;target key to only resolve specific
-            :or {dynamic true, show *show*, snapshot (metro-snapshot (:metronome *show*))}}]
+(defn auto-resolve "Resolve param(s) to *show* and now"
+ [p & {:keys [dynamic show snapshot head target-key] ;target key to only resolve specific
+         :or {dynamic true, show *show*, snapshot (metro-snapshot (:metronome *show*))}}]
  (let [resolve-fn (if dynamic params/resolve-param params/resolve-unless-frame-dynamic)]
-  (if-not (map? p-or-m) ;also support vectors tho (then receiving vector back, not map)
-   (resolve-fn p-or-m show snapshot)
-   (let [f (fn [m [k v]] (assoc m k (resolve-fn v show snapshot head)))]
-    (reduce f {} p-or-m)))))
+  ;; XXX should auto-resolve also try to auto-bind keywords? hmm
+  (cond (and (map? p) (not (params/param? p))) ;be careful just checking for map now that Param is record
+        (let [f (fn [pm [id param]]
+                 (assoc pm id (resolve-fn param show snapshot head)))]
+         (reduce f {} p))
+        (vector? p) ;also support vectors (then receiving vector back, not map)
+         (mapv #(auto-resolve % :dynamic dynamic :show show :snapshot snapshot :head head) p) ;throwing in nil head doesnt matter right cause thats what internal does?
+        :else
+         (resolve-fn p show snapshot head))))
 
 (defn assemble "Assemble params from map of arguments sent to Effect. creator from those passed, and defaults, bound to keywords ready for cue-var. Also resolves non-dynamic params. Returns pm (param-map) for usage in function"
  [args arg-spec & {:keys [resolve-vars] :or {resolve-vars false}}] ;XXX make compat diff lengths args/arg-spec? like could have a fallback with lots of stuff used for multiple things
- (let [[vars opts] (map #(util/ks-show-ks-defaults args %)
-                        (map (arg-spec) [:vars :opts]))] ;align fallback map
+ (let [arg-spec (cond (map? arg-spec) arg-spec
+                      (ifn? arg-spec) (arg-spec)) ;could get spec as either a map or getter-fn (since defaults may be dynamic / not ready at app launch)
+       [vars opts] (doall (mapv #(util/ks-show-ks-defaults args %)
+                         (map arg-spec [:vars :opts])))] ;align fallback map
   (merge (let [vars (bind-vars vars)]
-          (if resolve-vars
+          (if resolve-vars ;why wouldnt we want to resolve non-dynamic stuff tho??
            (auto-resolve vars :dynamic false)
            vars)) ;theoretically should work fine as avoids preemptively resolving what shouldnt. but dunno
-         (auto-resolve (bind-vars opts)))
-  #_OR
-  ;; (apply merge (map #(auto-resolve (bind-vars %1) :dynamic %2) [vars opts] [false true]))
-  #_(apply merge (map #(auto-resolve (bind-vars %) :dynamic false) [:vars :opts])) ;regardless of final spec, maybe best just run all early? if not dynamic won't change anyways...
-  ))
-
-;; ; does below make sense? build-param-formula already resolves for us, wouldn't this lock vals?
-;; (defn number-formula "Build param formula with Number return type, resolve incoming nils to 0 unless specified"
-;;  [f & params]
-;;  (let [resolved (map #(or (params/resolve-param % *show* (metro-snapshot (:metronome *show*)))
-;;                           0)
-;;                    params)]
-;;   (apply build-param-formula Number f resolved)))
-;;   XXX makes more sense defer res nil to 0 at calc time no?
-(defn number-formula "Build param formula with Number return type, resolve incoming nils to 0 unless specified"
- [f & params]
- (let [resolved (map #(or (params/resolve-param % *show* (metro-snapshot (:metronome *show*)))
-                          0)
-                   params)]
-  (apply build-param-formula Number f resolved)))
+         (auto-resolve (bind-vars opts)))))
 
 
 (defn ratio "Create dynamic param setting the beat ratio for LFO-containing cues. Expects var-map to contain keys `:beats` and `:cycles`, defaulting to 1 if missing."; {{{
   [vm & {:keys [prefix]}] ;XXX should be a display overlay (add-control-held-feedback-overlay) touching "beats" brings up cycles...
   ; AND rows of 12345678 beats, 12345678 cycles, mult, div, maybe presets? instant 8/3 etc
-  ;; (util/dlet [candidates (set (prefix-ks prefix (config/values-data :time-unit)))
-  (let [candidates
-        #_(set (map #(key-str (when prefix (str prefix "-")) %) (config/values-data :time-unit)))
-              (prefix-set prefix (config/values-data :time-unit))
-        k (some candidates (flatten (seq vm)))
-        [ticks cycles mul div] (bind-keys (get vm k) 4, (:cycles vm ((prefix-set prefix #{:cycles}) vm)) 1
-                                          :lfo-metro-mul 1, :lfo-metro-div 1)
-        f (fn [ticks cycles mul div] (* mul (/ ticks cycles div)))] ;XXX clamp all four params to 1,2,3,4,6,8 etc
-    (build-param-formula Number f ticks cycles mul div)))
-
-;; (prefix-set "pan" #{ :bar :quo })
-;; (ratio (assoc (starting-vm-for "square") :pan-beats 4) :prefix "pan")
-
+  (let [candidates (prefix-set prefix (config/values-data :time-unit))]
+        (if-let [k (some candidates (flatten (seq vm)))] ;XXX clamp all four params to 1,2,3,4,6,8 etc
+         (let [[ticks cycles mul div]
+                 (bind-keys (k vm) 4, (:cycles vm ((prefix-set prefix #{:cycles}) vm)) 1
+                            :lfo-metro-mul 1, :lfo-metro-div 1)
+                 f (fn [ticks cycles mul div] (* mul (/ ticks cycles div)))]
+   (build-param-formula Number f ticks cycles mul div))
+   #_1))) ;more reasonable else to return 1 or nil? fallback vs. unintended values...
 
 (defn fraction "Create dynamic param representing a fraction as either 0-1 or 1/divisor with optional offset"
-  ;; [vm & {:keys [target offset prefix]}]
   [vm target & {:keys [offset prefix]}]
-  (if-let [target-key (or target (some (prefix-set prefix (config/values-data :time-unit)) (flatten (seq vm))))] ;no idea continuing if we don't get something here...
+  (if-let [target-key (or target (some (prefix-set prefix (config/values-data :time-unit))
+                                       (flatten (seq vm))))] ;no idea continuing if we don't get something here...
    (let [target (target-key vm)
-         offset-key (key-str target-key "-offset") #_(-> (name target-key) (str "-offset") keyword)
-         offset-global (key-str offset-key "-global") #_(-> (name offset-key) (str "-global") keyword)
-         offset-bind (or offset (offset-key vm) offset-global #_(get-variable offset-global)) ;manual offset can go in fn call
+         offset-key (key-str target-key "-offset")
+         offset-global (key-str offset-key "-global")
+         offset-bind (or offset (offset-key vm) offset-global) ;manual offset can go in fn call
          [fraction-param offset-param] (bind-keys target 1, offset-bind 0)
          f (fn [fraction offset]
             (if (< 1 fraction)
