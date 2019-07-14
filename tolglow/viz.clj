@@ -9,15 +9,24 @@
             [afterglow
              [show-context :as show-context :refer [*show*]]
              [fixtures :as fixtures]
-             [show :as show]]
+             [show :as show]
+             [util :as autil :refer [ubyte unsign]]]
             [afterglow.effects.movement :as movement]
             [afterglow.web.layout :as layout]
             [tolglow
-             [config :as config :refer [cfg]]]
+             [config :as config :refer [cfg]]
+             [color :as color]]
+            [ola-clojure.ola-service :as ola]
+            [ola-clojure.ola-client :as olac]
+            [flatland.protobuf.core :refer [protobuf protobuf-load protobuf-dump]]
+
             [puget.printer :as printer]
-            [com.evocomputing.colors :as colors])
+            [com.evocomputing.colors :as colors]
+            [thi.ng.color.core :as clr]
+            [thi.ng.math.core :as cmath])
   (:import [javax.media.j3d Transform3D]
-           [javax.vecmath Matrix3d Vector3d]))
+           [javax.vecmath Matrix3d Vector3d]
+           [com.google.protobuf ByteString]))
 
 (def max-lights "fuckoff asap, throttle yourself" 32)
 (def show *show*)
@@ -260,22 +269,26 @@
  (let [ss (assoc-in (start-state) [:fog :image] (q/load-image "fog.png"))]
  ss)) ; setup function returns initial state.
 
-(defn mouse-scroll "Respond to scroll" [& what])
+(defn mouse-scroll "Respond to scroll" [s & what] s)
 (defn key-pressed "Respond to keypress" [s pressed-key]
  (print (:key pressed-key) " ")
  s)
 
+(defn settings [] (q/smooth 2)) ;no-smooth errors but smooth 0 works heh
+
 (def starting-camera {:position [100 -200 -300] :straight [-0.05 0.08 0.5] :up [0 1 0]}) ; XXX should depend on show dimensions etc...
+
 (defn init [& args]
- (q/defsketch tolglow-viz
-  :title "quil vizualiser for tolglow", :size [600 400]
+ (q/defsketch quil
+  :title "quil visualizer for tolglow", :size [600 400]
   :renderer :opengl ;java2d default... p2d, opengl, pdf.
   :features [:keep-on-top :resizable]
-  :middleware [m/fun-mode m/navigation-3d m/pause-on-error]
+  :middleware [m/pause-on-error m/fun-mode m/navigation-3d]
   :navigation-3d (merge {:step-size 60} starting-camera)
-  :setup setup, :update update-state, :draw draw-state
+  :setup setup, :settings settings, :update update-state-timed, :draw draw-state
   :mouse-wheel mouse-scroll, :key-pressed key-pressed
-  :on-close #(println "CLOSING DIz" (puget.printer/cprint (dissoc % :show :fog)))))
+  :on-close #(println "CLOSING DIz" (puget.printer/cprint (dissoc % :show :fog))))
+ (alter-var-root #'a/*applet* (constantly quil))) ;like i dont get why is this bad/not done by default?
 
 
 (defn set-camera [m-pos] (push-to-state {:navigation-3d m-pos}))
