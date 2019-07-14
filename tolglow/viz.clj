@@ -159,8 +159,7 @@
 
 ;; STATE / VARS
 (defn start-state "return starting state map. fn in case something isnt valid at load" []
- {:positions [], :colors [], :rotations []
-  :fixtures {:positions [], :colors [], :rotations []}
+ {:fixtures {:positions [], :colors [], :rotations [] :dimmers [] :strobe []} ;eh just have heads with keys instead of weirdo sep lists
   :count 0
   :show *show* ;no the whole thing is here prob slowing down each update loads. change to quoted and eval to access, dunno?
   :fog {:particles () :origin [0 -140 80] :drag [1.005 1.025 0.99] :image nil
@@ -168,6 +167,7 @@
   :stage {:w (* #_1   100 (apply - (map #(cfg :venue :wall %) [:right :left])))
           :h (* #_1   100 (cfg :venue :ceiling))
           :d (* #_-1 -100 (cfg :venue :wall :stage))}}); use scale instead if can work for everything...
+(def s start-state) ;debug
 
 (defonce lightscounter (atom 1)) ;cant go in s cause its during draw. unless make decision during update which to use but then much more complex than just counting...
 (defonce shader (atom nil))
@@ -287,10 +287,21 @@
      (f s)))) ;could also like wrap push/pop style?
 (draw-gui s))
 
-  (let [draw-fns [base-lights draw-fixtures draw-stage draw-fog]]
-   (doseq [f draw-fns] (f s)))
+(defn update-state "Main loop state update fn" [s]
+ (print-if-requested (-> s (dissoc :show) (update :fog dissoc :particles)))
+ (let [lights (take max-lights (active-fixtures (:show s)))]
+  (-> s
+      check-for-new-data ;; not sure how much will actually need but
+      (assoc-in [:fixtures :positions] (adjusted-positions lights (:show s))) ;use transient for something like this? or just wrap these in one call?
+      (assoc-in [:fixtures :colors] (current-colors lights (:show s)))
+      (assoc-in [:fixtures :rotations] (current-rotations lights (:show s)))
+      (update :fog (comp #_add-particle add-particle add-particle update-particle-system))
+      (assoc-in [:navigation-3d :up] [0 1 0])
+      (update-in [:fog :mist :zoff] #(+ % (-> s :fog :mist :zincrement)))))) ;boggles the mind this isnt default... we're not in the fucking ocean
 
-  #_(q/no-lights))
+(defn update-state-timed [s]
+ (if (:time-update s) (time (update-state s)) (update-state s)))
+
 
 (defn setup []
  (q/frame-rate 40)
@@ -299,17 +310,17 @@
 ;;  (q/scale 100) ;useful if actually works on translations etc as well... so auto m -> cm
  (reset! shader (q/load-shader "pixlightfrag.glsl", "pixlightvert.glsl")) ;;  (reset! shader (q/load-shader "pixlightexfrag.glsl", "pixlightexvert.glsl"))
 ;;  (q/hint :disable-stroke-perspective) ;just testing
-;;  (q/current-frame-rate)
+
+;;  (q/scale 100) ;useful if actually works on translations etc as well... so auto m -> cm
+;;  (reset! shader (q/load-shader "pixlightfrag.glsl", "pixlightvert.glsl")) ;;  (reset! shader (q/load-shader "pixlightexfrag.glsl", "pixlightexvert.glsl"))
  (let [ss (assoc-in (start-state) [:fog :image] (q/load-image "fog.png"))]
  ss)) ; setup function returns initial state.
 
 (defn mouse-scroll "Respond to scroll" [s & what] s)
 (defn key-pressed "Respond to keypress" [s pressed-key]
- (print (:key pressed-key) " ")
- s)
+ (print (:key pressed-key) " ") s)
 
 (defn settings [] (q/smooth 2)) ;no-smooth errors but smooth 0 works heh
-
 (def starting-camera {:position [100 -200 -300] :straight [-0.05 0.08 0.5] :up [0 1 0]}) ; XXX should depend on show dimensions etc...
 
 (defn init [& args]
@@ -324,7 +335,7 @@
   :on-close #(println "CLOSING DIz" (puget.printer/cprint (dissoc % :show :fog))))
  (alter-var-root #'a/*applet* (constantly quil))) ;like i dont get why is this bad/not done by default?
 
-
+(defn set-sketch [sketch])
 (defn set-camera [m-pos] (push-to-state {:navigation-3d m-pos}))
 (defn request-print [] (reset! print-ok true))
 
