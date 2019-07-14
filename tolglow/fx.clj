@@ -583,12 +583,12 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 (defn build-cross-scene "Create scene setting color of a light while aiming it just below and in front of another."
   [move-key reference-key color]
   (fx/scene "Cross scene"
-            (move/aim-effect "Cross" (javax.vecmath.Point3d. (:x (first (fixtures-named reference-key))) 0.0 0.2)
+            (move/aim-effect "Cross" (Point3d. (:x (first (fixtures-named reference-key))) 0.0 0.2)
                              (fixtures-named move-key))
             (color-fx/color-effect "Cross color" color (fixtures-named move-key) :include-color-wheels? true)))
 
 (defn or-crossover-chase []
- {:vars {:beats 1, :fade-fraction 0, :cross-color (color/like :orangered), :end-color (color/like :orange)}})
+ {:vars {:beats 1, :fade-fraction 0.25, :cross-color (color/like :orangered), :end-color (color/like :orange)}})
 (defn crossover-chase "Create a sequential chase which gradually takes over all the moving heads from whatever they were doing, changes their colors, and makes
   them cross in an interesting pattern. By default, stages of the chase advance on every beat, but you can adjust that by passing in a
   different value for with the optional keyword argument `:beats`. To add a fade between stages, pass a non-zero value (up to 1, which
@@ -620,20 +620,19 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
         step (build-step-param :interval :bar :interval-ratio (:bars p))
         phase-osc (sawtooth :interval :bar :interval-ratio (:bars p))
         width (- (:right-wall p) (:left-wall p))
-        front (if ceiling? 0.5 (:stage-wall p))  ; The blades can't reach behind the rig
+        front (if ceiling? 0.5 (:stage-wall p))
         depth (- (:rear-wall p) front)
         y (if ceiling? (:ceiling p) 0.0)
         heads (sort-by :x (move/find-moving-heads fixtures))
-        [points running current-step] (map ref [(ring-buffer (count heads)) true nil]) ]
-    (Effect. "Circle Chain"
-             (fn [_ _] (dosync (or @running (seq @points)))) ;; Continue running until all circles are finished
-             (fn [show snapshot]
+        [points running current-step] (map ref [(ring-buffer (count heads)) true nil])
+        active-fn (fn [_ _] (dosync (or @running (seq @points)))) ;; Continue running until all circles are finished
+        gen-fn (fn [show snapshot]
                (dosync
                 (let [now (math/round (resolve-param step show snapshot))
                       phase (lfo/evaluate phase-osc show snapshot nil)
-                      stagger (resolve-param (:stagger p) show snapshot) ;; stagger (resolve-param stagger show show snapshot) ;ehh sloppy double thing
+                      stagger (resolve-param (:stagger p) show snapshot)
                       head-phases (map #(* stagger %) (range))] ;well no need i guess since lazy but
-                  (when (not= now @current-step)
+                  (when-not (= now @current-step)
                     (ref-set current-step now)
                     (if @running  ;; Either add a new circle, or just drop the oldest
                       (alter points conj (Point3d. (+ (:left-wall p) (rand width)) y (+ front (rand depth))))
@@ -646,7 +645,62 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
                                                     (+ (.z point) (* radius (Math/sin theta))))]
                            (fx/build-head-parameter-assigner :aim head head-point show snapshot)))
                        heads @points head-phases))))
-             (fn [_ _] (dosync (ref-set running false)))))) ;; Stop making new circles, and shut down once all exiting ones have ended.
+        end-fn (fn [_ _] (dosync (ref-set running false)))]
+    (Effect. "Circle Chain" active-fn gen-fn end-fn))) ;; Stop making new circles, and shut down once all exiting ones have ended.
+
+
+(defn build-aim-fan-point "Create a dynamic parameter which computes the aim point for a fixture in an [[aim-fan]] effect."
+  [x y z x-scale y-scale]
+  (let [params [x y z x-scale y-scale]
+        dyn (boolean (some params/frame-dynamic-param? params))
+        resolve-fn (fn [show snapshot head]
+                     (let [params (map #(params/resolve-unless-frame-dynamic % show snapshot head) params)]
+                       (apply build-aim-fan-point params)))
+        eval-fn (fn [show snapshot head]
+                  (let [[x y z x-scale y-scale]
+                        (map #(params/resolve-unless-frame-dynamic % show snapshot head) params)
+                        [dx dy] (map (fn [k sym] (- (k head) sym)) [:x :y] [x y])]
+                  (Point3d. (+ (:x head) (* dx x-scale)), (+ (:y head) (* dy y-scale)), z)))]
+   (Param. "Aim fan param" dyn Point3d resolve-fn eval-fn))) ;feels like a much smaller wrapper around a general aim param creator oughta do??
+
+(defn aim-fan "Creates an aim effect which aims the lights outward around a reference point specified by `:x`, `:y`, and `:z`, which defaults to `(0, 0, 5)`, by first aiming the lights at the reference point, and then adding on the distance within the x-y plane from the fixture to that point, multiplied by `:x-scale` and `:y-scale`, which each default to `1`. A scale of `0` would aim the lights straight forward. Positive values fan them out, while negative values overshoot the reference point in the other direction, fanning them in. All parameters other than `fixtures` can be dynamic or keywords, which will be bound to show variables.  "
+  [fixtures & {:keys [x y z x-scale y-scale effect-name]
+               :or {x 0.0 y 0.0 z 5.0 x-scale 1.0 y-scale 1.0 effect-name "Aim Fan"}}]
+  (let [params (map #(params/bind-keyword-param %1 Number %2)
+                    [x y z x-scale y-scale] [0.0 0.0 5.0 1.0 1.0])]
+    (move/aim-effect effect-name (apply build-aim-fan-point params) fixtures)))
+
+(defn- build-twirl-vector "Create a dynamic parameter which computes the direction vector for a fixture in a [[twirl]] effect."
+  [x y z radius osc]
+  (letfn [(eval-fn [show snapshot head]
+           (let [[x y z radius] (map #(params/resolve-param % show snapshot head) [x y z radius])
+                 reference-point (Point3d. x y z)
+                 head-point (Point3d. (:x head) (:y head) (:z head))
+                 displacement (Point3d. 0.0 radius 0.0)
+                 angle (* tf/two-pi (lfo/evaluate osc show snapshot head))
+                 rotation (Transform3D.)]
+            (.rotZ rotation angle)
+            (.transform rotation displacement)
+            (.add head-point displacement)
+            (.sub head-point reference-point)
+            (Vector3d. head-point)))
+          (resolve-fn [show snapshot head]
+           (let [params (map #(params/resolve-unless-frame-dynamic
+                               % show snapshot head) [x y z radius osc])] ;osc wrong here no? not yet param...
+            (apply build-twirl-vector params)))]
+   (Param. "Twirl vector" true Vector3d eval-fn resolve-fn)))
+
+
+(defn or-twirl []
+ {:vars {:x 0.0 :y 0.0 :z -2.0 :radius 0.25 :beats 4 :cycles 1}})
+(defn twirl "Direction movement effect fanning lights out from set point and then making rotations around this new direction, with phase offset by fixture x pos"
+  [fixtures & {:keys [x y z radius beats cycles effect-name]
+               :or {x 0.0 y 0.0 z -2.0 radius 0.25 beats 4 cycles 1 effect-name "Twirl"}}]
+  (let [[x y z radius beats cycles] (map #(params/bind-keyword-param %1 Number %2)
+                                         [x y z radius beats cycles] [0.0 0.0 -2.0, 0.25 4 1])
+        osc (lfo/sawtooth :interval-ratio (params/build-param-formula Number #(/ %1 %2) beats cycles)
+                          :phase (params/build-spatial-param fixtures :x :max 1.0))]
+    (move/direction-effect effect-name (build-twirl-vector x y z radius osc) fixtures)))
 
 
 ;           CHANNEL / FUNCTION effects
