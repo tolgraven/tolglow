@@ -685,19 +685,50 @@
  (Effect. "Blank" fx/always-active (fn [_ _] []) fx/end-immediately))
 (def generate-fade #'afterglow.effects/generate-fade)
 
+(defn ms-elapsed ;shouldnt there already be a fn like this somewhere??
+ [earlier & show]
+ (if earlier
+  (let [show (or (first show) *show*)
+       now (metro-snapshot (:metronome show))]
+  (apply - (map :instant [now earlier])))
+  0)) ; 0 elapsed since right now if earlier is nil, makes sense
+(def conditions [:default :mute :solo]) ;condition for mute and that? so dont rely on alpha 0 for it would then have to store sep anyways ; nil and :default would be same...
+;; :mute easy enough. but :solo another fucking thing... guess it'd iterate over all effects pre-rendering and if any has :solo collect and only run those
 (defn effect "Wraps other effect-fns in a fade to blank, and possibly other shit later. Like prio adjustment/autorestart?"
- ;XXX alpha/condition should be ev integrated into Effect protocol?
-  [effect alpha & {:keys [condition]}] ;condition for mute and that? so dont rely on alpha 0 for it...
+  [effect alpha & {:keys [timeout timeout-interval envelope condition] ;XXX alpha/condition should be ev integrated into Effect protocol?
+                   :or {envelope {:a 600 :r 1000}
+                        timeout-interval :ms ;oh yeah ms could be a thing with :beats :bars etc.
+                        ;; timeout 1000000000}}] ; should be built in. but maybe more at the cue level...
+                        timeout :global-effect-timeout-ms}}] ; should be built in. but maybe more at the cue level...
   {:pre [(some? *show*) #_(instance? Effect effect)]}
-  (validate-param-type alpha Number)
-  (let [[alpha condition] (map #(param/auto-resolve % :dynamic false) [alpha condition])
+  (map #(validate-param-type % Number) [alpha timeout])
+  (let [[alpha condition] (param/auto-resolve [alpha condition] :dynamic false)
+        timeout (param/auto-resolve (bind-keyword-param timeout Number 3000 (str (:name effect) " timeout")))
+        launched (metro-snapshot (:metronome *show*))
+        ended (atom nil)
+        end-fn (if (pos? (:r envelope))
+                (fn [show snapshot]
+                 (if (not @ended) (reset! ended snapshot))
+                 nil)
+                (:end-fn effect))
+        active-fn (if (or timeout (pos? (:r envelope))) ;this makes more sense than like wrapping everything in chases right?
+                   (fn [show snapshot]
+                    (let [[ms-start ms-end] (map #(ms-elapsed % show) [launched @ended])]
+                     (if (not @ended)
+                      (if (< ms-start timeout)
+                       (:active-fn effect)
+                       (reset! ended snapshot)) ;since cant call end-fn on ourselves yet. no idea why wouldnt work when called to f above in let tho,..
+                      (if (< ms-end (:r envelope))
+                       (:active-fn effect)))))
+                   (:active-fn effect))
         f (fn [show snapshot]
-               (let [[alpha condition] (map #(resolve-param % show snapshot) [alpha condition])]
-                 (cond (autil/float>= alpha 1.0) ((:gen-fn effect) show snapshot)
-                       (autil/float<= alpha 0.0) ((:gen-fn blank-effect) show snapshot)
-                       :else (generate-fade blank-effect effect alpha show snapshot))))] ;could we do spatial param = fade effect per head/in space? or smooth fades out. or mixing bunch of lfos prob funky
-    (Effect. (:name effect)
-             (:active-fn effect)
-             f
-             (:end-fn effect))))
+            (let [[alpha condition] (map #(resolve-param % show snapshot) [alpha condition])
+                  [ms-start ms-end] (map #(ms-elapsed % show) [launched @ended])
+                   fade (min 1.0 (/ ms-start (:a envelope 1))
+                            (if (pos? (:r envelope)) (- 1.0 (/ ms-end (:r envelope))) 1))
+                   alpha (* fade alpha)]
+             (cond (autil/float>= alpha 1.0) ((:gen-fn effect) show snapshot)
+                   (autil/float<= alpha 0.0) ((:gen-fn (fx/blank)) show snapshot)
+                   :else (generate-fade (fx/blank) effect alpha show snapshot))))] ;could we do spatial param = fade effect per head/in space? or smooth fades out. or mixing bunch of lfos prob funky
+    (Effect. (:name effect) active-fn f end-fn)))
 
