@@ -15,7 +15,7 @@
              [fun :as fun]
              [movement :as move]
              [oscillators :as lfo :refer [build-oscillated-param sawtooth sine square triangle]]
-             [params :as params :refer [bind-keyword-param build-aim-param build-color-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param? param? resolve-param validate-param-type]]
+             [params :as params :refer [bind-keyword-param build-aim-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param? param? resolve-param validate-param-type]]
              [show-variable :as var-fx :refer [variable-effect]]]
             [amalloy.ring-buffer :refer [ring-buffer]]
             [clojure.math.numeric-tower :as math]
@@ -28,7 +28,7 @@
              [debug :as debug :refer [det]]
              [util :as util :refer []]])
   (:import [afterglow.effects Effect IEffect]
-           afterglow.effects.params.IParam
+           [afterglow.effects.params IParam Param]
            afterglow.effects.dimmer.Master
            afterglow.effects.oscillators.IOscillator
            afterglow.rhythm.Metronome
@@ -681,24 +681,66 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
             (fn [show snapshot target was]
               (max (resolve-param level show snapshot target)
                    (or (resolve-param was show snapshot target) 0)))
-            (fn [show snapshot target was] ;; We can defer parameter resolution until the final DMX level assignment stage.
-              level))
-        assigners (chan-fx/build-head-function-assigners function-type heads f)]
-    (Effect. effect-name
-             fx/always-active
-             (fn [show snapshot] assigners)
-             fx/end-immediately)))
+            (fn [_ _ _ _] level)) ;; We can defer parameter resolution until the final DMX level assignment stage.
+        get-assigners (fn [_ _] (chan-fx/build-head-function-assigners function-type heads f))]
+    (Effect. effect-name fx/always-active get-assigners fx/end-immediately)))
 
-; ^ XXX either merge or drop use of channel completely, prob makes more sense, think channels create full-range
-; function specs anyways? check
+(defn or-trigger [] {:vars {} :opts {}})
+(defn trigger "Trigger code a la code-cue, whenever level hits 1.0 (or arbitrary threshold?). Or when level changes?"
+ [level f & {:keys [args effect-name trigger-check-fn throttle-fn]
+             :or {effect-name "Code trigger", trigger-check-fn #(>= % 1.0)
+                  throttle-fn (fn [triggered-at now & {:keys [interval] :or {interval :bar}}] (= triggered-at (interval now)))}}]
+ (let [level (params/bind-keyword-param level Number 0.0)
+       gen-fn (fn [show snapshot]
+               (when (trigger-check-fn (param/auto-resolve level))
+                ()
+                (apply f args)))]
+  (Effect. effect-name fx/always-active gen-fn fx/end-immediately)))
+;; ^^ this looks a lot like conditional-effect... am I going for a wrapper or low down?
 
-;GOTTA WORK ON
-;conditional-effect
-;spatial shit...
-;making new effects!!!
-(defonce ^{:doc "One blank effect ought to be enough for everyone."} blank-effect
- (Effect. "Blank" fx/always-active (fn [_ _] []) fx/end-immediately))
-(def generate-fade #'afterglow.effects/generate-fade)
+
+(defn code "Calls f, once or per frame, (or timed/throttled?) for code to be run from cue grid,
+   or some live coding coolness.  `f` must be a fn of 2 args, apart from your own.
+   It will be called with those, and show / snapshot..
+   Must return immediately, as is run in rendering pipeline, so any lengthy ops
+   must be performed on another thread.  And on-end-fn can be provided, that will
+            (hopefully) be called when effect ends, before shutdown. ;/"
+  [f arg-fn & {:keys [kind on-end-fn] :or {kind :loop}}]
+  {:pre [(ifn? f)]}
+  (let [end-fn (if on-end-fn (fn [show snapshot]
+                              (on-end-fn show snapshot) true) fx/end-immediately)]
+    (Effect. "Code"
+             (fn [show snapshot] true) ;here is where he ran f. better why?
+             (fn [show snapshot] (or (f show snapshot) [])) ;If no assigners to return
+             end-fn)))
+
+
+(defmacro pass-live-fn "Guard fn in var so stays hot-reloadable inside fx, chases etc..."
+ [v]
+ (if (symbol? v)
+  `(if (fn? ~v) (var ~v) ~v)
+  v))
+
+(defmacro call "Fetch and call :gen-fn for Effect while passing show and snapshot eh uselessss"
+;;  [effect showsnap] ;oh yeah head as well ugh
+ [effect show snap] ;oh yeah head as well ugh
+ `(let [gen# (:gen-fn ~effect)]
+   ;; (gen# ~@showsnap)))
+   (gen# ~show ~snap)))
+
+
+(defn live "Something more like quil where you can have a draw fn and changes reflect instantly, no relaunching bs"
+ [draw-fn & {:keys [fx-name inputs starting-state state-var get-update-fn]
+             :or {fx-name "Live" state-var :live-effect}}]
+ (let [gen-fn (fn [show snapshot]
+               ;; ((get-update-fn) state-var show snapshot)
+               (if-let [assigners (draw-fn (show/get-variable state-var) show snapshot)]
+                assigners
+                []))]
+  (Effect. fx-name fx/always-active gen-fn fx/end-immediately)))
+
+
+(def generate-fade #'afterglow.effects/generate-fade) ;not public so gotta alias like this
 
 (defn ms-elapsed ;shouldnt there already be a fn like this somewhere??
  [earlier & show]
