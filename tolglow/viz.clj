@@ -58,24 +58,28 @@
 ;;                      [(.-m01 rot) (.-m11 rot) (.-m21 rot)]
 ;;                      [(.-m02 rot) (.-m12 rot) (.-m22 rot)]]))))
 
-(defn adjusted-positions "Adjust y axis to match Processing's weirdo coordinate system."
+(defn adjusted-positions "Flip y axis to match Processing's weirdo coordinate space"
   [lights _]
   (for [[_ {:keys [x y z]}] lights] [x (* -1 y) z]))
 
 (defn fx-on-fixture [id fx show]
  ((keyword (str fx "-" id)) (:previous @(:movement show))))
 
-(defn active? "Whether given fixture (represented as tuple of [id spec], of show's :visualizer-visible map) is potentially emitting light and should be rendered"
+(defn color? "Whether given fixture (represented as tuple of [id spec], of show's :visualizer-visible map) is potentially emitting light and should be rendered"
   [show [id fixture-or-head]]
   (when-let [color (fx-on-fixture id "color" show)] ;; XXX need to take into account dimmers, and someday be based on raw DMX values rather than the current higher-level abstractions.
-    (pos? (colors/lightness color))))
+    (pos? (clr/luminance color))))
 
 (defn active-fixtures "Return fixtures to render, those emitting light."
   [show]
   (when show
-   (filter (partial active? show) (:visualizer-visible @(:dimensions show) [])))) ;bugs out when viz started with show stopped. fix how?
+   ;; (filter (partial color? show) (:visualizer-visible @(:dimensions show) [])))) ;bugs out when viz started with show stopped. fix how?
+    (:visualizer-visible @(:dimensions show) []))) ;bugs out when viz started with show stopped. fix how?
 #_(defn included-fixtures "Should only use fixtures, not heads (strips) considering only 8 lights supported. So can put spheres where they are patched"
  [show])
+(defn colored-fixtures "change to lit asap"
+ [show]
+ (filter (partial color? show) (active-fixtures show)))
 
 ;; XXX just save the original current transforms per head and use those instead, gets too weird trying to solve back something with multiple solutions...
 ;; also, everything should be stored and retrievable anyways (post assigners), also so can do more interesting stuff
@@ -101,11 +105,16 @@
      (let [rotvec [(.x dir) (.y dir) (.z dir)]]
       rotvec))))
 
+; for stuff like this, dimmer, strobe etc actually might be easier (and better for testing!) to loop back
+; dmx from OLA and (since we know where all the channels are) just read from there...
 (defn current-colors "Get the current color values of the active spotlights for the visualizer.  Return as a series of four-element vectors of red, green, blue, and alpha."
   [lights show]
   (for [[id head] lights]
-    (let [color ((keyword (str "color-" id)) (:previous @(:movement show)))]
-     (mapv #(double (/ (% color) 255)) [colors/red colors/green colors/blue colors/alpha]))))
+    (if-let [color ((keyword (str "color-" id)) (:previous @(:movement show)))] ;; (mapv #(double (/ (% color) 255)) [colors/red colors/green colors/blue colors/alpha]))))
+     @(clr/as-rgba color)
+     [0.0 0.0 0.0])))
+
+
 
 ;; PARTICLE / FOG SYSTEM
 (defn divv [v n] (if (zero? n) v (mapv #(/ % n) v)))
@@ -201,29 +210,38 @@
  (q/pop-style))
 
 
+(defn light-from-fixtures "Lighting shit from (up to 7) fixtures"
+ [{{:keys [positions colors rotations] :as s} :fixtures}]
+ (q/color-mode :rgb 1.0)
+  (doseq [[pos color rot] (partition 3 (interleave positions colors rotations))]
+  (when-not (zero? (apply + color)) ;only light with light lol. should be a flag in map, incl prio of what to use etc
+   (q/with-translation (mapv #(* % 100) pos) ;pos
+     (q/with-translation [0 0 -170 #_-1] ;move light out of the later drawn sphere so can actually see it...
+      (when (< @lightscounter 8)
+       (q/spot-light color pos rot (/ q/HALF-PI 2.5) 10) ;;emitting the fixture's light
+       (swap! lightscounter inc)))))))
+
 (defn draw-fixtures "Should split into one drawing (all) fixtures, one setting up lights..."
  [{{:keys [positions colors rotations] :as s} :fixtures}]
  (when (seq positions)
+  (q/color-mode :rgb #_:hsb 1.00) ;whoops :hsl isnt in clj, use rgb conversion...
   (doseq [[pos color rot] (partition 3 (interleave positions colors rotations))]
-
     (q/with-translation (mapv #(* % 100) pos) ;pos
-      (q/with-translation [0 0 -100 #_-1] ;move light out of the later drawn sphere so can actually see it...
-       (when (< @lightscounter 8)
-        (q/spot-light color pos rot (/ q/HALF-PI 2.5) 7) ;;emitting the fixture's light
-        (swap! lightscounter inc)))
-
-      (q/stroke 0.2 0.2) (q/stroke-weight 0.1)
+      (q/no-stroke) ;(q/stroke 0.2 0.2) (q/stroke-weight 0.1)
       (apply q/fill color)
-      (q/sphere 25) ;;symbolizing the fixture itself
+      (q/sphere-detail 15)
+      (q/sphere 20) ;;symbolizing the fixture itself
 
-      (apply q/stroke (conj (mapv #(- % 0.25) (take 3 color)) 0.8))
+      (q/sphere-detail 8)
       (q/with-rotation (cons q/PI rot)
-       (q/stroke-weight 7)
-       (q/line 0 0 -35, 0 0 100)
-       (q/stroke-weight 4)
-       (q/line 0 0 0, 0 50 0)
-       (q/with-translation [0 0 100] (q/sphere 4))
-       (q/with-translation [0 0 -30] (q/sphere 4))))))) ;) ;should all be relative to fixture/line size...
+       ;; (apply q/stroke (conj (mapv #(- % 0.20) (take 3 color)) 0.8))
+       (apply q/stroke color)
+       (q/stroke-weight 4) (q/line 0 0 -25, 0 0 75)
+       (q/stroke-weight 2) (q/line 0 0 0, 0 35 0)
+       (q/with-translation [0 0 77] (q/sphere 3))
+       (q/with-translation [0 0 -23] (q/sphere 4))
+       ;also need like a transparent cone to more properly extend from fixture to show beam
+       ))))) ;) ;should all be relative to fixture/line size...
 
 (defn draw-stage [{{:keys [w h d] :as stage} :stage :as s}]
   (q/fill 0.3 0.6 0.5)
@@ -241,17 +259,22 @@
   (q/ambient 0.5 0.5 0.5)
   (q/shininess 20.0) ;does this need setting every frame or only once?
 
-  (q/directional-light 0.7 0.7 0.7  0.3 0.6 0.4)
-  ;; (q/point-light 0.2 0.2 0.2, 0 -0 0)
+  (q/directional-light 0.7 0.7 0.7  0.3 0.6 0.4) ;; (q/point-light 0.2 0.2 0.2, 0 -0 0)
   (reset! lightscounter 1))
 
-
-(defn draw-state [s] "Main loop drawing fn"
+(defn draw-state "Main loop drawing fn" [s]
   (q/background 0.07) ; Clear sketch by filling bg
-  (q/stroke 0.2 0.3)
-  (q/stroke-weight 0.2)
+  (q/stroke 0.2 0.3) (q/stroke-weight 0.2)
   ;; (q/shader @shader)
   ;; (q/reset-shader)
+  (let [fs {:base-lights base-lights :light-from-fixtures light-from-fixtures
+            :draw-fixtures draw-fixtures
+            :draw-stage draw-stage :draw-fog draw-fog}]
+   (doseq [[id f] fs]
+    (if (-> s :time id)
+     (time (f s))
+     (f s)))) ;could also like wrap push/pop style?
+(draw-gui s))
 
   (let [draw-fns [base-lights draw-fixtures draw-stage draw-fog]]
    (doseq [f draw-fns] (f s)))
