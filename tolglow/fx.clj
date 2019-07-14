@@ -20,6 +20,8 @@
             [amalloy.ring-buffer :refer [ring-buffer]]
             [clojure.math.numeric-tower :as math]
             [com.evocomputing.colors :as colors :refer [color-name]]
+            [thi.ng.color.core :as clr]
+            [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
             [taoensso.timbre.profiling :refer [pspy]]
             [tolglow
@@ -53,7 +55,7 @@
                       :arg-spec #({:vars {:color (color/create :white), :fraction 0, :width 1
                                           :halo 0.1  ;part, as percent of width, where bloom has ended but some bleeds through/fades out
                                           :keyhole? false, :keyhole-opacity 0.8 ; allow some through even outside keyhole
-                                          :hue-mod 30 :lightness-mod -5 :saturation-mod -15}
+                                          :hue-mod (/ 30 360) :lightness-mod -0.05 :saturation-mod -0.15}
                                    :opts {:measure (tf/build-distance-measure 0 0 0) ;; :keyhole-target "lightness"; adjustable destination (curr simply black outside bounds, should rather mod was)
                                           }})
                       :main-param :fraction
@@ -81,51 +83,51 @@
             active-fn
             (fn [show snapshot] (assigners-fn gen-fn))
             end-fn)))))
-
 (defn make-effect "Create an Effect. with name, gen-fn, and optional overridden active and end-fns (defaulting to always-active and end-immediately)"
  [fx-name gen-fn & {:keys [active-fn end-fn] :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
  (Effect. fx-name active-fn gen-fn end-fn))
 
-(defn color "Make a color effect which affects all lights, or :fixtures"
+(defn color "Make a color effect which affects all lights, or :fixtures" ;XXX change to [fixtures color]
   [color & {:keys [fixtures effect-name include-color-wheels? htp? priority]
             :or {fixtures (all-fixtures)}}]
   (try
-    (let [[c desc] (cond (= (type color) ::colors/color) [color (color-name color)]
-                         (keyword? color)                [(color/like (name color)) (name color)]
-                         (and (param? color) ;XXX helper (param/results-in ::color/color)
+    (let [[c desc] (cond (= (type color) thi.ng.color.core.HSLA) [color (color-name (apply colors/create-color (map #(int (* 255 %)) (take 3 @(clr/as-rgba color)))))]
+                         (keyword? color) ; keyword needs to first check for show var param...
+                         (if (color/color? (show/get-variable color)) ;(resolve-param (bind-keyword-param color thi.ng.colors.core.HSLA (color/color :white))))
+                          [(bind-keyword-param color thi.ng.color.core.HSLA (show/get-variable color)) "variable"]
+                          [(color/like (name color)) (name color)])
+                         (and (param? color) ;XXX helper
                               (= (params/result-type color)
-                                 ::colors/color))        [color "variable"]
-                         :else                           [(color/like (name color)) color])]
+                                 thi.ng.color.core.HSLA))        [color "variable"]
+                         :else                           [(color/like (name color)) color])
+          ;; sat (clr/saturation (param/auto-resolve c)) ;well resolve in case etc
+          ]
                          ;; :else [(color/create color) color])]
       (color-fx/color-effect (or effect-name (str "Global " desc)) c fixtures
-                             :include-color-wheels? include-color-wheels?))
+                             :include-color-wheels? include-color-wheels? :htp? htp?))
     (catch Exception e (throw (Exception. (str "Can't figure out how to create color from " color) e)))))
 
 (defn global-dimmer-effect "Return an effect that sets all dimmers. It can vary in response to a MIDI mapped show variable, an oscillator, or the location of the fixture. You can override the default name by passing in a value with :effect-name"
   [level & {:keys [effect-name add-virtual-dimmers?]}]
   (let [htp? (not add-virtual-dimmers?)]
     (dimmer-effect level (all-fixtures) :effect-name effect-name :htp? htp? :add-virtual-dimmers? add-virtual-dimmers?)))
-#_(defn rgb-dimmer "moderate rgb pixels using a virtual dimmer with high priority, scaling other effects." []
-  (add-effect! :master (global-dimmer-effect 255 :htp? false :add-virtual-dimmers? true) :priority 100000))
 
 (defn sat-transformer "Creates a color transformation for use with [[transform-colors]] which changes the saturation based on a variable parameter. If no parameter is supplied, the default is to use an oscillated parameter based on [[sawtooth]] with `:down?` set to `true` so the color is fully saturated at the start of the beat, and fully desaturated by the end. A different pattern can be created by supplying a different parameter with the `:param` optional keyword argument." {:doc/format :markdown}
-  [& {:keys [param] :or {param (build-oscillated-param (sawtooth :down? true) :min -20 :max 20)}}]
+  [& {:keys [param] :or {param (build-oscillated-param (sawtooth :down? true) :min -0.2 :max 0.2)}}]
   (fn [color show snapshot head]
-    (let [s (colors/clamp-percent-float (resolve-param param show snapshot head))]
-      (build-color-param :color color :adjust-saturation s)))); }}}
+    (let [s (cmath/clamp (resolve-param param show snapshot head) -1.0 1.0)] ; wait resolving/clamping might as well be done in param builder?
+      (param/color :color color :adjust-saturation s)))); }}}
 
 (defn color-transformer "generalized color transform"
   [& {:keys [h s l]}]
   (fn [color show snapshot head]
     (let [args (into [:color color] ;there is no need to resolve params at this point, so just pass them on...
-                     ;; (when-not (= color (color/create :black)) ;avoid lighting up black, maybe some performance gains too
-                     ;; (when-not (color/black? color) ;avoid lighting up black, maybe some performance gains too
-                     (when (< (color/l color) 10) ;avoid lighting up black/very dark maybe some performance gains too
-                      [:adjust-hue h :adjust-saturation s :adjust-lightness l]))]
-      (apply build-color-param args))))
+                     (when (> (color/l color) 0.10) ;avoid lighting up black/very dark maybe some performance gains too
+                      [:adjust-hue h :adjust-saturation s :adjust-lightness l]))] ;well might forward nil but all the same as not sending those args in first place yeah?
+      (apply param/color args))))
 
 (defn color-mod-effect "Wraps transform-colors and the baddest transform-fn to get some fucking order in this place"
- [param fixtures & {:keys [hue saturation lightness] :or {hue 0.0 saturation 1.0 lightness 0.0}}] ;value scales param for that key
+ [param fixtures & {:keys [hue saturation lightness] :or {hue 0.05 saturation 1.0 lightness 0.1}}] ;value scales param for that key
  (fn [show snapshot head]
   (let [res (resolve-param param show snapshot head)
         transformer (color-transformer :h (* res hue) :s (* res saturation) :l (* res lightness))] ;would be better to simply avoid if scale 0
@@ -181,7 +183,7 @@
                           (let [r (param/auto-resolve p :show show :snapshot snapshot :head head) ;XXX either make sure to utilize spatial color and fade, or resolve just once...
                                 fraction (/ (- now creation-time) (max 10 (:fade-time r)))
                                 colormod (->> (:color r)
-                                              (color/h (- (rand 70) 35)) ;XXX dont vary every fucking update...
+                                              (color/h (- (rand (/ 70 360)) (/ 35 360))) ;XXX dont vary every fucking update...
                                               (color/l (* fraction (color/l (:color r)))))]
                            (fx/build-head-assigner
                             :color head
@@ -190,36 +192,6 @@
         end-fn (fn [_ _] (reset! running false))]
     (Effect. "Sparkle" active-fn gen-fn end-fn))) ;; Arrange to shut down once all existing sparkles fade out.
 
-;      BLOOMS
-(defn bloom-dimmer "Bloom that doesn't set a color, only affecting dimmer"
-  [fixtures & {:keys [fraction measure]
-               :or { :fraction 0, :measure (tf/build-distance-measure 0 0 0)}}]
-  (let [fraction (bind-keyword-param fraction Number 0)
-        measure (resolve-param (bind-keyword-param measure :tf/distance-measure
-                                                                 (tf/build-distance-measure 0 0 0))
-                                      *show* (metro-snapshot (:metronome *show*)))
-        heads (chan/find-rgb-heads fixtures)
-        furthest (tf/max-distance measure heads)
-        f (fn [show snapshot target was]
-            (let [fraction (resolve-param fraction show snapshot target)
-                  distance (measure target)]
-              ;; (if (<= distance (* furthest fraction))
-                was))
-        assigners (fx/build-head-assigners :color heads f)]
-    (apply fx/scene "Bloom"
-           (concat [(Effect. "Bloom dimmer"
-                             fx/always-active
-                             (fn [show snapshot] assigners)
-                             fx/end-immediately)]
-                   (for [fixture fixtures]
-                     (let [distance (measure fixture)
-                           level (build-param-formula Number
-                                                      (fn [fraction]
-                                                        (if (<= distance (* furthest fraction))
-                                                          255
-                                                          0))
-                                  fraction)]
-                       (dimmer/dimmer-effect level [fixture])))))))
 
 ;      BLOOMS
 (defn or-bloom []
@@ -246,7 +218,7 @@
                  distance (/ ((:measure p) head) furthest)
                  [h s l] (map #(* (% r) distance) [:hue-mod :saturation-mod :lightness-mod])
                  color-fn (fn [color]
-                           (when color (apply build-color-param :color color
+                           (when color (apply param/color :color color
                                           (flatten (map #(when (not= 0 %2) [%1 %2])
                                                         [:adjust-hue :adjust-saturation :adjust-lightness]
                                                         [h s l]))))) ;; XXX per-head virtual dimmer (not the same as lightness) (how not the same?)
@@ -303,9 +275,9 @@
           (map (fn [head]
                  (let [[min-dur max-dur] (apply get-min-max show snapshot (map pm [:min-dur :max-dur]))
                        duration (+ min-dur (rand-int (inc (- max-dur min-dur))))
-                       [min-sat max-sat] (map #(colors/clamp-percent-float (resolve-param % show snapshot head)) (map pm [:min-sat :max-sat]))
-                       saturation (colors/clamp-percent-float (- max-sat (rand (- max-sat min-sat))))]
-                   [head [(+ current-step duration) (color/create (or hue 350) (or saturation 50) (+ (rand-int 25) 38))]]))
+                       [min-sat max-sat] (map #(util/clamp (resolve-param % show snapshot head)) (map pm [:min-sat :max-sat]))
+                       saturation (util/clamp (- max-sat (rand (- max-sat min-sat))))]
+                   [head [(+ current-step duration) (color/create (or hue (/ 350 360)) (or saturation 0.50) (+ (rand 0.25) 0.38))]]))
                heads))))
 
 (defn- aim-flakes "Chooses a random point at which the newly-created flakes shoule be aimed."
@@ -319,7 +291,7 @@
  []
  {:whatever "make work w systim from can-can"
   :vars {:step (build-step-param) :min-add 1 :max-add 4 :min-dur 2 :max-dur 4
-         :min-sat 40.0 :max-sat 80.0 :min-hue 0.0 :max-hue 360.0}
+         :min-sat 0.40 :max-sat 0.80 :min-hue 0.4 :max-hue 0.7}
   :opts {:aim? false :min-x -5.0 :max-x 5.0 :min-y 0.0 :max-y 2.0 :min-z 0.5 :max-z 5.0}})
 ;; XXX tol, flakes as bounds in space instead of heads. So could map over multiple heads, change size to osc n shit
 (defn confetti "Mod confetti so can set max saturation, and limit colors to specific range or selection"
