@@ -541,8 +541,23 @@
     (apply fx/scene #_"Effect Sweep" (str #_(pretty-demunge effect-fn) (or name "Some") " Sweep")
            (for [fixture fixtures]
              (let [fixture-level (build-param-formula Number f fixture position (:width p) (:level p) (:fade p))]
-               (apply effect-fn fixture-level [fixture] effect-keys))))))
+               (apply effect-fn fixture-level [fixture] effect-keys)))))) ;why fixture in lone vec?
 
+(defn color-strobe "Compound strobe/color effect, sets dimmers by show variable `:strobe-dimmers` (default 255), assigns color from show variable `:strobe-color` (default purple), and specified `lightness` (which may be dynamic), with a default of 100, whiting out the hue unless lowered.  Then sets fixtures' strobe channel to `level`, which may also be a dynamic parameter.
+Designed to be run as a high priority queue, ideally held and with aftertouch adjusting a cue-introduced `lightness` or `level` var (which is used to control the strobe function of the affected fixtures, setting the strobe speed, and defaults to a middle value). The global strobe color can be adjusted via the show variables, either by aftertouch or by another effect with no assigners, like [[adjust-strobe]]."
+  [level fixtures & {:keys [fx-name lightness]
+                     :or {fx-name "Color Strobe"}}]
+  (let [[level-p lightness-p dimmer-p]
+         (map #(params/bind-keyword-param %1 Number %2)
+              [level lightness :strobe-dimmers] [70 0.80 255])
+        color-p (params/bind-keyword-param :strobe-color color/used-type (color/create "purple")) ;XXX fix conversion fn to all 0.0
+        dimmer (dimmer-effect dimmer-p fixtures)
+        color (color-fx/color-effect
+               "Strobe Color" (param/color :color color-p :l lightness-p)
+               fixtures :include-color-wheels? true)  ; :htp true tends to wash out right away
+        function (chan-fx/function-effect "Strobe Level" :strobe level-p fixtures)]
+   (fx/scene fx-name dimmer color function)))
+;; (param/build-color-param :color (color/create "purple") :l 0.5)
 
 (defn strobe "wraps strobe-2 with [level fixtures] standard ting"
  [level fixtures & {:keys [lightness name] :or {lightness 100 name "Strobe"}}]
