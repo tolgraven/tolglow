@@ -33,6 +33,7 @@
 
 ;; REMEMBER: Processing has Y inverted compared to openGL / afterglow / rest of world
 
+;; REMEMBER: Processing has Y inverted compared to openGL / afterglow / rest of world
 ;; (defn show-span "Determine degree to which show spreads over an axis. For X and Z axes this is simply the difference in bounding box
 ;;   coordinates. For Y, we want to preserve height from the floor, so we use zero as a lower bound on the minimum coordinate."
 ;;   [show axis]
@@ -183,20 +184,63 @@
   (do (reset! state-pusher nil) (merge s m))
   s))
 
+(defn trans-points "Like, translate but 0-100 (or 0.0-1.0?) so no div by window size"
+ [x y & z]
+ (let [x (* x (q/width))
+       y (- (* y (q/height)))
+       z (when (seq z) (* 100 (first z)))]
+  (if z
+   (q/translate x y z)
+   (q/translate x y))))
 
-(defn update-state [s] "Main loop state update fn"
- (print-if-requested (-> s (dissoc :show) (update :fog dissoc :particles)))
- (let [lights (take max-lights (active-fixtures (:show s)))]
-  (-> s
-      check-for-new-data ;; not sure how much will actually need but
-      (assoc-in [:fixtures :positions] (adjusted-positions lights (:show s)))
-      (assoc-in [:fixtures :colors] (current-colors lights (:show s)))
-      (assoc-in [:fixtures :rotations] (current-rotations lights (:show s)))
-      (update :fog (comp add-particle add-particle add-particle add-particle update-particle-system)))))
+(defn begin-gui [{:keys [gui] :as s}]
+ ;; alternative:
+  ;; (q/with-graphics (:graphics gui))
+  (q/no-lights)
+
+  (q/hint :disable-depth-test)
+  (q/push-matrix)
+  (q/reset-matrix)
+  ;; (q/ortho 0 (q/width) 0 (q/height) -10, 10)
+  (q/ortho 0 (q/width) 0 (q/height)) ;left right BOTTOM top hence yeah....
+;; g.ortho(0, viewport[2], -viewport[3], 0, -Float.MAX_VALUE, +Float.MAX_VALUE)
+  (q/push-style))
+
+(defn end-gui [s]
+  (q/pop-matrix)
+  (q/perspective) ;the default perspective (incl in quil) is actually quite fucked, not ortho+restore's fault
+  (q/hint :enable-depth-test)
+  (q/pop-style))
+
+(defn draw-gui "like what?" [s]
+ (begin-gui s)
+ (q/color-mode :rgb 255)
+;;  (q/translate (* 0.01 (q/width)) (- (* 0.95 (q/height)))) ; upper left of window as baseline...
+ (trans-points 0.01 0.95)
+ (q/fill 255)
+ (q/text-size 14)
+;;  (q/rect-mode)
+;;  (q/rect 0 0 300 200 30)
+ (q/stroke 255) (q/stroke-weight 100)
+;;  (q/line 0 0 500 500)
+ (q/text (str (cmath/roundto (q/current-frame-rate) 1)) 0 0)
+ (end-gui s))
 
 
-(defn set-stroke "like if got those settings in state and could set automatically..." [s])
+(defn draw-mist "overlay fog" [{{{:keys [zoff increment]} :mist} :fog}]
+  (q/noise-detail 6 0.45); Optional: adjust noise detail here
+  (let [pixels (q/pixels)] ;calls loadpixels itself so no need
+   ;; (print (q/width) (q/height) "")
 
+  (doseq [x (range (q/width)) y (range (q/height))] ;; For every x,y coordinate in a 2D space, calculate a noise value and produce a brightness value
+     ;; (aset pixels (* x y) (* 255 (q/noise (* x increment) (* y increment) zoff)))) ; // Calculate noise and scale by 255
+     (let [noise (* 255 (q/noise (* x increment) (* y increment) zoff))]
+      ;; (print noise "")
+      ;; (aset pixels (* (q/width) (+ x y)) (int noise)))) ; // Calculate noise and scale by 255
+      (aset pixels (+ x (* (q/width) y)) (int noise)))) ; // Calculate noise and scale by 255
+     ;; float bright = random(0,255); // Try using this line instead
+     ;; pixels[x+y*width] = color(bright,bright,bright); // Set each pixel onscreen to a grayscale value
+  (q/update-pixels))) ;; zoff += zincrement; XXX Increment zoff in state
 
 (defn draw-particle [{:keys [lifespan] [x y z] :location :as particle} & image]
   (let [d (q/map-range lifespan  0 255  1 (/ (q/width) 4))
@@ -213,8 +257,7 @@
 (defn draw-fog [{{:keys [particles image #_confetti] :as ps} :fog}]
  (q/push-style)
  (q/color-mode :rgb 255) ;;XXX should be 0-1
- (q/stroke 0.2 0.3)
- (q/stroke-weight 0.1)
+ (q/stroke 0.2 0.3) (q/stroke-weight 0.1)
  (q/hint :disable-depth-mask) ;transparent part of sprite gets all fucked by blend otherwise
  (doseq [particle particles] (draw-particle particle image))
  (q/hint :enable-depth-mask)
@@ -255,14 +298,13 @@
        ))))) ;) ;should all be relative to fixture/line size...
 
 (defn draw-stage [{{:keys [w h d] :as stage} :stage :as s}]
-  (q/fill 0.3 0.6 0.5)
-  (q/stroke 0.35 0.6)
-  (q/stroke-weight 5)
-   (q/fill 0.4 0.4 0.4)
-   (q/box w 10 d) ;stage floor
-   (q/with-translation [0 15 (- (* 2 d))] ;rest of floor
+  (q/color-mode :rgb 1.0) ;(q/fill 0.3 0.6 0.5)
+  (q/stroke 0.35 0.6) (q/stroke-weight 5)
+  (q/fill 0.4 0.4 0.4)
+  (q/box w 10 d) ;stage floor
+  (q/with-translation [0 15 (- (* 2 d))] ;rest of floor
     (q/box w 10 (* 3 d)))
-   (q/with-translation [0 (- (/ h 2)) (/ d 2)] ;wall behind stage
+  (q/with-translation [0 (- (/ h 2)) (/ d 2)] ;wall behind stage
     (q/box w h 10)))
 
 (defn base-lights [s]
@@ -306,9 +348,8 @@
 (defn setup []
  (q/frame-rate 40)
  (q/color-mode :rgb 1.0)
- (q/sphere-detail 40)
-;;  (q/scale 100) ;useful if actually works on translations etc as well... so auto m -> cm
- (reset! shader (q/load-shader "pixlightfrag.glsl", "pixlightvert.glsl")) ;;  (reset! shader (q/load-shader "pixlightexfrag.glsl", "pixlightexvert.glsl"))
+ (q/sphere-detail 24)
+ (q/hint :enable-optimized-stroke)
 ;;  (q/hint :disable-stroke-perspective) ;just testing
 
 ;;  (q/scale 100) ;useful if actually works on translations etc as well... so auto m -> cm
