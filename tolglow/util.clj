@@ -9,6 +9,7 @@
    [show-context :refer [*show* set-default-show! with-show]]]
   [afterglow.effects.params :as params :refer [bind-keyword-param build-aim-param build-color-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param?  param?  resolve-param validate-param-type]]
   [clojure.string :as string :refer [capitalize upper-case]]
+  [clojure.repl]
   [com.evocomputing.colors :as colors]
   [thi.ng.color.core :as clr]
   [tolglow
@@ -18,24 +19,24 @@
 
 (defn value "shortcut resolve param to val"
  [param]
- (resolve-param param *show* (metro-snapshot (:metronome *show*))))
+ (when (and param *show*)
+  (resolve-param param *show* (metro-snapshot (:metronome *show*)))))
 
-(defn clamp-number "Clamp a number within min-max range"
+(defn clamp "Clamp a number within min-max range"
   [number min max]
   (let [number (or number 0)] ;XXX check int or float auto 0.0-1.0 / 0-255?
-    (cond (>= number max) max
-          (<= number min) min
-          (<= min number max) number)))
+    (cond (<= min number max) number
+          (>= number max) max
+          (<= number min) min)))
 
-#_(defn scale-number "Scale a number from 0.0-1.0 to min-max range"
-  [number lo hi]
-  (let [number (or number 0)
-        hi (max lo hi)
-        range (- max  min)
-        ] ;XXX check int or float auto 0.0-1.0 / 0-255?
-    #_(cond (>= number max) max
-          (<= number min) min
-          (<= min number max) number)))
+(defn scale-number "Scale a number from 0.0-1.0 to min-max range"
+ [number lo hi & {:keys [old-low old-high] :or {old-low 0.0 old-high 1.0}}]
+  (let [[lo hi] [(min lo hi) (max lo hi)] ;hmm needed? nothing breaks?
+        range (- hi lo)
+        relative (/ (- number old-low) (- old-high old-low))] ;XXX check int or float auto 0.0-1.0 / 0-255?
+   (float (+ lo (* range relative)))))
+;; (int (+ 0 (* (- 255 0) (/ (- 50 -255) (- 255 -255)))))
+;; (scale-number 50 0 255 :old-low -255 :old-high 255)
 
 (defn ensure-is
  [kind v]
@@ -45,7 +46,7 @@
 
 (defn key-str ;XXX make macro so can write - without quoting and stuff...
  [& args]
- (keyword (apply str (map #(ensure-is :string %) args))))
+ (keyword (clojure.string/replace (clojure.string/lower-case (apply str (map #(ensure-is :string %) args))) " " "-")))
 
 (defn find-fn "Should auto-resolve keywords, strings, etc, to any reasonable fn, from cfg list of ns's to look in, or manually specd, or by keyword ns..."
  [id & {:keys [location]}])
@@ -59,27 +60,37 @@
          Integer (int (f low high)) ;:integer
          ;; Double   ;:float
          ;; Float    ;:float
-         ::colors/color (color/random low high) ;:color
-         (f low high) )))
+         thi.ng.color.core.HSLA (color/random low high) ;:color
+         (f low high))))
 
-(defn catchall "Wrap f in (try (f) (catch Exception e))"
+(defn catchall "Wrap f in (try (f) (catch Exception e)), and auto log/print stack trace"
  [f & logfn]
-  (let [logfn (or logfn
-                  (fn [f e]
-                   #_(println "\n" (str e) #_"\n" #_e)
+  (let [logfn (or (first logfn)
+                  (fn [e]
+                   (println) ;new bug... "wrong number of args (2) passed to: repl/pretty-pst"
+                   (clojure.repl/pst e 8) ;this one isnt even called pretty-pst? there is no such fn??
+                   (println)) ;there's a pretty-pst in io.aviso.repl, wtf is that?
+                  #_(fn [e]
                    (when (cfg :debug :auto-print-trace) (printf "\n%s" e)) ;welp dang to do this, fucks pst etc...
-                   (swap! (at :exceptions) #(concat % [e]))))]
+                    (swap! (at :exceptions) #(concat % [e]))))]
    (try
     (f)
-    (catch Exception e
-      (logfn f (str e))))))
+    ;; (catch Exception e
+    (catch Throwable t
+      #_(logfn t)))))
 
 
-(defn find-nested "Find key at any level of nested maps"
-  [m k]
+(defn find-nested "Find value(s) for key at any level of nested maps. Doesnt work if structure also contains lists and vectors etc..."
+ [m k]
   (->> (tree-seq map? vals m)
        (filter map?)
-       (some k)))
+       (map k) (filter some?) ;; (filter #(= k %))
+       #_(some k)))
+
+(defn merge-vecs "Magically tidies up vector to one 'base' layer"
+ [& v-or-vs]
+ (apply (comp vec flatten vector) v-or-vs))
+
 
 (defn avar "get/set show variable shortcut"
  ([key]
@@ -92,30 +103,46 @@
   (print key " " value "\t"))
 
 (defn watch-var
- [key]
- (show/clear-variable-set-fn! key print-var-on-change)
- (show/add-variable-set-fn! key print-var-on-change))
+ [show-key & watcher]
+ (let [watcher (or (first watcher) print-var-on-change)])
+ (show/clear-variable-set-fn! key watcher)
+ (show/add-variable-set-fn! key watcher))
 
 (defn hook-var
  [show-key f]
- (show/clear-variable-set-fn! show-key f)
- (show/add-variable-set-fn! show-key f))
+  (show/clear-variable-set-fn! show-key f)
+  (show/add-variable-set-fn! show-key f)
+  [show-key f]) ;return these so can easily unhook
+
+(defn unhook-var "I really should stop these fns that just pass through..."
+ [show-key f]
+ (show/clear-variable-set-fn! show-key f))
+
+(defn watch-var
+ [show-key & watcher]
+ (let [watcher (or (first watcher) print-var-on-change)])
+ (hook-var show-key watcher))
+
+
+(defn to-vars! "Set show vars from map"
+ [prefix m]
+ (let [m (zipmap (map #(keyword (str prefix "-" %1)) (keys m)) (vals m))]
+ (doall (map set-variable! (keys m) (vals m))))
+;;  (map set-variable! m)
+;;  (doall (map set-variable! m)) ;needed right?
+ #_(map #(apply set-variable! (keyword (str prefix "-" %1)) %2)
+      m))
 
 ;; (defn check-pre-map "Run keys (fns) against vals (vectors of variables)"
 ;;  [m] ;nice idea, but useless since can't tell what caused assert duh. needs macro
 ;;  (every? true? (mapcat #(map %1 %2) (map key m) (map val m))))
-(defmacro check-pre-map "Run keys (fns) against vals (vectors of variables)"
- [m] ;nice idea, but useless since can't tell what caused assert duh. Could throw own assertion tho?
- (let [fn-names (keys m)
-       vars (vals m)
-       results (map map ~fn-names ~vars)]
-  results))
+;; (defmacro check-pre-map "Run keys (fns) against vals (vectors of variables)"
+;;  [m] ;nice idea, but useless since can't tell what caused assert duh. Could throw own assertion tho?
+;;  (let [fn-names (keys m)
+;;        vars (vals m)
+;;        results (map map ~fn-names ~vars)]
+;;   results))
 
-#_(let [m {some? [1 3 nil 4], integer? [1 1.0 nil]}]
- (check-pre-map m)
- (vec m)
-  (zipmap (keys m) (map map (map key m) (map val m)))
- (map map m))
 
 (defn get-fixtures "Resolve keywords to fixture maps, return maps as-is and all-fixtures for nil"
  [fixtures]
@@ -194,15 +221,16 @@
  [string coll & {:keys [by] :or {by :key}}]
  (into {} (filter #(= (by %) string) coll)))
 
-(defn get-map-for-param
+(defn get-map-for-param "Get default cue-vars for named param. SHOULD BE: just pass a param straight and get cue-vars for its registered inputs"
  [param-name param-types]
- (get-map-with param-name param-types :by :type))
+ (let [param-types (or param-types #_tolglow.param/types)]
+  (get-map-with param-name param-types :by :type)))
 
 
 
 (defn clear-cues! []
  (let [[x y] @(:dimensions (:cue-grid *show*))]
- (doseq [x (range x), y (range y)] ;XXX should rather find placed cues...
+ (doseq [x (range (inc x)), y (range (inc y))] ;XXX should rather find placed cues...
   (show/clear-cue! x y))))
 
 (defn clear-fixtures! []
@@ -211,12 +239,11 @@
 
 (defn clear!
  [& what]
- (let [what (or what [:cues :effects])]
-  (doseq [thing what]
-   (condp = thing
-    :cues (clear-cues!)
-    :fixtures (clear-fixtures!)
-    :effects (show/clear-effects!)))))
+ (doseq [thing (or what [:cues :effects])]
+  (condp = thing
+   :cues (clear-cues!)
+   :fixtures (clear-fixtures!)
+   :effects (show/clear-effects!))))
 
 
 ;; (def #^{:macro true} apply-vm #'cues/apply-merging-var-map) ;; give macro another name
@@ -226,6 +253,15 @@
   [var-map f & args]
   `(apply ~f ~@args
           (flatten (seq ~var-map))))
+
+(defmacro apply-map "Call fn, merge k/v from supplied map to end of arg list, so dealing with params is as easy as cues"
+  [f m & args]
+  `(apply ~f ~@args (flatten (seq ~m))))
+
+;; (defn apply-mapf "Call fn, merge k/v from supplied param-map to end of arg list, so dealing with params is as easy as cues"
+;;  [f param-map & args] ;right needs to be macro only bc rest args are actually required
+;;                       ;by f hence cant be applied at end but must get banged
+;;   (apply f ~@args (flatten (seq ~param-map))))
 
 (defn show-keys-and-defaults "Create map where keys are values of incoming effect args (show variable keys, params, raw values or nil) and values are values for corresponding keys in fallback defaults map. This is then used with [[bind-keyword-param]] in effect fn"
  [arg-map defaults-map]
@@ -278,54 +314,44 @@
 (defn patch-group! "FIXME"
  [group f universe offset & [pos args]]
   (map #(show/patch-fixture! %1 f universe %2)))
+;; (ns-resolve 'tolglow.fixtures (symbol (name )))
 
-(defn patch-cfg!
- []
- (print "->  from config...")
- (doseq [[group-key group-data] (cfg :fixtures :defs)]
-   (print "\n     ")
-   (loop [i 0
-          offset (or (:offset group-data) 1)]
-     ;(tolglow.debug/det
-     (let [fixture ((:list group-data) i)
+(defn patch-cfg!  []
+ (doseq [[group-key group-data] (cfg :fixtures :patches)]
+  (println)
+   (loop [i 0, offset (:offset group-data 1)]
+     (#_tolglow.debug/det
+      let [fixture ((:list group-data) i) ;seems we're not dealing at all with missing fixture defs etc. pls do...
            k (key-str group-key "-" (inc i))
            universe (or (:universe group-data) (+ i (:start-universe group-data)))
            [f x y z & args] fixture
-           f-in-fixtures #(ns-resolve 'tolglow.fixtures (symbol (name %)))
-           fix-map (or
-                    (and (map? f) f)
-                    (and (fn? f) (f))
-                    (and (vector? f)
-                         (if (> (count f) 1)
-                          (apply (try (eval (first f))
-                                      (catch Throwable t
-                                       (f-in-fixtures (first f))))
-                          ;; (apply (or (try (eval (first f))
-                          ;;             (catch Throwable t)) (f-in-fixtures (first f)))
-                                 (rest f)) ;now only supports quoted, if has args...
-                          ((first f))))
-                    (and (keyword? f) (f tolglow.config/fixture-types))
-                    (and (fn? (try (eval f) (catch Throwable t))) ((eval f)))
-                    ;; ((ns-resolve 'tolglow.fixtures (symbol (name f))))) ;works for both quoted syms and keywords without luck from fixture-types config
-                    ((f-in-fixtures f))) ;works for both quoted syms and keywords without luck from fixture-types config
-           ;; fix-map (cond
-           ;;          (map? f) f
-           ;;          (fn? f) (f)
-           ;;          (vector? f) (if (> (count f) 1) (apply (first f) (rest f))
-           ;;                       ((first f)))
-           ;;          (keyword? f) (f tolglow.config/fixture-types)
-           ;;          (fn? (try (eval f) (catch Throwable t))) ((eval f))
-           ;;          :else ((ns-resolve 'tolglow.fixtures (symbol (name f)))))
-           ;; fix-map (if (map? f) f
-           ;;          (try ((eval f)) (catch Throwable t
-           ;;                          ((ns-resolve 'tolglow.fixtures (symbol (name f)))))))
-           jump (if (:universe group-data)
-                 (apply max (map :offset (:channels fix-map))) ;XXX also count heads... also don't count for strips...
+           get-hardcoded-f #(ns-resolve 'tolglow.fixtures (symbol (name %)))
+           fix-map (cond
+                    (map? f) f
+                    (fn? f) (f)
+                    (vector? f)
+                      (if (> (count f) 1)
+                        (apply (try (eval (first f))
+                                    (catch Throwable t
+                                      (get-hardcoded-f (first f))))
+                               (rest f)) ;now only supports quoted, if has args...
+                        ((first f)))
+                    (keyword? f) (f tolglow.config/fixture-types)
+                    (fn? (try (eval f) (catch Throwable t))) ((eval f))
+                    :else ((get-hardcoded-f f)))
+           jump (if (:universe group-data) ;;XXX still gotta support heads... just check like (address-map) after patching instead...
+                 (try
+                  (apply max
+                        (flatten
+                         (for [k [:offset :fine-offset]]
+                          (filter some?
+                                  (map k (:channels fix-map))))))
+                  (catch Throwable t (clojure.repl/pst t 10)))
                  0)
            pos (reduce into [] (filter (fn [[_ v]] (some? v)) {:x x :y y :z z}))
            args (into pos args)]
-     (print k #_f "\t")
-     (apply patch-fixture! k fix-map universe offset (eval args) #_args)
+     (println universe "  " offset #_"\t" "  " k " \t" (:name fix-map))
+     (catchall #(apply patch-fixture! k fix-map universe offset (eval args))) ;well more like to log maybe dunno
      (when (< (inc i) (count (:list group-data)))
        (recur (inc i) (+ offset jump))))))
  (println))
