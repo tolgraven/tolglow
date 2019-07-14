@@ -1,6 +1,7 @@
 (ns tolglow.fixtures "tolgrAVen fixtures" {:author "Joen Tolgraven"}
   (:require [afterglow.channels :as chan :refer [dimmer functions pan tilt fine-channel color-wheel-hue focus]]
             [afterglow.effects.channel :as chan-fx :refer [function-value-scaler]]
+            [afterglow.transform :as tf :refer [degrees]]
             [clojure.string :as string]))
 
 (defn shutter-strobe-map "helper for strobe defs and scaling"
@@ -25,17 +26,24 @@
  [low high]
  (partial function-value-scaler low high))
 
+
+(def color-layouts {:rgb [:red :green :blue] ;XXX add BRG etc
+                    :rgbw [:red :green :blue :white]
+                    :rgbwa [:red :green :blue :white :amber]})
+(def named-colors [:red :green :blue :white :amber :uv :cyan :magenta :yellow])
+(def color-hues {:amber 45 :uv 270 :cyan 180 :magenta 300 :yellow 55})
+
 (defn color
- [color offset & {:keys [hue fine]}]
- (let [hue (when hue [:hue hue])
-       fine (when fine [:fine-channel fine]) ]
-  (apply chan/color offset color (into hue fine))))
+ [color-key offset & {:keys [hue fine]}]
+ (let [hue (if hue [:hue hue]
+            (if-let [hue (color-key color-hues)]
+             [:hue hue])) ;tho, yeah just add to afterglow lol...
+       fine (when fine [:fine-channel fine])]
+  (apply chan/color offset color-key (into hue fine))))
 
 (defn colors
- [mode & offsets]
- (let [color-keys (case mode
-                   :rgb [:red :green :blue] ;XXX add BRG etc
-                   :rgbw [:red :green :blue :white])
+ [color-layout & offsets]
+ (let [color-keys (color-layout color-layouts)
        offsets (flatten offsets)
        offsets (if (= 1 (count offsets))
                 (range (first offsets)
@@ -43,70 +51,39 @@
                 offsets)]
   (map color color-keys offsets)))
 
-(declare pixel-strip)
-(defn strip "Easy helper wrapper for pixel-strip"
- [pixels [[x-start x-end] [y-start y-end] [z-start z-end] :as bounds] & mode]
- (let [mode (or (first mode) :rgbw)
-       pos [:x-start (or x-start 0.0) :x-end (or x-end 0.0)
-            :y-start (or y-start 0.0) :y-end (or y-end 0.0)
-            :z-start (or z-start 0.0) :z-end (or z-end 0.0)]]
-  (apply pixel-strip :pixels pixels :mode mode pos)))
 
-(defn color-head "Create a head of subpixels"
- [offset mode x y z & {:keys [colors subpixels] :or {colors [:red :green :blue :white]}}]
- (let [pos {:x x :y y :z z}
-       subpixels (or subpixels (case mode :rgb 3 :rgbw 4))
-       channels (mapv #(chan/color (+ %1 offset) %2) (range subpixels) colors)]
-  (merge {:channels channels}
-         pos)))
-
-(defn pos-for-head "Get position for head given bounds, size and index"
- [pixels index start end]
- (+ start (* index (/ (- end start) pixels))))
+(defn head-pos "Get position for head given amount of heads, index and total length of fixture"
+ [heads index length]
+ (let [end (/ length 2)
+       start (- end)]
+  (if (= heads 1)
+   0.0
+   (float (+ start (* index (/ length (dec heads))))))))
 
 (defn resolve-channel "Automap key to appropriate channel def" ;XXX how map to functions?
  [ch-key index & args]
  (let [f (or (ns-resolve 'afterglow.channels (symbol (name ch-key)))
              (ns-resolve 'tolglow.fixtures (symbol (name ch-key)))
-             (if (some #{:red :green :blue :white :amber :cyan :magenta :yellow} [ch-key])
-              (partial color ch-key)) ;XXX add :rgb [3 4 5] :rgbw [4 5 6 7] support...
-             (if (some #{:rgb :rgbw} [ch-key])
+             (if (some (set named-colors) [ch-key])
+              (partial color ch-key))
+             (if (some (set (keys color-layouts)) [ch-key])
               (partial colors ch-key))
              (partial fine-channel ch-key))]
   (apply f index args)))
 
-(defn merge-vec "Magically tidies up vector to one 'base' layer"
- [& v-or-vs]
- (apply (comp vec flatten vector) v-or-vs))
-
 (defn make-channels "Create channels from ks, sequentially from offset. Empty coll if none valid" ;XXX lookup ks to chan/ fns. if not, use fine-channel
  [channels & global-offset] ;bit weird maybe why'd we need a global global-offset like this?
  (let [global-offset (or (first global-offset) 0)]
-  (merge-vec
+  (when channels
+  ((comp vec flatten vector)
    (for [[ch args] channels]
    (#_tolglow.debug/det
     let [args (if (coll? args) args [args]) ;ensure vec
            ;; [i & args] args]
-           i (+ global-offset (first args))
-           args (rest args)]
-    (apply resolve-channel ch i args)))))) ;needed apply here since resolve got rest arg
+         i (+ global-offset (first args))
+         args (rest args)]
+    (apply resolve-channel ch i args))))))) ;needed apply here since resolve got rest arg
 
-; XXX make helpers and turn everything proper abstracted. xyz-bounds (vec? map?) and geometry (function) optional
-(defn pixel-strip "one strip as one head per pixel, supports RGB or RGBW."
-  [pixels & {:keys [x y z mode channels #_xyz geometry]
-             :or {mode :rgbw, x [-1.0 1.0] y [2.0 2.0] z [0.0 0.0]}}]
-  (let [subpixels (if (= mode :rgbw) 4 3)
-        channels (make-channels channels)
-        fx-channels (count channels)
-        ;; [x-base y-base z-base] (map #(/ (apply + %) 2) [x y z])]
-        [x-base y-base z-base] (map #(/ (apply + %) 2) [x y z])]
-   {:name (str (string/upper-case (name mode)) " LED strip")
-    :x x-base, :y y-base, :z z-base
-    :channels channels
-   :heads (for [i (range pixels)]
-            (let [[x y z] (map #(apply pos-for-head pixels i %) [x y z])
-                  c (+ (* i subpixels) (+ fx-channels 1))]  ;; offset for fn channels
-             (color-head c mode x y z)))}))
 
 
 ;; ; pixel heads should be relative and mapped onto actual xyz shit only at patch-time
@@ -484,28 +461,3 @@
                             240 "Color Wheel Yellow + Pink" ;color 10
                             252 "Color Wheel Pink + Green")) ;color 1
 
-          (build-gobo-wheel [channel]
-                            (functions :gobo channel
-                                            0 "Gobo Open 1"
-                                            10 {:type :gobo-clockwise :label "Gobo Clockwise Speed" :var-label "CW Speed" :range :variable}
-                                            82 {:type :gobo-counterclockwise :label "Gobo Counterclockwise Speed" :var-label "CCW Speed" :range :variable}
-                                            155 "Gobo 2" 179 "Gobo 3" 191 "Gobo 4" 201 "Gobo 5" 209 "Gobo 6"
-                                            217 "Gobo 7" 227 "Gobo 8" 235 "Gobo 9" 245 "Gobo 10" 252 "Gobo Open 1"))
-          (build-gobo-speed [channel]
-                            (functions :gobo-rotation channel
-                                            0 {:type :gobo-rotation-clockwise
-                                               :label "Gobo Rotation Speed (fast->slow)" :var-label "CW (fast->slow)"
-                                               :range :variable}))
-          (build-shutter [channel]
-                         (functions :shutter channel
-                                         0 "Shutter Closed" 26 "Shutter Open"
-                                         51 {:type :strobe :label "Strobe" :range :variable}
-                                         230 "Shutter Closed 2" 242 "Shutter Open 2"))]
-    {:channels [(pan 1)
-                (tilt 2)
-                (build-color-wheel 3)
-                (build-gobo-wheel 4)
-                (build-shutter 5)
-                (dimmer 6)
-                (build-gobo-speed 7)]
-     :name "Trackspot"}))
