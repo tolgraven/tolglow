@@ -6,17 +6,22 @@
              [transform :as tf :refer [degrees]]]
             [afterglow.effects
              [oscillators :as lfo :refer [build-oscillated-param sawtooth sine square triangle]]
-             [params :as params :refer [bind-keyword-param build-aim-param build-color-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param? param? resolve-param validate-param-type]]]
+             [params :as params :refer [bind-keyword-param build-aim-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param? param? resolve-param resolve-unless-frame-dynamic validate-param-type]]]
             [clojure.math.numeric-tower :as math]
             [clojure.string :as string :refer [capitalize upper-case]]
             [com.evocomputing.colors :as colors :refer [adjust-hue color-name create-color darken desaturate hue lighten lightness saturate saturation]]
+            [thi.ng.color.core :as clr]
+            [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
             [tolglow
              [color :as color :refer []]
              [config :as config :refer [at cfg]]
-             [util :as util :refer [clamp-number get-map-with key-str value]]
+             [util :as util :refer [clamp get-map-with key-str value]]
              [debug :as debug :refer [det]]
-             [vars :as vars]])
+             [graph :as graph]
+             [viz :as viz]
+             [vars :as vars]]
+            [afterglow.effects.cues :as cues])
   (:import afterglow.rhythm.Metronome
            [afterglow.effects.params IParam Param]))
 
@@ -54,9 +59,9 @@
                    (config/values-data :time-div)]
            :fraction [:width]
            ; fallback search below...
-           (let [pattern (re-pattern (str (util/ensure-is :string kind) "-\\w+"))] ;XXX fix pattern so matches eg :pan-min-fart as well...
-            (filter #(re-matches pattern (util/ensure-is :string %))
-                    (keys m))))]
+           ;; (let [pattern (re-pattern (str (util/ensure-is :string kind) "-\\w+"))] ;XXX fix pattern so matches eg :pan-min-fart as well...
+           (let [pattern (re-pattern (str (name kind) "-\\w+"))] ;XXX fix pattern so matches eg :pan-min-fart as well...
+            (filter #(re-matches pattern (name %)) (keys m))))]
   (dig-in-map m ks))) ;XXX end up wrong order -max -min because alphabet. Specify fallback order stuff dunno?
 
 (defn atoms "Make atoms. Put in vars?"
@@ -76,9 +81,9 @@
 ;; ^ i mean no point as already got other fns to handle them but unified/having types would be better no?
 
 (defn bind-default "Bind param by default kind and value"
- [type-key symbol] ;only for quickies
- (bind-keyword-param symbol (-> param-specs type-key :type) (-> param-specs type-key :default)))
-;;  (apply bind-keyword-param symbol (map #(-> param-specs type-key %) [:type :default])))
+ [type-key show-key] ;only for quickies
+ (let [data (-> param-specs type-key)]
+  (bind-keyword-param show-key (:type data) (:default data))))
 
 (defn bind-vars "Bind args to keyword params, ensuring nil never results"
  [m]
@@ -157,7 +162,7 @@
 (defn sum "Get total from values" [& vs] (apply + vs))
 (defn sub "Subtract values from first" [& vs] (apply - vs))
 (defn avg "Get average of values" [& vs] (/ (apply + vs) (count vs)))
-(defn div "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply / (map #(util/clamp-number % 0.1 10) vs)))
+(defn div "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply / (map #(util/clamp % 0.1 10) vs)))
 (defn mul "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply * vs))
 
 (defn extremes "Get lowest / highest result possible (assuming linear) from running f on all combinations of min/max input, summing for however many invocations. So can normalize ahead of time."
@@ -183,11 +188,11 @@
 
                     (and min max)
                     (fn [& params]
-                     (util/clamp-number (apply f params) min max))
+                     (util/clamp (apply f params) min max))
                    :else f)]
    (apply build-param-formula Number wrapped-fn params))))
 (def mix-dmx #(mix %1 %2 :min 0 :max 255))
-(def mix-dmx-funky #(mix %1 %2 :min 0 :max 255 :scale? true))
+(def mix-dmx-funky #(mix %1 %2 :min 0 :max 255 :normalize? true))
 
 (defn average "Average value from any number of input params"
  [& params] (mix params avg))
@@ -204,29 +209,16 @@
 ; to smooth without keeping track of earlier values, just use rolling average as output? would also work for others
 ; but we still gotta count invocations to hmm wait... create a unique var to hold vector of last x values?
 (defn noise "Random noise param, with options for smoothing (rolling average) and min/max volatility"
- [vm & {:keys [smoothing min-jump-fraction max-jump-fraction]}])
-(defn jitter "Hold specified value, but keep it jiggly"
- [])
-(defn drift "Drift from specified value, unsteadily, towards target"
- [])
-(defn color-breathing "Color param, but moves around given color, within bounds, never staying static"
- [])
-(defn trigger "Trigger some shit when reaching a specific range. Differs from whatever-param driving a chase by running actual code.
-                     Meaning shit can evolve more better hopefully"
- [vm])
-(defn quick-lfo "quick wrapper around lfo-param, to make lots"
- [])
+ [vm & {:keys [param-to-transform smoothing jump-fraction time-volatility]}]
+ (let [was (atom 0) ;keep track of previous
+       eval-fn (fn [show snapshot head]
+                )] ;however to generate.
+  (Param. "Noise" true Number eval-fn (partial identity))))
 
-
-(defn random-wrapper "Generates new random number (within range) each time wrapped square lfo hits max. Either lfo 1 frame wide, or have some flag get reset once reaching min..."
- [vm]
- (let [[min max] (map #(bind-keyword-param (%1 vm) Number %2) [:min :max] [0 255])
-       [last-val already-triggered] (repeat 2 (ref nil))
-       square (build-oscillated-param (lfo/square :interval-ratio (ratio vm)
-                                                  :phase (:phase vm) :width 0.01)
-                                      :min min :max max)
-       f ()]
-  (build-param-formula Number f square :last-random-wrap-test)))
+(defn jitter "Hold specified value, but keep it jiggly" [])
+(defn drift "Drift from specified value, unsteadily, towards target" [])
+(defn color-breathing "Color param, but moves around given color, within bounds, never staying static" [])
+(defn trigger "Trigger some shit when reaching a specific range. Differs from whatever-param driving a chase by running actual code.  Meaning shit can evolve more better hopefully" [vm])
 
 (defn quick-lfo "quick wrapper around lfo-param, to make lots"
  [kind & {:keys [opts beats low high] :or {beats 4 low 0 high 255}}]
@@ -250,11 +242,11 @@
  (into {} (map (fn [v] [(keyword (:key v)) (or (:start v) 0)])
                (:variables (util/get-map-for-param param-name types)))))
 
-(defn lfo-raw
- [vm type]
- (let [lfo (ns-resolve @(cfg :ns :active) (symbol "lfo" type))]
+(defn lfo-raw "Get raw lfo (ie not param) from vm, a la param/auto"
+ [vm kind]
+ (let [lfo (ns-resolve @(at :ns) (symbol "lfo" kind))]
    (apply lfo :interval-ratio (ratio vm) :phase (:phase vm 0.0)
-          (condp = type
+          (condp = kind
            "sawtooth" [:down? (:down vm)]
            "square"   [:width (fraction vm :width)]))))
 
@@ -402,7 +394,7 @@
  [vm param-name & {:keys [min max phase down? width] :as all}] ;so can set these without them being present in vm
  (let [[min max phase] (map #(or (% all) (% vm)) [:min :max :phase])
        [min max phase] (map #(if %1 (bind-keyword-param %1 Number %2) %2) [min max phase] [0 255 0])
-       lfo (ns-resolve @(cfg :ns :active) (symbol "lfo" param-name)) ;max binding workaround...
+       lfo (ns-resolve @(at :ns) (symbol "lfo" param-name)) ;max binding workaround...
        raw (case param-name
              ("level" "held") (bind-keyword-param (:level vm) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
              ("random" rng :min min :max max :min-change (:min-change vm 0.1)) ;#_(build-param-formula Number #(* %1 %2 1/3) phase max)) ;phase filling in, fix proper later, +interval-ratio
@@ -411,30 +403,14 @@
                                      :min min :max max))]
   raw))
 
-#_(defn #_defmacro def-base-lfo-color-fns
- [& lfo-names]
- (eval (cons 'do
-       (map (fn [param-name]
-           (let [lfo-sym (symbol (str "base-" param-name "-color-param"))
-                 vm (:variables (util/get-map-with param-name types :by :type))]
-             `(def ~lfo-sym ~(lfo-color-fn vm param-name))))
-          lfo-names)))) ;defonce not actually necessary I guess since got all info from start
-;and won't mod... or maybe should scale these with global metro scale tho...
-;surely they should just be stuck in a map btw lol
-
-;; (macroexpand-1 `(def-base-lfo-color-fns "square"))
-;; (eval (def-base-lfo-color-fns "random"))
-;; (value base-sine-color-param)
-;; (value base-random-color-param)
-
 
 (defn lfo-viz "Create visualizer for lfo-cues"
  [vm show param-name scale]
-  (let [p (auto-vm vm param-name)] ;should only create it twice right. Probably in lfo-cue, bind to show var
+  (let [p (auto-vm-dev vm param-name)] ;should only create it twice right. Probably in lfo-cue, bind to show var
    ;; could have :lfo entry just as now has :effect :color-fn etc. Inactive cues can often share same instances, just for color-fn
    ;; Then once var-map created, build own to be shared by effect/viz/color, and "pointed" towards varmap targets...
    ;; To change lfo just link new show var...
-  (fn [snapshot] (/ (params/evaluate p show snapshot nil) scale))))
+  (fn [snapshot] (/ (params/resolve-param p show snapshot nil) scale))))
 
 (defn lfo-chooser "run lfo params into a picker whoosing which one to use. SHOULD also allow mixing. XY thing with them in the corners?"; {{{
  [vm lfo-names & {:keys [picker-param [lfo-params]]}] ;picker could be in var-map as well...
@@ -496,6 +472,17 @@
 ;Above-1.0 also possible to gain-up
 
 
+(defn formula "Improved version?  Whenever the parameter's value is needed, it will evaluate all of the parameters passed as `input-params`, and call `calc-fn` with their current values, returning its result, which must have the type specified by `param-type`.
+The compound dynamic parameter will be frame dynamic if any of its input parameters are."
+  [param-type calc-fn & input-params]
+  (let [dyn (some frame-dynamic-param? input-params)
+        eval-fn (fn [show snapshot head]
+                  (apply calc-fn (map #(resolve-param % show snapshot head) input-params)))
+        resolve-fn (fn [show snapshot head]
+                     (apply build-param-formula param-type calc-fn
+                            (map #(resolve-unless-frame-dynamic % show snapshot head) input-params)))]
+    (Param. "Formula" dyn param-type eval-fn resolve-fn))) ;first, give sensible name based on input params...
+
 ;  RANDOM NUMBER PARAM
 
 (defn any-dynamic? "Check whether any params in assembled map are frame-dynamic"
@@ -512,29 +499,31 @@
 (defn pick-new-value "Helper for random-params, pick new value with min difference (as fraction) from last value."
  [current min max min-change]
  (let [range (get-range min max)
-       min-change (clamp-number min-change 0 0.33)] ;prob shouldn't be hardcoded here...
+       min-change (clamp min-change 0 0.33)] ;prob shouldn't be hardcoded here...
   (loop [candidate (+ min (rand range))]
    (if (or (nil? current) (>= (get-range current candidate) min-change))
      candidate
-     (recur (+ min (rand range)))))))
+     (recur (+ min (rand range))))))) ;why not just force a value outside no recur?
 
 (defn or-rng "Defaults for random number generator" []
- {:vars {:min 0 :max 255 :min-change 0.1 :interval :bar, :interval-ratio 1, :fade-fraction 0.25, :fade-curve :sine}})
-(defn rng "Returns a dynamic number parameter which gets a new random value each interval. XXX fade to new value"
+ {:vars {:min 0 :max 255 :min-change 0.1 :interval :beat, :interval-ratio 1, :fade-fraction 0.25, :fade-curve :sine}})
+(defn rng "Returns a dynamic number parameter which gets a new random value each interval."
  [& {:keys [min max min-change interval interval-ratio fade-fraction fade-curve] :as args}] ;to skip or not skip listing possible keys...
  {:pre [(some? *show*)]}
  (let [pm (assemble args or-rng)
        step (apply build-step-param (flatten (seq pm)))
-       [current-step last-value coming-value] (map ref (repeat nil))
+       [current-step last-value coming-value] (map ref (repeat nil)) ;why not atoms?
        eval-fn (fn [show snapshot _]
                 (let [pm (auto-resolve pm :show show :snapshot snapshot)
                       now (params/resolve-param step show snapshot)]
                  (dosync (when (not= (int now) @current-step) ;only update target when reaches new whole number
                           (ref-set current-step (int now))
                           (ref-set last-value (or @coming-value 0))
-                          (apply alter coming-value pick-new-value (map pm [:min :max :min-change])))
-                         (+ @last-value (* (- now @current-step) (- @coming-value @last-value)))))) ;return faded value
-       presolve-fn (fn [show snapshot head]
+                          (apply alter coming-value pick-new-value
+                                 (map pm [:min :max :min-change])))
+                         (+ @last-value (* (- now @current-step)
+                                           (- @coming-value @last-value)))))) ;return faded value
+        resolve-fn (fn [show snapshot head] ;auto resolve has quite high overhead. more relevant now that params are ten+ times faster. Fix
                     (apply rng (flatten (seq (auto-resolve pm :dynamic false :show show :snapshot snapshot)))))]
   (Param. "RNG" true Number eval-fn presolve-fn)))
 
