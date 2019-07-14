@@ -119,14 +119,19 @@
 ;; PARTICLE / FOG SYSTEM
 (defn divv [v n] (if (zero? n) v (mapv #(/ % n) v)))
 
-(defn create-particle [location]
+(defn create-particle [location & {:keys [velocity lifespan]}]
   {:location location
-   :velocity [(* (q/random-gaussian) 1.8)
-              (- (q/abs (* (q/random-gaussian) 1.0))) ;(- (* (q/random-gaussian) 1.0) 1.7)
-              (- (q/abs (* (q/random-gaussian) 0.2)))]
-   :acceleration [0 0 0], :lifespan 255, :mass 1000})
+   :velocity (or velocity
+                 [(* (q/random-gaussian) 1.8)
+                  (- (q/abs (* (q/random-gaussian) 1.0)))
+                  (- (q/abs (* (q/random-gaussian) 0.2)))])
+   :acceleration [0 0 0], :lifespan (or lifespan 255), :mass 1000})
 
 (defn add-particle [ps & n] (update ps :particles #(conj % (create-particle (:origin ps)))))
+(defn split-particle
+ [ps {:keys [location velocity] :as particle}]
+ (update ps :particles (fn [p] (conj p (create-particle location
+                                 :velocity (divv (mapv #(/ (- %1) 2) velocity)))))))
 (defn is-dead? [{:keys [lifespan]}] (<= lifespan 0.0))
 (defn get-wind "Get wind. Now from mouse location but would have other sources like fog machine origin"
  [& source]
@@ -138,15 +143,18 @@
   (assoc particle
          :velocity (mapv #(+ %1 %2) (map #(/ %1 %2) velocity [1.005 1.025 0.99]) acceleration)  ;add vectors, divide by drag
          :location (mapv #(+ %1 %2) velocity location)
-         :lifespan (- lifespan 1.5)
+         :lifespan (- lifespan 1.8)
          ;; :mass (/ (q/pow lifespan 1.5) 100)
          :mass (/ (q/pow (- 260 lifespan) 2.5) 100) ;actually want faster speed early, then slow... guess change back to high mass early but make that keep insertia better (less drag) tho wind low impact
          :acceleration (divv wind mass)))
-;; XXX need some way to split a particle in two by random chance
+
 (defn update-particle-system [{:keys [particles confetti] :as ps}]
   (let [wind (get-wind)]
     (-> ps
-        (update :particles #(map (fn [p] (update-particle p wind)) %))
+        (update :particles #(map (fn [p]
+                                  #_(if (and (< 150 (:lifespan p) (>= 0.99 (rand))))
+                                   (split-particle ps p));; XXX need some way to split a particle in two by random chance
+                                  (update-particle p wind)) %)) ;something tells me wont work lol...
         (update :particles #(remove is-dead? %)))))
 
 ;; STATE / VARS
@@ -154,8 +162,9 @@
  {:positions [], :colors [], :rotations []
   :fixtures {:positions [], :colors [], :rotations []}
   :count 0
-  :show *show*
-  :fog {:particles () :origin [0 -70 80] :drag [1.005 1.025 0.99] :image nil}
+  :show *show* ;no the whole thing is here prob slowing down each update loads. change to quoted and eval to access, dunno?
+  :fog {:particles () :origin [0 -140 80] :drag [1.005 1.025 0.99] :image nil
+        :mist {:zoff 0.00 :zincrement 0.07 :increment 0.01}}
   :stage {:w (* #_1   100 (apply - (map #(cfg :venue :wall %) [:right :left])))
           :h (* #_1   100 (cfg :venue :ceiling))
           :d (* #_-1 -100 (cfg :venue :wall :stage))}}); use scale instead if can work for everything...
@@ -190,14 +199,16 @@
 
 
 (defn draw-particle [{:keys [lifespan] [x y z] :location :as particle} & image]
-  (q/fill 140 120 130 (* 0.5 lifespan))
-  (q/tint 255 (* 0.5 lifespan))
-  (let [d (q/map-range lifespan  0 255  1 (/ (q/width) 7))
+  (let [d (q/map-range lifespan  0 255  1 (/ (q/width) 4))
         img (first image)]
-   (q/with-translation [0 0 z] ;images and ellipses arent 3d so gotta translate...
+   ;; (q/with-translation [0 0 z] ;images and ellipses arent 3d so gotta translate...
+   (q/with-translation [x y z] ;images and ellipses arent 3d so gotta translate...
     (if (and img (q/loaded? img)) ;might wanna wrap in try? checking nil for loaded no good
-     (q/image img x y d d) ;(q/texture )
-     (q/ellipse x y d d)))))
+     (do (q/tint 255 (* 0.45 lifespan))
+         ;; (q/image img x y d d)) ;(q/texture )
+         (q/image img 0 0 d d)) ;uh fucker still moves up and down when width of window changes...
+     (do (q/fill 140 120 130 (* 0.45 lifespan))
+         (q/ellipse x y d d))))))
 
 (defn draw-fog [{{:keys [particles image #_confetti] :as ps} :fog}]
  (q/push-style)
