@@ -10,6 +10,7 @@
   [afterglow.effects.params :as params :refer [bind-keyword-param build-aim-param build-color-param build-direction-param-from-pan-tilt build-pan-tilt-param build-param-formula build-spatial-param build-step-param frame-dynamic-param?  param?  resolve-param validate-param-type]]
   [clojure.string :as string :refer [capitalize upper-case]]
   [com.evocomputing.colors :as colors]
+  [thi.ng.color.core :as clr]
   [tolglow
    [color :as color :refer []]
    [config :as config :refer [at cfg ptr-cfg]]]))

@@ -1,38 +1,46 @@
 (ns tolglow.color "Color utility functions"
   (:require [afterglow.effects.params :as params]
             [afterglow.show :as show]
+            [afterglow.transform :as tf]
             [com.evocomputing.colors :as colors :refer [color-name]]
+            [thi.ng.color.core :as clr]
+            [thi.ng.math.core :as cmath]
             [tolglow.debug :as debug]))
 
-(defn color? "Is color?" [color] (= (type color) ::colors/color))
+(def used-type thi.ng.color.core.HSLA)
+(defn color? "Is color?" [color] (= (type color) used-type))
 
 ; XXX for color effects simply scale end alpha with alpha from color...
+(defn convert "for now, from evocomputing to thi.ng since latter lacks named colors etc"
+ [color]
+ (clr/as-hsla (apply clr/rgba (map #(/ % 255) (:rgba (colors/create-color color))))))
 
-;; (declare cap)
-(defn create "Create reasonable color"
+(def default (convert "black"))
+
+(defn create "Create reasonable color, or pass through existing. XXX make sure to handle keywords (maybe show vars) properly"
  ([color]
-  (let [color (cond
+  (let [color (cond ;XXX chill with keyword since can be show vars... tho won't find a matching one then, try again binding instead...
                (color? color) color
-               ;; (some true? (map #(% color) [string? keyword? map?]))
-               (or (string? color) (keyword? color) (map? color))
-               (colors/create-color color)
-
-               (vector? color) (apply colors/create-color (interleave [:h :s :l] color))
-               (params/param? color) color ;or do we resolve?
-               :else (try (colors/create-color color)
+               (string? color) (convert color) ;new is record = map. avoid check  ;(colors/create-color color) ;; (or (string? color) (keyword? color) (map? color))
+               (keyword? color) (try (convert color)
+                                     (catch IllegalArgumentException _
+                                       (params/bind-keyword-param color used-type default (str (name color))))) ;lets see if this is a good idea
+               ;; (vector? color) (apply colors/create-color (interleave [:h :s :l] color))
+               (vector? color) (apply clr/hsla color)
+               (params/param? color) color
+                ;(create :black)
+               #_(try (colors/create-color color)
                           #_(catch IllegalArgumentException e (print color "aint a color.  "))
                           (finally (create :black))))]
-   #_(cap color :s 90) ;circular
+   #_(cap color :s 0.90) ;circular
    color))
  ([h s l & {:keys [mode] :or {mode :full}}]
   (case mode
    :full ;360, 100, 100
-   (colors/create-color :h (colors/clamp-hue h)
-                        :s (colors/clamp-percent-float s)
-                        :l (colors/clamp-percent-float l))
+   (clr/hsla h s l)
    :fraction
    #_(colors/create-color (mapv colors/clamp-unit-float [h s l]))))) ;should get from cfg but argh cross reqs
-
+;; (convert "fafaa")
 
 ; ev make proper so can + - directly? not possible tho i guess
 (defn- adjust-maker "Get/adjust saturation of color"
@@ -45,23 +53,15 @@
      (adjust-fn color change) ;pos, or adjuster works both ways (with negative numbers) if no specific down-fn
      (down-fn color (* -1 change))))))) ;call down-fn with pos number
 
+;diz woz rong idea, fix macros
+(defn h "get/adjust hue" [& args] (apply (adjust-maker clr/hue clr/rotate-hue) args)) ;XXX ::colors/color fix rotate degrees yada
+(defn s "get/adjust sat" [& args] (apply (adjust-maker clr/saturation clr/adjust-saturation) args))
+(defn l "get/adjust lightness" [& args] (apply (adjust-maker clr/luminance clr/adjust-luminance) args))
+(defn a "get/adjust alpha" [& args] (apply (adjust-maker clr/alpha clr/adjust-alpha) args))
 
-;diz woz rong idea
-;; (defn h "get/adjust hue" [& args] (apply (adjust-maker colors/hue colors/adjust-hue #(colors/adjust-hue %1 (* -1 %2))) args))
-(defn h "get/adjust hue" [& args] (apply (adjust-maker colors/hue colors/adjust-hue) args))
-(defn s "get/adjust sat" [& args] (apply (adjust-maker colors/saturation colors/saturate :down-fn colors/desaturate) args))
-(defn l "get/adjust lightness" [& args] (apply (adjust-maker colors/lightness colors/lighten :down-fn colors/darken) args))
-(defn a "get/adjust alpha" [& args] (apply (adjust-maker colors/alpha colors/adjust-alpha) args))
-;; (defn add [one two] (apply colors/color-add (map create [one two])))
-(defn add [& args] (apply colors/color-add (map create args)))
-(defn sub [one two] (apply colors/color-sub (map create [one two])))
-(defn mul [one two] (apply colors/color-mult (map create [one two])))
-(defn div [one two] (apply colors/color-div (map create [one two])))
-
-
-(defn black? [color] (= color (create :black)))
-(defn white? [color] (= color (create :white)))
-(defn unsaturated? "Pretty much black-and/or-white" [color] (< (s color) 5)) ;or whatever tolerance?
+(defn black? [color] (= color (convert :black))) ;; (defn black? [color] (= color (create :black)))
+(defn white? [color] (= color (convert :white)))
+(defn unsaturated? "Pretty much black-and/or-white" [color] (< (s color) 0.05)) ;or whatever tolerance?
 ;; (defn primary? "No mixing = RACIST. How dare they" [color] (and (< 357.5 color) (> 2.5 color)))
 (defn primary? "No mixing = RACIST. How dare they"
  [color]
@@ -73,7 +73,7 @@
 
 
 (defn cap "Ensure color aspect within bounds"
- [color & {:keys [s l fraction] :or {s 90 l 100 #_fraction #_like-ratio-highest-rgb-to-lowest...}}] ;90 as in cfg sat cap
+ [color & {:keys [s l fraction] :or {s 0.90 l 1.00 #_fraction #_like-ratio-highest-rgb-to-lowest...}}] ;90 as in cfg sat cap
  (let [color (create color)
        [chue csat clight] (:hsl color)
        capped (map (fn [curr bound] (if (< curr bound) curr bound))
@@ -90,38 +90,35 @@
                      Colors too far from appropriate points get darkened and desaturated..."
  [])
 
-(def default-color-like {:h-spread 50 :s-spread 30 :l-spread 15})
+;; (def default-color-like {:h-spread (/ (tf/degrees 50) Math/PI) :s-spread 0.3 :l-spread 0.15})
+(def default-color-like {:h-spread (/ 50 360) :s-spread 0.3 :l-spread 0.15})
 (defn like "Return a random color similar to one passed in, with adjustable rng range per h s l"
  ([] ;random color
-  (like (create (rand 360), (+ 30 (rand 50)), (+ 40 (rand 20)))))
+  (like (create (rand 1.0), (+ 0.25 (rand 0.5)), (+ 0.4 (rand 0.2)))))
 
  ([color & {:keys [h-spread s-spread l-spread] :as spread
-            :or {h-spread 50 s-spread 30 l-spread 15}}] ;should be a percentage variation instead right
+            :or {h-spread (/ 60 360) s-spread 0.2 l-spread 0.15}}] ;should be a percentage variation instead right
   (if-let [color (create color)] ;ensure input ok
-  (if (or (black? color) (> 1 (l color)))
-   color ;return straight if black
-   (let [hsl (map (fn [k]
+   (if (or (black? color) (> 0.01 (l color)))
+    color ;return straight if black
+    (let [hsl (map (fn [k]
                    (or (k spread)
                        (try (show/get-variable (keyword (str "color-like-" (name k))))
                         (catch Exception e))
                        (k default-color-like)))
                   [:h-spread :s-spread :l-spread])
          rand-res (map rand hsl)
-         weight (map #(- %1 (* %1 %2)) hsl [0.5 0.25 0.25]) ;weight, where is (inverse) center? 0.25 = 75% below
-         hsl  (mapv - rand-res weight)
-         #_s #_(if (< 80 (s color)) (- s (- (s color) 80)) s) ;this would need to check resulting sat rather tho, surely...
-         hsl [(colors/clamp-hue (+ (h color) (hsl 0)))
-              (colors/clamp-percent-float (+ (s color) (hsl 1)))
-              (colors/clamp-percent-float (+ (l color) (hsl 2)))]]
-    (apply create hsl))))))
-
+         weight (map #(- %1 (* %1 %2)) hsl [0.5 0.15 0.25]) ;weight, where is (inverse) center? 0.25 = 75% below
+         hsl  (mapv - rand-res weight)]
+    (apply create (map #(cmath/clamp (+ (%1 color) (hsl %2)) 0.0 1.0) [h s l] [0 1 2])))))))
 
 
 (defn random
  ([]
   (like)) ;swap tho, like should call this...
  ([color] ;dunno, maybe...
-  (like color :h 360 :s 20 :l 10))
+  ;; (like color :h 360 :s 20 :l 10)) ;doesnt seem to use those keys tho
+  (like color))
  ([low high]
   (let [low (or low (random))
         high (or high (random))

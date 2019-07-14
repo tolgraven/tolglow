@@ -105,18 +105,20 @@
 (defn color "Create a cue-grid entry which establishes a global color effect, given a named color. Also set up a cue color parameter so the color can be tweaked in the Web UI or on the Ableton Push, and changes can be saved to persist between invocations."
   [group x y color & {:keys [include-color-wheels? held? fixtures priority cue-name]
                       :or   {include-color-wheels? true}}]
-  (let [[color desc] (cond (= (type color) ::colors/color) [color, (color-name color)]
-                          (keyword? color)   [(color/like (name color)), (name color)]
-                          (and (param? color) (= (params/result-type color) ::colors/color))
-                            [color, "variable"]
-                          :else              [(color/like (name color)), color])
+  (let [[color desc] (cond (color/color? color) [color, "fix named colors"] ;need a named-colors-rgb-to-name with tolerance, find closest one...
+                           (keyword? color)     [(color/like (name color)), (name color)]
+                           (string? color)      [(color/like color), color]
+                           (and (param? color) (= (params/result-type color) thi.ng.color.core.HSLA #_::colors/color))
+                                                [color, "variable"]
+                           :else                [(color/like (name color)), color])
         [fx-key fixtures fx-name] (group-parts group "color" desc)
         color-var (vars/cue-map ["color" color]) #_{:key "color", :type :color, :start color, :name "Color"}
-        efn (fn [vm]
-              (tolfx/effect (tolfx/color (bind-keyword-param (:color vm) ::colors/color color) ;gotta bind vm like this?
+        f (fn [vm]
+              (tolfx/effect (tolfx/color (bind-keyword-param (:color vm) thi.ng.color.core.HSLA color) ;gotta bind vm like this?
                             :effect-name fx-name :fixtures fixtures :include-color-wheels? include-color-wheels?)
                             (param/fraction vm :alpha)))
-        cue (cue (util/key-str fx-key (rand)) efn :priority priority :held held? :color color
+        ;; cue (cue (util/key-str fx-key (rand)) f :priority priority :held held? :color color
+        cue (cue fx-key f :priority priority :held held? :color color
                  :color-fn (cues/color-fn-from-cue-var color-var x y)
                  :variables (vars/auto [color-var] :alpha))]
    (set-cue! x y cue)))
