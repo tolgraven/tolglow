@@ -31,7 +31,18 @@
 (def max-lights "fuckoff asap, throttle yourself" 32)
 (def show *show*)
 
-;; REMEMBER: Processing has Y inverted compared to openGL / afterglow / rest of world
+(def buf1 (byte-array 512))
+;; (ola/GetDmx {:universe 1} #(printer/cprint (-> % :response :data)))
+(ola/GetDmx {:universe 1} #(.copyTo (-> % :response :data) buf1 0))
+;; (ola/GetUniverseInfo #(clojure.pprint/pprint %))
+(def ran (doall (range 1 513)))
+
+(defn dump-dmx []
+  (doseq [[i b] (partition 2 (interleave ran buf1))]
+  (printf "%4d" (unsign b))
+  (if (= 0 (mod i 32))
+    (println)))) ;; ((vec buf1) 0);; (bytes buf1)
+;; (dump-dmx)
 
 ;; REMEMBER: Processing has Y inverted compared to openGL / afterglow / rest of world
 ;; (defn show-span "Determine degree to which show spreads over an axis. For X and Z axes this is simply the difference in bounding box
