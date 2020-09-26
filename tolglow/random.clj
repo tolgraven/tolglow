@@ -25,21 +25,24 @@
  (atom []))
 
 (defn ize-cue-vars!
- [& {:keys [cue-prefix var-type volatility per-cue-limit duration show] :or {volatility 0.5, show *show*}}] ;add metadata to vars setting not just min-max but like "reasonable range", scale/clamp-fn,
- (let [effects (:meta @(:active-effects show))
+;;  [& {:keys [cue-prefix var-type var-key volatility per-cue-limit duration show] :or {volatility 0.5, show *show*}}] ;add metadata to vars setting not just min-max but like "reasonable range", scale/clamp-fn,
+ [& {:keys [cue-prefix var-id volatility per-cue-limit duration show] :or {volatility 0.5, show *show*}}] ;add metadata to vars setting not just min-max but like "reasonable range", scale/clamp-fn,
+;;  (let [effects (:meta @(:active-effects show))
+ (let [effects (:meta @(:active-effects *show*))
        get-max #(+ (:current % (:start %)) (* volatility (- (:max %) (:current %)))) ] ;volatility 1.0 = full random, 0.0 = no change. So 0.5 if [0 127 255] = 64 192...       ]
   (doseq [fx effects, m (zipmap (sort-by #(name (first %)) (fx :variables))
                                 (sort-by #(:key %) (-> fx :cue :variables)))]
-   ;; (let [[[_ k] v] m] ;; k (second (first m)) v (second m)
-   (let [ k (second (first m)) v (second m)
-         ]
-         ;; (if-let [doesapply? (test)]
-          (let [old-val (show/get-variable k)
+   ;; (let [[[_ k] v] m]
+   (let [k (second (first m))
+         v (second m)]
+         ;; XXX var-key (ie :alpha) actually comes as str so make sure test for all kinds
+          ;; (when (or (not var-type) (not var-key) (= var-type (:type v)) (= var-key (:key v))) ;(type v)))
+          (when (or (not var-id) (= var-id (:type v)) (= var-id (:key v))) ;(type v)))
+           (let [old-val (show/get-variable k)
                 new-val (util/random-in-range (:min v (:start v)) (:max v))] ;bool and color lack min/max...
-    ;; (println k v new-val " ")
-    (set-variable! k new-val)
-    )
-    
+    ;; (println k " /  " v " ->" new-val)
+    (set-variable! k new-val)))
+
     #_(swap! temp-vars conj {:key k :duration duration :was old-val :val new-val
                            :snapshot (metro-snapshot (:metronome *show*))}))))) ;short term: :avoid :min larger than :max, weird beats/cycles combos, ?
 

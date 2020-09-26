@@ -17,17 +17,27 @@
    [config :as config :refer [at cfg ptr-cfg]]]))
 
 
-(defn value "shortcut resolve param to val"
+(defn value "shortcut resolve show-var/param/param in show-var" ;XXX maybe put in a live ns
  [param]
  (when (and param *show*)
-  (resolve-param param *show* (metro-snapshot (:metronome *show*)))))
+  (cond-> param
+   (keyword? param) (show/get-variable)
+   (params/param? param) (resolve-param *show* (metro-snapshot (:metronome *show*))))))
+
+  ;; (cond (params/param? param)
+  ;;  (resolve-param param *show* (metro-snapshot (:metronome *show*)))
+  ;;  (keyword? param) (let [param  (show/get-variable param)]
+  ;;                    (if (params/param? param) (resolve-param param *show* (metro-snapshot (:metronome *show*)))
+  ;;                     param)))))
+
 
 (defn clamp "Clamp a number within min-max range"
-  [number min max]
+ ([number min max]
   (let [number (or number 0)] ;XXX check int or float auto 0.0-1.0 / 0-255?
-    (cond (<= min number max) number
-          (>= number max) max
-          (<= number min) min)))
+   (cond (<= min number max) number
+         (>= number max) max
+         (<= number min) min)))
+ ([number] (clamp number 0.0 1.0)))
 
 (defn scale-number "Scale a number from 0.0-1.0 to min-max range"
  [number lo hi & {:keys [old-low old-high] :or {old-low 0.0 old-high 1.0}}]
@@ -98,9 +108,7 @@
  ([key value]
   (show/set-variable! key value)))
 
-(defn print-var-on-change
-  [key value]
-  (print key " " value "\t"))
+(defn print-var-on-change [key value] (print key " " value "\t"))
 
 (defn watch-var
  [show-key & watcher]
@@ -159,14 +167,6 @@
        ;; channel-key (map #(if (keyword? %) % (keyword %)) (flatten [channel-type]) #_[channel-type])] ;support multiple
  (when channel-type (chan/extract-channels fixtures #(= (:type %) channel-type)))))
  ;; (when channel-key (mapcat (fn [k] (extract-channels fixtures #(= (:type %) k))) channel-key))))
-
-#_(defn scaled-metronome "not needed for what I thought, since scaling time in ratio-param... but might still be good to finish."
- ([]) ; update
- ([multiplier divisor] ;setup
-   (set-variable! :metro-scale (/ multiplier divisor))
-   (set-variable! :scaled-master-metro (metronome (/ (:bpm (metro-snapshot (:metronome *show*)))
-                                                     (get-variable :metro-scale)))))
- ([scale-param])) ;setup dynamic
 
 
 (defn add-midi-callback

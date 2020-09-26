@@ -24,10 +24,10 @@
             [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
             [taoensso.timbre.profiling :refer [pspy]]
+            [clojure.core.memoize :as memo]
             [tolglow
              [color :as color :refer []]
              [param :as param :refer []]
-             [debug :as debug :refer [det]]
              [util :as util :refer []]])
   (:import [afterglow.effects Effect IEffect]
            [afterglow.effects.params IParam Param]
@@ -43,13 +43,21 @@
 ; need to fucking take note.
 ; CLEAR ERROR MESSAGES WHEN THID HAPPENS
 
-(def or-spec "Map of fx defaults. Should contain keys :dynamic, :static, :constant ?
-              Currently :vars (dynamic params to expose to cue-vars), :opts (non-exposed args)
-              which is dumb, allow make choice downstream...
+(def or-spec "Map of fx vars and defaults.
+              To use both for automatically setting ones not provided, adding new controls dynamically,
+              spec-testing provided vars/params instead of manual checks inside effect fn,
+              loads really...
+
+              Currently :vars (dynamic params to expose to cue-vars), :opts (any non-exposed args)
+              which makes sense, should be some kinda division,
+              A dynamic interface means we need to recreate the effect fn when we modify input types
+              since all non-param vars get optimized to their return types on creation...
+              Whereas opts necessite recreating fx every time they change _value_
 
               Prob could roll all into one sorta and just use resolve-unless-frame-dynamic to
-              sep types? Just need some sorta tagging to weed out ones not relevant for cue-vars.
-              Maybe simply by type?")
+              sep types? Just need some sorta tagging to hide those not relevant to show.
+              Tho will need that anyways I think...
+              ")
 
 (def fx-data {:bloom {:name "Bloom color"
                       :arg-spec #({:vars {:color (color/create :white), :fraction 0, :width 1
@@ -59,21 +67,25 @@
                                    :opts {:measure (tf/build-distance-measure 0 0 0) ;; :keyhole-target "lightness"; adjustable destination (curr simply black outside bounds, should rather mod was)
                                           }})
                       :main-param :fraction
- #_:protocol #_{:name "Bloom color" :active fx/always-active :gen :bloom, :end fx/end-immediately}}
-                      :active fx/always-active
-                      :gen :bloom
-                      :end fx/end-immediately})
-#_(defn get-fx-maker "Effect generator FIXME" ;wait til work on bloom etc shows best way forward
+ #_:protocol #_{:name "Bloom color" :active fx/always-active :gen :bloom, :end fx/end-immediately}}})
+
+(defn get-fx-maker "Effect generator FIXME" ;wait til work on bloom etc shows best way forward
  [fx-name
   arg-spec-fn ;returns map of var args (resolved at execution/inside main-fn) and their defaults   opts ;map of args to be resolved at effect creation
   inters-fn ;other intermediate values (calculated at creation) used in later fns (how?)
   gen-fn ;main calc fn, called by assigners-fn. takes [show snapshot head was map-of-all-above]
   assigners-fn ;takes main-fn (+possibly other stuff?)
-  & {:keys [active-fn end-fn effect-def-fn] :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
+  & {:keys [active-fn end-fn effect-def-fn]
+     :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
  {:pre [(some? *show*)]}
  (fn [fixtures & args]
   (let [p (param/assemble args arg-spec-fn)
        inters (inters-fn)
+       ;; heads (chan/find-rgb-heads fixtures)
+       ;; furthest (tf/max-distance (:measure p) heads)
+       ;;
+       ;; ^^ example from bloom. How would we deal with that. More like effect requests these things to be available, it gets test-launched and central learns this?
+       ;; basically in f, refer to things not passed in args and lookup will be attempted
        f (fn [show snap head was]
           (let [r (apply merge (map (param/auto-resolve) [p inters]))]
            (gen-fn show snap head was r)))]
@@ -83,6 +95,7 @@
             active-fn
             (fn [show snapshot] (assigners-fn gen-fn))
             end-fn)))))
+
 (defn make-effect "Create an Effect. with name, gen-fn, and optional overridden active and end-fns (defaulting to always-active and end-immediately)"
  [fx-name gen-fn & {:keys [active-fn end-fn] :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
  (Effect. fx-name active-fn gen-fn end-fn))
@@ -91,18 +104,19 @@
   [color & {:keys [fixtures effect-name include-color-wheels? htp? priority]
             :or {fixtures (all-fixtures)}}]
   (try
-    (let [[c desc] (cond (= (type color) thi.ng.color.core.HSLA) [color (color-name (apply colors/create-color (map #(int (* 255 %)) (take 3 @(clr/as-rgba color)))))]
-                         (keyword? color) ; keyword needs to first check for show var param...
-                         (if (color/color? (show/get-variable color)) ;(resolve-param (bind-keyword-param color thi.ng.colors.core.HSLA (color/color :white))))
-                          [(bind-keyword-param color thi.ng.color.core.HSLA (show/get-variable color)) "variable"]
-                          [(color/like (name color)) (name color)])
-                         (and (param? color) ;XXX helper
-                              (= (params/result-type color)
-                                 thi.ng.color.core.HSLA))        [color "variable"]
-                         :else                           [(color/like (name color)) color])
+    (let [[c desc]
+          (cond
+           (= (type color) thi.ng.color.core.HSLA) [color (color-name (apply colors/create-color (map #(int (* 255 %)) (take 3 @(clr/as-rgba color)))))]
+           (keyword? color) ; keyword needs to first check for show var param...
+           (if (color/color? (show/get-variable color)) ;(resolve-param (bind-keyword-param color thi.ng.colors.core.HSLA (color/color :white))))
+            [(bind-keyword-param color thi.ng.color.core.HSLA (show/get-variable color)) "variable"]
+            [(color/like (name color)) (name color)])
+           (and (param? color) ;XXX helper
+                (= (params/result-type color)
+                   thi.ng.color.core.HSLA))        [color "variable"]
+           :else                           [(color/like (name color)) color])
           ;; sat (clr/saturation (param/auto-resolve c)) ;well resolve in case etc
           ]
-                         ;; :else [(color/create color) color])]
       (color-fx/color-effect (or effect-name (str "Global " desc)) c fixtures
                              :include-color-wheels? include-color-wheels? :htp? htp?))
     (catch Exception e (throw (Exception. (str "Can't figure out how to create color from " color) e)))))
@@ -142,6 +156,30 @@
 ;; (defn saturation-comp "compress saturation"
 ;;  [])
 
+;      SHADER!!!
+;      solution, with static fixture mounts:
+;      We have positions xyz. Use first just xy
+;      Make shader surface span entire area
+;      Pixel sample in processing and route colors to heads...
+;
+;  the breakthrough:
+;    also use head pos/dir's/any current assignment to PUT stuff on shader surface
+;    incl new interpreation of effects in chain
+;    so say we pin a "sun" on a moving head, and set it to shine all dirs
+;    this would spill some yellow base color onto non-occluded LEDs (not "radiate" like bloom), but hit surfaces...)
+;    but 3x radius of head actual beam gets "killer" fx, blacking out surfaces around where points
+;
+;    hence state of heads can give them new magical powers, simulated but visual in LED rig
+;
+;    idea is, not just render shader -> sample wherever heads are -> LED, but also from start use knowledge
+;    of those positions.
+
+#_(defn shader
+ [fixtures & {:keys [vertshader fragshader dimensions sampling-roughness]}]
+ [let [shader (shader vertshader fragshader)
+       dimensions (or dimensions (show-dimensions yo))]
+  ])
+
 ;      SPARKLE
 (defn- clean-sparkles "Filters out any sparkles that were created longer ago than the fade time. `sparkles` is a map from head to the timestamp at which the sparkle was created."
   [sparkles show snapshot fade-time]
@@ -172,7 +210,7 @@
         active-fn (fn [show snapshot]
                   (swap! sparkles clean-sparkles show snapshot (:fade-time p)) ;; Continue running until all existing sparkles fade
                   (or @running (seq @sparkles)))
-        gen-fn (fn [show snapshot]
+        gen-fn (fn [show snapshot] ;hmm btw this loops over all heads centrally instead of at assigner stage, positives? negatives?
                   (pspy :sparkle
                         (when @running ;; See if we create any new sparkles (unless ending)
                          (doseq [head heads] ;XXX either make sure to utilize per-head chance, or resolve just once...
@@ -195,10 +233,11 @@
 
 ;      BLOOMS
 (defn or-bloom []
- {:vars {:color (color/create :white), :fraction 0, :width 0.5
-         :halo 0.2  ;part, as fraction of width, where bloom has ended but some bleeds through/fades out
+ {:vars {:color (color/create :white), :fraction 0.5, :width 0.5
+         :halo 0.5  ;part, as fraction of width, where bloom has ended but some bleeds through/fades out
          :keyhole? false, :keyhole-opacity 0.8 ; allow some through even outside keyhole
-         :hue-mod 0 :lightness-mod 0 :saturation-mod 0}
+         }
+         ;; :hue-mod 0 :lightness-mod 0 :saturation-mod 0}
  :opts {:measure (tf/build-distance-measure 0 0 0 :ignore-z true) ;; :keyhole-target "lightness"; adjustable destination (curr simply black outside bounds, should rather mod was)
         }
  :main-param :fraction
@@ -206,41 +245,108 @@
 ; obviously :active and :end could be skipped for those effects using defaults
 ; ^ tho splitting fully like that seems prob foolish as most(?) fx not using always-active/end-immediately
 ; have some interdependency
+;; {:color #object[afterglow.effects.params$build_variable_param$reify__23241
+;;                 0x2ee9cd2d afterglow.effects.params$build_variable_param$reify__23241@2ee9cd2d]
+;;  :fraction #afterglow.effects.params.Param{:name Formula, :dynamic true, :result-type java.lang.Number, :eval-fn #function[afterglow.effects.params/build-param-formula/eval-fn--23491], :resolve-fn #function[afterglow.effects.params/build-param-formula/resolve-fn--23495]},
+;;  :width #object[afterglow.effects.params$build_variable_param$reify__23241 0x6c6b80e9 afterglow.effects.params$build_variable_param$reify__23241@6c6b80e9],
+;;  :halo #object[afterglow.effects.params$build_variable_param$reify__23241 0x6b9d8246 afterglow.effects.params$build_variable_param$reify__23241@6b9d8246]}
 
-(defn bloom "yo" ;FIXME: doesnt handle fixtures spanning across 0?
- [fixtures & {:keys [measure color fraction width halo keyhole? keyhole-opacity keyhole-target
-                     hue-mod lightness-mod saturation-mod] :as all}] ;XXX move to [vars]
+(defn bloom "leaned down version"
+ [fixtures & {:keys [measure color fraction width halo keyhole? keyhole-opacity] :as all}] ;these should be moved to doc, since they're not actually used
  (let [p (param/assemble all or-bloom :resolve-vars true)
        heads (chan/find-rgb-heads fixtures)
        furthest (tf/max-distance (:measure p) heads)
-       fx (fn [show snap head was]
-           (let [r (param/auto-resolve p) ;ev rename to p so all same. not sure if resolving already-resolved opt has impact here? shouldn't normally, but with measure which is a fn?
-                 distance (/ ((:measure p) head) furthest)
-                 [h s l] (map #(* (% r) distance) [:hue-mod :saturation-mod :lightness-mod])
-                 color-fn (fn [color]
-                           (when color (apply param/color :color color
-                                          (flatten (map #(when (not= 0 %2) [%1 %2])
-                                                        [:adjust-hue :adjust-saturation :adjust-lightness]
-                                                        [h s l]))))) ;; XXX per-head virtual dimmer (not the same as lightness) (how not the same?)
-                 [<bound bound>] (map #(% (:fraction r) (/ (:width r) 2)) [- +])
-                 [<halo halo>] (map #(%1 %2 (* (:halo r) (:width r))) [- +] [<bound bound>])
-                 ;; bounded (fn [point near far] (<= near point far))
-                 bounds (map #(% (:fraction r) (/ (:width r) 2)) [- +])
-                 halos (for [[b op] [bounds [- +]]] (op b (* (:halo r) (:width r))))]
-             (if (<= <bound distance bound>) ;within bounds = bloom color normal, was color (modded) keyhole
-             ;; (if (apply bounded distance bounds) ;within bounds = bloom color normal, was color (modded) keyhole
-              (color-fn (if-not (:keyhole? r) (:color r) was))
-              (let [level (cond (<= <halo distance <bound) (/ (- distance <halo) (- <bound <halo))
-                                (<= bound> distance halo>) (/ (- halo> distance) (- halo> bound>))
-              ;; (let [[near far] (map #(map % [halos bounds]) [first second])
-              ;;       level (cond (bounded distance near) (/ (- distance <halo) (apply - (reverse near)))
-              ;;                   (bounded distance (reverse far)) (/ (- halo> distance) (apply - far))
-                                :else 0.0)] ;zero outside halo
-               (if-not (:keyhole? r)
-                (color-fx/fade-colors was (:color r) level show snap head) ;halo should fade out linearly...
-                (color-fx/fade-colors was nil (* level (- 1.0 (:keyhole-opacity r))) show snap head))))))]
-  (make-effect "Bloom color" (fn [show snapshot] (fx/build-head-assigners :color heads fx)))))
+       d (into {} (filter (fn [[_ v]] (params/frame-dynamic-param? v)) p))
+       f (fn [show snapshot]
+          (let [r (merge p (pspy :bloom-auto-resolve (param/auto-resolve d :show show :snapshot snapshot)))
+                fx (fn [show snapshot head was]
+                    (pspy :bloom ;oh yeah a fading halo bloom + alpha we're talking SEVERAL assigner splits, of course it goes crazy...
+                     (let [distance (/ ((:measure p) head) furthest)
+                           [<bound bound> :as bounds]
+                             (mapv #(% (:fraction r) (/ (:width r) 2)) [- +])
+                           [<halo halo>]
+                             (mapv #(%1 %2 (* (:halo r) (:width r)))   [- +] [<bound bound>])]
 
+                      (if (<= <bound distance bound>)    ;within bounds
+                       (if (:keyhole? r) was (:color r)) ;keep was when keyhole, use effect color when normal
+                       (let [level (cond                 ;out of main bounds, check  halo...
+                                    (<= <halo distance <bound)
+                                      (/ (- distance <halo) (- <bound <halo))
+                                    (<= bound> distance halo>)
+                                      (/ (- halo> distance) (- halo> bound>))
+                                    :else 0.0)] ;zero outside halo
+                        (if (:keyhole? r)
+                         (let [level (* level (- 1.0 (:keyhole-opacity r)))]
+                          (color-fx/fade-colors was nil level show snapshot head))
+                         (cond
+                          (> level 0.95) (:color r) ;dont try mix when we're taking over...
+                          (< level 0.05) was ;guess some cutoff slightly higher makes sense to spare cycles?
+                          :else ;(:color r) ;temp test
+                           (color-fx/fade-colors was (:color r) level show snapshot head))))))))] ;halo should fade out linearly...
+                (fx/build-head-assigners :color heads fx)))]
+ (make-effect "Bloom color" f)))
+;; (defn bloom "yo" ;FIXME: doesnt handle fixtures spanning across 0?
+;;  [fixtures & {:keys [measure color fraction width halo keyhole? keyhole-opacity
+;;                      #_hue-mod #_lightness-mod #_saturation-mod] :as all}] ;XXX move to [vars]
+;;  (let [p (param/assemble all or-bloom :resolve-vars true)
+;;        heads (chan/find-rgb-heads fixtures)
+;;        furthest (tf/max-distance measure heads)
+;;        [current-snap resolved-this-frame] (mapv atom [nil nil])
+;;        d (into {} (filter (fn [[_ v]] (params/frame-dynamic-param? v)) p))
+;;        ;; _ (println (count d) (keys d) d)
+;;        fx (fn [show snap head was]
+;;            (pspy :bloom ;oh yeah a fading halo bloom + alpha we're talking SEVERAL assigner splits, of course it goes crazy...
+;;             (let [r (if (and @resolved-this-frame
+;;                              (= (:instant snap) @current-snap))
+;;                      @resolved-this-frame
+;;                      (do ;yup seems to work and def helps performance. but also, lol we can just take a step back!
+;;                       (reset! current-snap (:instant snap))
+;;                       (reset! resolved-this-frame
+;;                               (merge p (pspy :bloom-auto-resolve
+;;                                              (param/auto-resolve d :show show :snapshot snap)))))) ;even if quick now not very smart to run everything through for EACH head.... btw how fix so could check for spatial params and otherwise all heads share param lookup?
+;;                  distance (/ (measure head) furthest)
+;;                  ;; [h s l] (mapv #(* (% r) distance) [:hue-mod :saturation-mod :lightness-mod])
+;;                  color-fn (fn [color] color
+;;                            #_(when color ;nil if ouside bounds
+;;                             (apply param/color :base-color color
+;;                                           (flatten (mapv #(when-not (zero? %2) [%1 %2])
+;;                                                         [:adjust-hue :adjust-saturation :adjust-lightness]
+;;                                                         [h s l]))))) ;; XXX per-head virtual dimmer (not the same as lightness) (how not the same?)
+;;                  [<bound bound> :as bounds] (mapv #(% (:fraction r) (/ (:width r) 2)) [- +])
+;;                  [<halo halo>] (mapv #(%1 %2 (* (:halo r) (:width r))) [- +] [<bound bound>])
+;;                  ;; bounded (fn [point near far] (<= near point far))
+;;                  #_halos #_(for [[b op] [bounds [- +]]] (op b (* (:halo r) (:width r))))]
+;;              (if (<= <bound distance bound>) ;within bounds = bloom color normal, was color (modded) keyhole
+;;              ;; (if (apply bounded distance bounds) ;within bounds = bloom color normal, was color (modded) keyhole
+;;               (color-fn (if-not (:keyhole? r) (:color r) was))
+;;               (let [level (cond (<= <halo distance <bound) (/ (- distance <halo) (- <bound <halo))
+;;                                 (<= bound> distance halo>) (/ (- halo> distance) (- halo> bound>))
+;;               ;; (let [[near far] (map #(map % [halos bounds]) [first second])
+;;               ;;       level (cond (bounded distance near) (/ (- distance <halo) (apply - (reverse near)))
+;;               ;;                   (bounded distance (reverse far)) (/ (- halo> distance) (apply - far))
+;;                                 :else 0.0)] ;zero outside halo
+;;                (if-not (:keyhole? r)
+;;                 (if (> level 0.1) ;guess some cutoff slightly higher makes sense to spare cycles?
+;;                  (color-fx/fade-colors was (:color r) level show snap head)
+;;                  was) ;halo should fade out linearly...
+;;                 (let [level (* level (- 1.0 (:keyhole-opacity r)))]
+;;                  (color-fx/fade-colors was nil level show snap head))))))))]
+;;   (make-effect "Bloom color" (fn [_ _] (fx/build-head-assigners :color heads fx)))))
+
+(defn testing []
+ (def p (param/assemble {:fraction (param/quick-lfo "sine")} or-bloom))
+ (def p2 (param/assemble {} or-bloom))
+ (def d (into {} (filter (fn [[_ v]] (params/frame-dynamic-param? v)) p)))
+ (def d2 (into {} (filter (fn [[_ v]] (params/frame-dynamic-param? v)) p2)))
+ (merge d nil)
+ (def bl (bloom (show/all-fixtures) :fraction (param/quick-lfo "sine")
+           :width (bind-keyword-param :widuh Number 0.2) :color (color/like :green)))
+ (def bl2 (bloom (show/all-fixtures) :fraction (param/quick-lfo "sine")
+           :width (bind-keyword-param :widuh Number 0.2)))
+ (def bl3 (bloom (show/all-fixtures) :fraction (param/quick-lfo "sine")))
+ (def bl4 (bloom (show/all-fixtures)))
+ (show/add-effect! :bloom bl)
+ )
 ;; (when aim?  ;from confetti. Here we are talking about a bounds tho, not specific point... but resolve only one axis and track?
 ;;  (filter identity  ;but guess heads check whether selves in/out, either find nearest head that got lit, or nearest point that would be?
 ;;          (for [[head [_ _ point]] @flakes]
@@ -303,13 +409,13 @@
         [running current-step flakes] (map ref [true nil {}]) ; A map from head to [creation-step color] for active flakes
         active-fn (fn [show snapshot] ;; Continue running until all existing flakes fade
                    (dosync
-                    (alter flakes clean-flakes show snapshot (param/auto-resolve (:step p)))
+                    (alter flakes clean-flakes show snapshot (resolve-param (:step p) show snapshot))
                     (or @running (seq @flakes))))
         gen-fn (fn [show snapshot]
                   (pspy :confetti ;; See how many flakes to create (unless we've been asked to end).
                         (dosync
                          (when @running
-                          (let [now (math/round (param/auto-resolve (:step p) :show show :snapshot snapshot))] ;; (let [now (math/round (param/auto-resolve (:step p) show snapshot))] ;<-- wrong callll
+                          (let [now (math/round (resolve-param (:step p) show snapshot))]
                            (when (not= now @current-step)
                             (ref-set current-step now)
                             (let [p (update p :min-add #(max 0 (math/round (resolve-param % show snapshot))))
@@ -330,54 +436,59 @@
         (Effect. "Confetti" active-fn gen-fn end-fn)))
 
 ;          CAN-CAN
+(defn build-can-can-heads-map "Return fixture data map for [[can-can]]"
+ [fixture-keys & {:keys [pan-offsets tilt-offsets]}]
+  (map-indexed (fn [i k]
+                (let [[po to] (map #(if (vector? %) (% i) 0) [pan-offsets tilt-offsets])]
+                 {:key k :phase (* i (/ 1 (count fixture-keys)))
+                  :pan-offset po :tilt-offsets to})) ;or w/e nomenclature is...
+               fixture-keys))
+
 (defn or-can-can []
  {:vars {:bars 1 :cycles 1 :stagger 0 :spread 0 :pan-min -30 :pan-max 30 :tilt-min -100 :tilt-max 100}})
-(def heads [{:key :moving-1      :phase 0.0 :pan-offset  0 :tilt-offset 0}
-            {:key :moving-mini-1 :phase 0.2 :pan-offset  0 :tilt-offset 0}
-            {:key :moving-mini-2 :phase 0.4 :pan-offset -0 :tilt-offset 0}
-            {:key :moving-mini-3 :phase 0.6 :pan-offset -0 :tilt-offset 0}
-            {:key :moving-2      :phase 0.8 :pan-offset  0 :tilt-offset 0}])
-(defn can-can-heads "Return fixture data map for [[can-can]]"
- [fixtures & [pan-offsets tilt-offsets]]
- (map-indexed (fn [i k]
-               {:key k :phase (* i (/ 1 (count fixtures)))
-                :pan-offset (pan-offsets i 0) :tilt-offsets (tilt-offsets i 0)}) ;or w/e nomenclature is...
-              fixtures))
-
 (defn can-can "Fix something reasonable of this... then apply to xyz, color etc"
-  [#_fixture-cfg & {:keys [bars cycles stagger spread pan-min pan-max tilt-min tilt-max] :as all}]
-  (let #_tolglow.debug/det
-       [km (util/ks-show-ks-defaults all (:vars (or-can-can))) ;align fallback map
-        p (param/bind-vars km)
+  [fixture-keys & {:keys [bars cycles stagger spread pan-min pan-max tilt-min tilt-max] :as all}]
+  (let [p (param/assemble all or-can-can :resolve-vars true)
         ;; builder (fn [kind f & arg]
         ;;           (map (fn [side & arg]
         ;;                 (apply build-param-formula Number f side arg))
         ;;                (reverse (param/extract kind p)))) ;figure out here how spec so fns get sent right args (:spread for pan)
-        ratio (map #(apply build-param-formula Number % (param/extract :ratio p)) [#(/ %1 %2) #(/ (* 4 %1) %2)])
-        fx (for [h heads]
-             (let #_tolglow.debug/det [head-phase (param/number-formula #(* % (:phase h) (:stagger p))) ;(build-param-formula Number #(* % (:phase h)) (p :stagger))
+        ratio (map #(apply build-param-formula Number % (param/extract :ratio p))
+                   [#(/ %1 %2) #(/ (* 4 %1) %2)])
+        heads (build-can-can-heads-map fixture-keys)
+        fx (for [h heads] ;XXX obviously something wrong with param/number-formula compared to build-param-formula...
+             (let #_tolglow.debug/det
+                  [head-phase (build-param-formula Number #(* % (:phase h)) (p :stagger))
                    lfos (map #(sine :interval :bar, :interval-ratio %, :phase head-phase) ratio)
                    ;; [head-pan head-tilt] (map #(builder %1 %2 %3)
                    ;;                           [(:pan-offset h 0) (:tilt-offset h 0)]
                    ;;                           [#(+ %1 (* (:pan-offset h 0) %2))
                    ;;                            #(+ % (:tilt-offset h 0))] [(:spread p) nil])
-                   ;; head-pan (map (fn [side] (build-param-formula Number #(+ %1 (* (:pan-offset h 0) %2)) side (p :spread)))
-                   head-pan (map (fn [side] (param/number-formula #(+ %1 (* (:pan-offset h 0) %2)) side (p :spread)))
-                                                    (reverse (param/extract :pan p))) ;just rev now cause get -max -min order... fix sturdier
+                   ;; pans (reverse (param/extract :pan p))
+                   pans (param/extract :pan p)
+                   head-pan (map (fn [side]
+                                  (build-param-formula Number
+                                                       #(+ %1 (* (:pan-offset h 0) %2))
+                                                       side (p :spread)))
+                                 pans #_(reverse (param/extract :pan p))) ;just rev now cause get -max -min order... fix sturdier
+                   ;; head-pan (map (fn [side] (param/number-formula #(+ %1 (* (:pan-offset h 0) %2)) side (p :spread)))
+                   ;; tilts (reverse (param/extract :tilt p))
+                   tilts (param/extract :tilt p)
                    head-tilt (map (fn [side] (build-param-formula Number #(+ % (:tilt-offset h 0)) side))
-                                                     (reverse (param/extract :tilt p)))
+                                                    tilts #_(reverse (param/extract :tilt p)))
                    pt-params (for [[lfo [lo hi]] (zipmap lfos [head-pan head-tilt])]
                                                (build-oscillated-param lfo :min lo :max hi))
                    direction (apply build-pan-tilt-param (interleave [:pan :tilt] pt-params))]
                (move/pan-tilt-effect "Can Can Element" direction (fixtures-named (:key h)))))]
     (apply fx/scene "Can Can" fx)))
-;
+
+
 ;  PINSTRIPE
-(defn- gather-stripes "Gathers heads into the groups that will be assigned particular colors by the pinstripes effect."
-  [heads group-fn num-colors]
-  (let [head-groups (partition-all num-colors (sort-by #(:x (first %))
+(defn- gather-stripes "Gathers heads into the groups that will be assigned particular attributes (eg colors) by the (pin)stripes effect."
+  [heads group-fn num-stripes]
+  (let [head-groups (partition-all num-stripes (sort-by #(:x (first %))
                                                        (vals (group-by group-fn (sort-by :x heads)))))
-        stripe-groups (for [i (range num-colors)] [])]
+        stripe-groups (for [i (range num-stripes)] [])]
     (loop [remaining head-groups, result stripe-groups]
       (let [[current remaining] (map #(% remaining) [first rest])
             result (map concat result (concat current (repeat [])))]
@@ -385,6 +496,7 @@
           result
           (recur remaining result))))))
 
+;afa pinstripes all those chases prob tax it a bit even if not doing much interesting, no? cant pspy but
 (defn or-pinstripes "Default map for [[pinstripes]]" []
  {:vars {:colors [(color/like :royalblue) (color/like :orangered4)], :step (build-step-param)}
   :opts {:tolerance 0}})
@@ -401,14 +513,14 @@
   The `:step`, `:tolerance`, and `:colors` parameters may be dynamic, (and may be bound to show variables using the standard shorthand of
   passing the variable name as a keyword). Since `:step` and `:tolerance` are not associated with a specific head, they cannot be
   spatial parameters. The colors can be, however, so for example saturations can vary over the rig."
-  [fixtures & {:keys [step tolerance colors] :as all}]
+  [fixtures & {:keys [step tolerance colors] :as all}] ;rename tolerance "width" i guess. and make so works dynamically
   {:pre [(some? *show*)]}
   (let [p (param/assemble all or-pinstripes)
         heads (chan/find-rgb-heads fixtures)
         group-fn (if (< (:tolerance p) 0.00001) :x #(math/round (/ (:x %) (:tolerance p))))
         stripes (gather-stripes heads group-fn (count (:colors p)))
         chases (map (fn [i stripe-heads]
-                     (let [effects (map #(color-fx/color-effect "pin color" % stripe-heads) (:colors p))
+                     (let [effects (map #(color % :effect-name "pin color" :fixtures stripe-heads) (:colors p))
                            pin-step (build-param-formula Number #(- % i) (:step p))]
                       (chase "Pinstripe" effects pin-step :beyond :loop)))
                     (range) stripes)]
@@ -417,19 +529,18 @@
 
 (defn or-stripes "Default map for [[stripes]]" []
  {:vars {:step (build-step-param), :values [(color/like :royalblue) (color/like :orangered4)]}
-  :opts {:tolerance 0}})
+  :opts {:tolerance 0.05}})
 (defn stripes "Pinstripes for generic params" ;works already. for color anyways...
  [fixtures target-fn & {:keys [step tolerance values] :as all}] ;prob want to also have multiple target fns? like every other strobes and colors, etc
 (let [p (param/assemble all or-stripes)
-      ;; heads (chan/extract-heads-with-some-matching-channel fixtures #(= % target-fn)) ;eh tricky, pass as extra arg?
-      heads fixtures
+      heads fixtures ;; (chan/extract-heads-with-some-matching-channel fixtures #(= % target-fn)) ;eh tricky, pass as extra arg?
       group-fn (if (< (:tolerance p) 0.00001) :x #(math/round (/ (:x %) (:tolerance p))))
       stripes (gather-stripes heads group-fn (count (:values p)))
-      chases (map (fn [i stripe-heads]
-                   (let [effects (map #(target-fn stripe-heads %) (:values p)) ;just wrap fx-fn if not [fixtures level]
-                         stripe-step (build-param-formula Number #(- % i) (:step p))]
-                    (chase "Stripe" effects stripe-step :beyond :loop)))
-                  (range) stripes)]
+      chases (map-indexed (fn [i stripe-heads]
+                           (let [effects (map #(target-fn stripe-heads %) (:values p)) ;just wrap fx-fn if not [fixtures level]
+                                 stripe-step (build-param-formula Number #(- % i) (:step p))]
+                            (chase "Stripe" effects stripe-step :beyond :loop)))
+                          stripes)]
   (apply fx/scene "Stripes" chases)))
 
 
@@ -443,9 +554,9 @@
  {:pre [(some? *show*)]}
   (let [p (param/assemble all or-metronome-effect)
         heads (chan/find-rgb-heads fixtures)
-        [running local-snapshot] (map atom [true nil]) ; Need to set up a snapshot at start of each run for all assigners
         snapshot (metro-snapshot (:metronome p)) ;; Need to use the show metronome as a snapshot to resolve our metronome parameter first
-        [down-color other-color] (map #(params/resolve-unless-frame-dynamic % *show* snapshot) (map p [:down-color :other-color]))
+        [down-color other-color] (mapv #(params/resolve-unless-frame-dynamic % *show* snapshot) (map p [:down-color :other-color]))
+        [running local-snapshot] (mapv atom [true nil]) ; so local-snapshot is basically to not have to grab a snapshot twice per frame? (gen and active) but instead just active
         f (fn [show snapshot target was]
            (pspy :metronome-effect
                  (let [raw-intensity (* 2 (- (/ 1 2) (snapshot-beat-phase @local-snapshot 1)))
@@ -485,7 +596,7 @@
                                           (* level (/ (- range distance) range))
                                           level))))
                                   position width level fade)]
-               (dimmer-effect fixture-level [fixture])))))) ;:htp? false, :add-virtual-dimmers? true)))))) ;;add virtual dimmers so works for ledstrips...
+               (dimmer-effect fixture-level [fixture])))))) ;:htp? false, :add-virtual-dimmers? true))))) ;;add virtual dimmers so works for ledstrips...
 
 (defn or-sweep []
  {:vars {:width 0.1 :level 255 :fade true :scale 1.0}})
@@ -495,6 +606,7 @@
                         :or {effect-fn dimmer-effect}}]
   (let [p (param/assemble vars or-sweep)
         bounds (map #(apply % (map :x fixtures)) [min max])
+        span (math/abs (apply - bounds)) ;not using scale...
         minmax (map (fn [b] (build-param-formula Number #(* %1 %2) b (:scale p))) bounds) ;use min-x max-x, or scale + "middle" for proper control of both ends?
         position (cond (or (number? position) (params/param? position)) position
                        (instance? IOscillator position) (build-oscillated-param position :min 0.0 :max 1.0)
@@ -505,7 +617,7 @@
                                         (+ lo (* (- hi lo) v))))
                                       position minmax)
         f (fn [fixture position width level fade]
-           (let [range (/ width 2)
+           (let [range (/ (* span width) 2)
                  distance (math/abs (- position (:x fixture)))]
             (if (> distance range)
              0
@@ -543,11 +655,9 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
   [level fixtures & {:keys [lightness effect-name] :or {lightness 100 effect-name "Strobe"}}]
   {:pre [(some? *show*)]}
   (let [level-param (bind-keyword-param level Number 50)
-        function (chan-fx/function-effect "strobe level" :strobe level-param fixtures)]
-    (Effect. effect-name
-             fx/always-active
-             (fn [show snapshot] (fx/generate function show snapshot))
-             (fn [show snapshot] (fx/end function show snapshot)))))
+        f (chan-fx/function-effect "strobe level" :strobe level-param fixtures)]
+    (Effect. effect-name fx/always-active (fn [show snapshot] f) fx/end-immediately)))
+
 
 ;           CROSSOVER CHASE
 (defn shift [coll] (->> coll cycle (drop 1) (take (count coll))))
@@ -599,7 +709,8 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
         [points running current-step] (map ref [(ring-buffer (count heads)) true nil])
         active-fn (fn [_ _] (dosync (or @running (seq @points)))) ;; Continue running until all circles are finished
         gen-fn (fn [show snapshot]
-               (dosync
+               (pspy :circle-chain
+                (dosync
                 (let [now (math/round (resolve-param step show snapshot))
                       phase (lfo/evaluate phase-osc show snapshot nil)
                       stagger (resolve-param (:stagger p) show snapshot)
@@ -616,7 +727,7 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
                                                     (.y point)
                                                     (+ (.z point) (* radius (Math/sin theta))))]
                            (fx/build-head-parameter-assigner :aim head head-point show snapshot)))
-                       heads @points head-phases))))
+                       heads @points head-phases)))))
         end-fn (fn [_ _] (dosync (ref-set running false)))]
     (Effect. "Circle Chain" active-fn gen-fn end-fn))) ;; Stop making new circles, and shut down once all exiting ones have ended.
 
@@ -677,25 +788,24 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
 
 ;           CHANNEL / FUNCTION effects
 ;XXX maybe flip channels and channel-type??
+(defn or-channel []
+ {:vars {:htp? false, :fixtures (all-fixtures), :effect-name "Channel level"}  })
 (defn channel "Fixed to [level targets & effect-name] standard format... Returns an effect which assigns a dynamic value to all the supplied channels. If `level is a keyword, it will be looked up as a show variable. If `htp?` is true, applies highest-takes-precedence (i.e.  compares the value to the previous assignment for the channel, and lets the highest value remain)."
   [level channels & {:keys [htp? effect-name fixtures channel-type]
-                     :or {fixtures (all-fixtures), effect-name "Channel effect"}}]
-  {:pre [(some? effect-name) (some? *show*) (sequential? channels)]}
+                     :or {fixtures (all-fixtures), effect-name "Channel level"}}]
+  {:pre [(some? *show*) (sequential? channels)]}
   (let [level (params/bind-keyword-param level Number 0)
         f (if htp?  ;; We need to resolve any dynamic parameters at this point so we can apply the highest-take-precedence rule.
             (fn [show snapshot target was]
-              (max (colors/clamp-rgb-int (resolve-param level show snapshot (:head target)))
-                   (or (colors/clamp-rgb-int (resolve-param was
-                                                            show snapshot (:head target))) 0)))
-            (fn [show snapshot target was] ;; We can defer resolution to the final DMX calculation stage.
-              level))
-        assigners (chan-fx/build-raw-channel-assigners channels f)]
-    (Effect. effect-name
-             fx/always-active
-             (fn [show snapshot] assigners)
-             fx/end-immediately)))
+              (let [[level was] (map #(colors/clamp-rgb-int
+                                       (resolve-param % show snapshot (:head target))) [level was])]
+               (max level (or was 0))))
+            (fn [_ _ _ _] level)) ;; We can defer resolving to the final DMX calculation stage.
+        get-assigners (fn [_ _] (chan-fx/build-raw-channel-assigners channels f))]
+    (Effect. effect-name fx/always-active get-assigners fx/end-immediately)))
 
-
+(defn or-function []
+ {:vars {:htp? false}})
 (defn function "Fixed to [level target &]. Returns an effect which assigns a dynamic value to all channels of the supplied fixtures or heads which have a range that implements the specified function. (Functions are a way for fixtures to use the same DMX channel to do multiple things, allocating ranges of values to get more dense use from a smaller number of channel allocations.) The `function` argument is the keyword by which the function information will be found for the supplied `fixtures`. The actual value sent for the channel associated with `function` for each fixture will be calculated by treating `level` as a percentage of the way between the lowest and highest DMX values assigned to that named function for the fixture. The name displayed for the effect in user interfaces is determined by `effect-name`.  If `:htp?` is passed with a `true` value, applies highest-takes-precedence (i.e. compares the value to the previous assignment for the channels implementing the function, and lets the highest value remain).  If you have multiple effects trying to control different functions which use the same channel, you are unlikely to get the results you want. Hopefully the fixture designers chose how to share channels wisely, avoiding this pitfall."
   [level function-type & {:keys [effect-name htp? fixtures] :or {fixtures (all-fixtures)}}]
   {:pre [(some? *show*) (some? function-type) #_(sequential? fixtures)]}
@@ -766,6 +876,19 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
   (Effect. fx-name fx/always-active gen-fn fx/end-immediately)))
 
 
+;easy perf boost:
+;retain even just last frames state (assigners)
+;and make a check whether any inputs diff
+;NOTE: not the same as "any dynamic params?",
+;all cue vars obvs dynamic but mostly dont move.
+;Fns usually pure-ish.
+;So: keep all,
+;make comparisons, save a bit cutting fx short but mostly at
+;reduce apply assigners stage
+;(instead of 15 assigners running once per frame per pixel,
+;prob like 8 down, render 1, jump 3 more...)
+;
+
 (def generate-fade #'afterglow.effects/generate-fade) ;not public so gotta alias like this
 
 (defn ms-elapsed ;shouldnt there already be a fn like this somewhere??
@@ -786,32 +909,31 @@ Designed to be run as a high priority queue, ideally held and with aftertouch ad
   {:pre [(some? *show*) #_(instance? Effect effect)]}
   (map #(validate-param-type % Number) [alpha timeout])
   (let [[alpha condition] (param/auto-resolve [alpha condition] :dynamic false)
-        timeout (param/auto-resolve (bind-keyword-param timeout Number 3000 (str (:name effect) " timeout")))
+        timeout (param/auto-resolve (bind-keyword-param timeout Number 0 (str (:name effect) " timeout")))
         launched (metro-snapshot (:metronome *show*))
         ended (atom nil)
-        end-fn (if (pos? (:r envelope))
+        end-fn (if (pos? (:r envelope)) ;release envelope fades out effect when it ends
                 (fn [show snapshot]
                  (if (not @ended) (reset! ended snapshot))
                  nil)
                 (:end-fn effect))
-        active-fn (if (or timeout (pos? (:r envelope))) ;this makes more sense than like wrapping everything in chases right?
+        active-fn (if (or (pos? timeout) (pos? (:r envelope))) ;this makes more sense than like wrapping everything in chases right?
                    (fn [show snapshot]
                     (let [[ms-start ms-end] (map #(ms-elapsed % show) [launched @ended])]
                      (if (not @ended)
-                      (if (< ms-start timeout)
+                      (if (or (zero? timeout) (< ms-start timeout))
                        (:active-fn effect)
                        (reset! ended snapshot)) ;since cant call end-fn on ourselves yet. no idea why wouldnt work when called to f above in let tho,..
                       (if (< ms-end (:r envelope))
                        (:active-fn effect)))))
                    (:active-fn effect))
         f (fn [show snapshot]
-            (let [[alpha condition] (map #(resolve-param % show snapshot) [alpha condition])
+            (pspy :effect-wrapper (let [[alpha condition] (map #(resolve-param % show snapshot) [alpha condition])
                   [ms-start ms-end] (map #(ms-elapsed % show) [launched @ended])
                    fade (min 1.0 (/ ms-start (:a envelope 1))
                             (if (pos? (:r envelope)) (- 1.0 (/ ms-end (:r envelope))) 1))
                    alpha (* fade alpha)]
              (cond (autil/float>= alpha 1.0) ((:gen-fn effect) show snapshot)
                    (autil/float<= alpha 0.0) ((:gen-fn (fx/blank)) show snapshot)
-                   :else (generate-fade (fx/blank) effect alpha show snapshot))))] ;could we do spatial param = fade effect per head/in space? or smooth fades out. or mixing bunch of lfos prob funky
+                   :else (generate-fade (fx/blank) effect alpha show snapshot)))))] ;could we do spatial param = fade effect per head/in space? or smooth fades out. or mixing bunch of lfos prob funky
     (Effect. (:name effect) active-fn f end-fn)))
-

@@ -14,36 +14,48 @@
                                                   DwFluidParticleSystem2D]
          [com.thomasdiewald.pixelflow.java.imageprocessing     DwOpticalFlow
                                                                DwFlowField]
+         [com.thomasdiewald.pixelflow.java.imageprocessing.filter  DwFilter DwLiquidFX Merge]
          [com.thomasdiewald.pixelflow.java.flowfieldparticles  DwFlowFieldParticles
                                                                DwFlowFieldParticles$SpawnRadial]
          [Dw.filter.DwFilter]))
-;
+
 (defmacro pass-live-fn "Guard fn in var so stays hot-reloadable inside fx, chases etc..."
  [v]
  (if (symbol? v)
   `(if (fn? ~v) (var ~v) ~v)
   v))
 
+(defonce ^{:kind processing.opengl.PGraphics2D} pg (atom {}))
+; in devdemo: checker, canvas, obstacles, spheres, particles, trails, trails_tmp, sprite, gravity, impulse, luminance...
+
 (defonce ^{:kind processing.opengl.PGraphics2D} pg-canvas (atom nil))
 (defonce ^{:kind processing.opengl.PGraphics2D} pg-world (atom nil)) ;physical objexts must be rendered seperately first so particles/flow can adhere
+(defonce ^{:kind processing.opengl.PGraphics2D} pg-img (atom nil)) ;physical objexts must be rendered seperately first so particles/flow can adhere
 (defonce ^{:kind DwPixelFlow} context (atom nil))
 (defonce ^{:kind DwFluid2D} fluid (atom nil))
 (defonce ^{:kind DwFlowFieldParticles} particles (atom nil))
 (defonce ^{:kind DwFlowField} gravity (atom nil))
+(defonce ^{:kind DwLiquidFX} liquidfx (atom nil))
 
 (def obstacle-color [40 40 40 255]) ;color of texture used as solid matter
 
-(defn lfo [lfo l h b] (param/quick-lfo lfo :lo l :high h :beats b))
+(defn lfo [id l h b] (param/quick-lfo id :low l :high h :beats b))
 
-(def sine (lfo "sine"  1 255 13))
-(def sine2 (lfo "sine" 2 255 4))
-(def saw  (lfo "sawtooth" 3 80 23))
-(def saw2 (lfo "sawtooth" 0.05 0.8 3))
-(def mix  (param/mix [sine saw] param/sum :min 0.99 :max 20.5))
-;; (def mix (param/mix [sine saw] param/sum :mode :bounce))
-(def sub  (param/mix [sine saw] param/sub :min 2.99 :max 40.5))
-(def div  (param/mix [saw saw2] param/div :min 2.99 :max 20.5))
-(def params [sine sine2 saw saw2 mix sub div])
+(defn fuck-around-defs []
+ (def sine (lfo "sine"  1 255 13))
+ (def sine2 (lfo "sine" 2 255 4))
+ (def sin-1 (lfo "sine"  -1 1 8))
+ (def sin-2 (lfo "sine"  -1 1 4))
+ (def saw  (lfo "sawtooth" 3 80 23))
+ (def saw2 (lfo "sawtooth" 0.05 0.8 3))
+ (def mix  (param/mix [sine saw] param/sum :min 0.99 :max 20.5))
+ (def sinsin (param/mix [sin-1 sin-2] param/sum :min -1 :max 1))
+ (def sinsin-2 (param/mix [sin-1 sin-2] param/div :min -1 :max 10))
+ ;; (def mix (param/mix [sine saw] param/sum :mode :bounce))
+ (def sub  (param/mix [sine saw] param/sub :min 2.99 :max 40.5))
+ (def div  (param/mix [saw saw2] param/div :min 2.99 :max 20.5))
+ (def params [sine sine2 saw saw2 mix sub div])
+ )
 
 (defn pp+ [ps]
  (apply + (param/auto-resolve ps)))
@@ -256,7 +268,7 @@
 (defn update-fluid [obj] ;fix this so not inlined a la quil then can update anytime
  (let [[sine sine2 saw saw2 mix sub div] (mapv #(param/auto-resolve %) params)
        x (q/mouse-x)
-       y (- (q/height) (q/mouse-y))
+       y (- (q/height) 200 (q/mouse-y))
        radius 50]
 
   (if (q/mouse-pressed?)
@@ -271,11 +283,12 @@
      (.addVelocity obj x y radius vel-x vel-y)))
 
   (let [x (+ x 2 (* 0.3 mix))
-        radius (+ 80 (* mix 0.2))
-        r (+ 0.1 (/ sine 500))
-        g (+ 0.1 (/ sine2 590))
+        radius (+ 30 (* mix 0.2))
+        r (+ 0.2 (/ sine 600))
+        g (+ 0.2 (/ sine2 790))
+        ;; g 0.9
         b (+ 0.4 (/ (- 255 sine2) 500))
-        scale 500]
+        scale 50]
    (.addDensity obj x y radius r g b scale))
 
   (let [x (* saw 1.00)
@@ -285,31 +298,65 @@
    (.addTemperature obj x y one two))))
 
 
-(defmacro set-param!
-[obj paramm value]
-`(set! (. (. @obj ))))
-
-(defn set-particle-params [obj]
- (let [p (.-param obj)]
-  (set! (.col_A p) (float-array [0.10 0.50 0.80 5.00])) ;particles.param.col_A = new float[]{0.10f, 0.50f, 0.80f, 5};
-  (set! (.col_B p) (float-array [0.05 0.25 0.40 0.00]))
+(defn set-particle-params [#_obj] ;can get fancy later. live reload is #1
+ (let [p (.-param @particles #_obj)]
+  (set! (.col_A p) (float-array [0.10 0.50 0.80 1.00])) ;inner color
+  (set! (.col_B p) (float-array [0.25 0.15 0.50 0.00])) ;outer color - but 0.00 sure as hell aint alpha??
+  ;; (set! (.col_B p) (float-array [0.85 0.15 0.10 0.10])) ;outer color - but 0.00 sure as hell aint alpha??
+  ;; (set! (.col_B p) (float-array [0.05 0.25 0.70 0.0 #_0.09])) ;outer color - but 0.00 sure as hell aint alpha??
+  ;; (set! (.col_B p) (float-array [0.0 0.0 0.0 0.0 #_0.09])) ;outer color - but 0.00 sure as hell aint alpha??
   (set! (.shader_collision_mult p) 0.2)
-  (set! (.steps p) 1)
-  (set! (.velocity_damping p) 0.995)
-  (set! (.size_display p) 10)
-  (set! (.size_collision p) 10)
-  (set! (.size_cohesion p) 4)
+  (set! (.steps p) 1) ;right. stes 2 and we get, not blend but less
+  (set! (.velocity_damping p) 0.97) ;0.95 - 1.0
+  (set! (.size_display p) 13)
+  (set! (.size_collision p) 4)
+  (set! (.size_cohesion p) 3)
+  (set! (.wh_scale_coh p) 4)
+  (set! (.wh_scale_col p) 1)
+  (set! (.wh_scale_obs p) 0)
+
   (set! (.mul_coh p) 0.5)
   (set! (.mul_col p) 1.0)
-  (set! (.mul_obs p) 2.0)))
+  (set! (.mul_obs p) 1.0)))
 
+; decent goo starting point:
+; steps 1
+; size: 50 display 11 colission 34 cohesion
+; mul: 3.3 colission 4.0 cohesion 4.0 obstacles
+; wh scale: 0 col 1 coh 0 obs
+; sprite: size 32 exp1 0.38 exp2 0.52 mult 0.04 (not even showing on preview)
+; bloom + liquid fx (which with user settings looks like 90s photoshop lol)
+
+; glowing cubes:
+; size display and colission very large, cohesion vary
+; sprite: 0.00 exp2 (square)
+; spawn few
+;
+; bloomy:
+; use display dist debug mode as starting point for an actual
+;
+
+;XXX eh fix a script to go from java to clj automatically
+(defn set-liquidfx-params [obj]
+ (.base_LoD            (.-param @liquidfx) 1   )
+ (.base_blur_radius    (.-param @liquidfx) 1   )
+ (.base_threshold      (.-param @liquidfx) 0.6)
+ (.base_threshold_pow  (.-param @liquidfx) 25  )
+ (.highlight_enabled   (.-param @liquidfx) true)
+ (.highlight_LoD       (.-param @liquidfx) 1   )
+ (.highlight_decay     (.-param @liquidfx) 0.6)
+ (.sss_enabled         (.-param @liquidfx) true)
+ (.sss_LoD             (.-param @liquidfx) 3   )
+ (.sss_decay           (.-param @liquidfx) 0.8)
+;;  (.apply @liquidfx pg-particles)
+ )
 
 (defn set-fluid-params [obj] ;can also be called whenever to update (so def try lfoing them)
-(let [p (.-param obj)]
+(let [p (.-param @fluid #_obj)]
   (set! (.dissipation_velocity p) 0.98)
   (set! (.dissipation_density p) 0.89)
   (set! (.dissipation_temperature p) 0.79)
-  (set! (.vorticity p) 0.59)))
+  (set! (.vorticity p) 0.29)))
 
 (defn init-fluid [context obj callback] ;ok guess no work now, callback gets inlined...
  (let [cb (proxy [DwFluid2D$FluidData] []
@@ -328,10 +375,11 @@
   (reset! context (DwPixelFlow. (quil.applet/current-applet)))
   (.printGL @context)
 
-  (init-fluid context fluid update-fluid) ;uh dont have the atom reset/deref in the fn
+  ;; (init-fluid context fluid update-fluid) ;uh dont have the atom reset/deref in the fn
+  (init-fluid context fluid (pass-live-fn update-fluid)) ;uh dont have the atom reset/deref in the fn
 
   (reset! particles (DwFlowFieldParticles. @context 10000))
-  (set-particle-params @particles)
+  (set-particle-params #_@particles)
   ;; (.createSpriteTexture @particles 50 0.5 0.8 8.9) ;dunno what it does haha
 
   (reset! gravity (DwFlowField. @context))
@@ -341,9 +389,9 @@
   ;;  (.resize particle-system context, viewport_w/3, viewport_h/3));
 
   (reset! pg-canvas (q/create-graphics w h :p2d))
-  ;; (.smooth @pg-canvas 0)
+  (.smooth @pg-canvas 0)
   (reset! pg-world (q/create-graphics w h :p2d))
-  ;; (.smooth @pg-world 8)
+  (.smooth @pg-world 8)
 
   (q/frame-rate 60)
   (q/color-mode :rgb 255)))
@@ -385,23 +433,27 @@
   (.vel sr vx vy)
   (.spawn obj (q/width) (q/height) sr))
 
-(defn add-particles [obj]
+(defn add-particles [obj & [amount]]
  (let [[w h] [(q/width) (q/height)]
-       position [(/ w 2.0) (/ h 4.0)]
+       sinsin (* 50 (param/auto-resolve sinsin))
+       ;; position [(/ w 2.0) (/ h 4.0)]
+       position [(+ sinsin (/ w 2.0)) (+ sinsin (/ h 4.0))]
        velocity [0 4]
-       [amount radius] [1 30]
+       [amount radius] [((fnil + 0) amount) 10]
        sr (DwFlowFieldParticles$SpawnRadial.)] ;DwFlowFieldParticles.SpawnRadial sr = new DwFlowFieldParticles.SpawnRadial();
-  (spawn-particles obj sr position velocity radius amount)
 
   (if (q/mouse-pressed?)
    (let [pr (* 0.5 (.getCollisionSize @particles))
          amount (Math/ceil (* 0.01 (.getCount @particles)))
-         amount (min 500 amount)
+         amount (min 100 (max 1 amount)) ;guess it gets pissy if passed 0?
          radius (Math/ceil (Math/sqrt (* amount pr pr)))
-         [px py :as position] [(q/mouse-x) (q/mouse-y)]
-         [vx vy :as velocity] [(*  5 (- px (q/pmouse-x)))
+         [px py :as position] [(max 0 (- (q/mouse-x) 100))
+                               (q/mouse-y)]
+         [vx vy :as velocity] [(* -0.5 (- px (q/pmouse-x)))
                                (* -5 (- py (q/pmouse-y)))]]
-    (spawn-particles obj sr position velocity radius amount)))))
+    (spawn-particles obj sr position velocity radius amount))
+
+   (spawn-particles obj sr position velocity radius amount))))
 
 
 (defn render-gui []
@@ -419,15 +471,18 @@
           20 33))
 
 
-(def reset-trigger (lfo "sawtooth" 0 80 53))
+(def reset-trigger (lfo "sawtooth" 0 80 27))
+(def run-trigger (lfo "sawtooth" 0 80 6))
 
 (defn draw []
+ (let [[reset run] (map #(param/auto-resolve %) [reset-trigger run-trigger])]
   (update-state)
   (render-world @pg-world) ;obstacles
-  (add-particles @particles)
-  (when (> 2 (param/auto-resolve reset-trigger))
-   (.reset @particles))
-   (.reset @particles) ;dont call from repl btw, crashhh
+  (when (or (> 5 run) (q/mouse-pressed?))
+   (add-particles @particles (int (* 2 run))))
+  ;; (add-particles @particles 1)
+  ;; (when (< 75 reset) (.reset @particles))
+  ; (.reset @particles) ;dont call from repl btw, crashhh
 
   (.addObstacles @fluid @pg-world)
   (.update @fluid)
@@ -441,11 +496,25 @@
   (.displayParticles @particles @pg-canvas)
   (.renderFluidTextures @fluid @pg-canvas 0)
 
+
+  ;; ; bloom - pretty so sort soon
+  ;; DwFilter filter = DwFilter.get(context);
+  ;; filter.luminance_threshold.param.threshold = 0.7f; // when 0, all colors are used
+  ;; filter.luminance_threshold.param.exponent  = 7;
+  ;; filter.luminance_threshold.apply(pg_aa, pg_luminance);
+  ;;
+  ;; filter.bloom.setBlurLayers(10);
+  ;; ;filter.bloom.gaussianpyramid.setBlurLayers(10);
+  ;; filter.bloom.param.blur_radius = 1;
+  ;; filter.bloom.param.mult   = 0.5f; //map(mouseX, 0, width, 0, 2);
+  ;; filter.bloom.param.radius = 0.7f; //map(mouseY, 0, height, 0, 1);
+  ;; filter.bloom.apply(pg_luminance, null, pg_aa);
+
   (q/blend-mode :replace)
   (q/image @pg-canvas 0 0)
   (q/blend-mode :blend)
 
-  (render-gui))
+  (render-gui)))
 
 
 (defn init []

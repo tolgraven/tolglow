@@ -21,7 +21,7 @@
  [path handler]
  (oosc/osc-handle @(:server binds) path handler))
 
-(defn done "Return :done, which removes handler"
+(defn done "Return :done, which removes handler" ;#(:done) suffice no?
  [msg] :done)
 
 (defn listen "Create generic handler for all incoming messages"
@@ -145,10 +145,18 @@
 
 (defn refresh-cues "Ensure OSC client is up, clear any previous bindings & create new ones"
  []
- (start-client)
  (clear-cue-bindings)
- #_(attach-all-cues))
+ (attach-all-cues))
 
+
+(defn init "Start OSC apparatus n shit" []
+ (start-server)
+ (start-client)
+ (clear-bindings)
+ (attach-all-cues)
+ (when (cfg :osc :debug) (listen #(timbre/debug %) :debug)) ;or other way round? either way, log msgs if debugging...
+ (oosc/zero-conf-on)
+ (print "osc up"))
 
 
 (defn shutdown "Shut down osc server and clean up." []
@@ -157,8 +165,8 @@
   (core/stop-osc-server)
   (swap! (:client binds) #(when % (osc-close %) nil)))
 
+
 (defn to-vars! "Set show vars from map"
-;;  [prefix & pairs]
  [prefix m]
  (let [m (zipmap (map #(keyword (str prefix "-" %1)) (keys m)) (vals m))]
 ;;  (map set-variable! (keys m) (vals m)))

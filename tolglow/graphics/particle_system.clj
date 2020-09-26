@@ -45,27 +45,25 @@
 
 (defonce scaler (atom 1))
 (defn dump []
-(def sine (param/quick-lfo "sine" :low 0.05 :high 2.5 :beats 17)) ;see this is where mutability could come handy
-(def saw (param/quick-lfo "sawtooth" :low 0.02 :high 0.9)) ;see this is where mutability could come handy
+(def sine (param/quick-lfo "sine" :low 0.02 :high 2.5 :beats 27)) ;see this is where mutability could come handy
+(def saw (param/quick-lfo "sawtooth" :low 0.09 :high 1.9 :beats 9)) ;see this is where mutability could come handy
 ;just put something somewhere then continue to modify the def. but yeah wrap and resolve still works blabla
 (param/auto-resolve sine)
 (param/auto-resolve saw sine)
 (param/multiply-normalized (map #(param/quick-lfo %) ["sine" "saw"]))
 ;; (param/multiply-normalized (param/quick-lfo "sine") (param/quick-lfo "sawtooth"))
-;; (param/multiply-normalized sine #_saw)
-(reset! scaler (param/mix [sine saw] param/sum :mode :loop :min 0.05 :max 3.5))
+(reset! scaler (param/mix [sine saw] param/sum :mode :loop :min 0.09 :max 3.5))
 (reset! scaler (param/mix [sine (param/quick-lfo "sawtooth" :beats 13)]
                           param/avg :mode :loop :min 0.12 :max 2.5))
    ;; (move-fn this (+ 0.09 (param/auto-resolve (param/rng :min 0.01 :max 5)))))
-   ;; (move-fn this 1))
    ;; (move-fn this 0.2)) ;cool glitches 0.1-0.5
    ;; (move-fn this (:x (:accel this)))) ;nice glitchy
 )
 
 (defn move-fn ;couldve just done lookup with one arity heh
   ([this]
-   (move-fn this (param/auto-resolve @scaler) ))
-   ;; (move-fn this (param/auto-resolve sine)))
+   ;; (move-fn this (param/auto-resolve @scaler) ))
+   (move-fn this (param/auto-resolve sine)))
   ([this scale]
    (let [vel (utils/add (:velocity this) (:accel this))
          pos (utils/add (:position this) (utils/div (:velocity this) scale))]

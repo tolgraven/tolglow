@@ -5,18 +5,31 @@
   [selector & {:keys [all? category attribute]}]) ;could filter by priority, whether it's movement, color, etc
 ;; want to "tag" cues without launching them. to add to a macro, or maybe link their launch''
 ;; in-place to another cue?
-;;
-;;this just brings fn?
-(defn as-compound-effect "Surely should only gather the macro stuff into a cue format, which is then placed by regular means."
-  [macro-effects & macro-name])
-;;some kinda auto name/description as well showing contents? Could also have colorfn switching between contents colors...
-(defn as-individual-effects "Should work right? Instead of compound effect, just gather same data and launch individually by code-cue"
-  [macro-effects & macro-name]
-    (cues/code-cue (fn [] (map show/add-effect!/from-cue-grid?))) macro-effects)) ;;and/or for compound it's possible to have like one param per fx still available hehe 
 
-(defn as-chase "right"
+(defn as-anything "get various macro types"
+  [macro-effects & {:keys [macro-name kind]}]
+  (comment "so kind is
+            :compound (cue and fx type)
+            :scene (fx type grouping multiple, no control)
+            :individual (launch the original cues for full control), unlike :compound no active macro cue to kill all at once
+            :chase (well, that's different)
+            importantly most should be able to convert between, within reason")
+  )
+
+;; (defn as-compound-effect "Surely should only gather the macro stuff into a cue format, which is then placed by regular means."
+;;   [macro-effects & macro-name])
+
+(defn as-scene "Also combines to one, but (I guess?) doesn't fuck with existing active cues? not a cue, just fx"
   [])
+;;some kinda auto name/description as well showing contents? Could also have colorfn switching between contents colors...
+;; (defn as-individual-effects "not sure how important given compound-cue already properly launches originals, mustve just bugged out earlier when didnt for me..."
+;;   [macro-effects & macro-name]
+;;     (cues/code-cue (fn [] (map #_show/add-effect!/from-cue-grid?))) macro-effects)) ;;and/or for compound it's possible to have like one param per fx still available hehe
 
+(defn as-chase "right" [])
+
+; ^ wait either just one single or otherwise a multimethod makes sense right
+; all input is the same, output isnt. so a flag for what you want or?
 
 (defn save-to-file "Basic file saving already but probably want to keep some order,
                     decide to actively save to a specific session, ensure any dependencies also saved"
