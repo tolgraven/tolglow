@@ -9,10 +9,14 @@
    [afterglow.effects
     [channel :as chan-fx] [dimmer :as dimmer]
     [oscillators :as lfo :refer [build-oscillated-param sawtooth sine square triangle]]
+    [cues :as cues :refer []]
     [params :as params :refer [param?]]
     [show-variable :as var-fx :refer [variable-effect]]]
+   [afterglow.web.routes.show-control :as aweb]
    [clojure.string :as string :refer [capitalize upper-case]]
    [com.evocomputing.colors :as colors :refer [color-name]]
+   [thi.ng.color.core :as clr]
+   [thi.ng.math.core :as cmath]
    ;; [overtone.osc :as oosc :refer [osc-close osc-handle osc-listen osc-send]]
    [tolglow
     [color :as color :refer [color?]]
@@ -20,11 +24,12 @@
     [cue :as cue :refer [group-parts]]
     [fixtures :as fixtures] [fx :as fx] [osc :as osc] [page :as page]
     [param :as param] [setup :as setup]
-    [quil :as quil]
-    [util :as util :refer [apply-vm avar clamp-number clear! get-channels get-map-with key-str random-in-range space-phase value x-phase]]
-    [vars :as vars :refer [alt-start cue-map cue-maps]]]
+    [graph :as graph]
+    [util :as util :refer [apply-vm avar clamp clear! get-channels get-map-with key-str random-in-range space-phase value x-phase]]
+    [vars :as vars :refer [alt-start cue-map cue-maps]]
+    [viz :as viz]]
    [clojure.pprint :refer [pprint pp print-table]]))
-(when (cfg :debug :enabled)
+#_(when (cfg :debug :enabled)
  (map use '[clojure.tools.namespace.repl #_clojure.tools.trace #_debugger.core]))
 
 (defn activate-show
@@ -41,6 +46,11 @@
 ;; (show/add-effect! :strobe (chan-fx/function-effect "strobe level" :strobe 90 (show/all-fixtures)))
 ;; (show/add-effect! :color (fx/color (color/like :blue)))
 ;; (show/add-effect! :dimmer (fx/global-dimmer-effect 255))
+;; (show/add-effect! :dimmer (fx/metronome-effject (all-fixtures)))
+;; (util/value (util/value rngy ))
+; (def show *show*)
+; (require 'quil.core)
+; (viz/init)
 
 (defn reprioritize "Restart cue with new effect-priority, preserving state otherwise"
  [cue prio]
@@ -54,33 +64,67 @@
 (defn cues [] @(-> *show* :cue-grid :cues))
 (defn fx [] @(-> *show* :active-effects))
 (defn dim [] (keys @(-> *show* :dimensions)))
-(defn vars [] (*show* :variables))
+(defn vars [] @(*show* :variables))
+(defn move [] @(*show* :movement))
+(defn vizi [] (:visualizer-visible  @(*show* :dimensions)))
+(defn unis [] (*show* :universes))
 (defn fixtures [] (keys @(*show* :fixtures)))
-
+(defn ks [] (keys *show*))
+(defn ks [] (keys @(:active-effects *show*)))
 ;; (require '[puget.printer :as puget])
-;; (puget/cprint @(-> *show* :active-effects))
+;; (filter #(= (:color %) :red) chans)
+;; (afterglow.fixtures/printable (fixtures-named :test))
+;; ((vizi) 26)
+;; (count (vizi))
+;; (:color-1 (:previous (move)))
 
-(defn n-dim-ks "Build keys from n(?) vectors" ;FIXME
+; START MODELING GRAPHQL STUFF
+; chucking dat real data to frontend
+
+(defn n-dim-ks "Build keys from n(?) vectors" ;FIXME wtf is this for?
  [& colls]
- (loop [colls (next colls) result (map key-str (first colls))]
-  (println result)
+ (loop [result (map key-str (first colls)), colls (next colls)]
+  ;; (println result)
   (let [result (map #(key-str %1 "-" %2) result (first colls))]
    (if (next colls) (recur (next colls) result)))))
 
+(key-str [:what :is :this])
+(n-dim-ks [:what :is :this] [:seriously :weird :shit])
 #_(for [pos [:min :center :max] axis [:x :y :z]]
  (key-str pos "-" axis))
 #_(map #(% @(-> *show* :dimensions))
      [:min-x :center-x :max-x
       :min-y :center-y :max-y
       :min-z :center-z :max-z]) ;; :timestamp :visualizer-visible
+#_(show/patch-fixture! :strip-1 (tolglow.fixtures/pixel-strip
+                               10 :mode :rgbw, :x [-3.0 -0.0] :y [2.0 2.0]
+                               :channels config/pixtol-chs)
+                     5 1)
 
-(defn -main [& args]
- (activate-show))
+(def pur (clr/hsla 0.8 0.5 0.5))
+(def c (clr/hsla 0.2 0.6 0.6))
+(def z (clr/hsva 0.2 0.6 0.0))
+(def crgb (clr/as-rgba c))
+(def chsv (clr/as-hsva c))
+(def e (clr/hsla 1.3 0.6 0.5))
 
-(defn shortcuts []
- (page/create :pointing 1 1 "aim")
- (page/create :pointing 2 1 "direction")
- (keys (:cue-grid *show*)))
+(def grey (clr/rgba 0.4 0.5 0.6))
+(-> (clr/rgba 1.0 1.0 1.0) (clr/as-hsla))
+(-> grey (clr/adjust-brightness 1.0) (clr/as-hsla))
+(-> grey (clr/adjust-brightness 1.0))
+(-> grey (clr/adjust-brightness -1.0))
+(-> z clr/as-hsla (clr/adjust-luminance 1.0))
+(-> pur (clr/adjust-luminance 0.45) clr/as-rgba)
+(-> c clr/as-hsva (clr/adjust-brightness -0.9) #_clr/as-hsla)
+(-> c clr/as-hsva (clr/adjust-brightness -0.1) clr/as-rgba)
+(-> c clr/as-hsva (clr/adjust-brightness -0.03) clr/as-rgba clr/as-hsla)
+(-> c clr/as-hsva (clr/adjust-brightness 0.03) clr/as-rgba clr/as-hsla)
+(-> c clr/as-hsva (clr/adjust-brightness 0.8) clr/as-hsla clr/as-rgba)
+(-> chsv (clr/adjust-brightness -0.3))
+
+
+(defn -main [& args] (activate-show))
+(defn shortcuts [] (keys (:cue-grid *show*)))
 ;XXX add to effect interface
 ; :inlets (how can we control it? NEEDED for proper cue-var automapping / dynparam anything)
 ;   vector of params + extra data "is this one reasonable to randomly fuck with?"

@@ -4,6 +4,7 @@
    try to incorporate with Params. etc and see what afterglow can do controlling 3d animations..."
   (:require [newtonian.utils :as utils]
             [tolglow.graphics.particle-system :as ps]
+            [tolglow.param :as param]
             [quil.core :as q]
             [quil.middleware :as m]
             [quil.applet :as a :refer [with-applet]]
@@ -117,13 +118,20 @@
           (update s k concat v)))) ;corr?
   s))
 
+(def saw (param/quick-lfo "sawtooth" :lo 0.01 :high 0.9 :beats 21))
+(defn only-when [s f]
+ (if (< 0.1 (param/auto-resolve saw) 0.3)
+           f #_(update s :emitters update-objs 500 500 ps/move)
+       s))
 
 (defn update-state [s]
  (-> s
      (pull-from-queue)
      (add-new-particles)
-     (update-particles 2000 2000)
-     ;; (update :emitters update-objs 1000 1000 ps/move)
+     (update-particles 2000 3000)
+     ;; (update s :emitters update-objs 500 500 ps/move)
+     ;; (only-when)
+     (only-when #(update s :emitters update-objs 500 500 ps/move)) ;should work?
      ))
 
 
@@ -141,28 +149,22 @@
     #_(q/fill (+ 166 a)
             (/ (* 220 0.5) s)
             (* 76 s)
-            255)
-        ;; (max (* a 95) 255))) ;should modulate alpha too
+            255) ;; (max (* a 95) 255))) ;should modulate alpha too
         ;; (min 85 (max 255 (- (+ 50 (:death p)) (:age p)))))) ;should modulate alpha too
-        #_(q/with-fill [(+ 166 a)
-                      (/ (* 220 0.5) s)
-                      (* 76 s)
-                      255]
-          (q/ellipse x y 5 5))
     ;; (q/ellipse x y (int (* a 20)) 5)))
-    (q/ellipse x y (max 4 (* a 4)) (max 3 (* s 3)))))
+    (q/ellipse x y (max 6 (* s a 9)) (max 3 (* s s 6)))))
+
+(def sine (param/quick-lfo "sine" :lo 0.5 :high 1.5 :beats 13))
 
 (defn draw [{:keys [particles emitters] :as s}]
-  (q/background 8)
-  ;; (q/shader @shader)
-  ;; (q/filter-shader @shader)
-  ;; (q/ellipse-mode)
+  (q/background (* 11 (param/auto-resolve sine)) )
+  (q/lights)
+  ;; (q/filter-shader @shader) (q/shader @shader)
   (q/no-stroke)
   (q/fill (+ 166 1)
-          ;; (min 0 (max 255 (/ (* 220 0.5) (mod (count particles) 40))))
           (min 255 (* 0.9 (mod (count particles) (cmath/roundto (q/current-frame-rate) 1))))
-          (* 76 0.7)
-          255)
+          (* 76 0.7 (param/auto-resolve sine))
+          (* 255 0.9))
   (doseq [p particles] (draw-particle p))
 
   (q/no-stroke)
@@ -178,8 +180,7 @@
   (q/stroke 155) (q/stroke-weight 5)
   (q/text (str (cmath/roundto (q/current-frame-rate) 1)) 20 50)
   (q/text (str (cmath/roundto (count particles) 1)) 20 70)
-  (q/text (str (count emitters)) 20 90)
-  )
+  (q/text (str (count emitters)) 20 90))
 
 
 (defn setup []
@@ -220,7 +221,7 @@
 (defn stash []
   (add-random-emitter)
   (add-random-field) ;apart from making emitters updatable like particles, maybe abstract it completely so can spawn an emitter emitter?
-  (reset! max-particles 10000)
+  (reset! max-particles 5000)
   (swap! fields pop)
   (restore-state!))
 

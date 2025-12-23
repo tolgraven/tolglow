@@ -8,24 +8,33 @@
     [show-context :refer [*show* set-default-show! with-show]]]
    [afterglow.effects.show-variable :as var-fx]
    [clojure.string :as string :refer [capitalize upper-case]]
-   [rebel-readline.core :as rlcore]
-   [rebel-readline.clojure.line-reader :as rlreader]
-   [rebel-readline.clojure.service.local :as rllocal]
+   [clojure.pprint]
+   ; [rebel-readline.core :as rlcore]
+   ; [rebel-readline.clojure.line-reader :as rlreader]
+   ; [rebel-readline.clojure.service.local :as rllocal]
+
+   [taoensso.timbre :as timbre]
    [tolglow
     [config :as config :refer [at cfg param-data var-data]]
     [osc :as osc]
     [page :as page]
     [util :as util :refer []]
+    [viz :as viz]
     [vars :as vars]]))
-
 
 (defn init
  ([f id & required]
-  (let [run? (or (first required)
-                 (not id)
-                 (true? (cfg id)) #_(= true (apply cfg id))
-                 (:enabled (cfg id)) #_(:enabled (apply cfg id)))]
-  (print "\n"(if run? "📗" "❌") (name id) "\t")  ;XXX switch to codepoint
+  (let [run? (or (first required) ;core component, must always run
+                 (not id) ;if no id supplied it's a random fn with no settings, so run
+                 (:enabled (cfg id) true) ;lookup fallback so will run if there is no :enabled key in map
+                 ;; (or (true? (cfg id)) (not (boolean? (cfg id)))))] ;also true if key is missing
+                 (true? (cfg id)))
+        opts (if (map? (cfg id)) (dissoc (cfg id) :enabled))]
+  (print "\n"(if run? "📗" "❌") (name id) "\t")  ;XXX switch to setting/codepoint
+         ;; (clojure.pprint/pprint (if (map? (cfg id)) (dissoc (cfg id) :enabled) ""))
+  (when (and (seq opts) (cfg :print-options)) (clojure.pprint/pprint opts))
+  (print "\t")
+
   (when run?
    (if (cfg :debug :force-init)
     (util/catchall f)
@@ -37,17 +46,15 @@
   (let [f (resolve (symbol "tolglow.setup" (name k)))]
    (if f
     (init f k required)
-    (println "\nCouldn't resolve setup fn for key" k)))))
+    (println "\n ❌" (name k) "\tCouldn't resolve setup fn")))))
 
 
 (defn osc []
- (osc/start-server)
- (osc/clear-var-bindings)
- (osc/clear-cue-bindings))
+ (osc/init))
 
 (defn max-msp []
- (apply require (cfg :max :require))
- (reset! (cfg :ns :active) (cfg :max :ns)))
+ (apply require (cfg :max-msp :require))
+ (reset! (cfg :ns :active) (cfg :max-msp :ns)))
 
 (defn clock-sync "Gracefully attempt to init sync..." []
  (try (sync-to-external-clock (sync-to-midi-clock)) ; throws a shitty assertion, nuke ffs
@@ -60,20 +67,21 @@
 
 (defn nrepl [] (core/start-nrepl (cfg :nrepl :port)))
 (defn terminal-repl []
- (try
-  (with-bindings
-   ;; (set! *print-level* 3) ;avoid krazy spew. hurr how set these outside of repl?
-   ;; (set! *print-length* 100)
-   (rlcore/with-readline-in
-    (rlreader/create (rllocal/create))
-    (clojure.main/repl :prompt (fn []))))
-  (catch clojure.lang.ExceptionInfo e
-    (if (-> e ex-data :type (= :rebel-readline.jline-api/bad-terminal))
-      (do (println (.getMessage e))
-          #_(clojure.main/repl)) ;skip fallback repl as likely due to running lein repl yeah?
-      (throw e)))))
+ ; (try
+ ;  (with-bindings
+ ;   ;; (set! *print-level* 6) ;avoid krazy spew. hurr how set these outside of repl?
+ ;   ;; (set! *print-length* 20)
+ ;   (rlcore/with-readline-in
+ ;    (rlreader/create (rllocal/create))
+ ;    (clojure.main/repl :prompt (fn []))))
+ ;  (catch clojure.lang.ExceptionInfo e
+ ;    (if (-> e ex-data :type (= :rebel-readline.jline-api/bad-terminal))
+ ;      (do (println (.getMessage e))
+ ;          #_(clojure.main/repl)) ;skip fallback repl as likely due to running lein repl yeah?
+ ;      (throw e))))
+ )
 
-(defn fixture-patches []
+(defn fixtures []
  (util/patch-cfg!)
  (util/reset-fixture-binds!))
 
@@ -81,23 +89,9 @@
 ;; an fx, fixture, cue def can be reloaded in one go, without having to relaunch cues,
 ;; restore values etc...
 (defn cue-pages
- [& {:keys [origin-page page-data relaunch-active-cues?]
-     :or {origin-page 0 #_[0 0] page-data (cfg :cue-pages :definitions)}}] ; prob have main page/startup at like 2 2 so plenty space in all directions...
+ []
  {:pre [(some? *show*)]}
- (let [force (cfg :debug :force-cue-pages)
-       #_saved-pos #_(save-view-position)]
-
- (print "Force" (if force "on" "off"))
- (doseq [[fn-key pages] (partition 2 page-data)
-         [xb yb & opts] (if (set? pages) pages #{pages})] ;XXX or use whatever :while alternative binding thing...
-  (let [[x y] (map #(+ origin-page %) [xb yb])
-        f #(apply page/create (name fn-key) x y opts)]
-   (print "\n" (name fn-key) "\t" x y (or opts "")) ;log
-   ;; (puget.printer/cprint (str "\n" (name fn-key) "\t" x y (or opts ""))) ;log
-   ;; (pr (puget.printer/cprint-str (str "\n" (name fn-key) "\t" x y (or opts "")))) ;log
-   (if force (util/catchall f) (f)))) ;XXX should only generate defs, compare those with saved map, only change updated ones (so dont overwrite active cues)
-
- #_(set-view-position (or saved-pos (repeat 2 origin-page)))))
+ (page/reload-all))
 
 (defn controllers "Init controllers from config" ;XXX make actual proper
  []
@@ -108,27 +102,20 @@
 (defn new-show
  [current]
  (when current
-  (println "Replacing show" (:id current))
-  (show/unregister-show current)
+  (print "Replacing show" (:id current))
   (with-show current
    (show/stop!)
-   (show/blackout-show)))
+   (show/blackout-show))
+  (show/unregister-show current))
  (show/show :description (cfg :description)
             :refresh-interval (/ 1000 (cfg :hz)) ;DMX 29 to 44 hz.
             :universes (cfg :universes)))
 
-(defn show []
- (set-default-show! (swap! (at :show) #(new-show %))))
+(defn show [] (set-default-show! (swap! (at :show) #(new-show %))))
 
-(defn vars []
- (reset! (at :vars) (var-fx/create-for-show *show*)))
+(defn vars [] (reset! (at :vars) (var-fx/create-for-show *show*)))
 
-(defn set-ns []
- (reset! (at :ns) (cfg :ns :base)))
-
-(defn set-macro-path
- [& {:keys [path] :or {path (cfg :macro :save-file)}}]
- (reset! afterglow.web.routes.show-control/macro-record-file path))
+(defn set-ns [] (reset! (at :ns) (cfg :ns :base)))
 
 (defn wavetick "Updates var and runs some shit on incoming midi"
  []
@@ -138,16 +125,28 @@
        tickers (fn [k v] (if (= v 127) (vars/update! k inc)))]
   (doseq [div ks]
    (vars/init! (w :maps div :ticker) 0)
-   #_(watch-var (w :maps div :ticker))
    (let [[note ticker] (map #(w :maps div %) [:note :ticker])]
-    (util/add-midi-callback dev ch note (partial tickers ticker) :kind :note)
-    #_(println device channel note ticker)
-    ))))
+    (util/add-midi-callback dev ch note (partial tickers ticker) :kind :note)))))
+
+(defn visualizer "Start quil viz"
+ []
+ (timbre/warn "Moved to frontend...")
+ #_(tolglow.viz/init))
 
 (defn show-state "Setup vars/effects running from start of show creation, load any existing state..."
  [& {:keys [actions] :or {actions (cfg :show-state :actions)}}]
  (doseq [f actions]
   (f)))
+
+(defn set-macro-path
+ [& {:keys [path] :or {path (cfg :macro :save-file)}}]
+ (reset! afterglow.web.routes.show-control/macro-record-file path))
+
+(defn load-macros "Should be part of show-state eventually"
+ []
+ (try (load-file (cfg :macro :save-file))
+      ; (catch java.lang.RuntimeException e (println "Couldn't load cue macros...")))) ;in future instead of straight evals should save parsable data and then can choose what to actually fully load...
+      (catch Exception e (println "Couldn't load cue macros...")))) ;in future instead of straight evals should save parsable data and then can choose what to actually fully load...
 
 ;; XXX for config/measure-data
 #_(defn make-points []

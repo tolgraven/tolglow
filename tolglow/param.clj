@@ -13,11 +13,12 @@
             [thi.ng.color.core :as clr]
             [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
+            [taoensso.timbre.profiling :refer [pspy]]
+            [tolglow.utils.iters :refer [mapv-fast mapcatv]]
             [tolglow
              [color :as color :refer []]
              [config :as config :refer [at cfg]]
              [util :as util :refer [clamp get-map-with key-str value]]
-             [debug :as debug :refer [det]]
              [graph :as graph]
              [viz :as viz]
              [vars :as vars]]
@@ -29,13 +30,14 @@
 (def types (for [m config/param-data]
                 (update m :variables (partial apply vars/auto))))
 
+;; XXX deprecated? does same thing as bind-vars but on pairs instead of map, so confusing...
 (defn bind-keys "Bind keys to default values, inferring type from default, and returning default for nil keys"
  [& pairs]
- (doall
+ (doall ;; (doseq [[k v] (partition 2 pairs)] ;uh so how does for+doall work but doseq not when we're just calling a fn for side effects, not gathering data?
   (for [[k v] (partition 2 pairs)]
    (let [kind (cond (number? v) Number
-                    (instance? Boolean v) Boolean
-                    (color/color? v) ::colors/color)
+                    (boolean? v) Boolean
+                    (color/color? v) params/color-type #_::colors/color)
          k (or k v)] ;put val as key when key nil (like when missing from vm) -> still get param (unless nil? v)
     (bind-keyword-param k kind v)))))
 
@@ -63,27 +65,38 @@
            (let [pattern (re-pattern (str (name kind) "-\\w+"))] ;XXX fix pattern so matches eg :pan-min-fart as well...
             (filter #(re-matches pattern (name %)) (keys m))))]
   (dig-in-map m ks))) ;XXX end up wrong order -max -min because alphabet. Specify fallback order stuff dunno?
+  ;; (apply sorted-map-by #(- (compare %1 %2)) (dig-in-map m ks)))) ;XXX end up wrong order -max -min because alphabet. Specify fallback order stuff dunno?
+;; (sorted-map-by compare)
 
-(defn atoms "Make atoms. Put in vars?"
- [& types]
- (map atom types))
-
+;; (defrecord ReturnType [^java.lang.Class kind
+;;                        ^clojure.lang.Keyword kind-key
+;;                        ;; ...
+;;                        ]
+;;  ) ;or something dunno. record to like implement multiple param
+   ;representations on top of same type. Or a like-single-number view
+;  ;for complelx types...
 (defn param-specs "move to config hey"
  []
  {:metronome {:type Metronome :default (:metronome *show*)}
   :measure {:type ::tf/distance-measure, :default (tf/build-distance-measure 0 0 0)}
-  :color {:type ::colors/color, :default (color/create :white)}
+  :color {:type (color/used-type), :default (color/create :white)}
   :bool {:type Boolean :default false}
-  :number {:type Number :default 0} })
-
-;; :herebestep {:type ::make-a-type-yo :default (build-step-param)}
-;; :herebelfo {:type :saem :default (sine)}
-;; ^ i mean no point as already got other fns to handle them but unified/having types would be better no?
+  :number {:type Number :default 0}
+  :step {:type Number :default (build-step-param :interval :bar :fade-fraction 0.25 :fade-curve :sine)}
+  :range {:type 'tolglow.vars.RangedNumber } ;something like this. tho ultimately it just returns a number I suppose... then again ultimately a color just returns three.
+   ;it would work like, an effect or param could take either a min and max, or a range (combined min-max) for representing it
+   ;could also be used *WITH* an actual settable value (not just lfo/auto types)
+   ;to either form the original range, or clamp or rescale an existing param?
+   ;the main (only?) place needed to be updated for it would be varmap/controller cue interface...
+   :looping-number {} ;well not a param but for controller, vals that loop around if you keep spinning
+  ;; :lfo {:type afterglow.effects.oscillators.Oscillator :default ()} ;like why not really? it'd just have to be a thing that it resolve itself twice.
+  })
 
 (defn bind-default "Bind param by default kind and value"
  [type-key show-key] ;only for quickies
  (let [data (-> param-specs type-key)]
   (bind-keyword-param show-key (:type data) (:default data))))
+
 
 (defn bind-vars "Bind args to keyword params, ensuring nil never results"
  [m]
@@ -94,41 +107,48 @@
                        param (or (util/arg m id) default) ;bind-keyword-param dumb and nil as first arg resolves to nil, not default, so...
                        kind  (cond (number? default) Number
                                    (or (seq? default) (vector? default)) java.util.List
-                             ;maybe need vector -> java.util.List per pinstripes?
-                                   ;; (boolean? default) Boolean
-                                   ;; (color/color? default) ::colors/color
                                    :else (type default))]
                   (if (params/param? param)
                    param ;just return if already a param. tho that's what bind-keyword-param already does right so why not just pass through?
                    (bind-keyword-param param kind default (name id))))))]
   (reduce f {} m)))
 
-(defn auto-resolve "Resolve param(s) to *show* and now"
- [p & {:keys [dynamic show snapshot head target-key] ;target key to only resolve specific
-         :or {dynamic true, show *show*, snapshot (metro-snapshot (:metronome *show*))}}]
- (let [resolve-fn (if dynamic params/resolve-param params/resolve-unless-frame-dynamic)]
+
+;; (type [])
+;; 100 ms extra for 10000 calls ok when resolve hundreds and.graphics lib taking seconds. but no more.
+;; still dont get whats so slow tho...
+(defn auto-resolve "Resolve param(s) to *show* and now. IS MAJOR BOTTLENECK now that param? is unfucked"
+ [p & {:keys [dynamic show snapshot head] ;XXX really need to change name of dynamic param
+         :or {dynamic true, }}]
+         ;; :or {show *show*, snapshot (metro-snapshot (:metronome *show*))}}] ;oook interesting. :or with such a massive var as *show* slows down fn _EVEN_ when fallback isnt run.
+ (let [show (or show *show*) ;that slowdown does NOT occur when (or ) in let and passing
+       snapshot (or snapshot (rhythm/metro-snapshot (:metronome show)))]
+  (pspy :auto-resolve-fn
+        (let [resolve-fn (if dynamic params/resolve-param params/resolve-unless-frame-dynamic)]
   ;; XXX should auto-resolve also try to auto-bind keywords? hmm
-  (cond (and (map? p) (not (params/param? p))) ;be careful just checking for map now that Param is record
-        (let [f (fn [pm [id param]]
-                 (assoc pm id (resolve-fn param show snapshot head)))]
-         (reduce f {} p))
-        (vector? p) ;also support vectors (then receiving vector back, not map)
-         (mapv #(auto-resolve % :dynamic dynamic :show show :snapshot snapshot :head head) p) ;throwing in nil head doesnt matter right cause thats what internal does?
-        :else
-         (resolve-fn p show snapshot head))))
+  (cond (params/param? p) (resolve-fn p show snapshot head) ;shouldnt really be used for this but latency from checks def biggest for groups of individual calls so
+        (and (map? p) (seq p) (not (record? p))) ;be careful just checking for map now that Param is record
+        #_(map? p) (pspy :reduce-kv-resolvers
+                         (reduce-kv (fn [pm id param] ;ohh right ONCE AGAIN remember records are maps so might go reducing for no reason
+                          (assoc pm id (resolve-fn param show snapshot head)))
+                         {} p)) ;ouff yeah this is not quick...
+        ;; (vector? p) (mapv #(resolve-fn % show snapshot head) p) ;; (mapv #(auto-resolve % :dynamic dynamic :show show :snapshot snapshot :head head) p) ;throwing in nil head doesnt matter right cause thats what internal does?
+        ;; (or (vector? p) (list? p)) (mapv #(resolve-fn % show snapshot head) p) ;; (mapv #(auto-resolve % :dynamic dynamic :show show :snapshot snapshot :head head) p) ;throwing in nil head doesnt matter right cause thats what internal does?
+        (or (vector? p) (seq? p)) (mapv #(resolve-fn % show snapshot head) p) ;; (mapv #(auto-resolve % :dynamic dynamic :show show :snapshot snapshot :head head) p) ;throwing in nil head doesnt matter right cause thats what internal does?
+        :else p)))))
 
 (defn assemble "Assemble params from map of arguments sent to Effect. creator from those passed, and defaults, bound to keywords ready for cue-var. Also resolves non-dynamic params. Returns pm (param-map) for usage in function"
  [args arg-spec & {:keys [resolve-vars] :or {resolve-vars false}}] ;XXX make compat diff lengths args/arg-spec? like could have a fallback with lots of stuff used for multiple things
+;;  [args arg-spec & {:keys [resolve-vars] :or {resolve-vars true}}] ;yeah seems fucks step params still? blabla keyword... byt manual auto-resolve + auto-resolve works fine...
  (let [arg-spec (cond (map? arg-spec) arg-spec
                       (ifn? arg-spec) (arg-spec)) ;could get spec as either a map or getter-fn (since defaults may be dynamic / not ready at app launch)
        [vars opts] (doall (mapv #(util/ks-show-ks-defaults args %)
                          (map arg-spec [:vars :opts])))] ;align fallback map
   (merge (let [vars (bind-vars vars)]
-          (if resolve-vars ;why wouldnt we want to resolve non-dynamic stuff tho??
+          (if resolve-vars ;why wouldnt we want to resolve non-dynamic stuff tho?? was it step param something back in the day?
            (auto-resolve vars :dynamic false)
            vars)) ;theoretically should work fine as avoids preemptively resolving what shouldnt. but dunno
          (auto-resolve (bind-vars opts)))))
-
 
 (defn ratio "Create dynamic param setting the beat ratio for LFO-containing cues. Expects var-map to contain keys `:beats` and `:cycles`, defaulting to 1 if missing."; {{{
   [vm & {:keys [prefix]}] ;XXX should be a display overlay (add-control-held-feedback-overlay) touching "beats" brings up cycles...
@@ -166,36 +186,47 @@
 (defn mul "Divide value by later (presumably between 0.1-10-ish) ones" [& vs] (apply * vs))
 
 (defn extremes "Get lowest / highest result possible (assuming linear) from running f on all combinations of min/max input, summing for however many invocations. So can normalize ahead of time."
- ([f pairs] (extremes f (first pairs) (rest pairs)))
+ ([f pairs] (extremes f (first pairs) (rest pairs))) ;this is what we actually call
  ([f coll pairs]
   (let [coll (for [x (range (count coll))
-                   y [first second]]
+                   y [first second]] ;haha i remember being proud of this but wtf is first second
                (f ((vec coll) x) (y (first pairs))))]
    (if (next pairs)
     (extremes f coll (next pairs))
     (map #(apply % coll) [min max])))))
+; ^uh how can memoize?
 
 (defn mix "Mix params by applying f"
- [params f & {:keys [min max normalize? reflect? clip?]}] ;or single scale number showing whether 0.0-1.0 or 0-255...
+ [params f & {:keys [min max mode]; normalize loop reflect clip
+              :or {mode :normalize}}] ;or single scale number showing whether 0.0-1.0 or 0-255...
  (when *show*
-  (let [wrapped-fn (cond
-                    normalize?
-                    (let [candidates (repeat (count params) [min max])
+  (let [wrapped-fn (condp = mode #_cond ;ok wouldnt work here but cond-> and a pipe of transformations like this, nifty stuff
+                    :normalize #_(= mode :normalize)
+                    (let [candidates (repeat (count params) [min max]) ;ugh dont like shadowing but what else to call them
                           [lo hi] (extremes f candidates)]
-                      (fn [& params]
-                       (util/scale-number (apply f params) min max :old-low lo :old-high hi)))
-                    #_reflect?
+                      (fn [& ps]
+                       (util/scale-number (apply f ps) min max :old-low lo :old-high hi)))
+                    :loop
+                    (fn [& ps]
+                     (mod (apply f ps) max))
 
-                    (and min max)
-                    (fn [& params]
-                     (util/clamp (apply f params) min max))
-                   :else f)]
+                    :bounc
+                    (fn [& ps]
+                     (let [res (apply f ps)]
+                      (- max (mod res max))))
+
+                    (if (and min max)
+                     (fn [& ps]
+                      (util/clamp (apply f ps) min max))
+                     f))]
    (apply build-param-formula Number wrapped-fn params))))
 (def mix-dmx #(mix %1 %2 :min 0 :max 255))
 (def mix-dmx-funky #(mix %1 %2 :min 0 :max 255 :normalize? true))
 
 (defn average "Average value from any number of input params"
  [& params] (mix params avg))
+(defn multiply-normalized [& params]
+ (mix params mul))
 
 (defn any-lfo
  [chooser & {:keys [min max beats blend-shite] :or {min 0 max 255 beats 4}}]
@@ -226,6 +257,8 @@
   (let [lfo-sym (ns-resolve @(at :ns) (symbol "lfo" kind))
         lfo (apply lfo-sym :interval-ratio beats (flatten (seq opts)))]
   (build-oscillated-param lfo :min low :max high))))
+;; (def sin (build-oscillated-param (lfo/sine) :min -1 :max 1))
+;; (def qsin (quick-lfo "sine" :low ))
 ;; (def tall (map quick-lfo ["sine" "square" "sawtooth" "triangle"]))
 ;; (def tallvg (apply average tall))
 ;; (def tsub (mix-dmx (map quick-lfo ["sine" "sawtooth"]) sub))
@@ -260,85 +293,27 @@
 ;; ([Control] -> Generator) -> Scaler -> [Router -> Scaler -> Endpoint]
 ;; where Endpoint can be another Generator Control, cue/effect-var, etc
 ;; Think the design through...
-
-
-
-#_(defn auto-vm "Create parameter from var-map and name (looked up against types) for use with `cue/auto` for both the actual effect and its visualizer/color-fn"
- [vm param-name & {:keys [min max phase down width gain offset level smoothing noise min-change vm-prefix param-defs] :as all}] ;so can set these without them being present in var-map
- (let [vm (or vm (starting-vm-for param-name))
-       p '[min max phase down width gain offset level min-change]
-       ks (map keyword p)
-       ;; pre #(if vm-prefix (str vm-prefix "-" %) %)
-       ;; ks (map #(keyword (pre %)) p)
-       ;; syms (map symbol p)
-       [min max phase down width gain offset level min-change] (map #(% all (% vm)) ks)
-       params [min max phase gain offset level min-change]
-       [min max phase gain offset level min-change]
-       (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ;actually: grab the standard :start val...
-       ;; (map #(bind-keyword-param %1 Number %2) params [0 255 0 1 0 0 0.1]) ;interesting that this doesnt work...
-
-       ;; m (interleave ks (map vm ks))
-       ;; m (interleave ks (for [[k default] [ks #_(map vm ks) [0 255 0 true 1 1 0 255 0.1]]]
-       ;;                   #_(println k default) (vm k default)))
-       ;; m (interleave ks (map #(%1 vm %2) ks [0 255 0 true 1 1 0 255 0.1]) ) ;XXX get defaults from var defs...
-       [noise smoothing] (map #((vars/init! % 0.0)
-                               (bind-keyword-param % Number 0.0)) ;utility fn for this, have map of globals and defaults duh
-                              [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
-       ;; binds (zipmap ks (apply bind-keys m)) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; binds (into (zipmap ks (apply bind-keys m)) {:noise noise #_:smoothing #_smoothing}) ;then look up below so like (get-with-prefix binds :min vm-prefix)
-       ;; b #(binds (pre %))
-
-       lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
-
-       ; hmm gotta change eg (ratio) (fraction) to handle prefix no?
-       raw (case param-name ;XXX param handling should be specified in param/types def
-            ;; ("level" "held") (b :level)  ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-            ;; ("level" "held") ( :level)  ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-            ;;  "random" (rng :min (b :min) :max (b :max) :min-change (b :min-change))
-            ;; (build-oscillated-param (apply lfo :interval-ratio (ratio vm) :phase (b :phase)
-            ;;                          (cond (= param-name "sawtooth") [:down? (b :down)]
-            ;;                                (= param-name "square")   [:width (fraction vm :width)]))
-                                    ;; :min (b :min) :max (b :max)))
-            ("level" "held") level #_(bind-keyword-param (:level vm level) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-             "random" (rng :min min :max max :min-change min-change)
-            (if lfo
-             (build-oscillated-param (apply lfo :interval-ratio (ratio vm) :phase phase
-                                     (cond (= param-name "sawtooth") [:down? down]
-                                           (= param-name "square")   [:width (fraction vm :width)]))
-                                    :min min :max max)
-             (println "Can't resolve" param-name "to function")))
-       ;; raw-future (resolve-param raw *show* (metro-snapshot (:metronome *show*)))
-       ;; final {:type param-name :param raw :min min :max max :gain gain :off offset :noise noise :vm vm}
-       f (fn [param min max gain offset noise] ;;calculate actual resultant value, incorporating gain, offset and noise... XXX and any additional mixed-in params...
-          (let [offset (* max offset)
-                noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
-                noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
-                result (+ offset noise (* gain param))]
-           (clamp-number result min max)))
-       #_args #_(map b [:min :max :gain :offset :noise])] ;clamp final
-  ;; (println raw f (map value args))
-  #_(println param-name (map value [raw min max gain offset noise]))
-  (build-param-formula Number f raw min max gain offset noise)))
+;; (vars/init! :param-noise-all 0.0)
 
 (defn auto-vm "Create parameter from var-map and name (looked up against types) for use with `cue/auto` for both the actual effect and its visualizer/color-fn"
- [vm param-name & {:keys [min max phase down width gain offset level smoothing noise min-change vm-prefix param-defs] :as all}] ;so can set these without them being present in var-map
-
+ [vm param-name & {:keys [min max phase down width gain offset level smoothing noise min-change fade-fraction vm-prefix param-defs] :as all}] ;so can set these without them being present in var-map
  (let [vm (or vm (starting-vm-for param-name))
-       p '[min max phase down width gain offset level min-change]
+;;  (debug/det [vm (or vm (starting-vm-for param-name))
+       p '[min max phase down width gain offset level min-change fade-fraction]
        ks (map keyword p)
-       [min max phase down width gain offset level min-change] (map #(or (% all) (% vm)) ks)
-       params [min max phase gain offset level min-change]
-       [min max phase gain offset level min-change]
-       (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1]) ;actually: grab the standard :start val...
+       [min max phase down width gain offset level min-change fade-fraction] (map #(or (% all) (% vm)) ks)
+       params [min max phase gain offset level min-change fade-fraction]
+       [min max phase gain offset level min-change fade-fraction]
+       (map #(if %1 (bind-keyword-param %1 Number %2) %2) params [0 255 0 1 0 0 0.1 0.25]) ;actually: grab the standard :start val...
        [noise smoothing] (map (fn [k]
                                (vars/init! k 0.0)
                                (bind-keyword-param k Number 0.0)) ;utility fn for this, have map of globals and defaults duh
-                               [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
+                              [:param-noise-all :param-smooth-all])  ;this one for all. best opt for smoothing?-basic
        lfo (resolve (symbol "afterglow.effects.oscillators" param-name)) ;max binding workaround...
 
        raw (case param-name ;XXX param handling should be specified in param/types def
             ("level" "held") (bind-keyword-param (:level vm level) Number 255) ;straight level as "lfo", later incorporate ext control etc and rename function... ;level, just held
-             "random" (rng :min min :max max :min-change min-change :interval-ratio (ratio vm))
+             "random" (rng :min min :max max :min-change min-change :interval-ratio (ratio vm) :fade-fraction fade-fraction)
             (if lfo
              (build-oscillated-param (apply lfo :interval-ratio (ratio vm) :phase phase
                                      (cond (= param-name "sawtooth") [:down? down]
@@ -352,10 +327,7 @@
                 noise-base (* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
                 noise (if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
                 result (+ offset noise (* gain param))]
-           (clamp-number result min max)))
-       #_args #_(map b [:min :max :gain :offset :noise])] ;clamp final
-  ;; (println raw f (map value args))
-  #_(println param-name (map value [raw min max gain offset noise]))
+           (clamp result min max)))] ;clamp final
   (build-param-formula Number f raw min max gain offset noise)))
 
 
@@ -366,7 +338,8 @@
        pm (assemble (merge vm ncvm input) defaults) ;so with :input we get all other potential passed crap but whats the harm really? will only get passed once and discarded right?
        ;btw should assemble also like put an :interval-ratio (ratio pm...) when finds right pieces? probably
        ;; pre #(if vm-prefix (str vm-prefix "-" %) %)
-       [noise smooth] (map #(bind-keyword-param (vars/init! % 0.0) Number 0.0) [:param-noise-all :param-smooth-all]) ;utility fn for this, have map of globals and defaults duh
+       [noise smooth] (doall (map #(bind-keyword-param (vars/init! % 0.0) Number 0.0) [:param-noise-all :param-smooth-all])) ;utility fn for this, have map of globals and defaults duh
+       ;^ makes most sense if both of these are "param transformers" (that can take a param and apply themselves) so at end of (formula) we pipe through first smooth then noise...
        param-f (eval (:fn (util/get-map-for-param param-name param-defs))) ;then fix (how?) so can simply apply. will likely need a (build-oscillated-param) wrapper/mod that can pass through and create lfo itself
        interval-ratio (apply ratio pm (when vm-prefix [:prefix vm-prefix])) ;for now
 
@@ -384,9 +357,9 @@
                 #_noise-base #_(* max (rand (or noise 0))) ;XXX main thing noise has got to be its own bound param we can just resolve and add in. w/ ctrl params for smoothing etc
                 #_noise #_(if (< 0 noise-base) (- noise-base (/ (* max noise) 2)) 0)
                 result (+ offset #_noise (* gain param))]
-           (clamp-number result min max)))]
+           (clamp result min max)))]
   (apply build-param-formula Number f raw (map pm [:min :max :gain :offset #_:noise]))))
-
+; XXX ^ use (formula) instead?
 
 (defn lfo-color-fn
  "Stripped down version. But only reasonable way I think is for all cues
@@ -413,41 +386,33 @@
   (fn [snapshot] (/ (params/resolve-param p show snapshot nil) scale))))
 
 (defn lfo-chooser "run lfo params into a picker whoosing which one to use. SHOULD also allow mixing. XY thing with them in the corners?"; {{{
- [vm lfo-names & {:keys [picker-param [lfo-params]]}] ;picker could be in var-map as well...
+ [vm lfo-names & {:keys [picker-param lfo-params]}] ;picker could be in var-map as well...
  (let [[min max] (map #(bind-keyword-param (%1 vm) Number %2) [:min :max] [0 255])
-       lfo-syms (map #(ns-resolve @(cfg :ns :active) (symbol "lfo" %)) lfo-names)
-       [lfo-sine lfo-saw lfo-tri lfo-square]
-       (map (fn [param-name]
-             ;; (println (name param-name))
+       lfo-syms (map #(ns-resolve @(at :ns) (symbol "lfo" %)) lfo-names)
+       lfos (map (fn [param-name]
              (build-oscillated-param
-                      ;; (param-name :interval-ratio (ratio var-map)
-                      ;;           :phase (:phase var-map) :down? (:down var-map)
-                      ;;           :width (fraction var-map :width)) ;maybe clear out the nil ones tho. but no real harm either way
-                      (param-name :interval-ratio 4 :phase 0.5
-                                :down? true
-                                :width 0.25) ;maybe clear out the nil ones tho. but no real harm either way
-                      :min 0 :max 255))
+              (param-name :interval-ratio (ratio vm)
+                          :phase (:phase vm) :down? (:down vm)
+                          :width (fraction vm :width)) ;maybe clear out the nil ones tho. but no real harm either way
+              ;; (param-name :interval-ratio 4 :phase 0.5
+              ;;           :down? true :width 0.25) ;maybe clear out the nil ones tho. but no real harm either way
+              :min min :max max))
                  lfo-syms)
        picker (bind-keyword-param (or picker-param (:lfo-picker vm)) Number 0)
-       ;; held-param  (bind-keyword-param (:level vm) Number 255) ;keep held in this somehow for quick modulation between lfos and M4L incoming - just merge it on
 
-       ;; f (fn [picker & params]
-       f (fn [picker lfo-sine lfo-saw lfo-tri lfo-square]
-          (let [params [lfo-sine lfo-saw lfo-tri lfo-square]]
-           (params picker)))]
- (build-param-formula Number f picker lfo-sine lfo-saw lfo-tri lfo-square)))
- ;; (apply build-param-formula Number f picker params)))
+       f (fn [picker & params]
+          ((auto-resolve picker) params))] ;picker should resolve to number, used to index vector. needs checks obvs...
+ (apply build-param-formula Number f picker lfos)))
 
 
 (defn variable "Create variable parameter from var-map"
  [vm]
  (params/build-variable-param (show/get-variable (:variable vm))))
 
-;; (value (step nil))
 (defn step "Create step parameter from var-map"
- [vm & {:keys [interval] :or {interval :beat}}]
+ [vm & {:keys [interval fade-curve] :or {interval :beat fade-curve :sine}}]
  (build-step-param :interval interval :interval-ratio (ratio vm)
-                   :fade-fraction (:fade vm 0.25) :fade-curve (if (:sine-curve vm) :sine :linear)))
+                   :fade-fraction (:fade vm 0.25) :fade-curve (:fade-curve vm fade-curve)))
 
 (defn lfo-step "Create step parameter, from var-map, actual speed of which, as a fraction of set :interval-ratio, is run off LFO (would need high speed/fade-fraction no?)"
  [vm & {:keys [interval param-name] :or {interval :beat, param-name "sawtooth"}}]
@@ -485,12 +450,13 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
 
 ;  RANDOM NUMBER PARAM
 
-(defn any-dynamic? "Check whether any params in assembled map are frame-dynamic"
- [pm]
- ; dynamic-inputs? (#_apply some param? (map p [:min :max :min-change :interval]))
- ; ^^ but stuff can be param (bound/unresolved) without being dynamic tho, right? so further check needed,
- ; any existing in params?
- (some param? (vals pm)))
+;; (defn any-dynamic? "Check whether any params in assembled map are frame-dynamic"
+;;  [pm]
+;;  ; dynamic-inputs? (#_apply some param? (map p [:min :max :min-change :interval]))
+;;  ; ^^ but stuff can be param (bound/unresolved) without being dynamic tho, right? so further check needed,
+;;  ; any existing in params?
+;;  (some param? (vals pm))
+;;  #_(not (not-any? params/frame-dynamic? (vals pm))))
 
 (defn get-range "Get absolute difference between max and min"
  [min max]
@@ -512,7 +478,7 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
  {:pre [(some? *show*)]}
  (let [pm (assemble args or-rng)
        step (apply build-step-param (flatten (seq pm)))
-       [current-step last-value coming-value] (map ref (repeat nil)) ;why not atoms?
+       [current-step last-value coming-value] (map ref (repeat nil)) ;why not atoms? also haha mapv got it stuck, i need to pay more attention...
        eval-fn (fn [show snapshot _]
                 (let [pm (auto-resolve pm :show show :snapshot snapshot)
                       now (params/resolve-param step show snapshot)]
@@ -520,12 +486,12 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
                           (ref-set current-step (int now))
                           (ref-set last-value (or @coming-value 0))
                           (apply alter coming-value pick-new-value
-                                 (map pm [:min :max :min-change])))
+                                 (mapv pm [:min :max :min-change])))
                          (+ @last-value (* (- now @current-step)
                                            (- @coming-value @last-value)))))) ;return faded value
         resolve-fn (fn [show snapshot head] ;auto resolve has quite high overhead. more relevant now that params are ten+ times faster. Fix
-                    (apply rng (flatten (seq (auto-resolve pm :dynamic false :show show :snapshot snapshot)))))]
-  (Param. "RNG" true Number eval-fn presolve-fn)))
+                    (apply rng (flatten (seq (auto-resolve pm :dynamic false :show show :snapshot snapshot :head head)))))]
+  (Param. "RNG" true Number eval-fn resolve-fn)))
 
 ; XXX how look ahead to show graphically like an lfo? means different approach since same step
 ; in a particular step-param run
@@ -537,15 +503,128 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
  []
  (let []))
 
+(defn build-color-param
+  "Returns a dynamic color parameter. If supplied, `:color` is passed
+  to [[interpret-color]] to establish the base color to which other
+  arguments are applied. The default base color is black, in the form
+  of all zero values for `r`, `g`, `b`, `h`, `s`, and `l`. To this
+  base it will then assign values passed in for individual color
+  parameters.
+
+  All incoming parameter values may be literal or dynamic, and may be
+  keywords, which will be dynamically bound to variables
+  in [[*show*]].
+
+  Not all parameter combinations make sense, of course: you will
+  probably want to stick with either some of `:h`, `:s`, and `:l`, or
+  some of `:r`, `:g`, and `:b`. If values from both are supplied, the
+  `:r`, `:g`, and/or `:b` assignments will occur first, then then any
+  `:h`, `:s`, and `:l` assignments will be applied to the resulting
+  color.
+
+  Finally, if any adjustment values have been supplied for hue,
+  saturation or lightness, they will be added to the corresponding
+  values (rotating around the hue circle, clamped to the legal range
+  for the others).
+
+  If you do not specify an explicit value for `:frame-dynamic`, this
+  color parameter will be frame dynamic if it has any incoming
+  parameters which themselves are."
+  [& {:keys [color r g b h s l adjust-hue adjust-saturation adjust-lightness frame-dynamic]
+      :or {color params/default-color frame-dynamic :default}}]
+  {:pre [(some? *show*)]}
+  (let [c (bind-keyword-param (params/interpret-color color) params/color-type params/default-color "color")
+        [r g b, h s l, ah as al :as params]
+        (map #(bind-keyword-param % Number 0) [r g b, h s l, adjust-hue adjust-saturation adjust-lightness])
+        clamp (fn [n] (when n (cmath/clamp n 0.0 1.0)))]
+    (if (not-any? param? [c r g b h s l adjust-hue adjust-saturation adjust-lightness])
+      ;; Optimize the degenerate case of all constant parameters
+      (let [result-color (atom c)]
+        (if (seq (filter identity [r g b]))
+          (let [red (when r (clamp r))
+                green (when g (clamp g))
+                blue (when b (clamp b))]
+           (swap! result-color #(clr/as-hsla (clr/rgba (or red (clr/red %))
+                                                       (or green (clr/green %))
+                                                       (or blue (clr/blue %))
+                                                       (clr/alpha %))))))
+        (if (seq (filter identity [h s l]))
+          (let [hue (when h (clamp (double h)))
+                saturation (when s (clamp (double s)))
+                lightness (when l (clamp (double l)))]
+           (swap! result-color #(clr/hsla (or hue (clr/hue %))
+                                          (or saturation (clr/saturation %))
+                                          (or lightness (clr/luminance %))))))
+        (when adjust-hue
+          (swap! result-color #(clr/rotate-hue % (double adjust-hue))))
+        (when adjust-saturation
+          (swap! result-color #(clr/adjust-saturation % (double adjust-saturation))))
+        (when adjust-lightness
+          (swap! result-color #(clr/adjust-luminance % (double adjust-lightness))))
+        @result-color)
+      ;; Handle the general case of some dynamic parameters
+      (let [dyn (if (= :default frame-dynamic)
+                  ;; Default means incoming args control how dynamic we should be
+                  (boolean (some frame-dynamic-param?
+                                 [color r g b h s l adjust-hue adjust-saturation adjust-lightness]))
+                  ;; We were given an explicit value for frame-dynamic
+                  (boolean frame-dynamic))
+            eval-fn (fn [show snapshot head]
+                      (let [result-color (atom (resolve-param c show snapshot head))]
+                        (if (seq (filter identity [r g b]))
+                          (let [red (when r (clamp (resolve-param r show snapshot head)))
+                                green (when g (clamp (resolve-param g show snapshot head)))
+                                blue (when b (clamp (resolve-param b show snapshot head)))]
+                           (swap! result-color #(clr/as-hsla (clr/rgba (or red (clr/red %))
+                                                                  (or green (clr/green %))
+                                                                  (or blue (clr/blue %))
+                                                                  (clr/alpha %))))))
+                        (if (seq (filter identity [h s l]))
+                          (let [hue (when h (clamp (double (resolve-param h show snapshot head))))
+                                saturation (when s (clamp
+                                                    (double (resolve-param s show snapshot head))))
+                                lightness (when l (clamp
+                                                   (double (resolve-param l show snapshot head))))]
+                           (swap! result-color #(clr/hsla (or hue (clr/hue %))
+                                                          (or saturation (clr/saturation %))
+                                                          (or lightness (clr/luminance %))))))
+                                (when adjust-hue
+                                  (swap! result-color
+                                         #(clr/rotate-hue % (double (resolve-param adjust-hue show snapshot head)))))
+                                (when adjust-saturation
+                                  (swap! result-color #(clr/adjust-saturation % (double (resolve-param adjust-saturation
+                                                                                                 show snapshot head)))))
+                                (when adjust-lightness
+                                  (swap! result-color
+                                         #(clr/adjust-luminance % (double (resolve-param
+                                                                     adjust-lightness show snapshot head)))))
+                                @result-color))
+            resolve-fn (fn [show snapshot head]
+                         (with-show show
+                           (build-color-param :color (resolve-unless-frame-dynamic c show snapshot head)
+                                              :r (resolve-unless-frame-dynamic r show snapshot head)
+                                              :g (resolve-unless-frame-dynamic g show snapshot head)
+                                              :b (resolve-unless-frame-dynamic b show snapshot head)
+                                              :h (resolve-unless-frame-dynamic h show snapshot head)
+                                              :s (resolve-unless-frame-dynamic s show snapshot head)
+                                              :l (resolve-unless-frame-dynamic l show snapshot head)
+                                              :adjust-hue (resolve-unless-frame-dynamic adjust-hue show snapshot head)
+                                              :adjust-saturation (resolve-unless-frame-dynamic
+                                                                  adjust-saturation show snapshot head)
+                                              :adjust-lightness (resolve-unless-frame-dynamic
+                                                                 adjust-lightness show snapshot head)
+                                              :frame-dynamic dyn)))]
+       (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
+
+
 ; CHANGE:
 ; (Param) - DONE
-; refactor / make smaller - halfday there
+; refactor / make smaller - WHO A
 ; no atoms - DONE
 ; fix bugs
 ; alpha as a first class member influencing any assignments
 ; optimize if possible - likely switch color lib? this one recreates on each adjustment
 ; (which given spatial stuff, bloom... can be lots of) running through whole dispatch thing
-; if we did a color record could just assoc change to map right? and also keep copy-on-write memory benefits...
 (defn color
   "Send a color (name, object...) and create a base param to which other
   arguments are applied. The default base color is black, in the form
@@ -555,56 +634,182 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
 
   All incoming parameter values may be literal or dynamic, and may be
   keywords, which will be dynamically bound to variables in [[*show*]]."
-  [& {:keys [color r g b h s l a adjust-hue adjust-saturation adjust-lightness frame-dynamic]
-      :or {color params/default-color frame-dynamic :default}}]
+  [& {:keys [base-color r g b h s l a adjust-hue adjust-saturation adjust-lightness frame-dynamic]
+      :or {base-color params/default-color frame-dynamic :default}}]
   {:pre [(some? *show*)]}
-  (let [c (bind-keyword-param (params/interpret-color color) params/color-type (params/interpret-color "black") "color")
-        [r g b, h s l, a ah as al] (map #(bind-keyword-param % Number 0)
-                                     [r g b, h s l, a adjust-hue adjust-saturation adjust-lightness])
-        params [c r g b, h s l, a ah as al]
-        clamp (fn [n] (when n (cmath/clamp n 0.0 1.0)))
-        update-color (fn [current [run? f]] (if run? (f current) current))]
-    (if (not-any? param? params) ;; Optimize the degenerate case of all constant parameters
-      (reduce
-       update-color c
-       [[(seq (filter some? [r g b]))
-         #(let [[r g b] (map clamp [r g b])]
-           (clr/as-hsla (clr/rgba (or r (clr/red %)) (or g (clr/green %))
-                                  (or b (clr/blue %)) (or a (clr/alpha %)))))] ;alpha lookup throws nullptr if no base c...
-        [(seq (filter some? [h s l]))
-         #(let [[h s l] (map clamp [h s l])]
-          (clr/hsla (or h (clr/hue %)) (or s (clr/saturation %))
-                    (or l (clr/luminance %)) (or a (clr/alpha %))))]
-        [ah #(clr/rotate-hue % (tf/degrees ah))]
-        [as #(clr/adjust-saturation % as)]
-        [al #(clr/adjust-luminance % al)]])
-      ;; Handle the general case of some dynamic parameters
-      (let [dyn (boolean (if (= :default frame-dynamic)
-                          (some frame-dynamic-param? params) ;; Default means incoming args control how dynamic we should be
-                          frame-dynamic)) ;; We were given an explicit val e for frame-dynamic
-            eval-fn (fn [show snapshot head]
-                     (reduce ;so since this is identical to above except for the resolving, how can we fwd that call (without invoking it unecessarily)
-                      update-color (resolve-param c show snapshot head)
-                      [[(seq (filter some? [r g b]))
-                        (fn [c]
-                         (let [[r g b] (map #(when % (clamp (resolve-param % show snapshot head))) [r g b])] ;slightly less optimal I guess cause nil vals get an extra fn call and check but eh
-                          (clr/as-hsla (clr/rgba (or r (clr/red c)) (or g (clr/green c))
-                                                 (or b (clr/blue c)) (or a (clr/alpha c))))))]
-                       [(seq (filter some? [h s l]))
-                        (fn [c]
-                         (let [[h s l] (map #(when % (clamp (resolve-param % show snapshot head))) [h s l])]
-                          (clr/hsla (or h (clr/hue c)) (or s (clr/saturation c))
-                                    (or l (clr/luminance c)) (or a (clr/alpha c)))))]
-                       [ah #(clr/rotate-hue % (resolve-param ah show snapshot head))]
-                       [as #(clr/adjust-saturation % (resolve-param as show snapshot head))]
-                       [al #(clr/adjust-luminance % (resolve-param al show snapshot head))]]))
+   (pspy :color-param
+       (let [c (bind-keyword-param (params/interpret-color base-color) params/color-type params/default-color "color")
+         [r g b, h s l, a ah as al :as params]
+         (mapv-fast #(bind-keyword-param % Number 0) [r g b, h s l, a adjust-hue adjust-saturation adjust-lightness])
+         clamp (fn [n] (when n (cmath/clamp n 0.0 1.0)))
+         update-color (fn [current [run? f]] (if run? (f current) current))
+         dyn (boolean (if (= :default frame-dynamic)
+                       (some frame-dynamic-param? params) ;; Default means incoming args control how dynamic we should be
+                       frame-dynamic)) ;; We were given an explicit val e for frame-dynamic
+         eval-fn (fn [show snapshot head]
+                  (pspy :color-param-eval
+                 (reduce
+                   update-color (resolve-param c show snapshot head)
+                   [[(seq (filter some? [r g b]))
+                     (fn [c]
+                      (let [[r g b] (mapv-fast #(when % (clamp (resolve-param % show snapshot head))) [r g b])] ;slightly less optimal I guess cause nil vals get an extra fn call and check but eh
+                       (clr/as-hsla (clr/rgba (or r (clr/red c)) (or g (clr/green c))
+                                              (or b (clr/blue c)) (or a (clr/alpha c))))))]
+                    [(seq (filter some? [h s l]))
+                     (fn [c]
+                      (let [[h s l] (mapv-fast #(when % (clamp (resolve-param % show snapshot head))) [h s l])]
+                       (clr/hsla (or h (clr/hue c)) (or s (clr/saturation c))
+                                 (or l (clr/luminance c)) (or a (clr/alpha c)))))]
+                    [ah #(clr/rotate-hue % (resolve-param ah show snapshot head))]
+                    [as #(clr/adjust-saturation % (resolve-param as show snapshot head))]
+                    [al #(clr/adjust-luminance % (resolve-param al show snapshot head))]])))
 
-            resolve-fn (fn [show snapshot head]
-                         ;; (with-show show ;like why have this? we're being passed show passing it already?
-                           (let [[c r g b h s l a ah as al]
-                                 (map #(resolve-unless-frame-dynamic % show snapshot head) params)]
-                            (color :color c :r r :g g :b b :h h :s s :l l :a a
-                                               :adjust-hue ah :adjust-saturation as :adjust-lightness al
-                                               :frame-dynamic dyn)))] ;shouldn't this just be built-in on creation?
-       (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
+         resolve-fn (fn [show snapshot head]
+                     (let [[c r g b h s l a ah as al]
+                           (mapv-fast #(resolve-unless-frame-dynamic % show snapshot head) (into [c] params))]
+                      (color :base-color c :r r :g g :b b :h h :s s :l l :a a
+                             :adjust-hue ah :adjust-saturation as :adjust-lightness al
+                             :frame-dynamic dyn)))] ;shouldn't this just be built-in on creation?
+  (cond
+   (not-any? param? params) ;3x slower creation - how big deal?
+   (eval-fn *show* (rhythm/metro-snapshot (:metronome *show*)) nil)
+   (not-any? params/frame-dynamic-param? params)
+   (resolve-fn (rhythm/metro-snapshot (:metronome *show*)) nil)
+   :else
+   (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
+  ;; (if (not-any? param? params) ;3x slower creation - how big deal?
+  ;;  (eval-fn *show* (rhythm/metro-snapshot (:metronome *show*)) nil)
+  ;;  (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
+;however slow going from 80-90 to  <40 loc is pretty nice
 
+
+; add to Param. probably:
+; whether has / potentially can be further optimized? then no need for reify/return self
+; also maybe remove resolve-non-frame-dynamic? just always handle that on creation?
+; - whether is spatial / varies per head -> rest can ignore that completely
+;
+;
+(defprotocol Resolver "disappointing - 5x slower than auto-resolve on vec of 1000 arams..."
+ (resolv [this]))
+(extend-protocol Resolver
+ afterglow.effects.params.Param
+ (resolv [this] (afterglow.effects.params/resolve-param this *show* (afterglow.rhythm/metro-snapshot (:metronome *show*))))
+ clojure.lang.PersistentArrayMap
+ (resolv [this] (reduce-kv (fn [pm id param] ;ohh right ONCE AGAIN remember records are maps so might go reducing for no reason
+                          (assoc pm id (afterglow.effects.params/resolve-param param *show* (afterglow.rhythm/metro-snapshot (:metronome *show*)) nil)))
+                         {} this))
+ clojure.lang.PersistentVector
+ (resolv [this] (map #(afterglow.effects.params/resolve-param % *show* (afterglow.rhythm/metro-snapshot (:metronome *show*))) this))
+ )
+
+(defmacro times "how long?"
+ [n f]
+ `(time (doseq [i# (range ~n)]
+              ~f)
+        #_(doall (for [i# (range ~n)] ~f))))
+;; arf
+
+(defn defs []
+ (def show *show*)
+ (def snapshot (metro-snapshot (:metronome *show*)))
+ (def lfo-param (quick-lfo "sine"))
+ (def rand-color (color/create (rand) (rand) (rand)))
+ [ (auto-resolve [nil nil nil nil nil 3 (color/like "blue") nil nil (quick-lfo "sine")])]
+
+ (def color-lfo-param (color :base-color rand-color :adjust-hue (quick-lfo "sine")))
+ (def color-crazy-param (color :base-color rand-color :adjust-hue (quick-lfo "sine") :adjust-lightness (quick-lfo "sawtooth") :s :fart))
+ (def color-static-param (color :base-color rand-color :adjust-hue 7))
+ (def color-lfo-param-reify (build-color-param :color rand-color :adjust-hue (quick-lfo "sine")))
+ (def color-static-param-reify (build-color-param :color rand-color :adjust-hue 7))
+ (util/avar :fart nil #_0.3)
+ (def color-crazy-param-reify (build-color-param :color rand-color :adjust-hue (quick-lfo "sine") :adjust-lightness (quick-lfo "sawtooth") :s :fart))
+ (def color-param-vec (vec (repeat 10000 color-lfo-param)))
+ (def color-param-vec-big (vec (repeat 1000000 color-lfo-param)))
+ (def color-lfo-param-unsolved (auto-resolve color-lfo-param :dynamic false))
+ (def color-not-param (auto-resolve color-lfo-param))
+ (def color-evo-static-param (params/build-color-param :color (colors/create-color :h (rand 360) :s (rand 100) :l (rand 100))))
+ (def color-evo-lfo-param (params/build-color-param :color (colors/create-color :h (rand 360) :s (rand 100) :l (rand 100))
+          :adjust-hue (quick-lfo "sine")))
+ (def rgb [nil 0.7 0.0])
+ (def hurf (params/bind-keyword-param :hurf Number 0))
+ (def hurf-set (params/bind-keyword-param :hurf-set Number 0))
+ (def metro (:metronome *show*))
+ (def measure (tf/build-distance-measure 0 0 0 :ignore-z true))
+ (util/avar :hurf-set (quick-lfo "sine"))
+ (params/frame-dynamic-param? hurf)
+
+ (defn get-timer [f] #(times 10000 (f %)))
+ (def r-param (get-timer #(resolve-param % show snapshot))))
+
+(defn runs []
+ (defs)
+ (type color-lfo-param)
+ (times 10000 (resolve-param color-lfo-param show snapshot)) ;400 -> 20
+ (times 1 (auto-resolve color-param-vec)) ; - so no penalty for vecs/maps then
+ (times 1 (auto-resolve color-param-vec-big)) ;1745
+ (times 1000 (resolv color-lfo-param)) ;45 -> 4 - so no penalty for vecs/maps then
+ (times 1000 (auto-resolve color-lfo-param)) ;
+ (times 1000 (resolve-unless-frame-dynamic color-lfo-param show snapshot)) ;140 -> 50 - way slower than eval but ok since not called as often...
+
+ (times 1000 (if (param? color-not-param) (resolve-param color-not-param show snapshot) color-not-param)) ;44->1
+ (times 10000 (resolve-param color-not-param show snapshot)) ;350 -> 2.7
+ (times 10000 (resolve-param color-lfo-param show snapshot)) ; 21
+ (times 10000 (param? color-not-param)) ;35 - 0.7 after fixing param?
+ (times 10000 (param? metro)) ;35 - 0.7 after fixing param?
+ (times 10000 (param? measure)) ;35 - 0.7 after fixing param?
+ (times 10000 (map? {}))
+ (times 10000 (param? color-lfo-param)) ;35 - 0.7 after fixing param?
+ (times 10000 (param? color-evo-lfo-param)) ;4
+ (times 10000 (param? color-evo-static-param)) ;240 -> 4 without satisfies
+
+ (times 10000 (if (param? nil) (resolve-param nil show snapshot))) ;1.6
+ (times 10000 (do (param? nil) (resolve-param nil show snapshot))) ;1.6
+ (times 10000 (auto-resolve nil :show show :snapshot snapshot)) ;7.5
+ (times 10000 (auto-resolve nil)) ;87
+
+ (instance? Param nil)
+ (instance? Param lfo-param)
+ (instance? afterglow.effects.params.IParam color-evo-lfo-param)
+ (times 10000 (instance? Param nil))
+ (times 10000 (instance? Param (quick-lfo "sine"))) ;slow bc of _creation_
+ (times 10000 (instance? Param lfo-param)) ;1.4
+ (times 10000 (instance? afterglow.effects.params.IParam color-evo-lfo-param)) ;1.4
+;;  (times 10000 (satisfies? afterglow.effects.params.Param color-evo-lfo-param)) ;1.4
+ (times 10000 (instance? afterglow.effects.params.Param lfo-param)) ;1.4
+
+ (times 10000 (seq (filter identity rgb)))
+ (times 10000 (seq (filter some? rgb)))
+
+ (map r-param [lfo-param]) ;number params, dynamic. 6
+ (map r-param [hurf hurf-set]) ;fallback vs show var or lfo (3 vs 4-5ms)
+
+ (map r-param [color-evo-lfo-param color-evo-static-param]) ;88 2
+ (map r-param [color-lfo-param       color-crazy-param       color-static-param #_color-lfo-param-unsolved]) ;36 33 ish -> 23 0,7, mine proper slower...
+ (map r-param [color-lfo-param-reify color-crazy-param-reify color-static-param-reify]) ;37 37 -> 16 0.7
+ ; ^ reify/old color-param still quicker. but close
+
+
+ (def fiz (clr/hsla (rand) (rand) (rand)))
+ (times 10000 (clr/rotate-hue fiz Math/PI)) ;; 2.5
+ (times 10000 (color :base-color rand-color :adjust-hue 7)) ;; 150ms
+ (times 10000 (params/resolve-param (color :base-color rand-color :adjust-hue 7) show snapshot)) ;; 150ms
+ (times 10000 (color :base-color rand-color :adjust-hue lfo-param)) ;; 70
+ (times 10000 (params/resolve-param (color :base-color rand-color :adjust-hue lfo-param) show snapshot)) ;; 100
+ (times 1000000 (clr/rotate-hue rand-color 7)) ;; 45ms. hmmm wtf
+ ; ^ goddamn somethings off w my iml if creating dynamic then resolving takes 2/3 time of creating static??
+
+
+ (times 10000 (build-color-param :base-color rand-color :adjust-hue 7)) ;; 45
+ (times 10000 (build-color-param :base-color rand-color :adjust-hue lfo-param)) ;; 80
+ (times 10000 (clr/rotate-hue (clr/hsla (rand) (rand) (rand)) Math/PI)) ;; 7.5
+
+ (times 10000 (colors/mix-hsl (colors/adjust-hue (colors/create-color :h (rand 360) :s (rand 100) :l (rand 100)) 90)
+                              (colors/create-color :h (rand 360) :s (rand 100) :l (rand 100)) 50.0)) ;320
+ (times 10000 (map #(int (* 255 %))
+                    @(clr/as-rgba (cmath/mix
+                                   (clr/rotate-hue (clr/hsla (rand) (rand) (rand)) (/ Math/PI 2))
+                                   (clr/hsla (rand) (rand) (rand)) 0.5)))) ;15 - 20x+ faster
+
+ (times 10000 (colors/create-color :h (rand 360) :s (rand 100) :l (rand 100))) ;77
+ (times 10000 (clr/hsla (rand) (rand) (rand))) ;3.5 - 20x faster
+)

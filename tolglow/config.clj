@@ -23,7 +23,7 @@
 
  (def pixtol-chs "Channel spec for pixTol standard"
   {:dimmer 1
-   :strobe [2 :hz [0.5 7.0]] :strobe-curve 3
+   :strobe [2 #_:hz #_[0.5 7.0]] :strobe-curve 3
    :attack 4 :release 5
    :bleed 6, :noise 7
    :rotate-back 8, :rotate-fwd 9
@@ -57,8 +57,8 @@
   {:rgbw-36-moving
    {:name "RGBW 108/36 moving head" :calibration {:pan [127 85] :tilt [35 188]}
     :channels
-    {:pan [1 13] :tilt [2 14] :movement-speed 3 :dimmer 4 :rgbw 5 ;[5 6 7 8]
-     :strobe [9 :start 10 :hz [1.0 30.0]] :focus 10 :auto 11 :speed 12}
+    {:pan [1 13] :tilt [2 14] :movement-speed 3 :dimmer 4 :rgbw 5
+     :strobe [9 :start 10 #_:hz #_[1.0 30.0]] :focus 10 :auto 11 :speed 12}
     ;; :size 3.14 ;XXX do, one of diameter or length/height?
     ;; :strength 360 ;XXX watts, lm, approximation?
     #_:beam #_15} ;XXX angle
@@ -66,7 +66,7 @@
    :rgbw-7-12-moving
    {:name "LED MOVING HEAD 7x12W" :calibration {:pan [127 85] :tilt [0 256]};only 180 deg. fix so can fancy map here as well, eg reset offset 255...
     :channels
-    {:pan [1 2] :tilt [3 4] :movement-speed 5 :dimmer 6 :strobe [7 :start 10 :hz [1 10]]
+    {:pan [1 2] :tilt [3 4] :movement-speed 5 :dimmer 6 :strobe [7 :start 10 #_:hz #_[1 10]]
      :auto 8 :speed 9 :rgbw 10 :reset 14}}  ;; :red 10 :green 11 :blue 12 :white 13;14 255...
 
    :rgbw-12-12-moving
@@ -75,12 +75,12 @@
     {:pan [1 14] :tilt [2 15] :movement-speed 9 :dimmer 3 :rgbw [4 5 6 7] ;; :dimmer 3 :red 4 :green 5 :blue 6 :white 7
      :strobe [8 :start 10] :auto 10 :speed 11 :control 12 :sound-sensitivity 13 :reset 16}} ;ch16 val150 actually
 
-   :rgbw-60-moving-beam
-   {:name "60w Beam MOVING HEAD" :calibration {:pan [127 85] :tilt [0 256]}
-    :channels
-    {:pan [1 2] :tilt [3 4] :movement-speed 5
-     :dimmer 6 :strobe [7 :open 8 :start 16 :hz [0.2 10]] ;here needs better shutter-builder...
-     :rgbw 8 :auto 12 :control [13 :reset 200 :sound-active 240]}}
+   ;; :rgbw-60-moving-beam
+   ;; {:name "60w Beam MOVING HEAD" :calibration {:pan [127 85] :tilt [0 256]}
+   ;;  :channels
+   ;;  {:pan [1 2] :tilt [3 4] :movement-speed 5
+   ;;   :dimmer 6 :strobe [7 :open 8 :start 16 :hz [0.2 10]] ;here needs better shutter-builder...
+   ;;   :rgbw 8 :auto 12 :control [13 :reset 200 :sound-active 240]}}
 
    :robe-1200
    {:name "Robe 1200" :calibration {:pan [127 85] :tilt [35 188]}
@@ -93,9 +93,9 @@
 
   :wash
   {:rgb-54-3-par {:name "54 LED RGB PAR"
-    :channels {:dimmer 1 :rgb 2 :strobe [5 :start 10 :hz [0.2 10]] :control 6 :speed 7}}
+    :channels {:dimmer 1 :rgb 2 :strobe [5 :start 10 #_:hz #_[0.2 10]] :control 6 :speed 7}}
    :rgbw-7-12-par {:name "LED RGBW Par Light"
-    :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 10 :hz [0.5 10]] :control 7 :speed 8}}
+    :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 10 #_:hz #_[0.5 10]] :control 7 :speed 8}}
    :rgbw-18-12-par {:name "18x12 RGBW, 200+ W"
     :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 10 #_:hz #_[0.5 10]] :control 7}}
    :rgbwauv-5-18-par {:name "5x18 RGBWA+UV, ? W"
@@ -105,9 +105,9 @@
    ;;  :channels {:dimmer 1 :white 2 :amber [3 :hue 48] :strobe [4 :start 10 :hz [0.45 10]]}}
 
    :adj-pro-led-tol {:name "ADJ 64B LED PRO"
-    :channels {:rgb 1 :color-macros 4 :strobe [5 :start 16 :hz [1.12 32]] :speed 6}}
+    :channels {:rgb 1 :color-macros 4 :strobe [5 :start 16 #_:hz #_[1.12 32]] :speed 6}}
    :rgbw-mirror {:name "RGBW churchy window thing"
-    :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 16 :hz [0.2 10]] :movement-speed 7}}
+    :channels {:dimmer 1 :rgbw 2 :strobe [6 :start 16 #_:hz #_[0.2 10]] :movement-speed 7}}
 
    :rgbw-mini {:name "Tiny RGBW split like"
     :channels {:dimmer 1 :rgbw 2 :auto 6 :strobe 7}}
@@ -116,7 +116,7 @@
 
   :cob
   {:wa-100-cob-par {:name "100Watt W/A LED COB PAR Light"
-    :channels {:dimmer 1 :white 2 :amber [3 :hue 48] :strobe [4 :start 10 :hz [0.45 10]]}}}
+    :channels {:dimmer 1 :white 2 :amber [3 :hue 48] :strobe [4 :start 10 #_:hz #_[0.45 10]]}}}
 
   :other
   {:capture-camera
@@ -148,20 +148,16 @@
 (def patches #_old-patches
   {:moving ;;XXX parser should handle just pushing new ones onto and offset auto calcs and tells you
    {:universe 1, :offset 400, :type :moving
-    ;; :list [(mapv #(flatten [(:robe-1200 moving) %])
-    ;;              [[-2.0 3.0 0.0], [-1.0 3.0 0.0], [1.0 3.0 0.0], [2.0 3.0 0.0]])]} ; :rotation {:y 180} ideal
     :list [[:rgbw-36-moving     -1.5 1.2 -0.5]
            [:rgbw-12-12-moving   1.5 1.2 -0.5 #_:y-rotation #_(degrees 180)]
-           `[rgbw-60-moving-beam 0.0 0.2 -1.0 :y-rotation (degrees 180)]]} ; :rotation {:y 180} ideal
+           `[tolglow.fixtures/rgbw-60-moving-beam 0.0 0.2 -1.0
+             :y-rotation (afterglow.transform/degrees 180)]]} ; :rotation {:y 180} ideal
    :moving-mini
    {:universe 1, :offset 150, :type :moving
     :list [[:rgbw-7-12-moving -2.0 3.0 0.0]
            [:rgbw-7-12-moving -1.0 2.0 0.0]
            [:rgbw-7-12-moving  1.0 2.0 0.0]
            [:rgbw-7-12-moving  2.0 3.0 0.0]]}
-   ;; :camera
-   ;; {:universe 4, :offset 490, :type :moving
-   ;;  :list [[:capture-camera 0.0 0.0 0.0]]}
    :cob
    {:universe 10, :offset 50
     :list [[:wa-100-cob-par 0.0 4.0 -1.0]]}
@@ -173,12 +169,12 @@
             [:hollywood-par   2.5 2.5 0.0]]}
    :strip
    {:start-universe 2, :type :strip
-    :list [[:pixtol-144-10 -0.0 0.1 0.0]
-           #_[:pixtol-60-2m  -1.0 2.0 0.0 :y-rotation (degrees 90)]]}
+    :list [[:pixtol-144-1m -0.0 2.0 0.0]
+           #_[:pixtol-60-2m  -1.0 2.0 0.0 :y-rotation (degrees 45)]]}
    :tube
    {:start-universe 11, :type :strip
     :list `[[#(tolglow.fixtures/pixel-strip
-               4, :color-layout :rgbw, :x [-1.0 1.0] :y [4.0 4.0]
+               10, :color-layout :rgbw, :x [-1.0 1.0] :y [4.0 4.0]
                :channels ~pixtol-chs)]]}
    #_:fogger
    #_{:universe 1, :offset 511
@@ -226,10 +222,10 @@
                {:flip "xy" :color-mod `#(tolglow.color/h 0.025 %)}] ;:transform #(rescale % :x true :y true)}]
   :type
   {:aim {:vars [:x :y :z] :name-prefix "Aim" :color-mod `tolglow.color/create
-         :fns `[afterglow.effects.params/build-aim-param
-                afterglow.effects.params/build-aim-transformer
-                afterglow.effects.movement/aim-effect]}
-   :dir {:vars [:x :y :z] :name-prefix "Dir" :color-mod `#(tolglow.color/h -0.30 %)
+         :fns `[afterglow.effects.params/build-aim-param ;should these do further in what i'm doing in cue? one fn to rule them all
+                afterglow.effects.params/build-aim-transformer ;then again they are sep param types so... but there's also lots of code
+                afterglow.effects.movement/aim-effect]}        ;and can all be generalized to n dimensions, whatever that's good for
+   :dir {:vars [:x :y :z] :name-prefix "Dir" :color-mod `#(tolglow.color/h -0.30 %) ;anyays no real performance downside since lookup on creation aint shit frame eval is all
          :fns `[afterglow.effects.params/build-direction-param
                 afterglow.effects.params/build-direction-transformer
                 afterglow.effects.movement/direction-effect]}
@@ -262,9 +258,9 @@
   ;;XXX BUG still with reading top-level true/false vals :fixture-patches true, :cue-pages true
   ;; :fixture-patches false, ;:cue-pages false ;seems get loaded anyways?
   :debug {:enabled true
-          :force-init false
+          :force-init false #_true
           :force-cue-pages false #_false
-          :auto-print-trace true} ;XXX how both catch, print, and pass to eg pst?
+          :auto-print-trace false #_true} ;XXX how both catch, print, and pass to eg pst?
   :macro {:save-file "macros.clj" ;relative to project home
           :save true, :load true} ;first gotta make it work hehe
   :load-macros true ;XXX mechanism for fn lookup from nested stuff. fix when rework entire cfg structure
@@ -272,7 +268,7 @@
   ; also a second button to persistently save cue state as new default. and maybe 4 saveable slots for each cue of different var values
 
   :web-server {:enabled true :port 16000}
-  :nrepl {:enabled true :port 5000} ;alredy runs in lein...
+  :nrepl {:enabled false :port 5000} ;alredy runs in lein?
   :terminal-repl {:enabled true}
   :logging {:enabled true}
   :ns {:base 'tolglow.core}
@@ -285,7 +281,7 @@
   :measure {:default #(afterglow.transform/build-distance-measure 0 (:rig venue) 0 :ignore-z true)}
   ;; ^^ says the type is like, tol cfg fn even when wrapped, hmm.
   ;; :measure {:default (afterglow.transform/build-distance-measure 0 (:rig venue) 0 :ignore-z true)}
-  :osc {:enabled true :debug true
+  :osc {:enabled false :debug true
         :address "127.0.0.1" :port-in 16010 :port-out 16011}
   :controllers {:enabled true
                 :push {:enabled true :name "Ableton Push" }
@@ -329,8 +325,8 @@
 (defmacro get-getter "Create a -> getter for data maps
 Arguments: name of fn to define, docstring, map where to search."
  [name docstring m]
-  `(defn ~name ~docstring [& path#]
-     (reduce #(-> %1 %2) ~m path#)))
+ `(defn ~name ~docstring [& path#]
+   (reduce #(-> %1 %2) ~m path#)))
 (get-getter cfg "Look in cfg map" data)
 (get-getter at "Look in binds map" binds)
 (get-getter ptr-cfg "Look in pointer cfg map" pointing-data)
