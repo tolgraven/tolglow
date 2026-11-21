@@ -16,9 +16,12 @@
 (def width 960)
 (def height 160)
 
-(defn- thread-factory [name]
+(defn- thread-factory [name thread-ref]
   (reify ThreadFactory
-    (newThread [_ runnable] (doto (Thread. runnable name) (.setDaemon true)))))
+    (newThread [_ runnable]
+      (let [thread (doto (Thread. runnable name) (.setDaemon true))]
+        (reset! thread-ref thread)
+        thread))))
 
 (defn- positive-ms! [value field]
   (when-not (and (integer? value) (<= 10 value 60000))
@@ -84,6 +87,19 @@
              (when executor (.shutdownNow ^ExecutorService executor))
              (remove-script! handle))))))
 
+(defn- startup-error [error {:keys [^Process process ipc-thread opened-at]}]
+  (if-not (instance? clojure.lang.ExceptionInfo error) error
+    (let [^Thread thread @ipc-thread]
+      (ex-info (.getMessage ^Throwable error)
+               (merge (ex-data error)
+                      {:stage :startup :elapsed-ms (/ (- (System/nanoTime) opened-at) 1.0e6)
+                       :process-started? (some? process) :process-id (when process (.pid process))
+                       :process-alive? (boolean (and process (.isAlive process)))
+                       :exit-code (when (and process (not (.isAlive process))) (.exitValue process))
+                       :ipc-thread-state (some-> thread .getState str)
+                       :ipc-stack (when thread (mapv str (take 6 (.getStackTrace thread))))
+                       :stderr :inherited}) error))))
+
 (defn process-capture
   "Construct an inert Node/Chromium capture backend. :browser-executable is
   required. :url defaults to the studio's loopback /push-display page. The bundled
@@ -108,13 +124,14 @@
      (fn []
        (let [owned (atom (merge (worker-file! worker-script)
                                {:lock (Object.) :request-lock (Object.) :closed? (atom false)
+                                :ipc-thread (atom nil) :opened-at (System/nanoTime)
                                 :shutdown-timeout-ms shutdown-timeout-ms}))]
          (try
            (let [process (.start (doto (ProcessBuilder. ^java.util.List
                                          [node-executable (str (:script-file @owned)) (json/write-str config)])
                                   (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
                  _ (swap! owned assoc :process process)
-                 executor (Executors/newSingleThreadExecutor (thread-factory "tolglow-display-ipc"))
+                 executor (Executors/newSingleThreadExecutor (thread-factory "tolglow-display-ipc" (:ipc-thread @owned)))
                  _ (swap! owned assoc :executor executor)
                  reader (BufferedReader. (InputStreamReader. (.getInputStream process) StandardCharsets/UTF_8))
                  writer (BufferedWriter. (OutputStreamWriter. (.getOutputStream process) StandardCharsets/UTF_8))
@@ -123,7 +140,10 @@
              (when-not (and (= "ready" (:status ready)) (= width (:width ready)) (= height (:height ready)))
                (throw (ex-info "Display worker did not become ready" {:response ready})))
              @owned)
-           (catch Throwable error (close-process! @owned) (throw error)))))
+           (catch Throwable error
+             (let [diagnostic (startup-error error @owned)]
+               (close-process! @owned)
+               (throw diagnostic))))))
      :capture!
      (fn [{:keys [request-lock closed? reader writer executor counter] :as handle} view]
        (locking request-lock

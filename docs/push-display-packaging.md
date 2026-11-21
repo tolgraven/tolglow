@@ -34,7 +34,7 @@ lighting output clock or the native display sink.
 
 ## Verification, 2026-11-21
 
-- Focused JVM display suite: **10 tests / 48 assertions**, passing. The actual
+- Focused JVM display suite: **10 tests / 50 assertions**, passing. The actual
   production worker is read through a `jar:` resource and run by Node; only its
   external browser is an injected process-boundary peer. Tests cover PNG
   capture, failed executable/browser startup, cancellation, inert construction,
@@ -44,11 +44,8 @@ lighting output clock or the native display sink.
 - Node suite: **6 tests**, passing, including execution of an extracted worker
   with dependency resolution from a separate launch directory and an absolute
   override.
-- Initial packaging checkpoint pure JVM lane: **459 tests / 3,605 assertions**,
-  passing. After the descendant-exit regression was added, the focused display
-  suite passed. A complete rerun reached 460 tests / 3,609 assertions but failed
-  the pre-existing workspace metadata-tampering test with `fatal: bad object
-  HEAD`; that separate workspace issue was reported to the coordinator.
+- Final combined pure JVM lane after the workspace isolation fix: **462 tests /
+  3,631 assertions**, passing on Temurin 17.0.21+9 and Node 26.
 - `lein jar` completed; the application JAR contains the exact production
   worker bytes at the expected classpath resource name.
 - Actual Chromium capture: production worker through a real `jar:` resource,
@@ -62,3 +59,14 @@ The browser check used the installed Linux Chromium and an image capture sink.
 It does not establish physical Push USB behavior or display throughput. The
 broader live-waveform/audio capture evidence remains in
 [waveform projections](waveform-projections.md).
+
+Startup failures retain their original error data and include the startup stage,
+elapsed time, Node PID/liveness/exit code, and the bounded IPC-thread stack. Node
+stderr continues to inherit the host's error stream. The real-process test also
+records Node's version and whether its readiness write completed, so a future
+CI timeout can distinguish process startup from a blocked protocol reader.
+The existing ten-second startup deadline has not been increased. Fifty repeated
+protocol lifecycles passed on the same Temurin 17.0.21+9 used by CI (Node 24);
+fifty also passed on Java 21, followed by fifty on Java 17 with pinned Node 26.
+These local repetitions do not establish the cause
+of the intermittent CI startup timeout; CI now pins Node 26 for JVM jobs.

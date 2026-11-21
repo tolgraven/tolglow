@@ -1782,6 +1782,6 @@
    :acceptance ["Checkout and executable-JAR workers open only at explicit connection"
                 "Owned extraction and process cleanup on success, failed startup and cancellation"
                 "External Playwright module resolution remains explicit and works after extraction"]
-   :evidence ["JVM display 10 tests / 48 assertions and Node worker 6 tests pass; initial packaging pure JVM checkpoint459/3605 passed; later full rerun hit separate workspace metadata failure documented in packaging notes"
+   :evidence ["JVM display 10 tests / 50 assertions and Node worker 6 tests pass; final combined pure JVM462/3631 passed on Java17 with pinned Node26 after the workspace metadata fix"
               "Actual Node26/Chromium capture of built re-frame page through jar resource; PNG dimensions, process exit and temporary-file cleanup checked"
               "See docs/push-display-packaging.md; no physical USB or throughput claim"]}]}

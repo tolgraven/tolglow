@@ -118,7 +118,10 @@
            (fn [options]
              (let [before (temp-workers)
                    capture (display/process-capture (assoc options :browser-executable "/browser-peer"))]
-               (is (thrown-with-msg? clojure.lang.ExceptionInfo #"did not become ready" ((:open! capture))))
+               (let [error (try ((:open! capture)) nil (catch clojure.lang.ExceptionInfo error error))]
+                 (is (re-find #"did not become ready" (.getMessage ^Throwable error)))
+                 (is (= :startup (:stage (ex-data error))))
+                 (is (pos? (:process-id (ex-data error)))))
                (is (= before (temp-workers))))))))))
 
 (deftest cancelling-packaged-worker-startup-cleans-process-and-extraction
@@ -228,20 +231,28 @@
 
 (deftest actual-owned-node-process-validates-png-and-closes-on-deadline
   (let [script (File/createTempFile "tolglow-display-protocol-" ".js")
+        startup (File/createTempFile "tolglow-display-startup-" ".json")
         bytes (ByteArrayOutputStream.)
         _ (javax.imageio.ImageIO/write (image) "png" bytes)
         png (.encodeToString (Base64/getEncoder) (.toByteArray bytes))]
     (try
       ;; The transport's external browser process is represented here by an
       ;; owned protocol peer. Actual re-frame/Chromium capture is a separate QA.
-      (spit script (str "const readline=require('node:readline');\n"
-                        "process.stdout.write(JSON.stringify({status:'ready',width:960,height:160})+'\\n');\n"
+      (spit script (str "const readline=require('node:readline'),fs=require('node:fs');\n"
+                        "const mark=phase=>fs.writeFileSync(" (pr-str (str startup))
+                        ",JSON.stringify({phase,pid:process.pid,node:process.version}));\n"
+                        "mark('started');\n"
+                        "process.stdout.write(JSON.stringify({status:'ready',width:960,height:160})+'\\n',()=>mark('ready-written'));\n"
                         "readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);"
                         "if(!r.view.stall)process.stdout.write(JSON.stringify({id:r.id,status:'captured',width:960,height:160,png:'" png "'})+'\\n');});\n"))
       (let [capture (display/process-capture {:browser-executable "/not-used-by-protocol-peer"
                                               :worker-script (.getAbsolutePath script)
                                               :capture-timeout-ms 100 :shutdown-timeout-ms 100})
-            handle ((:open! capture))]
+            handle (try ((:open! capture))
+                        (catch Exception error
+                          (throw (ex-info "Node protocol peer did not become ready"
+                                          {:peer-startup (when (pos? (.length startup)) (slurp startup))}
+                                          error))))]
         (try
           (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Test"}))))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"deadline" ((:capture! capture) handle {:stall true})))
@@ -249,4 +260,4 @@
           (is (.isFile script) "An explicit worker remains caller-owned after capture failure")
           (is (thrown? clojure.lang.ExceptionInfo ((:capture! capture) handle {:title "After close"})))
           (finally ((:close! capture) handle))))
-      (finally (io/delete-file script true)))))
+      (finally (io/delete-file script true) (io/delete-file startup true)))))
