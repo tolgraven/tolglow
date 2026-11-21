@@ -139,8 +139,9 @@ that trigger there too and remove the old copy.
 Profiler changes also run on pull requests, measuring that exact PR head in an
 independent runner before merge. These jobs retain the same oracle gates and
 artifact-only timings and do not share a concurrency group with master runs.
-Push runs check out the exact pushed master SHA. Scheduled/reusable/manual runs
-check out master, even though the caller's event SHA may belong to effects. Each
+Push runs check out the exact pushed master SHA. Scheduled/reusable calls check
+out master, even though the caller's event SHA may belong to effects. Manual
+calls default to master and can select the explicit revisions described below. Each
 run resolves both checkouts
 once and records their immutable SHAs before running the matrix on Java 21. Raw
 EDN and logs for both the complete show and connected subscriber matrices are
