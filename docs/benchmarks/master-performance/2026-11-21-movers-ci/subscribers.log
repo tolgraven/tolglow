@@ -1,0 +1,31 @@
+Profiling subscribers: 1000 pixels, 0 fast + 0 withheld ACK
+Profiling subscribers: 1000 pixels, 1 fast + 1 withheld ACK
+2026-11-21T11:41:52.863Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:601] - jetty-12.1.14; built: 2026-10-02T05:48:05.032Z; git: 15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0; jvm 21.0.13+9-LTS
+2026-11-21T11:41:53.095Z runnervm0hi8g INFO [org.eclipse.jetty.server.handler.ContextHandler:939] - Started oeje9n.ContextHandler$CoreContextHandler@398ba576{ROOT,/,b=null,a=AVAILABLE,h=oeje9n.ContextHandler$CoreContextHandler$CoreToNestedHandler@e937444{STARTED}}
+2026-11-21T11:41:53.103Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:332] - Started oejs.ServerConnector@4fde5241{HTTP/1.1, (http/1.1)}{127.0.0.1:34929}
+2026-11-21T11:41:53.104Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:658] - Started oejs.Server@578afa50{STARTING}[12.1.14,sto=0] @242ms
+2026-11-21T11:41:57.534Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:698] - Stopped oejs.Server@578afa50{STOPPING}[12.1.14,sto=0]
+2026-11-21T11:41:57.536Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:390] - Stopped oejs.ServerConnector@4fde5241{HTTP/1.1, (http/1.1)}{127.0.0.1:0}
+Profiling subscribers: 1000 pixels, 4 fast + 1 withheld ACK
+2026-11-21T11:41:57.614Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:601] - jetty-12.1.14; built: 2026-10-02T05:48:05.032Z; git: 15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0; jvm 21.0.13+9-LTS
+2026-11-21T11:41:57.621Z runnervm0hi8g INFO [org.eclipse.jetty.server.handler.ContextHandler:939] - Started oeje9n.ContextHandler$CoreContextHandler@4ddaf7c4{ROOT,/,b=null,a=AVAILABLE,h=oeje9n.ContextHandler$CoreContextHandler$CoreToNestedHandler@1b62175f{STARTED}}
+2026-11-21T11:41:57.652Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:332] - Started oejs.ServerConnector@3688df81{HTTP/1.1, (http/1.1)}{127.0.0.1:37693}
+2026-11-21T11:41:57.653Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:658] - Started oejs.Server@7bcfea90{STARTING}[12.1.14,sto=0] @38ms
+2026-11-21T11:42:01.849Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:698] - Stopped oejs.Server@7bcfea90{STOPPING}[12.1.14,sto=0]
+2026-11-21T11:42:01.851Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:390] - Stopped oejs.ServerConnector@3688df81{HTTP/1.1, (http/1.1)}{127.0.0.1:0}
+Profiling subscribers: 10000 pixels, 0 fast + 0 withheld ACK
+Profiling subscribers: 10000 pixels, 1 fast + 1 withheld ACK
+2026-11-21T11:42:26.346Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:601] - jetty-12.1.14; built: 2026-10-02T05:48:05.032Z; git: 15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0; jvm 21.0.13+9-LTS
+2026-11-21T11:42:26.355Z runnervm0hi8g INFO [org.eclipse.jetty.server.handler.ContextHandler:939] - Started oeje9n.ContextHandler$CoreContextHandler@112c682f{ROOT,/,b=null,a=AVAILABLE,h=oeje9n.ContextHandler$CoreContextHandler$CoreToNestedHandler@66c4b544{STARTED}}
+2026-11-21T11:42:26.357Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:332] - Started oejs.ServerConnector@45638365{HTTP/1.1, (http/1.1)}{127.0.0.1:38625}
+2026-11-21T11:42:26.357Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:658] - Started oejs.Server@6928b96b{STARTING}[12.1.14,sto=0] @11ms
+2026-11-21T11:42:30.596Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:698] - Stopped oejs.Server@6928b96b{STOPPING}[12.1.14,sto=0]
+2026-11-21T11:42:30.598Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:390] - Stopped oejs.ServerConnector@45638365{HTTP/1.1, (http/1.1)}{127.0.0.1:0}
+Profiling subscribers: 10000 pixels, 4 fast + 1 withheld ACK
+2026-11-21T11:42:30.986Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:601] - jetty-12.1.14; built: 2026-10-02T05:48:05.032Z; git: 15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0; jvm 21.0.13+9-LTS
+2026-11-21T11:42:30.992Z runnervm0hi8g INFO [org.eclipse.jetty.server.handler.ContextHandler:939] - Started oeje9n.ContextHandler$CoreContextHandler@68380559{ROOT,/,b=null,a=AVAILABLE,h=oeje9n.ContextHandler$CoreContextHandler$CoreToNestedHandler@2de6e422{STARTED}}
+2026-11-21T11:42:30.994Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:332] - Started oejs.ServerConnector@5621f31{HTTP/1.1, (http/1.1)}{127.0.0.1:41633}
+2026-11-21T11:42:30.994Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:658] - Started oejs.Server@4049e55b{STARTING}[12.1.14,sto=0] @8ms
+2026-11-21T11:42:35.650Z runnervm0hi8g INFO [org.eclipse.jetty.server.Server:698] - Stopped oejs.Server@4049e55b{STOPPING}[12.1.14,sto=0]
+2026-11-21T11:42:35.652Z runnervm0hi8g INFO [org.eclipse.jetty.server.AbstractConnector:390] - Stopped oejs.ServerConnector@5621f31{HTTP/1.1, (http/1.1)}{127.0.0.1:0}
+Wrote ../performance-artifact/subscribers.edn
