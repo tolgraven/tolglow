@@ -3,8 +3,7 @@
  :items
  [{:id :build/leiningen-canonical-workflows
    :title "Use one Leiningen project for backend, frontend, tests and profiling"
-   :kind :implementation :status :in-progress
-   :owner "master_render_performance_profiler_and_optimizations"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"
            "tolglow/dev/tolglow/build_manifest.clj" "tolglow/dev/parity_deps.clj"
            "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin/test"
@@ -17,10 +16,10 @@
                 "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
                 "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
                 "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
-   :evidence ["Lein :cljs final integrated185tests/994assertions and optimized185files/zero warnings passed locally"
+   :evidence ["Lein :cljs final integrated 185 tests / 994 assertions and optimized 185 files / zero warnings passed locally"
               "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
-              "Plain lein test after sync lifecycle integration:591/4896 passed on Java21; final sync/manifest23/272 and actual profile-master/subscriber capture-oracle smoke passed; final OSC pin integration rechecked in CI"
-              "Exact e77fce7 CI44898916324 passed all Java17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
+              "Plain lein test after sync lifecycle integration: 591 / 4896 passed on Java 21; final sync/manifest 23 / 272, startup/manifest 9 / 54 and actual profiler capture-oracle smokes passed"
+              "PR 46 merged a237c48 after exact 260b033 CI 44899570846 passed all Java 17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
   {:id :fixtures/patch-groups
    :title "Normalize named patch lists and fixture-builder heads before installation"
    :kind :implementation :status :done :owner nil
@@ -265,6 +264,21 @@
               ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"
               "Subscriber correctness smoke: actual Jetty/JVM clients at 1k/10k pixels +8 movers, 0/4 fast +1 withheld ACK; model/intent/packet/preview and full reconstructed view parity passed"
               "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
+  {:id :performance/animated-moving-heads
+   :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_movers.clj" "tolglow/dev/tolglow/bench_movers_reference.clj"
+           "afterglow/dev/afterglow/bench_movement_reference.clj" "afterglow/dev/AGENTS.md"
+           "tolglow/bin/profile-movers"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
+                "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
+                "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
+   :evidence ["All seven 64-head lanes passed the full 20-step opacity cycle through Lein at clean 4bcaff1 + Afterglow fcfd6be: 64 unique positions/rotations, 24 effects, all 48 heads beyond index 15 verified"
+              "Independent reference exposed missing packed pan history after zero opacity; Afterglow PR13 merged eeb04cd, regression red before fix, render/IR 46/744 and parity 320/3718 green"
+              "Optional 128-head scalar host hit the real 500ms worker timeout on the loaded shared machine; retain as failed evidence, dedicated runner timing pending"
+              "Mathematical geometry/physical-channel reference lives in Afterglow dev; Tolglow retains declarative effects, cues, admission, host and paired workflow"]}
   {:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
    :kind :implementation :status :done :owner nil

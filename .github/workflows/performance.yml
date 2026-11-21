@@ -2,14 +2,23 @@ name: Master show performance evidence
 on:
   workflow_dispatch:
   workflow_call:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'dev/tolglow/bench_*.clj'
+      - 'bin/profile-*'
+      - '.github/workflows/performance.yml'
   push:
     branches: [master]
     paths:
       - 'src/tolglow/**'
       - 'dev/tolglow/bench_show.clj'
       - 'dev/tolglow/bench_subscribers.clj'
+      - 'dev/tolglow/bench_movers.clj'
+      - 'dev/tolglow/bench_movers_reference.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
+      - 'bin/profile-movers'
       - 'src/shared/tolglow/**'
       - 'project.clj'
       - '.github/workflows/tests.yml'
@@ -17,7 +26,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: master-show-performance
+  group: show-performance-${{ github.event.pull_request.number || 'master' }}
   cancel-in-progress: false
 jobs:
   profile:
@@ -28,7 +37,7 @@ jobs:
         with:
           # Reusable calls originate on the default branch (currently effects).
           # Measure master for those calls, never the caller's older source tree.
-          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || 'master' }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || 'master' }}
           path: tolglow
       - name: Resolve paired Afterglow master once
         uses: actions/checkout@v7.0.1
@@ -75,6 +84,14 @@ jobs:
           ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
             --warmup 40 --samples 120 --period-ms 25 --output ../performance-artifact/subscribers.edn \
             2>&1 | tee ../performance-artifact/subscribers.log
+      - name: Profile rotated moving heads and competing opacity layers
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          set -o pipefail
+          ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
+            --output ../performance-artifact/movers.edn 2>&1 | tee ../performance-artifact/movers.log
       - name: Retain evidence including failures
         if: always()
         uses: actions/upload-artifact@v7.0.2
