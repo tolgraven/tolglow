@@ -1,7 +1,7 @@
 # Profiling the running show
 
 `bin/profile-master` measures a deterministic mixed rig through the real engine,
-renderer and ArtDMX encoder, then through `studio/tick!`. It never opens a network
+renderer and ArtDMX encoder, then through `show/tick!`. It never opens a network
 socket or physical output. Use an isolated paired checkout of current master:
 
 ```sh

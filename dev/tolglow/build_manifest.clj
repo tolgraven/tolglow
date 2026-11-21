@@ -27,10 +27,11 @@
   [root]
   (let [root (io/file root)
         deps (edn/read-string (slurp (io/file root "deps.edn")))
-        fork-path (get-in deps [:deps 'tolgraven/afterglow :local/root])
+        fork-path (or (System/getenv "AFTERGLOW_ROOT")
+                      (get-in deps [:deps 'tolgraven/afterglow :local/root]))
         _ (when-not (string? fork-path)
             (throw (ex-info "A paired Afterglow checkout is required" {})))
-        fork (io/file root fork-path)
+        fork (if (.isAbsolute (io/file fork-path)) (io/file fork-path) (io/file root fork-path))
         paired (project-data (io/file fork "project.clj"))
         paired-deps (into {} (map (fn [[lib & spec]] [(qualified-lib lib) (into [(qualified-lib lib)] spec)]))
                           (:dependencies paired))

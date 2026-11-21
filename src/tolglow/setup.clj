@@ -15,6 +15,7 @@
 
    [taoensso.timbre :as timbre]
    [tolglow
+    [modules :as modules]
     [config :as config :refer [at cfg param-data var-data]]
     [osc :as osc]
     [page :as page]
@@ -23,12 +24,9 @@
 
 (defn init
  ([f id & required]
-  (let [run? (or (first required) ;core component, must always run
-                 (not id) ;if no id supplied it's a random fn with no settings, so run
-                 (:enabled (cfg id) true) ;lookup fallback so will run if there is no :enabled key in map
-                 ;; (or (true? (cfg id)) (not (boolean? (cfg id)))))] ;also true if key is missing
-                 (true? (cfg id)))
-        opts (if (map? (cfg id)) (dissoc (cfg id) :enabled))]
+  (let [settings (modules/settings config/data id)
+        run? (or (first required) (nil? id) (:enabled settings true))
+        opts (dissoc settings :enabled)]
   (print "\n"(if run? "📗" "❌") (name id) "\t")  ;XXX switch to setting/codepoint
          ;; (clojure.pprint/pprint (if (map? (cfg id)) (dissoc (cfg id) :enabled) ""))
   (when (and (seq opts) (cfg :print-options)) (clojure.pprint/pprint opts))

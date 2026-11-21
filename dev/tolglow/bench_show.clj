@@ -6,8 +6,8 @@
             [afterglow.render.frame :as render]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
-            [tolglow.studio :as studio]
-            [tolglow.studio.output :as output]
+            [tolglow.show :as show]
+            [tolglow.output :as output]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
@@ -177,9 +177,9 @@
 
 (defn host-step! [runtime sink preview-indices i]
   (let [reply (when (zero? (mod i 8))
-                (studio/submit! runtime {:command-id (str "frame-" i) :op :master/set
+                (show/submit! runtime {:command-id (str "frame-" i) :op :master/set
                                          :value (+ 0.5 (* 0.01 (mod i 40)))}))]
-    (studio/tick! runtime (* 25.0 (inc i)))
+    (show/tick! runtime (* 25.0 (inc i)))
     (let [{:keys [model output status]} @(:state runtime)]
       (when (or (:error status) (:output-error status) (:reactive-error status)
                 (and reply (not= :accepted (:status @reply))))
@@ -195,15 +195,15 @@
                   (update frame :preview #(mapv (fn [v] (select-keys v [:id :pan :tilt :focus :zoom :strobe
                                                                        :emitted-color :intensity :aim :direction])) %)))
         sink (capture-sink)
-        oracle (studio/create-runtime {:model model :workers 1 :sink sink :batch? false :workspace-options nil})
+        oracle (show/create-runtime {:model model :workers 1 :sink sink :batch? false :workspace-options nil})
         expected (try (mapv #(project (host-step! oracle sink preview-indices %)) (range (+ (:warmup opts) (:samples opts))))
-                      (finally (studio/stop! oracle)))]
+                      (finally (show/stop! oracle)))]
     (mapv (fn [workers]
             (let [sink (capture-sink)
-                  runtime (studio/create-runtime {:model model :workers workers :sink sink :workspace-options nil})]
+                  runtime (show/create-runtime {:model model :workers workers :sink sink :workspace-options nil})]
               (try {:scope :host-tick :execution :workers :workers workers
                     :result (measure #(project (host-step! runtime sink preview-indices %)) #(nth expected %) opts)}
-                   (finally (studio/stop! runtime))))) (:workers opts))))
+                   (finally (show/stop! runtime))))) (:workers opts))))
 
 (defn revision [directory]
   (let [r (shell/sh "git" "rev-parse" "HEAD" :dir directory)] (when (zero? (:exit r)) (str/trim (:out r)))))

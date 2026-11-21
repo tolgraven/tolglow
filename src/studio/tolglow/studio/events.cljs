@@ -5,7 +5,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
