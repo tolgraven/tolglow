@@ -169,3 +169,27 @@ The profiling task stays open while integration continues; each agent reports it
 last measured commits and the next changed paths to recheck. A stopped agent does
 not imply an ongoing background monitor. The command and retained reports are the
 durable handoff for subsequent sessions.
+
+## Matched Afterglow comparisons
+
+Manual workflow dispatch accepts `tolglow_ref`, `afterglow_ref` and optional
+`compare_afterglow_ref`. Resolve candidate and baseline once, then run the same
+complete matrices in candidate → baseline → candidate-repeat order on one runner.
+Each pass has fresh JVMs, identical 40-frame warmup and 120-frame samples, heap,
+workloads and correctness checks. Baseline and repeat data live in separate
+artifact directories. Immutable commits are recorded before execution. Normal
+master, pull-request and weekly calls keep their previous workload and checkout
+selection; the optional comparison has its own concurrency group.
+
+This supports investigating implementation changes without comparing unrelated
+machines or silently changing the workload. Repeated tails and allocations still
+need inspection: a single favorable median does not establish an improvement.
+The workflow fails on oracle/test errors, never on a noisy timing threshold.
+
+Subscriber reports also record a wall-clock `:measurement-window` around the
+measured tick/fast-client-drain interval. Use that interval when inspecting a JFR
+allocation recording. The process first runs a deliberately expensive scalar
+oracle; including its allocations would incorrectly attribute oracle cost to
+the production typed pipeline. JFR-weighted allocation samples locate candidate
+code paths; they do not replace the recorded thread-allocation counters or an
+uninstrumented matched timing run.

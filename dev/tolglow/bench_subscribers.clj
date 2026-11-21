@@ -199,13 +199,14 @@
         (dotimes [i warmup] (run-tick i))
         (let [warm-frame (get-in @(:state runtime) [:model :frame-number])]
           (doseq [client fast] (await-frame! client warm-frame)))
-        (let [gc-before (bench/gc-snapshot) allocated-before (allocation-snapshot)
+        (let [measurement-started (java.time.Instant/now)
+              gc-before (bench/gc-snapshot) allocated-before (allocation-snapshot)
               started (System/nanoTime)
               frames (mapv #(run-tick (+ warmup %)) (range samples))
               render-end (System/nanoTime) final-frame (:frame (peek frames))
               _ (doseq [client fast] (await-frame! client final-frame))
               delivery-end (System/nanoTime) allocated-after (allocation-snapshot)
-              gc-after (bench/gc-snapshot)
+              gc-after (bench/gc-snapshot) measurement-ended (java.time.Instant/now)
               duration-ms (/ (- delivery-end started) 1e6)
               slow-before (when slow (count (:events @(:state slow))))
               slow-resume (when slow
@@ -221,6 +222,7 @@
             (when-not (= final-view (dissoc (:view @(:state client)) :status))
               (throw (ex-info "Applied subscriber view differs from current production snapshot" {:client (:name client)}))))
           {:fast-clients client-count :withheld-ack-clients (if slow 1 0)
+           :measurement-window {:from (str measurement-started) :through (str measurement-ended)}
            :visible-output-targets (count (get-in final-view [:output :values]))
            :rig-targets (count (get-in @(:patch runtime) [:compiled :target-order]))
            :host-tick-ms (bench/distribution (map :ms frames))

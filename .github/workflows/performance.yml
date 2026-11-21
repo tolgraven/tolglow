@@ -1,6 +1,19 @@
 name: Master show performance evidence
 on:
   workflow_dispatch:
+    inputs:
+      tolglow_ref:
+        description: Tolglow source revision to measure
+        type: string
+        default: master
+      afterglow_ref:
+        description: Candidate Afterglow revision to measure
+        type: string
+        default: master
+      compare_afterglow_ref:
+        description: Optional baseline Afterglow revision; run baseline then repeat candidate
+        type: string
+        default: ''
   workflow_call:
   pull_request:
     branches: [master]
@@ -26,30 +39,40 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: show-performance-${{ github.event.pull_request.number || 'master' }}
+  group: show-performance-${{ github.event.pull_request.number || (inputs.compare_afterglow_ref && github.run_id) || 'master' }}
   cancel-in-progress: false
 jobs:
   profile:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           # Reusable calls originate on the default branch (currently effects).
           # Measure master for those calls, never the caller's older source tree.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || 'master' }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || inputs.tolglow_ref || 'master' }}
           path: tolglow
-      - name: Resolve paired Afterglow master once
+      - name: Resolve paired Afterglow revision once
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: master
+          ref: ${{ inputs.afterglow_ref || 'master' }}
           path: afterglow
+      - name: Resolve optional Afterglow baseline once
+        if: inputs.compare_afterglow_ref != ''
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: ${{ inputs.compare_afterglow_ref }}
+          path: afterglow-baseline
       - name: Record immutable measured commits
         run: |
           mkdir -p performance-artifact
           git -C tolglow rev-parse HEAD > performance-artifact/tolglow-commit.txt
           git -C afterglow rev-parse HEAD > performance-artifact/afterglow-commit.txt
+          if [[ -d afterglow-baseline ]]; then
+            git -C afterglow-baseline rev-parse HEAD > performance-artifact/baseline-afterglow-commit.txt
+          fi
           date -u +%FT%TZ > performance-artifact/resolved-at.txt
       - uses: actions/setup-java@v6.3.0
         with:
@@ -71,7 +94,7 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: |
-          set -o pipefail
+          set -euo pipefail
           ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
             --warmup 40 --samples 120 --output ../performance-artifact/report.edn \
             2>&1 | tee ../performance-artifact/run.log
@@ -80,7 +103,7 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: |
-          set -o pipefail
+          set -euo pipefail
           ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
             --warmup 40 --samples 120 --period-ms 25 --output ../performance-artifact/subscribers.edn \
             2>&1 | tee ../performance-artifact/subscribers.log
@@ -89,9 +112,30 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: |
-          set -o pipefail
+          set -euo pipefail
           ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
             --output ../performance-artifact/movers.edn 2>&1 | tee ../performance-artifact/movers.log
+      - name: Compare baseline and repeat candidate on the same runner
+        if: inputs.compare_afterglow_ref != ''
+        working-directory: tolglow
+        run: |
+          set -euo pipefail
+          for pass in baseline candidate-repeat; do
+            if [[ "$pass" == baseline ]]; then
+              export AFTERGLOW_ROOT="$(cd ../afterglow-baseline && pwd)"
+            else
+              export AFTERGLOW_ROOT="$(cd ../afterglow && pwd)"
+            fi
+            mkdir -p "../performance-artifact/$pass"
+            ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
+              --warmup 40 --samples 120 --output "../performance-artifact/$pass/report.edn" \
+              2>&1 | tee "../performance-artifact/$pass/run.log"
+            ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
+              --warmup 40 --samples 120 --period-ms 25 --output "../performance-artifact/$pass/subscribers.edn" \
+              2>&1 | tee "../performance-artifact/$pass/subscribers.log"
+            ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
+              --output "../performance-artifact/$pass/movers.edn" 2>&1 | tee "../performance-artifact/$pass/movers.log"
+          done
       - name: Retain evidence including failures
         if: always()
         uses: actions/upload-artifact@v7.0.2
