@@ -49,6 +49,8 @@
             [tolglow.studio.calibration :as calibration]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.studio.audio :as audio]
+            [tolglow.integrations.audio-return :as audio-return]
+            [tolglow.integrations.audio-duplex :as duplex]
             [tolglow.studio.sync :as sync]
             [tolglow.studio.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
@@ -108,6 +110,7 @@
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
+                                   :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
 
@@ -178,6 +181,7 @@
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})
+      :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
@@ -452,6 +456,8 @@
                                                                     :version (inc (get-in model [:registry :cues id :version] 0))
                                                                     :reload-policy :preserve-state}}} time-ms)]
       (update cue-result :ack assoc :effect-id id :cue-id id))
+    :audio-return-configure
+    (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
     :settings
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
@@ -461,6 +467,7 @@
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
             settings (merge (get-in model [:settings scope]) values)
+            _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
         {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
          :ack {:status :accepted}}))
@@ -791,6 +798,7 @@
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms)
+                                     (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
@@ -951,6 +959,7 @@
                               (fn [] (doseq [observer (vals @(:observers runtime))] ((:close! observer))))
                               #(output-scheduler/close! (:publisher runtime))
                               #(effect-faults/close! (:effect-logs runtime))
+                              #(duplex/stop! (:audio-returns runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -1154,6 +1163,15 @@
     :status (assoc (audio/status (connections/audio (:connections runtime)))
                    :received-event-count (get-in @(:state runtime) [:model :variables :audio :event-count] 0))
     :inputs (audio/list-inputs)
+    :return-mixers (duplex/mixers)
+    :return-status (duplex/status (:audio-returns runtime))
+    :return-start (session-operation! runtime payload
+                    (fn [_] (duplex/start! (:audio-returns runtime) (:model @(:state runtime))
+                                           #(get @(:state runtime) :model) #(now-ms runtime)
+                                           (:open-audio-returns! runtime))))
+    :return-stop (let [manager (:audio-returns runtime)
+                       id (session-operation! runtime payload (fn [_] (:session (duplex/status manager))))]
+                   (duplex/stop! manager id))
     :start (session-operation! runtime payload
                                (fn [config]
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))

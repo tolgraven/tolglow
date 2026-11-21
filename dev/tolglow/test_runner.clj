@@ -11,7 +11,7 @@
     tolglow.composition.response-test
     tolglow.automation.random-test tolglow.automation.policy-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
-    tolglow.integrations.audio-test tolglow.integrations.providers-test
+    tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test

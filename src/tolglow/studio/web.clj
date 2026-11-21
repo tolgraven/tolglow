@@ -151,6 +151,7 @@
 
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+   "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -226,6 +227,8 @@
     "/api/rdm" (read-action rdm! :status "RDM service unavailable")
     "/api/audio" (read-action audio! :status "Audio service unavailable")
     "/api/audio/inputs" (read-action audio! :inputs "Audio service unavailable")
+    "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
+    "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
@@ -268,6 +271,7 @@
                  {"connect" :connect "disconnect" :disconnect "discover" :discover "read" :read "command" :command
                   "cancel" :cancel "associate" :associate "unassociate" :unassociate "adopt" :adopt} "RDM service unavailable")
    (post-actions "/api/audio/" audio! ok {"start" :start "stop" :stop})
+   (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))

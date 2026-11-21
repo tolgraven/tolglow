@@ -13,6 +13,25 @@
    :evidence ["Leiningen application tests cover namespace registration, ordered startup/rollback, headless device and agent settings, Transit restore into a Ring server, and shutdown."
               "Fresh-process headless smoke advanced frames with the Ring, Reitit and Studio namespaces unloaded. Normal lein run read TOLGLOW_CONFIG and served the advancing show on its allocated port."]}
  {:id :render/calibrated-moving-head-shader
+ {:id :integrations/live-audio-carrier-returns
+   :title "Render parameter carriers and route isolated Live returns into owned lighting tails"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/audio_return.clj"
+           "tolglow/src/tolglow/integrations/audio_duplex.clj"
+           "tolglow/test/tolglow/studio/audio_return_test.clj"
+           "tolglow/src/tolglow/integrations/audio_bridge/"
+           "tolglow/src/studio/tolglow/studio/audio_returns.cljs"
+           "tolglow/docs/live-audio-returns.md"]
+   :depends-on [:foundation/tests]
+   :evidence ["Real duplex PCM16 send/return through the lighting frame owner and packed DMX with silence, delay taps, decaying gain, human retrigger, disconnect and restore"
+              "Paired JVM parity 581 tests / 4842 assertions before the final stalled-reader case. Two Max bus topology tests passed."
+              "Chromium used real Ring and the optimized re-frame UI to save/reload a lane on an iPad viewport and surface missing-mixer status. No installed Live, CoreAudio hardware or physical fixtures."
+              "docs/live-audio-returns.md"]
+   :acceptance ["Encode numeric effect parameters as dry phase-continuous sine PCM"
+                "Analyze isolated processed PCM and publish confidence-gated pitch, RMS and texture sources"
+                "Render echoes after a dry activation ends without claiming a replacement activation"
+                "Route independent single-track and Drum Rack lanes over explicit virtual audio channels"]}
+  {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
    :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
