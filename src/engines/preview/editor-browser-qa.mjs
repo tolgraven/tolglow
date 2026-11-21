@@ -44,8 +44,8 @@ async function number(page, label, value) {
 }
 async function posted(page, path, action) {
   const response = page.waitForResponse(r => new URL(r.url()).pathname === path && r.request().method() === 'POST');
-  await action(); const result = await response; const body = await result.json();
-  assert.ok(result.ok(), JSON.stringify(body)); assert.notEqual(body.status, 'rejected', JSON.stringify(body)); return body;
+  await action(); const result = await response;
+  assert.ok(result.ok(), await result.text()); return result;
 }
 try {
   const {page, context, errors, panel} = await open();
@@ -84,11 +84,11 @@ try {
   await panel.getByLabel('Path ID', {exact: true}).fill(id); await panel.getByLabel('Path name').fill('QA sweeping trio');
   await panel.getByRole('checkbox', {name: fixture.name, exact: true}).click();
   await page.waitForFunction(name => [...document.querySelectorAll('.rig-targets label')].find(label => label.textContent === name)?.querySelector('input').checked, fixture.name);
-  const created = await posted(page, '/api/aim-path', () => panel.getByRole('button', {name: 'Create cue', exact: true}).click());
+  await posted(page, '/api/aim-path', () => panel.getByRole('button', {name: 'Create cue', exact: true}).click());
   const published = await state(), effect = published.effects.find(e => e.id === id);
-  assert.equal(created['effect-id'], id); assert.equal(effect.editor.points.length, 3);
+  assert.ok(published.cues.some(cue => cue.id === id && cue['effect-id'] === id)); assert.equal(effect.editor.points.length, 3);
   assert.deepEqual(effect.targets, [fixture.id]); assert.deepEqual(effect.editor.duration, {bars: 4});
-  assert.ok(!published.instances.some(i => i['cue-id'] === created['cue-id']), 'Create cue does not launch it');
+  assert.ok(!published.instances.some(i => i['cue-id'] === id), 'Create cue does not launch it');
   await number(page, 'Point 1 X', -3.125);
   await panel.getByLabel('Saved aim paths').selectOption(id);
   assert.equal((await editor(page)).points[0][0], effect.editor.points[0][0]);
@@ -96,9 +96,10 @@ try {
   await number(page, 'Duration', 8);
   const commandResponse = page.waitForResponse(r => new URL(r.url()).pathname === '/api/command' && r.request().method() === 'POST');
   await posted(page, '/api/aim-path', () => panel.getByRole('button', {name: 'Create + run', exact: true}).click());
-  const command = await commandResponse, payload = command.request().postDataJSON(), launch = await command.json();
-  assert.equal(payload.launch.mode, 'one-shot'); assert.equal(payload['cue-id'], id); assert.ok(launch['instance-id']);
-  assert.ok((await state()).instances.some(i => i.id === launch['instance-id']));
+  const command = await commandResponse, encodedCommand = command.request().postData();
+  assert.ok(command.ok(), await command.text());
+  assert.ok(encodedCommand.includes('one-shot') && encodedCommand.includes(id), 'The actual wire command selects one-shot for this cue');
+  assert.ok((await state()).instances.some(i => i['cue-id'] === id));
   console.log('desktop: path creation, saved editing and explicit one-shot run passed');
 
   const downloadPromise = page.waitForEvent('download'); await page.locator('#export-show').click();

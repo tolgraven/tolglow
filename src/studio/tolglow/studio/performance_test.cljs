@@ -91,7 +91,7 @@
     (is (= {:instance-id "4:1" :value 0.25} (:fields (command sent))))
     (is (= 0.25 (performance/opacity-value (:show base) draft [(first (get-in base [:show :instances]))])))
     (is (= 0.8 (performance/opacity-value (assoc (:show base) :revision 8) draft [(first (get-in base [:show :instances]))])))
-    (is (= [:studio/poll] (:dispatch ack)))))
+    (is (nil? (:dispatch ack)))))
 
 (deftest stale-opacity-ack-cannot-overwrite-a-newer-gesture
   (let [key (performance/target-key instance-target)

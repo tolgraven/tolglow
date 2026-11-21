@@ -7,8 +7,11 @@ component lifecycle boundaries. Do not reintroduce a parallel imperative DOM
 application in JavaScript. JavaScript WebGL and Neovim are specialized interop
 engines only; they do not own lighting commands or application UI state.
 
-Partial state projections may merge only when runtime identity, epoch and
-revision match the accepted snapshot. Preserve local parameter drafts until
+Studio owns one same-origin Transit WebSocket for show state. Apply a patch to
+the exact acknowledged token of the same runtime, show and epoch. Keep the
+decoded data in `:server-projection`. Adapt values for widgets above that
+baseline and acknowledge a frame only after installation. Request a fresh
+snapshot through the socket when the baseline is missing. Preserve drafts until
 their acknowledged revision arrives. Every asynchronous authoring/chat result
 must remain tied to the request/session that produced it; imported shows and
 replacement server processes invalidate prior work. Restoring chat history must
@@ -26,7 +29,7 @@ gesture acknowledgements/cancellations. See `docs/studio-ui.md` and
 `resources/studio/AGENTS.md`. Build with `npm run studio:build`, then browser-test
 actual semantic operations against the local captured-output Ring application.
 
-The passive `/push-display` route must never initialize show polling, WebGL,
+The passive `/push-display` route must never open a show socket, WebGL,
 editors or physical resources. Keep its synchronous snapshot API and 960×160
 layout bounded. REPL snapshots/history never trigger evaluation; capture the
 clicked source immediately and keep later typing intact. Stream callbacks belong

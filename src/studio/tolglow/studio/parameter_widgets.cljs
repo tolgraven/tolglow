@@ -1,6 +1,7 @@
 (ns tolglow.studio.parameter-widgets
   "Pure presentation shared by the web inspector and device displays."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [thi.ng.color.core :as color]))
 
 (defn label [value]
   (str/replace (cond (keyword? value) (name value) (nil? value) "—" :else (str value)) #"[-_]" " "))
@@ -14,12 +15,21 @@
             (number? value) (number-label value)
             (sequential? value) (str/join " · " (map #(if (number? %) (number-label %) (label %)) value))
             :else (label value))))
+(defn color-components [value]
+  (if (satisfies? color/IRGBConvert value)
+    (let [{:keys [r g b a]} (color/as-rgba value)] [r g b a])
+    value))
+
 (defn color-css [value]
   (cond
+    (satisfies? color/ICSSConvert value) (:col (color/as-css value))
     (and (string? value) (re-matches #"#[a-fA-F0-9]{3}(?:[a-fA-F0-9]{3})?(?:[a-fA-F0-9]{2})?" value)) value
     (and (sequential? value) (<= 3 (count value)) (every? finite? (take 3 value)))
     (str "rgb(" (str/join "," (map #(js/Math.round (* 255 (max 0 (min 1 %)))) (take 3 value))) ")")
     :else "#b6c9a9"))
+(defn swatch-css [value]
+  (if (string? value) value (color-css value)))
+
 (defn proportion [schema value]
   (let [[low high] (:bounds schema)]
     (when (and (finite? value) (finite? low) (finite? high) (< low high))
@@ -46,8 +56,8 @@
   [:span.category-tags
    (for [category (take 8 categories)]
      ^{:key (str category)}
-     [:span.category-tag {:style {"--category-color" (or (get colors category)
-                                                         (get colors (keyword (str category))) "#a8b99a")}}
+     [:span.category-tag {:style {"--category-color" (swatch-css (or (get colors category)
+                                                                    (get colors (keyword (str category))) "#a8b99a"))}}
       (label category)])])
 
 (defn parameter-kind [schema]
@@ -179,7 +189,7 @@
                  [:strong (if shown "On" "Off")] [:span "toggle"]]
        :color [:div.typed-color
                [:div.typed-color-swatch {:style {:background (color-css shown)}}]
-               (for [[index component] (map-indexed vector (take 4 shown))]
+               (for [[index component] (map-indexed vector (take 4 (color-components shown)))]
                  ^{:key index} [component-track (get ["R" "G" "B" "A"] index) {:bounds [0 1]} component
                                 (get ["#d99188" "#9fc699" "#90b9db" "#d5d3cc"] index)])]
        :range (let [[low high] shown a (proportion schema low) b (proportion schema high)]
