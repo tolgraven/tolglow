@@ -208,21 +208,34 @@
 (defn- revision [directory]
   (let [r (shell/sh "git" "rev-parse" "HEAD" :dir directory)] (when (zero? (:exit r)) (str/trim (:out r)))))
 
+(defn- source-status [directory]
+  (let [r (shell/sh "git" "status" "--short" "--" "src" "dev" "bin" "deps.edn" "project.clj" :dir directory)]
+    (when (zero? (:exit r)) (str/trim (:out r)))))
+
 (defn- system-file [path]
   ;; Some container procfs files reject FileInputStream.available().
-  (let [result (shell/sh "cat" path)] (when (zero? (:exit result)) (:out result))))
+  (when (.isFile (io/file path))
+    (let [result (shell/sh "cat" path)] (when (zero? (:exit result)) (:out result)))))
+
+(defn- cpu-model []
+  (or (some #(when (str/starts-with? % "model name") (str/trim (second (str/split % #":" 2))))
+            (str/split-lines (or (system-file "/proc/cpuinfo") "")))
+      (when (= "Mac OS X" (System/getProperty "os.name"))
+        (let [result (shell/sh "sysctl" "-n" "machdep.cpu.brand_string")]
+          (when (zero? (:exit result)) (str/trim (:out result)))))
+      "unavailable"))
 
 (defn -main [& args]
   (try
     (let [opts (options args)
           report {:benchmark :master-mixed-show :version 1 :measured-at (str (java.time.Instant/now))
                   :source-revisions {:tolglow (revision ".") :afterglow (revision (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))}
+                  :source-working-trees {:tolglow (source-status ".") :afterglow (source-status (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))}
                   :environment {:java (System/getProperty "java.version") :clojure (clojure-version)
                                 :os (System/getProperty "os.name") :architecture (System/getProperty "os.arch")
                                 :processors (.availableProcessors (Runtime/getRuntime)) :heap-bytes (.maxMemory (Runtime/getRuntime))
                                 :jvm-arguments (vec (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
-                                :cpu-model (some #(when (str/starts-with? % "model name") (str/trim (second (str/split % #":" 2))))
-                                                 (str/split-lines (system-file "/proc/cpuinfo")))
+                                :cpu-model (cpu-model)
                                 :cgroup-cpu (when (.isFile (io/file "/sys/fs/cgroup/cpu.max")) (str/trim (system-file "/sys/fs/cgroup/cpu.max")))}
                   :options (dissoc opts :output)
                   :notes ["Every packet byte, model and intent is checked against scalar compiler/general renderer; preview tolerance 1e-9."
@@ -239,7 +252,8 @@
                                        :runs (vec (concat (when (#{:all :pipeline} (:scope opts)) (pipeline-bench data opts))
                                                           (when (#{:all :host} (:scope opts)) (host-bench data opts))))})))}]
       (if-let [file (:output opts)]
-        (do (io/make-parents file) (with-open [writer (io/writer file)] (binding [*out* writer] (pprint/pprint report)))
+        (do (io/make-parents file) (with-open [writer (io/writer file)]
+                                   (binding [*out* writer pprint/*print-right-margin* 220] (pprint/pprint report)))
             (println "Wrote" file))
         (pprint/pprint report)))
     (finally (shutdown-agents))))

@@ -41,6 +41,14 @@ is direct `mapv` without dispatch.
 
 ## Keeping master under observation
 
+The `Master show performance evidence` workflow runs manually, weekly, and on
+master pushes affecting runtime/compiler/dependencies. It resolves both checkouts
+once and records their immutable SHAs before running the matrix on Java 21. Raw
+EDN and logs are retained for 90 days, including failed runs. Oracle failures fail
+the job; timings have no pass/fail threshold. Weekly runs also catch independent
+Afterglow master changes without requiring a Tolglow commit. Compare artifacts
+only after checking their source and machine metadata.
+
 On every merged change to the engine, compiler, renderer, host middleware or
 output, fetch both explicit master refs and run the relevant corpus in a clean
 paired checkout. For changes outside those paths, a small smoke run still checks
