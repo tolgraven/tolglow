@@ -1,0 +1,13 @@
+{:deps {:aliases [:cljs]}
+ :builds
+ {:studio-test {:target :node-test
+                :output-to "target/studio-tests.js"
+                :ns-regexp "tolglow.studio.events-test$"
+                :autorun true}
+  :studio {:target :browser
+           :output-dir "resources/studio/js"
+           :asset-path "/studio/js"
+           :modules {:main {:init-fn tolglow.studio.core/init!}}
+           :compiler-options {:infer-externs true :output-feature-set :es-next}
+           :devtools {:after-load tolglow.studio.core/mount!
+                      :preloads []}}}}

@@ -5,3 +5,6 @@ target/
 .nrepl-port
 *.class
 *.jar
+node_modules/
+.shadow-cljs/
+resources/studio/js/
