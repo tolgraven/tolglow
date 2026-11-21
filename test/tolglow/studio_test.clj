@@ -3,6 +3,7 @@
             [clojure.data.json :as json]
             [ring.core.protocols :as protocols]
             [tolglow.studio :as studio]
+            [tolglow.studio.transit :as wire]
             [tolglow.studio.agents :as agents]
             [tolglow.studio.output :as output]))
 
@@ -37,7 +38,8 @@
     (let [failing (assoc r :compile (fn [_] (fn [_] (throw (ex-info "bad effect" {})))))
           ack (apply-at! failing :command {:op :blackout/set :value true} 200)]
       (is (= :accepted (:status ack)))
-      (is (get-in (studio/snapshot r) [:status :error]))
+      (is (get-in (studio/snapshot r) [:instances 0 :fault]))
+      (is (nil? (get-in (studio/snapshot r) [:status :error])))
       (is (every? zero? (mapcat seq (vals (get-in @(:state r) [:output :universes]))))))))
 
 (deftest held-gesture-lease-and-instance-specific-release
@@ -72,7 +74,13 @@
     (let [handler (studio/handler r)
           saved (studio/snapshot r)
           old-id (get-in saved [:instances 0 :id])
-          exported (:body (handler {:request-method :get :uri "/api/export"}))]
+          response (handler {:request-method :get :uri "/api/export"})
+          exported (:body response)]
+      (is (= "application/transit+json" (get-in response [:headers "Content-Type"])))
+      (is (= "attachment; filename=tolglow-show.transit" (get-in response [:headers "Content-Disposition"])))
+      (let [document (wire/decode exported)]
+        (is (= 2 (:schema-version document)))
+        (is (every? bytes? (vals (get-in document [:frame-output :universes])))))
       (is (= :accepted (:status (apply-at! r :import {:source exported} 100))))
       (is (= 1 (:epoch (studio/snapshot r))))
       (is (= (:time-ms saved) (:time-ms (studio/snapshot r))))

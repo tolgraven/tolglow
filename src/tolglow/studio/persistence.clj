@@ -4,6 +4,7 @@
   (:refer-clojure :exclude [read-string])
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [tolglow.studio.transit :as wire]
             [afterglow.control.model :as control]
             [afterglow.control.system :as system]
             [afterglow.control.devices.expressive :as expressive]
@@ -26,7 +27,8 @@
             [tolglow.studio.output-scheduler :as output-scheduler]
             [tolglow.studio.routing :as routing]
             [tolglow.integrations.ableton :as ableton])
-  (:import [java.io PushbackReader StringReader]))
+  (:import [java.io PushbackReader StringReader]
+           [com.fasterxml.jackson.core JsonFactory]))
 
 (def schema-version 2)
 (def max-document-characters (* 16 1024 1024))
@@ -55,18 +57,21 @@
 (defn- portable! [value path depth]
   (check! (< depth 128) path "Show data exceeds nesting limit")
   (cond
-    (or (nil? value) (string? value) (keyword? value) (boolean? value) (char? value)) nil
+    (or (nil? value) (string? value) (keyword? value) (boolean? value) (char? value)
+        (instance? java.util.Date value) (uuid? value) (bytes? value)) nil
     (number? value) (check! (registry/finite-number? value) path "Numbers must be finite")
-    (and (map? value) (not (record? value)))
+    (and (map? value) (or (not (record? value)) (wire/color-value? value)))
     (doseq [[key child] value]
       (when (or (keyword? key) (string? key))
         (check! (not (secret-keys (str/lower-case (if (keyword? key) (name key) key))))
                 (conj path key) "Raw secrets are runtime-only; persist credential references instead"))
       (portable! key (conj path :map-key) (inc depth))
       (portable! child (conj path key) (inc depth)))
-    (or (vector? value) (set? value) (list? value))
-    (doseq [[index child] (map-indexed vector value)] (portable! child (conj path index) (inc depth)))
-    :else (fail! path "Expected portable EDN; functions, refs, records, symbols and Java objects are forbidden")))
+    (or (vector? value) (set? value) (sequential? value))
+    (doseq [[index child] (map-indexed vector value)]
+      (check! (< index max-document-characters) path "Show collection exceeds the document limit")
+      (portable! child (conj path index) (inc depth)))
+    :else (fail! path "Expected a portable show value")))
 
 (defn- validate-registry! [r]
   (check! (map? r) [:registry] "Registry must be a map")
@@ -314,24 +319,50 @@
       (validate-frame-output (:model document) (:frame-output document)))
     document))
 
+(defn- fits-file? [source]
+  (and (string? source) (<= (count source) max-document-characters)
+       (<= (alength (.getBytes ^String source java.nio.charset.StandardCharsets/UTF_8))
+           max-document-characters)))
+
+(defn- pack-universes [universes]
+  (update-vals universes
+               (fn [channels]
+                 ;; The renderer exports unsigned channels. Signed author-supplied
+                 ;; values remain vectors so their numeric convention round-trips.
+                 (if (every? #(<= 0 % 255) channels)
+                   (byte-array (map unchecked-byte channels))
+                   channels))))
+
+(defn- unpack-universes [universes]
+  (update-vals universes #(if (bytes? %) (mapv (fn [b] (bit-and b 255)) %) %)))
+
+(defn- encode-document
+  "Encode a validated show and check the actual file size."
+  [document]
+  (let [source (wire/encode (cond-> document (:frame-output document)
+                              (update-in [:frame-output :universes] pack-universes)))]
+    (check! (fits-file? source) [] "Show document exceeds the 16 MiB UTF-8 limit")
+    source))
+
+(defn- decode-document [source]
+  (let [document (wire/decode source)]
+    (cond-> document (get-in document [:frame-output :universes])
+      (update-in [:frame-output :universes] unpack-universes))))
+
+(defn- make-document [model frame-output]
+  (cond-> {:schema-version schema-version :model (validate-model model)}
+    (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
+
 (defn freeze
-  "Return the complete versioned document. Reject runtime resources/secrets;
-  never silently drop unknown domain state. IO shells and compiled plans are not
-  model fields. This function does not advance clocks or suspend the live show."
-  ([model]
-   (let [document {:schema-version schema-version :model (validate-model model)}]
-     (check! (<= (count (pr-str document)) max-document-characters)
-             [] "Show document exceeds the serialized character limit")
-     document))
+  "Return a detached, size-checked snapshot including any timestamp or binary values."
+  ([model] (freeze model nil))
   ([model frame-output]
-   (let [document (assoc (freeze model) :frame-output (validate-frame-output model frame-output))]
-     (check! (<= (count (pr-str document)) max-document-characters)
-             [] "Show document with frame output exceeds the serialized character limit")
-     document)))
+   (decode-document (encode-document (make-document model frame-output)))))
 
 (defn- remap-references [value instance-ids owner-ids]
   (letfn [(walk [value]
             (cond
+              (wire/color-value? value) value
               (map? value)
               (into {} (for [[key child] value]
                          [key (case key
@@ -371,7 +402,11 @@
                                        source (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
                                                 {:adapter :restore :epoch epoch})]]
-                             [id (-> instance (assoc :id id :source source) (dissoc :gesture-id))]))
+                             [id (-> (reduce (fn [entry field]
+                                               (if (get entry field)
+                                                 (update entry field #(assoc % :instance-id id :epoch epoch)) entry))
+                                             instance [:fault :reload-fault :retry-fault])
+                                     (assoc :id id :source source) (dissoc :gesture-id))]))
         runs (into {} (for [[id run] (:composition-runs saved)]
                         [id (assoc (remap-references run ids owners) :epoch epoch)]))
         tokens (into {} (for [[token instance-id] (:composition-tokens saved) :when (ids instance-id)]
@@ -404,20 +439,33 @@
                             :history {} :history-order []))]
     (validate-model (sensors/prepare-restored-model model))))
 
-(defn write-string "Freeze and serialize exactly one schema-2 EDN document."
-  ([model] (pr-str (freeze model)))
-  ([model frame-output] (pr-str (freeze model frame-output))))
+(defn write-string "Freeze and serialize one schema-2 show as Transit JSON."
+  ([model] (write-string model nil))
+  ([model frame-output] (encode-document (make-document model frame-output))))
+
+(def ^:private json-factory (JsonFactory.))
+
+(defn- read-transit-file [source]
+  ;; A Transit reader consumes a single value and can leave trailing input.
+  ;; Scan the document boundary without creating a second in-memory JSON tree.
+  (with-open [parser (.createParser ^JsonFactory json-factory ^String source)]
+    (check! (.nextToken parser) [] "Empty show document")
+    (.skipChildren parser)
+    (check! (nil? (.nextToken parser)) [] "Expected exactly one Transit document"))
+  (decode-document source))
+
+(defn- read-edn-file [source]
+  (with-open [reader (PushbackReader. (StringReader. source))]
+    (let [eof (Object.)
+          options {:eof eof :readers {} :default (fn [tag _] (fail! [] (str "Unsupported EDN tag " tag)))}
+          document (edn/read options reader)]
+      (check! (identical? eof (edn/read options reader)) [] "Expected exactly one show document")
+      document)))
 
 (defn read-string
-  "Read exactly one EDN document, without eval or custom tagged readers.
-  Validation happens before return; caller still uses thaw for epoch/ownership."
+  "Read a complete Transit show. Previously saved schema-2 EDN maps can also be imported."
   [source]
-  (check! (and (string? source) (<= (count source) max-document-characters))
-          [] "Show source must fit the document character limit")
-  (let [reader (PushbackReader. (StringReader. source))
-        eof (Object.)
-        options {:eof eof :readers {} :default (fn [tag _] (fail! [] (str "Unsupported EDN tag " tag)))}
-        document (edn/read options reader)]
-    (check! (not (identical? eof document)) [] "Empty show document")
-    (check! (identical? eof (edn/read options reader)) [] "Expected exactly one EDN document")
-    (validate-document! document)))
+  (check! (fits-file? source) [] "Show source must fit the 16 MiB UTF-8 limit")
+  (validate-document! (if (re-find #"^\s*\{\s*:" source)
+                        (read-edn-file source)
+                        (read-transit-file source))))

@@ -162,6 +162,11 @@ on previous movement history, so independent segments need complete checkpoints.
 
 ## Failures and regression evidence
 
+Recoverable effect faults are successful isolated transitions recorded with
+their portable journal. Healthy effects continue. Fault recordings replay across
+serial/worker execution; runtime caller frames are excluded from source traces.
+See [effect recovery](effect-fault-isolation.md).
+
 `::replay/mismatch` identifies the first changed step index, operation kind,
 changed expectation fields, and expected/actual observations. A renderer-only
 change reports `:output-digest`; an instance-state change also reports the model
