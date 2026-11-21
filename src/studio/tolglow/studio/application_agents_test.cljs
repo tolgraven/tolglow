@@ -61,6 +61,17 @@
     (is (nil? (:db stale)))
     (is (nil? (get-in closed [:studio/http :body :id])))))
 
+(deftest check-results-arrive-before-task-completion-and-only-explicit-ready-candidates-are-described-as-ready
+  (let [selected (assoc agents/defaults :selected "task-a" :tasks [{:id "task-a" :status "checking"}])
+        progress (agents/consume-events selected {:task-id "task-a" :cursor 4 :status "checking"
+                                                  :events [{:type "workspace/check" :profile "unit" :result {:status "passed" :exit-code 0}}
+                                                           {:type "workspace/check" :profile "browser" :result {:status "failed" :exit-code 1}}]})
+        summary (agents/check-summary (agents/task progress))]
+    (is (= [{:profile "browser" :status "failed" :exit-code 1} {:profile "unit" :status "passed" :exit-code 0}] (:checks summary)))
+    (is (false? (:candidate-ready? summary)))
+    (is (false? (:candidate-ready? (agents/check-summary {:status "completed" :checks {:unit {:status "passed"}}})))))
+  (is (:candidate-ready? (agents/check-summary {:candidate {:status "ready"}}))))
+
 (deftest task-identity-is-process-scoped-and-review-keeps-unsaved-file-drafts
   (let [a (agents/token base) same-process (assoc-in base [:show :epoch] 99)
         replacement (assoc-in base [:show :runtime-id] "server-b")
