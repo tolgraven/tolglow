@@ -112,7 +112,7 @@
   {:id :render/show-native-fields
    :title "Configure native effect expression rendering through the show module"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/compute.clj" "tolglow/src/tolglow/compiler/batch.clj"
+   :paths ["afterglow/src/afterglow/render/compute.clj" "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/src/tolglow/show.clj" "tolglow/test-native/tolglow/native_show_test.clj"]
    :depends-on [:render/named-glsl-fields]
    :acceptance ["Effect workers emit pure ordered requests and share one native session per show"
@@ -125,7 +125,7 @@
   {:id :render/show-native-movement
    :title "Select the post-blend Afterglow movement shader in show configuration"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/compute.clj" "tolglow/src/tolglow/show.clj"
+   :paths ["afterglow/src/afterglow/render/compute.clj" "tolglow/src/tolglow/show.clj"
            "tolglow/test-native/tolglow/native_show_test.clj" "tolglow/docs/native-shader-show.md"]
    :depends-on [:render/show-native-fields :render/afterglow-shader-execution]
    :acceptance ["Select the calibrated solver independently of expression evaluation"

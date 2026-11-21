@@ -22,5 +22,6 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
   compilation plus the real capture boundary; report excluded host/network/UI
   work. CPU batching is not SIMD or GPU execution.
 - A native-enabled compiler prepares owned field descriptions with pure Afterglow
-  functions. Open the session and evaluate requests only in the owning show.
+  functions. The show binds Afterglow’s render compute API. Keep native queue,
+  draw, wait, calibration and fallback code in the fork.
   [Native show configuration](../../../docs/native-shader-show.md)

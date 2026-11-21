@@ -11,13 +11,13 @@
             [tolglow.event-subscribers :as subscribers]
             [tolglow.events.callbacks :as event-callbacks]
             [afterglow.runtime.executor :as executor]
+            [afterglow.render.compute :as compute]
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
-            [tolglow.compute :as compute]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
@@ -151,6 +151,20 @@
                           (get before id)))]
     ((:close! observer))))
 
+(defn- compiler-context [fixtures batch? compute-owner]
+  (let [options (cond-> {:enabled? batch?}
+                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
+    {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
+
+(defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
+                       :or {batch? true frame-rate 40} :as options}]
+  (when (and (= :native-gpu compute-backend) (not batch?))
+    (throw (ex-info "Native GPU expressions require :batch? true" {})))
+  (compute/open!
+   (cond-> (select-keys options [:compute-backend :movement-backend :gpu-options])
+     (or (= :native-gpu compute-backend) (= :native-gpu movement-backend))
+     (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
+
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (calibration/disarm-restored (or model (demo/model)))
@@ -160,7 +174,7 @@
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
          patch (render/compile-patch fixtures)
-         compiler-context (atom {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures (compute/compiler-options compute-owner batch?)) :cache (atom {})})
+         compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
@@ -228,7 +242,7 @@
   :compute-backend :native-gpu acquires one session owned by this show."
   ([] (create-runtime {}))
   ([options]
-   (let [owner (compute/open! options)]
+   (let [owner (open-compute! options)]
      (try (configure-runtime owner options)
           (catch Throwable error
             (try (compute/close! owner) (catch Throwable cleanup (.addSuppressed error cleanup)))
@@ -535,7 +549,7 @@
 (defn- prepare-compiler! [runtime fixtures]
   (when-not (= fixtures (:fixtures @(:compiler-context runtime)))
     (reset! (:compiler-context runtime)
-            {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures (compute/compiler-options (:compute runtime) (:batch? runtime))) :cache (atom {})})))
+            (compiler-context fixtures (:batch? runtime) (:compute runtime)))))
 
 (defn- advance-transport [model time-ms]
   (let [transport (:transport model)

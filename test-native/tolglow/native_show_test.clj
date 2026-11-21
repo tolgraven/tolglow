@@ -4,8 +4,6 @@
             [afterglow.render.gpu.movement :as movement]
             [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
-            [tolglow.compiler.batch :as batch]
-            [tolglow.compute :as compute]
             [tolglow.demo :as demo]
             [tolglow.show :as show]))
 
@@ -67,7 +65,7 @@
                                       :gpu-options {:max-programs 2 :timeout-ms 500}})
         session (get-in runtime [:compute :session])
         rig (demo/fixtures)
-        step (batch/compile-effect wash rig (compute/compiler-options (:compute runtime) true))
+        step ((:compile runtime) wash)
         ctx {:frame {:time-ms 0.0 :fixtures rig :transport {:beat 0.0 :bpm 120.0}}
              :instance {:id "one" :phase :running :started-at-ms 0.0 :params {}}
              :state {} :intents [] :assignments [] :contributions [] :done? false}]

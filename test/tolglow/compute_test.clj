@@ -1,7 +1,6 @@
 (ns tolglow.compute-test
   (:require [afterglow.render.gpu.session :as gpu]
             [clojure.test :refer [deftest is]]
-            [tolglow.compute :as compute]
             [tolglow.show :as show]))
 
 (deftest unavailable-gpu-starts-a-working-cpu-show
@@ -21,10 +20,12 @@
 
 (deftest only-an-explicit-valid-gpu-option-acquires-a-session
   (with-redefs [gpu/open! (fn [_] (throw (AssertionError. "Unexpected GPU acquisition")))]
-    (is (= {:requested :cpu :active :cpu} (compute/status (compute/open! {}))))
+    (let [runtime (show/create-runtime)]
+      (try (is (= {:requested :cpu :active :cpu} (get-in (show/snapshot runtime) [:status :compute])))
+           (finally (show/stop! runtime))))
     (doseq [options [{:compute-backend :unknown}
                      {:movement-backend :unknown}
                      {:compute-backend :native-gpu :batch? false}
                      {:compute-backend :native-gpu :gpu-budget-ms 0}
                      {:compute-backend :native-gpu :gpu-options {:queue-capacity -2}}]]
-      (is (thrown? clojure.lang.ExceptionInfo (compute/open! options))))))
+      (is (thrown? clojure.lang.ExceptionInfo (show/stop! (show/create-runtime options)))))))
