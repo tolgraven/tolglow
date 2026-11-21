@@ -133,7 +133,16 @@ export class SceneRenderer {
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
     const output = snapshot.output?.values || {};
     const currentFixtures = new Map((rig.fixtures || []).slice(0, this.options.fixtures).map(f => [String(f.id), f]));
+    const illuminated = entry => Math.max(...emittedColor(output[entry.id] || {})) > .00001;
+    // Keep shader light/shadow counts stable across blackout and cue launches.
+    // Zero-colour slots emit no light. Prefer active lights for the fixed shadow
+    // budget, filling unused slots with dark fixtures before the first frame.
+    // Otherwise the first lit cue compiles new PBR variants on the GPU process,
+    // which can stall browser compositing even when JS runs in a worker.
+    const shadowLights = new Set(this.fixtures.filter(entry => entry.light)
+      .sort((a, b) => Number(illuminated(b)) - Number(illuminated(a))).slice(0, this.options.shadows));
     let shadowCount = 0;
+    this.activeLights = 0;
     this.lightEntries = [];
     for (const entry of this.fixtures) {
       entry.fixture = currentFixtures.get(entry.id) || entry.fixture;
@@ -143,7 +152,8 @@ export class SceneRenderer {
       entry.yoke.rotation.y = axisDegrees(entry.fixture, resolved, 'pan') * Math.PI / 180;
       entry.lensMaterial.emissive.setRGB(...rgb).multiplyScalar(8);
       if (!entry.light) continue;
-      const light = entry.light, active = Math.max(...rgb) > .00001;
+      const light = entry.light;
+      if (Math.max(...rgb) > .00001) this.activeLights++;
       light.color.setRGB(...rgb); light.intensity = 145; light.angle = Math.min(Math.PI * .45, beamAngle(entry.fixture, resolved) * 1.35);
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
       const optics = opticalFrustum(entry.fixture.position, direction, light.angle, apertureRadius(entry.fixture));
@@ -153,9 +163,9 @@ export class SceneRenderer {
       }
       light.shadow.camera.far = light.distance; light.userData.apexDistance = optics.apexDistance;
       light.target.position.copy(light.position).add(new THREE.Vector3(...direction)); light.target.updateMatrixWorld();
-      light.castShadow = active && shadowCount < this.options.shadows;
+      light.castShadow = shadowLights.has(entry);
       if (light.castShadow) shadowCount++;
-      light.visible = active;
+      light.visible = true;
       this.lightEntries.push({position: optics.optical, virtualPosition: optics.virtual, apexDistance: optics.apexDistance, apertureRadius: optics.radius, direction: optics.axis, color: light.color,
         angle: light.angle, penumbra: light.penumbra, intensity: light.intensity, distance: light.distance, shadow: light.castShadow ? light.shadow : null});
     }
@@ -256,6 +266,7 @@ export class SceneRenderer {
     } catch (error) { this.fail(error); }
   }
   draw(dt = 0) {
+    if (this.disposed || this.lost || !this.renderer) return false;
     const started = performance.now(); this.controls.update();
     const simulate = !this.reducedMotion.matches || this.clock < this.fogAnimationUntil;
     // Both preview worklights illuminate airborne material: the sky hemisphere
@@ -294,6 +305,7 @@ export class SceneRenderer {
       pixels: [this.width, this.height], frameCPUms: this.lastCPU, frameIntervalMs: this.frameInterval,
       idleBudgetMs: Math.max(0, this.frameInterval - this.lastCPU), nextFrameAt: this.nextFrameAt, frames: this.draws,
       geometryCount: this.renderer?.info.memory.geometries || 0, textureCount: this.renderer?.info.memory.textures || 0,
+      programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
       fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: MAX_LIGHTS,
       shadowCount: this.renderedShadows || 0, workLight: this.workLight, fogAmount: this.fogAmount,
       camera: this.camera?.position.toArray(), target: this.controls?.target.toArray(), fog: this.fog?.stats(),

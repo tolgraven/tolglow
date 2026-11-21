@@ -158,8 +158,8 @@ export class WorkerRoomPreview {
   pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.sendState();}
   resume() {this.paused = false; if (this.fallback) return this.fallback.resume(); this.sendState();}
   draw() {
-    if (this.fallback) {this.fallback.draw(); return Promise.resolve(true);}
     if (this.disposed || this.error) return Promise.resolve(false);
+    if (this.fallback) return Promise.resolve(this.fallback.draw() !== false);
     if (this.drawRequest) return this.drawRequest.promise;
     const id = ++this.actionId; let resolve; const promise = new Promise(done => {resolve = done;});
     this.drawRequest = {id, promise, resolve}; this.actions.push({id, type: 'draw'}); this.sendState(); return promise;

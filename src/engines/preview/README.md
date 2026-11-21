@@ -45,6 +45,11 @@ No browser effect code is evaluated. `emitted-color` is already RGBW/intensity/
 master resolved, so it is used directly, without applying those factors twice.
 Missing emitted output means an unlit fixture. Explicit worklight and environment
 illumination are preview-only and can be set to zero for a dark show.
+Spotlight slots remain present with zero RGB during blackout. The shadow budget
+has a stable slot count, preferring active fixtures and filling unused slots with
+dark fixtures. This warms the actual shader layout before readiness, avoiding a
+new light-count program when a cue starts; zero RGB still emits exactly no light.
+Telemetry separates active emission count from allocated shadow slots.
 
 Rig coordinates remain metres, Y up. The old analytic preview's tilt convention
 was wrong: the real CPU renderer uses elevation 0 along +Z and -90 degrees down.
@@ -139,13 +144,16 @@ Worker verification additionally exercises a real eight-light scene while a
 20ms UI callback continually supplies projections for ten seconds; state
 coalescing, an epoch change during an actual draw, bitmap ownership, resizing,
 disposal and an asynchronous worker startup exception all pass. In the latest
-isolated Chromium/SwiftShader run, 478 UI callbacks had a maximum gap of 45.6ms,
+isolated Chromium/SwiftShader run, 478 UI callbacks had a maximum gap of 47.1ms,
 and the renderer completed 58 frames while recovering to its 100ms software
-profile budget. First-frame shader compilation took 953ms; it did not leave a
+profile budget. First-frame shader compilation took 1030ms; it did not leave a
 multi-second idle budget on subsequent frames. `workerFrameMs` includes bitmap
 transfer cost, separately reported as `bitmapTransferMs`; these CPU/driver
 measurements are not physical-GPU timer queries. Evidence is in
-`/tmp/studio-qa/worker-test-final.log` and `/tmp/studio-qa/preview-worker-app/`.
+`/tmp/studio-qa/worker-test-stable-lights.log` and `/tmp/studio-qa/preview-worker-app/`.
+The black-to-lit transition kept all 18 linked programs, with no extra shader
+variant. GitHub CI installs the pinned Playwright Chromium and supplies its
+executable explicitly, so these browser tests cannot silently skip there.
 
 Visual acceptance remains open. The revised room is materially more detailed
 than the analytic box prototype, but thick plume billow detail, current mobile/

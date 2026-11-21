@@ -34,10 +34,13 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
         output: {values: Object.fromEntries(fixtures.map((fixture, index) => [fixture.id,
           {'emitted-color': index % 2 ? [.15, .35, .5] : [.5, .12, .03], direction: [(index - 3.5) * -.2, -1, .4], focus: .2}]))}};
       window.engine = new RoomPreview(document.querySelector('canvas'), document.querySelector('#status'));
-      engine.update(snapshot); await engine.whenReady; return engine.getTelemetry();
+      // Begin with every fixture black. The first cue must reuse the warmed
+      // light/shadow shader layout, not compile a different lit-scene program.
+      engine.update({...snapshot, output: {values: {}}}); await engine.whenReady; return engine.getTelemetry();
     });
     assert.equal(first.thread, 'worker'); assert.equal(first.ready, true); assert.equal(first.failed, null);
     assert.equal(first.fixtureCount, 8); assert.ok(first.shadowCount > 0);
+    assert.equal(first.activeLights, 0);
 
     const heartbeat = await page.evaluate(async () => {
       let previous = performance.now(), maximumGap = 0, ticks = 0, revision = 1;
@@ -53,6 +56,8 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.ok(heartbeat.telemetry.frames >= first.frames + 20, `Warmup left only ${heartbeat.telemetry.frames} frames in ten seconds`);
     assert.ok(heartbeat.telemetry.frameIntervalMs <= 250, 'Cadence must recover after shader compilation');
     assert.equal(heartbeat.telemetry.failed, null);
+    assert.equal(heartbeat.telemetry.activeLights, 8);
+    assert.equal(heartbeat.telemetry.programCount, first.programCount, 'A cue launch must not compile a new light-count shader');
 
     const fenced = await page.evaluate(async () => {
       engine.pause(); await engine.draw();
@@ -75,10 +80,11 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
       const telemetry = engine.getTelemetry(); const canvas = engine.canvas; engine.dispose();
       return {telemetry, disposed: engine.disposed, terminated: engine.worker === null,
-        channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview};
+        channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await engine.draw()};
     });
     assert.deepEqual(resized.telemetry.pixels, [360, 225]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
+    assert.equal(resized.drawAfterDispose, false);
     assert.deepEqual(errors, []);
 
     const fallback = await page.evaluate(async () => {
@@ -88,11 +94,12 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       const renderer = new RoomPreview(canvas, document.querySelector('#status'), {workerFactory: () => new Worker(url)});
       renderer.update(snapshot); await renderer.whenReady; URL.revokeObjectURL(url);
       const telemetry = renderer.getTelemetry(); renderer.dispose();
-      return {telemetry, calls, ownerRemoved: !canvas.tolglowPreview};
+      return {telemetry, calls, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await renderer.draw()};
     });
     assert.equal(fallback.telemetry.thread, 'main'); assert.equal(fallback.telemetry.ready, true);
     assert.match(fallback.telemetry.fallbackReason, /deliberate startup failure/);
     assert.equal(fallback.calls[0], 'webgl2'); assert.equal(fallback.ownerRemoved, true);
+    assert.equal(fallback.drawAfterDispose, false);
     assert.deepEqual(errors, []);
     t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, fenced, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
