@@ -136,6 +136,7 @@
    :kind :implementation :status :in-progress
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
            "tolglow/.github/workflows/performance.yml"
            "afterglow/src/afterglow/render/frame.clj" "afterglow/test/afterglow/render/frame_test.clj"
@@ -143,11 +144,14 @@
    :depends-on [:foundation/tests]
    :acceptance ["Repeatable scalar-oracle-checked 100/1000/10000-pixel and moving-head workloads"
                 "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
+                "Measure actual acknowledged WebSocket subscribers and withheld-ACK backpressure alongside identical host ticks"
                 "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
    :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
               "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
               "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
-              ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"]}
+              ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"
+              "Subscriber correctness smoke: actual Jetty/JVM clients at 1k/10k pixels +8 movers, 0/4 fast +1 withheld ACK; model/intent/packet/preview and full reconstructed view parity passed"
+              "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
   {:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
    :kind :implementation :status :done :owner nil
@@ -191,6 +195,34 @@
               "Full preview regression: 24 tests passed including actual GPU-context fog and worker startup fallback navigation/observer preservation"
               "Compiled desktop 1440x1000, iPad 1024x768 and phone 390x844 controls: actual pointer/touch hold and drag passed; page errors empty"
               "docs/preview-navigation.md; Chromium SwiftShader, no physical GPU or Safari claim"]}
+  {:id :rig/rdm-device-management
+   :title "Discover and configure RDM fixtures through an owned OLA session"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/studio/rdm" "tolglow/src/tolglow/studio/rdm.clj"
+           "tolglow/test/tolglow/studio/rdm_test.clj" "tolglow/test/tolglow/studio/rdm_host_test.clj"
+           "tolglow/src/studio/tolglow/studio/rdm.cljs" "tolglow/src/studio/tolglow/studio/rdm_test.cljs"
+           "tolglow/resources/studio/rdm.css" "tolglow/docs/rdm.md"
+           "tolglow/test/studio/rdm_browser.mjs" "tolglow/dev/tolglow/rdm_qa.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Passive rig view never discovers or changes hardware"
+                "Owned bounded RDM jobs validate replies and retain explicit errors"
+                "Show fixture bindings and observed configurations survive save/load without rearming"
+                "Address/personality edits and patch adoption remain explicit and collision checked"]
+   :evidence ["docs/rdm.md: pinned OLA wire/PID sources and explicit physical qualification limits"
+              "JVM parity 551 tests / 4617 assertions passed, including actual TCP codec, Ring/Transit, bounded cancellation, stale-session commit, save/load and concurrent frame publication"
+              "Frontend 161 tests / 860 assertions passed; optimized production build 179 files, zero warnings"
+              "Actual Ring/Chromium loopback workflow: 14 checks passed, no component errors or horizontal overflow at desktop/iPad/phone widths"
+              "dev/tolglow/rdm_qa.clj and test/studio/rdm_browser.mjs reproduce browser evidence; no physical olad/USB fixture or Safari qualification"]}
+  {:id :rig/direct-artnet-rdm
+   :title "Add direct ArtTod discovery and ArtRdm device control"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/src/tolglow/studio/rdm/artnet.clj"
+           "tolglow/test/tolglow/studio/rdm_artnet_test.clj"]
+   :depends-on [:rig/rdm-device-management]
+   :acceptance ["Verify ArtTod and ArtRdm formats against the published Art-Net specification"
+                "Reuse explicit sessions, bounded jobs and separate physical readback without sharing the DMX deadline transport"
+                "Qualify discovery and controls against protocol peers, then separately selected real nodes"]
+   :evidence []}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
   {:id :runtime/effect-fault-isolation
    :title "Isolate live-coded effect faults, recover revisions, and publish bounded diagnostics"

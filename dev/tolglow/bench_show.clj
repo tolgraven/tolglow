@@ -84,7 +84,7 @@
      :pixels pixels :movers movers
      :preview-indices (vec (concat (range (min 16 pixels)) (range pixels (+ pixels movers))))}))
 
-(defn- capture-sink []
+(defn capture-sink []
   (let [latest (volatile! [])]
     {:latest latest :description {:type :artdmx-capture :network false}
      :send! (fn [universes _] (vreset! latest (mapv (fn [[u b]] (output/artdmx-packet u 1 b)) (sort-by key universes))))
@@ -99,7 +99,7 @@
     (and (sequential? a) (sequential? b) (= (count a) (count b))) (every? true? (map approximately= a b))
     :else false))
 
-(defn- check! [expected actual]
+(defn check! [expected actual]
   (when-not (and (= (:model expected) (:model actual))
                  (= (:intents expected) (:intents actual))
                  (= (count (:packets expected)) (count (:packets actual)))
@@ -125,12 +125,12 @@
      :stages-ms {:engine (/ (- after-engine start) 1e6) :render (/ (- after-render after-engine) 1e6)
                  :preview (/ (- after-preview after-render) 1e6) :packet-encoding (/ (- end after-preview) 1e6)}}))
 
-(defn- distribution [values]
+(defn distribution [values]
   (let [xs (vec (sort values)) n (count xs) at #(nth xs (dec (max 1 (long (Math/ceil (* % n))))))]
     {:p50 (at 0.5) :p95 (at 0.95) :p99 (at 0.99) :min (first xs) :max (peek xs)
      :mean (/ (reduce + 0.0 xs) n)}))
 
-(defn- gc-snapshot []
+(defn gc-snapshot []
   (into {} (for [collector (ManagementFactory/getGarbageCollectorMXBeans)]
              [(.getName collector) {:collections (.getCollectionCount collector) :ms (.getCollectionTime collector)}])))
 
@@ -175,7 +175,7 @@
               {:scope :pipeline :execution :workers :workers workers
                :result (measure (fn [_] (pipeline data typed (executor/mapper pool) (capture-sink) false)) (constantly expected) opts)})))))
 
-(defn- host-step! [runtime sink preview-indices i]
+(defn host-step! [runtime sink preview-indices i]
   (let [reply (when (zero? (mod i 8))
                 (studio/submit! runtime {:command-id (str "frame-" i) :op :master/set
                                          :value (+ 0.5 (* 0.01 (mod i 40)))}))]
@@ -205,10 +205,10 @@
                     :result (measure #(project (host-step! runtime sink preview-indices %)) #(nth expected %) opts)}
                    (finally (studio/stop! runtime))))) (:workers opts))))
 
-(defn- revision [directory]
+(defn revision [directory]
   (let [r (shell/sh "git" "rev-parse" "HEAD" :dir directory)] (when (zero? (:exit r)) (str/trim (:out r)))))
 
-(defn- source-status [directory]
+(defn source-status [directory]
   (let [r (shell/sh "git" "status" "--short" "--" "src" "dev" "bin" "deps.edn" "project.clj" :dir directory)]
     (when (zero? (:exit r)) (str/trim (:out r)))))
 
@@ -217,7 +217,7 @@
   (when (.isFile (io/file path))
     (let [result (shell/sh "cat" path)] (when (zero? (:exit result)) (:out result)))))
 
-(defn- cpu-model []
+(defn cpu-model []
   (or (some #(when (str/starts-with? % "model name") (str/trim (second (str/split % #":" 2))))
             (str/split-lines (or (system-file "/proc/cpuinfo") "")))
       (when (= "Mac OS X" (System/getProperty "os.name"))

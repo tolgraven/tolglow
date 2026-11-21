@@ -10,7 +10,10 @@ on:
       - 'src/tolglow/studio.clj'
       - 'src/tolglow/studio/**'
       - 'dev/tolglow/bench_show.clj'
+      - 'dev/tolglow/bench_subscribers.clj'
       - 'bin/profile-master'
+      - 'bin/profile-subscribers'
+      - 'src/shared/tolglow/studio/**'
       - 'deps.edn'
       - 'project.clj'
       - '.github/workflows/tests.yml'
@@ -67,6 +70,15 @@ jobs:
           ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
             --warmup 40 --samples 120 --output ../performance-artifact/report.edn \
             2>&1 | tee ../performance-artifact/run.log
+      - name: Profile actual acknowledged Studio subscribers
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          set -o pipefail
+          ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
+            --warmup 40 --samples 120 --period-ms 25 --output ../performance-artifact/subscribers.edn \
+            2>&1 | tee ../performance-artifact/subscribers.log
       - name: Retain evidence including failures
         if: always()
         uses: actions/upload-artifact@v7.0.2
