@@ -8,30 +8,34 @@
 
 ;; Register concrete library constructors explicitly on both platforms. Keeping
 ;; each record's fields preserves alpha, color space and user-added entries.
-(defn- finite-components [fields]
-  (fn [m]
-    (every? (fn [field]
-              (let [v (get m field)]
-                (and (number? v) (#?(:clj Double/isFinite :cljs js/Number.isFinite) (double v)))))
-            fields)))
+(defn- components [ctor fields]
+  (fn [rep]
+    (when-not (every? (fn [field]
+                        (let [v (get rep field)]
+                          (and (number? v) (#?(:clj Double/isFinite :cljs js/Number.isFinite) (double v)))))
+                      fields)
+      (throw (ex-info "Expected finite color components" {:fields fields})))
+    (ctor (reduce #(update %1 %2 double) rep fields))))
 
-(defn- packed [lo hi]
-  (fn [{:keys [col]}]
-    (and (integer? col) (<= lo col hi))))
+(defn- packed [constructor coerce lo hi]
+  (fn [{:keys [col] :as rep}]
+    (when-not (and (integer? col) (<= lo col hi))
+      (throw (ex-info "Invalid packed color" {:min lo :max hi})))
+    (constructor (update rep :col coerce))))
+
+(defn- css [rep]
+  (when-not (string? (:col rep))
+    (throw (ex-info "CSS color requires a string" {})))
+  (color/map->CSS rep))
 
 (def ^:private color-types
-  [["thi.ng.color/rgba.v1" (type (color/rgba 0 0 0)) color/map->RGBA (finite-components [:r :g :b :a])]
-   ["thi.ng.color/hsla.v1" (type (color/hsla 0 0 0)) color/map->HSLA (finite-components [:h :s :l :a])]
-   ["thi.ng.color/hsva.v1" (type (color/hsva 0 0 0)) color/map->HSVA (finite-components [:h :s :v :a])]
-   ["thi.ng.color/cmyka.v1" (type (color/cmyka 0 0 0 0)) color/map->CMYKA (finite-components [:c :m :y :k :a])]
-   ["thi.ng.color/int24.v1" (type (color/int24 0)) color/map->Int24 (packed 0 16777215)]
-   ["thi.ng.color/int32.v1" (type (color/int32 0)) color/map->Int32 (packed -2147483648 4294967295)]
-   ["thi.ng.color/css.v1" (type (color/css "")) color/map->CSS (comp string? :col)]])
-
-(defn- color-fields [tag valid? value]
-  (when-not (and (map? value) (valid? value))
-    (throw (ex-info "Invalid color components" {:tag tag})))
-  value)
+  [["thi.ng.color/rgba.v1" (type (color/rgba 0 0 0)) (components color/map->RGBA [:r :g :b :a])]
+   ["thi.ng.color/hsla.v1" (type (color/hsla 0 0 0)) (components color/map->HSLA [:h :s :l :a])]
+   ["thi.ng.color/hsva.v1" (type (color/hsva 0 0 0)) (components color/map->HSVA [:h :s :v :a])]
+   ["thi.ng.color/cmyka.v1" (type (color/cmyka 0 0 0 0)) (components color/map->CMYKA [:c :m :y :k :a])]
+   ["thi.ng.color/int24.v1" (type (color/int24 0)) (packed color/map->Int24 int 0 16777215)]
+   ["thi.ng.color/int32.v1" (type (color/int32 0)) (packed color/map->Int32 long -2147483648 4294967295)]
+   ["thi.ng.color/css.v1" (type (color/css "")) css]])
 
 #?(:cljs (defrecord BeatFraction [numerator denominator]))
 
@@ -63,8 +67,8 @@
            (fn [v] (fraction-parts
                     #?(:clj [(str (numerator v)) (str (denominator v))]
                        :cljs [(:numerator v) (:denominator v)]))))}
-        (map (fn [[tag cls _ valid?]]
-               [cls (transit/write-handler tag #(into {} (color-fields tag valid? %)))]))
+        (map (fn [[tag cls _]]
+               [cls (transit/write-handler tag #(into {} %))]))
         color-types))
 
 (def ^:private read-handlers
@@ -73,27 +77,27 @@
           (fn [rep]
             (let [[n d] (fraction-parts rep)]
               #?(:clj (/ (bigint n) (bigint d)) :cljs (->BeatFraction n d)))))}
-        (map (fn [[tag _ ctor valid?]]
-               [tag (transit/read-handler #(ctor (color-fields tag valid? %)))]))
+        (map (fn [[tag _ read-color]]
+               [tag (transit/read-handler
+                     (fn [rep]
+                       (when-not (map? rep) (throw (ex-info "Expected a color field map" {:tag tag})))
+                       (read-color rep)))]))
         color-types))
 
-;; The JVM implementation precomputes immutable handler tables. Its stream-bound
-;; reader/writer instances remain private to a single call. The browser library
-;; resets its message cache after each synchronous read/write.
-#?(:clj (def ^:private writer-handlers (transit/write-handler-map write-handlers))
-   :cljs (def ^:private writer (transit/writer :json {:handlers write-handlers})))
-#?(:clj (def ^:private reader-handlers (transit/read-handler-map read-handlers))
-   :cljs (def ^:private reader (transit/reader :json {:handlers read-handlers})))
+;; Each message owns its Transit cache, including when a handler rejects the
+;; message halfway through. Only the immutable handler tables are shared.
+#?(:clj (def ^:private writer-handlers (transit/write-handler-map write-handlers)))
+#?(:clj (def ^:private reader-handlers (transit/read-handler-map read-handlers)))
 
 (defn encode [value]
   #?(:clj (let [out (ByteArrayOutputStream.)]
             (transit/write (transit/writer out :json {:handlers writer-handlers}) value)
             (.toString out StandardCharsets/UTF_8))
-     :cljs (transit/write writer value)))
+     :cljs (transit/write (transit/writer :json {:handlers write-handlers}) value)))
 
 (defn decode [text]
   (when-not (string? text)
     (throw (ex-info "Expected a Transit JSON string" {})))
   #?(:clj (let [input (ByteArrayInputStream. (.getBytes ^String text StandardCharsets/UTF_8))]
             (transit/read (transit/reader input :json {:handlers reader-handlers})))
-     :cljs (transit/read reader text)))
+     :cljs (transit/read (transit/reader :json {:handlers read-handlers}) text)))
