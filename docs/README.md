@@ -32,6 +32,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | --- | --- |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
+| [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
 | [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |
@@ -54,10 +55,12 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Docker terminal](terminal.md) | Actual PTY/container lifecycle and tested limits |
 | [Restart ownership](show-restart.md) | Execution reset and in-place input callback renewal |
 | [Scene contract](architecture/preview-scene-contract.md) | Shared fixture/rig optics and active visual acceptance |
+| [3D rig editor](rig-editor.md) | Draft fixture/truss placement, direct musical aim paths, explicit cue creation and saved-path editing |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
 | [Reactive REPL](reactive.md) | Durable subscriptions, ratoms, watchers and queued actions |
 | [Fixture library](fixture-library.md) | Verified format coverage, search, validation and rig workflow |
+| [RDM fixtures](rdm.md) | Explicit OLA discovery, device configuration, readback and show associations |
 | [Aim paths](aim-paths.md) | Musical world-space path effects, guarded cue publication and persistence |
 | [Studio UI](studio-ui.md) | Frontend implementation and browser verification |
 | [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |

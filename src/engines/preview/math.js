@@ -44,5 +44,5 @@ export function beamAngle(fixture, output = {}) {
   return clamp(radians(full / 2), .012, Math.PI * .42);
 }
 export function structuralKey(rig) {
-  return JSON.stringify({room: rig?.room, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, position: f.position, rotation: f['rotation-deg'], type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: rig?.trusses || []});
+  return JSON.stringify({room: rig?.room, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
 }
