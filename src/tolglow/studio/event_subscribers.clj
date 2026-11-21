@@ -18,7 +18,8 @@
              :registry/published :page/changed :page/deleted]
    :sensor [:sensor/armed :sensor/calibrated :sensor/dropout :sensor/gesture :sensor/input-error
             :sensor/sample-rejected :sensor/threshold]
-   :sync [:sync/clock :sync/observation :sync/error :sync/input-overflow :live/execution]
+   :sync [:sync/clock :sync/observation :sync/error :sync/input-overflow :sync/control-unavailable
+          :peer/found :peer/lost :live/execution :live/status :surface/clear-feedback :surface/mode]
    :command [:command/accepted :command/rejected]
    :effect [:effect/intent :instance/finished :effect/failed :effect/recovered :effect/reload-failed :effect/reloaded]})
 

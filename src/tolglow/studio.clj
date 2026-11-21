@@ -852,7 +852,9 @@
   this process; a qualified Var or portable :implementation can be restored."
   [runtime {:keys [id middleware] :as registration}]
   (let [registration (if middleware
-                       (let [implementation (if (var? middleware)
+                       (let [_ (when-not (or (fn? middleware) (var? middleware))
+                                 (throw (ex-info "Expected middleware function or Var" {:id id})))
+                             implementation (if (var? middleware)
                                               {:type :var :symbol (str (symbol middleware))}
                                               {:type :registered :id id})
                              definition (-> registration (dissoc :middleware)
