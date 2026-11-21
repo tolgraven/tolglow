@@ -190,6 +190,18 @@ opaque handlers must be registered durably before the graph can be exported.
 
 ## Evidence and remaining integration gates
 
+Cue presets are saved as the versioned cue's optional `:saved-params` map.
+Launching resolves effect defaults, authored cue parameters, saved parameters,
+then explicit launch overrides in that order. Saving a preset captures current
+typed instance parameters without overwriting authored defaults; clearing it
+publishes a new cue version. Both operations use the common command reducer.
+Registry publication and show import validate saved values against the cue's
+selected effect version, including pinned historical effects. Composition slot
+validation uses the same selected version and precedence. The combined
+registry/persistence/composition regression gate passed **40 tests / 324
+assertions**, including rejected malformed file values and launch after restore.
+This is additional schema-2 cue data, so no file schema migration is needed.
+
 The final focused suite passed **19 tests / 165 assertions**, including rich
 active state roundtrip, older captured definitions, paused musical timers,
 composition/auto/Ableton rekeying, exact output preservation, invalid data

@@ -1109,12 +1109,16 @@
                                             :emit! emit! :done! done!})))}))
 
 (defn start!
-  "Start the studio. Physical Art-Net output is enabled only by :artnet options."
+  "Start the studio in preview, or explicitly select :ola or :artnet output."
   ([] (start! {}))
-  ([{:keys [port host artnet frame-rate] :or {port 8500 host "127.0.0.1" frame-rate 40} :as options}]
+  ([{:keys [port host frame-rate] :or {port 8500 host "127.0.0.1" frame-rate 40} :as options}]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (when artnet (output/open-artnet! artnet))
-         runtime (create-runtime (assoc options :sink sink :independent-output? true))
+   (let [sink (output/open-sink! options)
+         runtime (try (create-runtime (assoc options :sink sink :independent-output? true))
+                      (catch Throwable error
+                        (when sink
+                          (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
+                        (throw error)))
          scheduler (Executors/newSingleThreadScheduledExecutor)]
      (try
        (reset! (:scheduler runtime) scheduler)
@@ -1126,11 +1130,43 @@
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))
 
+(defn parse-options
+  "Parse Studio CLI options without opening output or starting the web server."
+  [args]
+  (when (odd? (count args))
+    (throw (ex-info "Studio options require flag/value pairs" {})))
+  (let [allowed #{"--host" "--port" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
+        options (reduce (fn [result [flag value]]
+                          (when-not (allowed flag)
+                            (throw (ex-info "Unknown Studio option" {:option flag})))
+                          (when (contains? result flag)
+                            (throw (ex-info "Duplicate Studio option" {:option flag})))
+                          (assoc result flag value)) {} (partition 2 args))
+        ola? (or (contains? options "--ola-host") (contains? options "--ola-port"))
+        artnet? (or (contains? options "--artnet-host") (contains? options "--artnet-port"))
+        output (get options "--output" (cond ola? "ola" artnet? "artnet" :else "preview"))
+        port-number (fn [flag default minimum]
+                      (let [value (try (Long/parseLong (get options flag default))
+                                       (catch NumberFormatException _
+                                         (throw (ex-info "Port must be an integer" {:option flag}))))]
+                        (when-not (<= minimum value 65535)
+                          (throw (ex-info "Port is out of range" {:option flag :value value})))
+                        value))]
+    (when-not (#{"preview" "ola" "artnet"} output)
+      (throw (ex-info "--output must be preview, ola or artnet" {})))
+    (when (or (and ola? (not= output "ola")) (and artnet? (not= output "artnet")))
+      (throw (ex-info "Choose either OLA or direct Art-Net output" {})))
+    (when (and (= output "artnet") (not (seq (get options "--artnet-host"))))
+      (throw (ex-info "Direct Art-Net requires --artnet-host" {})))
+    (cond-> {:host (get options "--host" "127.0.0.1") :port (port-number "--port" "8500" 0)}
+      (= output "ola") (assoc :ola {:host (get options "--ola-host" "127.0.0.1")
+                                     :port (port-number "--ola-port" "9010" 1)})
+      (= output "artnet") (assoc :artnet {:host (get options "--artnet-host")
+                                           :port (port-number "--artnet-port" "6454" 1)}))))
+
 (defn -main [& args]
-  (let [options (apply hash-map args)
-        runtime (start! (cond-> {:port (Long/parseLong (get options "--port" "8500"))
-                                :host (get options "--host" "127.0.0.1")}
-                          (get options "--artnet-host") (assoc :artnet {:host (get options "--artnet-host")})))]
+  (let [options (parse-options args)
+        runtime (start! options)]
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable #(stop! runtime)))
-    (println "Tolglow Studio listening on" (str "http://" (get options "--host" "127.0.0.1") ":" (get options "--port" "8500")))
+    (println "Tolglow Studio listening on" (str "http://" (:host options) ":" (:port options)))
     @(promise)))

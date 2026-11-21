@@ -78,6 +78,18 @@
                       (assoc ms-sequence :slots [])]]
     (is (thrown? clojure.lang.ExceptionInfo (composition/save (show) definition)))))
 
+(deftest composition-uses-cue-presets-before-explicit-slot-and-launch-values
+  (let [model (assoc-in (show) [:registry :cues :red :saved-params] {:level 0.7})
+        definition {:id :preset-macro :mode :macro :slots [{:cue-id :red}]}]
+    (doseq [[slot expected] [[{} 0.7] [{:params {:level 0.2}} 0.2]
+                             [{:params {:level 0.2} :launch {:params {:level 0.4}}} 0.4]]]
+      (let [started (-> model
+                        (composition/save (update-in definition [:slots 0] merge slot))
+                        (composition/start :preset-macro 0))]
+        (is (= [expected] (mapv #(get-in % [:params :level]) (vals (:instances started)))))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (composition/save (assoc-in model [:registry :cues :red :saved-params] {:level 2}) definition)))))
+
 (deftest milliseconds-continue-to-drive-the-saved-sequence-with-owned-release
   (let [saved (composition/save (show) ms-sequence)
         start (-> saved (composition/start :sequence 0) (composition/advance 0))
