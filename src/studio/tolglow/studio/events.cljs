@@ -61,15 +61,15 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? on-success on-failure timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
                  (clj->js (cond-> {:method (if (some? body) "POST" "GET") :cache "no-store"
                                   :signal (.-signal controller)
                                   :headers (cond-> {"Accept" "application/transit+json"}
-                                             (some? body) (assoc "Content-Type" "application/transit+json"
-                                                                 "X-Tolglow-Form" "studio-v1"))}
+                                             (some? body) (assoc "Content-Type" "application/transit+json")
+                                             (and (some? body) (not typed?)) (assoc "X-Tolglow-Form" "studio-v1"))}
                            (some? body) (assoc :body (transit/encode body)))))
         (.then (fn [response]
                  (-> (.text response)

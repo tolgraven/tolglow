@@ -1,17 +1,24 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :done
-   :title "Inspect the event journal and DMX, and author event subscribers in Studio"
-   :owner nil
-   :paths ["tolglow/src/studio/tolglow/studio/debug.cljs" "tolglow/src/studio/tolglow/studio/debug_socket.cljs"
-           "tolglow/src/studio/tolglow/studio/subscriber_editor.cljs" "tolglow/resources/studio/debug.css"]
-    :depends-on [:foundation/tests]
-   :evidence ["docs/studio-debug.md, test/studio/debug_browser.cjs and test/studio/debug_subscribers_browser.cjs"
-              "162 CLJS tests / 875 assertions; optimized build 181 files, zero warnings"
-              "Live isolated Jetty/Chromium event stream, native binary DMX, subscriber CRUD, clock delivery, cross-tab push, exact musical intervals, tablet and phone viewport checks passed"]
-   :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
-                                              "Inspect selected DMX universes and author real filtered, ordered subscriber actions"]}
+ [{:id :integrations/live-audio-carrier-returns
+   :title "Render parameter carriers and route isolated Live returns into owned lighting tails"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/audio_return.clj"
+           "tolglow/src/tolglow/integrations/audio_duplex.clj"
+           "tolglow/test/tolglow/studio/audio_return_test.clj"
+           "tolglow/src/tolglow/integrations/audio_bridge/"
+           "tolglow/src/studio/tolglow/studio/audio_returns.cljs"
+           "tolglow/docs/live-audio-returns.md"]
+   :depends-on [:foundation/tests]
+   :evidence ["Real duplex PCM16 send/return through the lighting frame owner and packed DMX with silence, delay taps, decaying gain, human retrigger, disconnect and restore"
+              "Paired JVM parity 581 tests / 4842 assertions before the final stalled-reader case. Two Max bus topology tests passed."
+              "Chromium used real Ring and the optimized re-frame UI to save/reload a lane on an iPad viewport and surface missing-mixer status. No installed Live, CoreAudio hardware or physical fixtures."
+              "docs/live-audio-returns.md"]
+   :acceptance ["Encode numeric effect parameters as dry phase-continuous sine PCM"
+                "Analyze isolated processed PCM and publish confidence-gated pitch, RMS and texture sources"
+                "Render echoes after a dry activation ends without claiming a replacement activation"
+                "Route independent single-track and Drum Rack lanes over explicit virtual audio channels"]}
   {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
@@ -54,6 +61,17 @@
               "Optimized build 150 files / zero warnings"
               "14 real Ring/session/browser workflows; desktop, iPad and phone layouts; no browser errors"
               "docs/expressive-mapping-ui.md; roadmap validator passed with 107 items; integrated master 9a70836"]}
+  {:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :done
+   :title "Inspect the event journal and DMX, and author event subscribers in Studio"
+   :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/debug.cljs" "tolglow/src/studio/tolglow/studio/debug_socket.cljs"
+           "tolglow/src/studio/tolglow/studio/subscriber_editor.cljs" "tolglow/resources/studio/debug.css"]
+   :depends-on [:foundation/tests]
+   :evidence ["docs/studio-debug.md, test/studio/debug_browser.cjs and test/studio/debug_subscribers_browser.cjs"
+              "162 CLJS tests / 875 assertions; optimized build 181 files, zero warnings"
+              "Live isolated Jetty/Chromium event stream, native binary DMX, subscriber CRUD, clock delivery, cross-tab push, exact musical intervals, tablet and phone viewport checks passed"]
+   :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
+                "Inspect selected DMX universes and author real filtered, ordered subscriber actions"]}
   {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
@@ -142,6 +160,15 @@
               "Aggregate parity before final closed-path metadata guard: 502 tests / 4225 assertions passed"
               "Real output changes only selected mover; full show round trip and stale admission covered"
               "docs/aim-paths.md; 3D interaction and hardware accuracy are separate gates"]}
+  {:id :sync/link-playback-and-pause-lighting
+   :title "Follow Ableton Link playback and choose the paused light output"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/ableton_link.clj" "tolglow/src/tolglow/output/pause_look.clj" "tolglow/docs/ableton-link.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Link playback edges reach the show clock through a loopback daemon" "Manual and Link pauses can select a faint ambient color or blackout" "Save and restore pairing and output settings"]
+   :evidence ["Real Carabiner-protocol TCP socket, host clock transitions, retained musical lifetimes, RGBW sink capture, master/blackout precedence and Transit restore: 3 tests / 48 assertions"
+              "Optimized Chromium at touch-tablet dimensions saved/reloaded Link pairing and ambient RGB/level, switched to blackout; test/studio/link_pause_browser.cjs"
+              "Physical Live, cross-machine phase and real fixtures remain hardware gates in docs/ableton-link.md"]}
   {:id :performance/master-mixed-rig-profiling
    :title "Profile complete mixed rigs on master and optimize measured hot paths"
    :kind :implementation :status :in-progress

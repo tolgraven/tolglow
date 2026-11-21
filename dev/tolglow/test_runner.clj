@@ -11,7 +11,7 @@
     tolglow.composition.response-test
     tolglow.automation.random-test tolglow.automation.policy-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
-    tolglow.integrations.audio-test tolglow.integrations.providers-test
+    tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
@@ -22,7 +22,7 @@
     tolglow.studio.output-test tolglow.studio.output-options-test
     tolglow.studio.fixture-host-test tolglow.studio.rig-test
     tolglow.studio.rdm-test tolglow.studio.rdm-host-test
-    tolglow.studio.sync-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
+    tolglow.studio.sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.studio.repl-test tolglow.studio.repl-manager-test tolglow.studio.repl-host-test
     tolglow.studio.workspace-test tolglow.studio.development-test tolglow.studio.restart-host-test
