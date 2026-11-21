@@ -3,8 +3,8 @@
 The new studio uses the batch compiler and mixed contribution renderer by
 default (`:batch? true`). The same path is callable from the REPL. Effects still
 receive explicit frame/instance/state context; threads, caches, publication and
-transport remain owned boundaries. Ordinary contributions, geometry and exact
-numeric expressions remain supported through explicit scalar execution paths.
+transport remain owned boundaries. Ordinary contributions and exact numeric expressions remain supported.
+Geometry fields can travel alongside colors and focus in typed batches.
 This is the new model/engine pipeline; it does not run old effect closures.
 
 ## Implemented path
@@ -59,7 +59,7 @@ The original scalar compiler is the CPU behavior reference. Automatic batching
 is conservative because its primitive operations use float64, while Clojure can
 preserve ratios, decimals and integer intermediates.
 
-- Tween, aim and direction definitions select ordinary compilation. Their
+- Tween definitions select ordinary compilation. Their
   function metadata reports `:backend :ordinary` and `:fallback-reasons`.
 - Exact literals, or nonfloating literals/positions participating in arithmetic,
   select ordinary compilation. Ratios, BigDecimals and integers outside the
@@ -73,9 +73,10 @@ preserve ratios, decimals and integer intermediates.
   explicitly select scalar compilation. Rich renderer results remain the public
   default when `:include-values? false` is not requested.
 
-The batch IR itself still exposes distinct typed aim, direction, color and focus
-fields for callers. Automatic studio geometry execution currently uses the
-scalar geometry path; no vectorized aiming or GPU physical-output claim follows.
+Tolglow compiles declarative aim points and directions into the same typed
+contributions as color and focus. Coordinates can be negative or greater than
+one. Afterglow resolves the final geometry after blending and packs the physical
+pan and tilt. The default evaluator uses float64 on the CPU.
 
 ## Preview, movement history and saving
 
