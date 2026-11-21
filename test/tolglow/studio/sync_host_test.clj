@@ -125,6 +125,51 @@
           (if (< (System/nanoTime) deadline) (do (Thread/sleep 15) (recur))
               (throw (ex-info "Timed out waiting for Live bridge" {})))))))
 
+(defn- exercise-live-parameter! [runtime manager host! instance-id]
+  (let [source "live/ableton-live/parameter/cutoff"
+        state #(get-in @(:state runtime) [:model :routing :ports source])
+        spec {:version 1 :id :filter :revision 1
+              :sources {source {:kind :automation :range [20 20000] :timeout {:beats 16}}}
+              :destinations {:level {:cue-id :ember :param :level :range [0 1] :base 0 :combine :max}}
+              :routes [{:id :cutoff :source source :destination :level}]}
+        apply! (fn [op payload]
+                 (let [receipt (show/submit! runtime op payload)] (show/tick! runtime) @receipt))]
+    (is (:accepted? (show/sync-action! runtime :learn-parameter {:id "cutoff"})))
+    (let [port (try (await-live #(do (show/tick! runtime) (state)))
+                    (catch Exception e
+                      (throw (ex-info "The learned Live parameter did not reach the patchbay"
+                                      (select-keys (sync/status manager) [:last-error :last-execution :metrics])
+                                      e))))
+          saved (get-in (sync/export-state manager) [:config :live :observed-parameters "cutoff"])]
+      (is (= :automation (:kind port)))
+      (is (= "Filter" (get-in port [:port :device-name])))
+      (is (= [20 20000] (:range port)))
+      (is (= "live_set tracks 0 devices 2 chains 0 devices 0 parameters 3" (:path saved))))
+    (is (= :accepted (:status (apply! :patch-save {:source (pr-str spec)}))))
+    (is (= :accepted (:status (apply! :patch-enabled {:enabled? true}))))
+    (is (pos? (:listeners (host! {:setParameter 15005}))))
+    (await-live #(do (show/tick! runtime) (= 15005 (:value (state)))))
+    (is (= 0.75 (get-in @(:state runtime) [:model :instances instance-id :params :level])))
+    (let [show-file (show/export-show-source runtime)]
+      (is (:accepted? (show/sync-action! runtime :forget-parameter {:id "cutoff"})))
+      (await-live #(zero? (:listeners (host! {:listeners true}))))
+      (is (empty? (get-in (sync/export-state manager) [:config :live :observed-parameters])))
+      show-file)))
+
+(defn- restore-live-parameter! [runtime show-file host!]
+  (let [receipt (show/submit! runtime :import {:source show-file})]
+    (show/tick! runtime)
+    (is (= :accepted (:status @receipt))))
+  (let [manager (connections/sync (:connections runtime))
+        source "live/ableton-live/parameter/cutoff"]
+    (is (string? (get-in (sync/export-state manager) [:config :live :observed-parameters "cutoff" :path])))
+    (await-live #(pos? (:listeners (host! {:listeners true}))))
+    (host! {:setParameter 10010})
+    (await-live #(do (show/tick! runtime) (= 10010 (get-in @(:state runtime) [:model :routing :ports source :value]))))
+    (is (:stopped? (show/sync-action! runtime :stop {})))
+    (await-live #(zero? (:listeners (host! {:listeners true}))))
+    (is (contains? (get-in (sync/export-state manager) [:config :live :observed-parameters]) "cutoff"))))
+
 (deftest recorded-and-edited-midi-clip-plays-through-real-loopback-bridge
   (let [runtime (show/create-runtime)
         server (ring.adapter.jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
@@ -172,10 +217,12 @@
             (let [instance (last (sort-by :order (vals (get-in @(:state runtime) [:model :instances]))))]
               (is (= :ember (:cue-id instance)))
               (is (= 0.5 (get-in instance [:params :level])))
-              (is (:accepted? (host! {:play true :pitch pitch :release true :arrangement true})))
-              (is (session/flush! manager))
-              (show/tick! runtime)
-              (is (= :releasing (get-in @(:state runtime) [:model :instances (:id instance) :phase]))))
+              (let [show-file (exercise-live-parameter! runtime manager host! (:id instance))]
+                (is (:accepted? (host! {:play true :pitch pitch :release true :arrangement true})))
+                (is (session/flush! manager))
+                (show/tick! runtime)
+                (is (= :releasing (get-in @(:state runtime) [:model :instances (:id instance) :phase])))
+                (restore-live-parameter! runtime show-file host!)))
             (is (= 3 (count (host! {:notes true})))))))
       (finally
         (show/stop! runtime)

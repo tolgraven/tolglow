@@ -7,6 +7,7 @@
             [afterglow.sync.midi :as midi]
             [afterglow.time :refer [finite-number?] :rename {finite-number? finite?}]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.live-parameters :as live-params]
             [tolglow.integrations.live-sync-config :as settings]
             [tolglow.integrations.live-transport :as transport])
   (:import [java.util UUID]))
@@ -27,12 +28,16 @@
                     (= (:id run) (:sync-session-id payload))
                     (string? (:event-id payload)) (<= 1 (count (:event-id payload)) 256)
                     (case kind :status (map? (:status payload)) :midi (map? (:event payload))
+                          (:parameter :parameter-error) (map? (:sample payload))
                           :handoff (#{:live :lighting "live" "lighting"} (:mode payload)) false))]
     (if-not valid? false
       (let [event (case kind
                     :status {:type :live/status :status (:status payload) :time-ms ((get-in manager [:options :now-ms]))}
                     :midi {:type :live/midi :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
                                                                     (update :origin #(if (string? %) (keyword %) %)))}
+                    (:parameter :parameter-error) {:type (if (= kind :parameter) :live/parameter :live/parameter-error)
+                                :sample (:sample payload) :event-id (:event-id payload)
+                                :time-ms ((get-in manager [:options :now-ms]))}
                     :handoff (when-let [envelope! (:envelope! (run-callbacks run))]
                                {:type :live/handoff :mode (some-> (:mode payload) name keyword) :envelope (envelope!)}))]
         (locking (:lock manager)
@@ -112,6 +117,26 @@
                                             :status-version status-version})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
+(defn edit-observed-parameter! [manager op id]
+  (when-not (live-params/valid-id? id)
+    (fail! :invalid-live-parameter-id "Use a unique name of up to 64 letters, numbers, dots, hyphens or underscores"))
+  (let [{:keys [active config]} @(:state manager)
+        table (get-in config [:live :observed-parameters])]
+    (when-not active (fail! :not-connected "Start the Live connection before changing observed sources"))
+    (case op
+      :learn-parameter
+      (do (when (or (contains? table id) (>= (count table) live-params/max-parameters))
+            (fail! :parameter-in-use "Choose an unused source name or forget an existing parameter"))
+          (live-request! manager active (str (UUID/randomUUID)) :describe-selected-parameter {:id id}))
+      :forget-parameter (queue! manager active {:type :live/forget-parameter :id id}))))
+
+(defn- update-parameter-watchers! [manager run]
+  (let [table (get-in @(:state manager) [:config :live :observed-parameters])
+        generation (str (UUID/randomUUID))]
+    (reset! (:parameter-generation run) generation)
+    (swap! (:state manager) assoc :parameter-watch nil)
+    (live-request! manager run generation :watch-parameters {:sources table :generation generation})))
+
 (defn place-in-arrangement! [manager beat request-id]
   (when-not (and (finite? beat) (<= 0 beat) (string? request-id) (<= 1 (count request-id) 128))
     (fail! :invalid-placement "Placement requires a nonnegative song beat and a stable request ID"))
@@ -152,6 +177,9 @@
             (doseq [page (partition-all 64 (pads (get-in config [:live :mappings])))]
               (live-request! manager run (str (UUID/randomUUID)) :pad-page {:pads (vec page)})))
           (reset! (:mirrored-pair run) pair))))
+    (when (and (true? (get-in result [:capabilities :observe-parameters?]))
+               (compare-and-set! (:setup-watchers? run) false true))
+      (update-parameter-watchers! manager run))
     (swap! (:state manager) assoc :recording recording)
     (emit! manager run {:type :live/status :status recording})))
 
@@ -190,12 +218,40 @@
                              {:status :indeterminate :error (error-data error) :command-id (:command-id command)}))]
            (queue! manager run {:type :live/executed :result result})))))))
 
-(defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms]}]
+(defn- remember-learned-parameter! [manager run id descriptor]
+  (let [spec (live-params/descriptor descriptor)
+        sources (get-in @(:state manager) [:config :live :observed-parameters])]
+    (when (and (not (contains? sources id)) (< (count sources) live-params/max-parameters))
+      (swap! (:state manager) assoc-in [:config :live :observed-parameters id] spec)
+      (update-parameter-watchers! manager run))))
+
+(defn- receive-parameter! [manager run {:keys [type event-id time-ms sample]}]
+  (let [live (get-in @(:state manager) [:config :live])
+        id (live-params/wire-id (:id sample))
+        generation @(:parameter-generation run)]
+    (when (and generation (= generation (:generation sample))
+               (contains? (:observed-parameters live) id))
+      (if (= :live/parameter type)
+        (when-let [observation (live-params/observation live event-id time-ms sample)]
+          (emit! manager run observation))
+        (when-let [reason (and (string? (:reason sample)) (:reason sample))]
+          (let [diagnostic {:id id :reason (subs reason 0 (min 512 (count reason)))}]
+            (swap! (:state manager) update-in [:parameter-watch :skipped] (fnil conj []) diagnostic)
+            (emit! manager run (assoc diagnostic :type :live/parameter-lost))))))))
+
+(defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms payload]}]
   (when (and (= :executed (:status response)) (#{:inspect :configure-destination} op))
     (if (= status-version @(:status-version run))
       (process-status! manager run (:result response) time-ms round-trip-ms)
       (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0))))
-  (when (= :place-in-arrangement op) (swap! (:state manager) assoc :last-execution response))
+  (when (= :executed (:status response))
+    (case op
+      :watch-parameters (when (= @(:parameter-generation run) (:id response))
+                          (swap! (:state manager) assoc :parameter-watch (:result response)))
+      :describe-selected-parameter (remember-learned-parameter! manager run (:id payload) (:result response))
+      nil))
+  (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
+    (swap! (:state manager) assoc :last-execution response))
   (if (= :inspect op)
     (when-not (= :executed (:status response))
       (swap! (:state manager) assoc :last-error (:error response)))
@@ -206,6 +262,9 @@
     :midi/control (midi-control! manager run (:event event))
     :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
                      (swap! (:status-version run) inc))
+    (:live/parameter :live/parameter-error) (receive-parameter! manager run event)
+    :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
+                               (update-parameter-watchers! manager run))
     :live/midi (let [message (:event event)]
                  (when-not (= :tolglow-feedback (:origin message))
                    (midi/observe-midi! manager run message :live :live-playback (get event :time-ms at)))
@@ -217,14 +276,15 @@
                        (emit! manager run (assoc (:result event) :type :live/execution)))
     :live/response (receive-response! manager run event)))
 
+
 (defn- prepare-state [state phase]
   (when (and (= phase :start) (>= (count (:retired state)) 16))
     (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
-  (cond-> (assoc state :bridge (bridge (:config state)) :recording nil)
+  (cond-> (assoc state :bridge (bridge (:config state)) :recording nil :parameter-watch nil)
     (or (= phase :rebind) (nil? (:retired state))) (assoc :retired [])))
 
 (defn- run-state []
-  {:status-version (atom 0) :setup-mode? (atom false) :mirrored-pair (atom nil)
+  {:status-version (atom 0) :parameter-generation (atom nil) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
    :poll-pending? (atom false) :next-poll (atom 0) :callback-ids (atom [])})
 
 (defn- tick! [manager run now]
@@ -240,15 +300,16 @@
               (tick! manager run ((get-in manager [:options :now-ms])))
               (when-let [pairing (get-in @(:state manager) [:config :live :pairing])]
                 (live-request! manager run (str (UUID/randomUUID)) :configure-destination pairing)))
-    :rebind (do (reset! (:callback-ids run) []) (reset! (:poll-pending? run) false))
+    :rebind (do (reset! (:callback-ids run) []) (reset! (:poll-pending? run) false)
+                (reset! (:setup-watchers? run) false) (reset! (:parameter-generation run) nil))
     :stopping (release-held! manager run)))
 
 (defn- adapter [factory]
   {:defaults settings/defaults :normalize settings/normalize
    :transport (fn [settings _ run-id] (factory (assoc settings :sync-session-id run-id)))
    :prepare-state prepare-state :run-state run-state :lifecycle! lifecycle! :tick! tick!
-   :status #(select-keys % [:recording :last-execution])
-   :events #{:midi/control :live/status :live/midi :live/acknowledgement :live/handoff
+   :status #(select-keys % [:recording :last-execution :parameter-watch])
+   :events #{:live/parameter :live/parameter-error :live/forget-parameter :midi/control :live/status :live/midi :live/acknowledgement :live/handoff
              :record/command :live/executed :live/response}
    :receive! receive!})
 

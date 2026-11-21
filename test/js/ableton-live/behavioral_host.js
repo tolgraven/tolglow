@@ -6,9 +6,10 @@ const { createBridge } = require("../../../resources/devices/ableton-live/node_b
 function fixture() {
   const writes = [], methods = [], entities = {}, paths = {}; let nextNote = 100;
   function object(id, props, canonicalPath) {
-    const value = { id, props, notes: new Map(),
+    const value = { id, path: canonicalPath, props, notes: new Map(), listeners: new Set(),
       get(key) { const value = this.props[key]; return Array.isArray(value) ? value : [value]; },
-      set(key, value) { writes.push({ id: this.id, key, value }); this.props[key] = value; },
+      set(key, value) { writes.push({ id: this.id, key, value }); this.props[key] = value;
+        for (const listener of this.listeners) listener(key, value); },
       call(method, argument, beat) {
         methods.push({ method, argument });
         if (method === "duplicate_clip_to_arrangement") {
@@ -41,13 +42,18 @@ function fixture() {
   object(4, { has_drum_pads: 1, drum_pads: ["id", 10, "id", 11] }, "live_set tracks 0 devices 1");
   object(10, { note: 36, name: "Old pad", chains: ["id", 20] }); object(11, { note: 37, name: "Empty", chains: [] });
   const chain = object(20, { name: "Old chain", color: 0, is_auto_colored: 1 });
+  const synthPath = "live_set tracks 0 devices 2 chains 0 devices 0";
+  object(30, {name: "Filter"}, synthPath);
+  const cutoff = object(31, {name: "Cutoff", min: 20, max: 20000, is_quantized: 0, value: 120, automation_state: 1},
+                        synthPath + " parameters 3");
+  paths["live_set view selected_parameter"] = cutoff;
   const api = key => (typeof key === "object" ? entities[key.id] : paths[key]) || { id: 0 };
   const adapter = new Adapter({ api, dictionaryCall: (object, method, data) => object.call(method, data), readDictionary: JSON.parse });
   function request(op, payload, id = "request-" + Math.random()) { return adapter.handle({ id, op, payload }); }
   function pair(extra = {}) { return request("configure-destination", { "track-index": 0, "clip-slot-index": 0, "rack-device-index": 1, ...extra }); }
   function intent(type, id, beat, songBeat, extra = {}) { return { "protocol-version": 1, "destination-id": "clip:3", epoch: 2, "command-id": id,
     "instance-id": "2:7", beat, "song-beat": songBeat, event: { type, note: 36, velocity: type === "note-on" ? 100 : 0, channel: 1, origin: "tolglow-feedback" }, ...extra }; }
-  return { api, adapter, request, pair, intent, writes, methods, notes: clip.notes, song, track, clip, chain, entities, paths };
+  return { api, adapter, cutoff, request, pair, intent, writes, methods, notes: clip.notes, song, track, clip, chain, entities, paths };
 }
 
 module.exports = { fixture };
@@ -58,11 +64,25 @@ if (require.main === module) {
     let callback;
     const max = vm.createContext({
       include() {}, TolglowLive: require("../../../resources/devices/ableton-live/live_api"),
-      LiveAPI: function (_, objectPath) {
-        if (objectPath) return host.api(objectPath);
-        let id;
-        return {set id(value) {id = value;}, get id() {return id;},
-          get(key) {return host.api({id}).get(key);}, set(key, value) {host.api({id}).set(key, value);}};
+      TolglowParameters: require("../../../resources/devices/ableton-live/parameter_observers"),
+      Task: function (fn) {
+        let timer;
+        return {schedule(delay) {timer = setTimeout(fn, delay);}, cancel() {clearTimeout(timer);}};
+      },
+      LiveAPI: function (notify, path) {
+        let target = host.api(path || ""), watched, mode = 0;
+        const current = () => mode === 1 ? host.api(path) : target;
+        const listener = (k, v) => {if (notify && k === watched) notify([k, v]);};
+        return {
+          get id() {return current().id;}, set id(id) {target.listeners?.delete(listener); target = host.api({id});},
+          get path() {return current().path;}, set mode(v) {mode = v;},
+          set property(k) {
+            target.listeners?.delete(listener); watched = k;
+            if (k && notify) target.listeners.add(listener);
+          },
+          get(k) {return current().get(k);}, set(k, v) {current().set(k, v);},
+          call(...args) {return current().call(...args);}
+        };
       },
       outlet(port, kind, json) {
         if (port === 0 && kind === "response") bridge.receive(json);
@@ -78,6 +98,11 @@ if (require.main === module) {
       const op = JSON.parse(line);
       if (op.stop) break;
       const clip = op.arrangement ? host.paths["live_set tracks 0 arrangement_clips 0"] : host.clip;
+      if (op.setParameter !== undefined) {
+        host.cutoff.set("value", op.setParameter);
+        write({listeners: host.cutoff.listeners.size});
+      }
+      if (op.listeners) write({listeners: host.cutoff.listeners.size});
       if (op.notes) write(clip ? [...clip.notes.values()] : []);
       if (op.finish) {
         host.clip.props.is_recording = 0;

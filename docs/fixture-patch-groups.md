@@ -34,10 +34,23 @@ an options map to specify its `:id`, `:position` or `:rotation-deg`. Existing
 
 An EDN venue can refer to registered fixture types by keyword. A Clojure
 config can also supply `:fixture-types` for its existing definitions and
-`:factories` for named builders. For example, `:fixture-types
-tolglow.config/fixture-types` uses the existing Tolglow library in code. A
-quoted builder name is resolved only through the supplied map. An executable
-factory runs on the submitting thread before a rig enters the show owner.
+`:factories` for named builders. A quoted builder name resolves through the
+supplied map. An executable factory runs on the submitting thread before
+a rig enters the show owner.
+
+To start with the fixtures from the included venue configuration, run this
+in a Leiningen REPL:
+
+```clojure
+(require '[tolglow.application :as app] '[tolglow.config :as venue])
+(def running (app/start! (assoc (app/default-config)
+                                :web-server false
+                                :fixtures (:fixtures venue/data))))
+```
+
+This uses the venue's original patch lists, fixture library, callable strip
+builder and ordered moving, moving-mini, wash, COB, strip and tube groups.
+Use `(app/stop! running)` when the session finishes.
 
 A fixture builder may return the original vector or sequence of channel
 records. Each independently addressable head becomes a rig target, named

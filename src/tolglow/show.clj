@@ -52,6 +52,7 @@
             [afterglow.sync.session :as session]
             [afterglow.control.devices.transports :as midi-ports]
             [tolglow.integrations.live-sync :as live-sync]
+            [tolglow.integrations.live-parameters :as live-params]
             [tolglow.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
             [tolglow.agents :as agents]
@@ -1232,6 +1233,7 @@
                        config (if map? (update config :live ableton/map-page (:registry model) page) config)]
                    (cond-> (sync/configure! manager config)
                      map? (assoc :unmapped (ableton/unmapped-fields (:live config) (:registry model) page))))
+      (:learn-parameter :forget-parameter) {:accepted? (live-sync/edit-observed-parameter! manager operation (live-params/wire-id (:id payload)))}
       :arrange {:accepted? (live-sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
       :start (do (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
                  (sync/status manager))

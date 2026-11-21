@@ -28,7 +28,7 @@ can edit the same saved description without introducing another effect engine.
 `validate-patch` returns canonical data or throws before evaluation. Sources have
 a declared kind (`:midi`, `:automation`, `:audio`, `:control`), calibrated range,
 positive timeout and confidence floor. Kind describes the supplied observation;
-declaring an automation source does not create a Live observer. The graph is
+a learned Live device parameter supplies an automation source. The graph is
 bounded to 128 sources, 128 destinations and 512 routes. Routes connect declared
 inputs directly to declared outputs; output-to-input edges are not accepted.
 
@@ -91,6 +91,17 @@ from bytes; wiring both ends of a loop still requires an explicit routing policy
 
 See [Live audio sends and returns](live-audio-returns.md) for the multichannel PCM carrier and post-FX return path.
 
+## Existing device automation
+
+With a connected bridge, select a Live device or mixer parameter and choose
+**Learn selected parameter** in Studio Connections. The source appears under its
+stable `live/<source>/parameter/<id>` ID in the patchbay. Device or mixer changes
+and played-back automation feed the same graph in the parameter's native range.
+The source reports whether Live is playing automation or has an override.
+Its saved name and path can be restored across Live sessions. For gain, echoes
+or relative modulation visible only in the resulting sound, use an audio return.
+[Bridge setup and supported source types](../resources/devices/ableton-live/README.md)
+
 ## Sources available at the current boundary
 
 The sync manager emits one `:sync/observation` event for each captured note or CC,
@@ -112,7 +123,7 @@ the other.
 Current Live MIDI capture is the companion device's routed MIDI stream, which
 may include existing clip playback on that track. It is **not** a subscription
 to every Session View track or Drum Rack chain. Session-wide note routing,
-automation observers and MSP audio-feature emitters remain separate bridge work.
+learned Live parameter observers publish native-range automation values. MSP audio-feature emitters use the separate audio-return boundary.
 The patch kernel and source `:kind` fields do not imply those capabilities exist.
 
 ## Verified Live APIs and limits
