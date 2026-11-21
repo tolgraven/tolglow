@@ -1,6 +1,10 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { createWorker, launchOwned, localDisplayUrl } = require("./worker.js");
 
 function harness(overrides = {}) {
@@ -73,4 +77,28 @@ test("owned Chromium server is killed when graceful shutdown fails", async () =>
   assert.deepEqual(calls, ["close", "kill"]);
   await assert.rejects(launchOwned({ ...chromium, connect: async () => { throw new Error("connect failed"); } }, {}), /connect failed/);
   assert.deepEqual(calls, ["close", "kill", "kill"]);
+});
+
+test("an extracted worker resolves the installed module from the launch directory or explicit override", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tolglow-display-resolve-"));
+  try {
+    const script = path.join(root, "extracted", "worker.cjs"), cwd = path.join(root, "application");
+    const modulePath = path.join(cwd, "node_modules", "playwright-core");
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.mkdirSync(modulePath, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, "worker.js"), script);
+    // Distinct errors prove which real Node module was loaded, before any
+    // browser startup. An extracted worker cannot resolve this via __dirname.
+    fs.writeFileSync(path.join(modulePath, "index.js"), "throw new Error('installed launch-directory module');");
+    const override = path.join(root, "explicit-playwright.cjs");
+    fs.writeFileSync(override, "throw new Error('explicit module override');");
+    for (const [config, expected] of [[{}, "installed launch-directory module"],
+      [{ playwrightModule: override }, "explicit module override"]]) {
+      const result = spawnSync(process.execPath, [script, JSON.stringify(config)],
+        { cwd, encoding: "utf8", timeout: 10000 });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1);
+      assert.deepEqual(JSON.parse(result.stdout), { status: "failed", error: expected });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -4,6 +4,7 @@
   (:gen-class)
   (:require [afterglow.control.model :as control]
             [afterglow.control.categories :as categories]
+            [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
@@ -21,12 +22,14 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.studio.waveforms :as waveforms]
+            [tolglow.studio.expressive :as expressive]
             [tolglow.automation.policy :as policy]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.composition :as composition]
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -138,6 +141,7 @@
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
+      :browser-projections (projection/create)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
@@ -398,8 +402,10 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      {:model (-> model (update-in [:settings scope] merge values) (update :revision inc))
-       :ack {:status :accepted}})
+      (let [settings (merge (get-in model [:settings scope]) values)
+            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
+        {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
+         :ack {:status :accepted}}))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state
@@ -770,7 +776,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(output-scheduler/close! (:publisher runtime))
+                             [#(projection/clear! (:browser-projections runtime))
+                              #(output-scheduler/close! (:publisher runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -906,7 +913,8 @@
       (submit! runtime :import {:source (str source)}))))
 
 (defn browser-snapshot
-  "Bound preview values; omit unchanged authoring data on conditional polls."
+  "Bound preview values. Delta clients receive versioned, exact-base envelopes;
+  inspection requests can retrieve a complete or authoring-conditional view."
   [runtime query]
   (let [view (snapshot runtime)
         preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
@@ -915,10 +923,13 @@
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]
-    (if partial?
+    (cond
+      (= "delta-v1" (get query "projection"))
+      (projection/project! (:browser-projections runtime) view (get query "base"))
+      partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
-      view)))
+      :else view)))
 
 (defn fixture-action!
   "Fixture library operations; publication and patching join the owner queue."
@@ -1114,6 +1125,18 @@
             :fixture! #(fixture-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
+            :expressive! (fn [payload]
+                           (let [wire-id #(if (keyword? %) (subs (str %) 1) %)
+                                 options (some (fn [[id device]]
+                                                 (let [options (:options device)]
+                                                   (when (= (wire-id (:device-id payload))
+                                                            (wire-id (or (:mapping-id options) id))) options)))
+                                               @(:devices runtime))
+                                 profile (when options
+                                           {:id (get-in options [:profile :id])
+                                            :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                                            :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+                             (expressive/preview (:model @(:state runtime)) payload profile)))
             :patch! #(:patch (snapshot runtime))
             :repl! #(repl-action! runtime %1 %2)
             :repl-eval! #(repl-eval! runtime %1 %2 %3)
