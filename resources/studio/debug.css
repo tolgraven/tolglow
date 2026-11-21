@@ -25,7 +25,12 @@
 .debug-row time,.debug-event-name strong,.debug-channel strong,.debug-inspector pre,.debug-catalog code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums }
 .debug-row time,.debug-recipients,.debug-event-name small { color:var(--muted); font-size:12px; overflow-wrap:anywhere }
 .debug-event-name { display:grid; gap:4px; min-width:0; overflow-wrap:anywhere }
-.debug-event-name strong { font-size:13px; font-weight:560; color:var(--debug-mint) }
+.debug-event-name strong { font-size:13px; font-weight:560; color:var(--event-color,var(--debug-mint)) }
+.debug-row[data-category=audio] { --event-color:#e5bf84 }
+.debug-row[data-category=effect] { --event-color:#c9aedb }
+.debug-row[data-category=sensor] { --event-color:#96c9dc }
+.debug-row[data-category=command] { --event-color:#d8ce99 }
+.debug-inspector { margin-bottom:12px }
 .debug-gap { color:#e6bc83; font-size:13px }
 .debug-empty { margin:0; padding:24px 12px; color:var(--muted); border:1px dashed var(--debug-line); border-radius:8px }
 .debug-inspector,.debug-editor,.debug-subscribers,.debug-dmx { margin-top:12px; min-width:0 }

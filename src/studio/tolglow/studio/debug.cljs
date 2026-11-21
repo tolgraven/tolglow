@@ -122,11 +122,22 @@
       [:button.button {:aria-pressed (some? (:frozen debug)) :on-click #(emit! [:debug/freeze])}
        (if (:frozen debug) (str "Resume · " (- (or (:cursor debug) 0) (or (:frozen-cursor debug) 0)) " new") "Pause feed")]]
      [filters rows (:filters debug)]
+     (when selected
+       [:section.debug-inspector
+        [:div.debug-feed-tools [:h3 (label (:type selected))] [:button.button {:on-click #(emit! [:debug/select-row nil])} "Close detail"]]
+        [:dl (for [[k v] [["Event" (:id selected)] ["Emitter" (pr-str (:emitter selected))]
+                          ["Subscribers" (subscribers-label (:subscribers selected))]
+                          ["Delivery" (case (:delivery selected) :observed "Observed" :matched "Matched" "Unobserved")]
+                          ["Timestamp" (some-> (:timestamp selected) .toISOString)]
+                          ["Beat" (get-in selected [:time :beat])] ["Frame" (get-in selected [:time :frame-number])]
+                          ["Epoch" (get-in selected [:time :epoch])]]]
+               ^{:key k} [:div [:dt k] [:dd (str (or v "—"))]])]
+        [:pre (pr-str (:data selected))]])
      (if (seq visible)
        [:div.debug-event-list
         [:div.debug-table-head [:span "Local time"] [:span "Event / emitter"] [:span "Subscribers"]]
         (for [{:keys [id timestamp type category emitter subscribers]} shown]
-          ^{:key id} [:button.debug-row {:type "button" :aria-pressed (= (:id selected) id)
+          ^{:key id} [:button.debug-row {:type "button" :data-category (label category) :aria-pressed (= (:id selected) id)
                                          :on-click #(emit! [:debug/select-row (when (not= id (:id selected)) id)])}
                       [:time {:date-time (when (instance? js/Date timestamp) (.toISOString timestamp))} (format-clock timestamp)]
                       [:span.debug-event-name [:strong (label type)] [:small (str (label category) " · " (label (:id emitter)))]]
@@ -134,16 +145,7 @@
        [:p.debug-empty (if (seq rows) "No events match these filters." "Waiting for emitted events.")])
      (when (< (count shown) (count visible))
        [:button.button {:on-click #(emit! [:debug/more])} "Show older events"])
-     (when selected
-       [:section.debug-inspector
-        [:div.debug-feed-tools [:h3 (label (:type selected))] [:button.button {:on-click #(emit! [:debug/select-row nil])} "Close detail"]]
-        [:dl (for [[k v] [["Event" (:id selected)] ["Emitter" (pr-str (:emitter selected))]
-                          ["Subscribers" (subscribers-label (:subscribers selected))]
-                          ["Timestamp" (some-> (:timestamp selected) .toISOString)]
-                          ["Beat" (get-in selected [:time :beat])] ["Frame" (get-in selected [:time :frame-number])]
-                          ["Epoch" (get-in selected [:time :epoch])]]]
-               ^{:key k} [:div [:dt k] [:dd (str (or v "—"))]])]
-        [:pre (pr-str (:data selected))]])]))
+     ]))
 (defn- dmx [debug]
   (let [universes @(rf/subscribe [:debug/universes])
         channel-bank (:bank debug 0) start (* 64 channel-bank) packet (:packet debug)

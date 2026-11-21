@@ -128,7 +128,8 @@
             (when (and (nil? original) (contains? (registered db) id))
               (throw (js/Error. "A subscriber already has this ID.")))
             {:db (-> db (assoc-in [:debug :saving?] true) (update :debug dissoc :catalog-error :saved))
-             :subscribers/http {:body (merge {:expected-epoch (:epoch editing-show) :runtime-id (:runtime-id editing-show)}
+             :subscribers/http {:body (merge {:expected-epoch (:epoch editing-show) :runtime-id (:runtime-id editing-show)
+                                              :expected-subscriber original}
                                               (if (= op :remove) {:op :remove :id id} {:op :save :subscriber subscriber}))
                                 :ok [:subscribers/saved g op id] :fail [:subscribers/error g]}})
           (catch :default e {:db (assoc-in db [:debug :catalog-error] (.-message e))}))))))
@@ -158,11 +159,20 @@
      ^{:key (title item)} [:button.debug-chip {:type "button" :aria-label (str "Remove " (title item))
                                               :on-click #(change (filterv (partial not= item) selected))}
                            (str (title item) " ×")])])
-(defn- action-view [i action registry num-steps options]
+(defn- candidate-options [registry catalog op]
+  (let [kinds (case op :cue/launch [:cues] :effect/launch [:effects] [:instances :cues :effects])]
+    (->> (for [kind kinds
+              :let [eligible (set (get-in catalog [:candidates kind]))]
+              item (get registry kind)
+              :when (contains? eligible (:id item))]
+          [(:id item) (str (case kind :instances "Instance" :effects "Effect" "Cue") " · "
+                           (or (:name item) (title (:id item))))])
+         (into {}) (sort-by (comp title first)) vec)))
+
+(defn- action-view [i action registry num-steps catalog]
   (let [path [:actions i] set-at (fn [field v] (input! (into path field) v))
         op (:op action) select (:select action)
-        items (case op :cue/launch (:cues registry) :effect/launch (:effects registry) (:instances registry))
-        options (distinct (concat options [op]))]
+        options (distinct (concat (:actions catalog) [op]))]
     [:fieldset.debug-action
      [:legend (str "Step " (inc i))]
      [:div.debug-action-head
@@ -173,19 +183,22 @@
          ^{:key caption} [:button.button {:disabled disabled? :type "button" :aria-label (str (case caption "↑" "Move up" "↓" "Move down" "Remove") " step " (inc i))
                                          :on-click #(dispatch [:subscribers/step i dest])} caption])]]
      (if (= op :callback)
-       (let [{:keys [type symbol namespace form]} (:implementation action)]
+       (let [{:keys [type symbol namespace form id]} (:implementation action)]
          [:div.debug-fields
-          [select-box "Callback" type [[:var "Named Clojure var"] [:source "Clojure source"]]
-           #(set-at [:implementation] (if (= % :var) {:type :var :symbol ""} {:type :source :namespace "user" :form "" :bindings {}}))]
-          (if (= type :var)
-            [:label "Function" [:input {:placeholder "show.effects/on-event" :value symbol :on-change #(set-at [:implementation :symbol] (raw %))}]]
+          [select-box "Callback" type [[:registered "Registered function"] [:var "Named Clojure var"] [:source "Clojure source"]]
+           #(set-at [:implementation] (case % :registered {:type :registered :id nil} :var {:type :var :symbol ""}
+                                       {:type :source :namespace "user" :form "" :bindings {}}))]
+          (case type
+            :registered [:label "Registered function ID" [:input {:value (title id) :placeholder "show/hit"
+                                                                  :on-change #(set-at [:implementation :id] (some-> (raw %) not-empty keyword))}]]
+            :var [:label "Function" [:input {:placeholder "show.effects/on-event" :value symbol :on-change #(set-at [:implementation :symbol] (raw %))}]]
             [:<> [:label "Namespace" [:input {:value namespace :on-change #(set-at [:implementation :namespace] (raw %))}]]
              [:label.debug-full "Callback source" [:textarea {:spell-check false :value form :placeholder "(fn [context event] context)"
                                                               :on-change #(set-at [:implementation :form] (raw %))}]]])])
        [:div.debug-fields
         [select-box "Choose" (:pick select) [[:random "Random match"] [:first "First match"] [:all "All matches"]]
          #(set-at [:select :pick] %)]
-        [tags "Candidate IDs" (:ids select) (mapv (fn [item] [(:id item) (or (:name item) (title (:id item)))]) items)
+        [tags "Candidate IDs" (:ids select) (candidate-options registry catalog op)
          #(set-at [:select :ids] %)]
         [tags "Categories" (:categories select) (choices (sort-by title (keys (:category-colors registry)))) #(set-at [:select :categories] %)]
         [select-box "Page" (:page-id select) (into [[nil "All pages"]] (map (fn [{:keys [id name]}] [id (or name (title id))]) (:pages registry)))
@@ -221,7 +234,7 @@
         (for [{:keys [id enabled? match actions] :as sub} registered]
           ^{:key id} [:button.debug-registration {:disabled saving? :on-click #(dispatch [:subscribers/edit sub])}
                       [:strong (title id)] [:span (or (some-> (:type match) title) "Any event")]
-                      [:small (str (count actions) " actions · " (if enabled? "Enabled" "Disabled"))]])]
+                      [:small (str (count actions) " actions · " (if (false? enabled?) "Disabled" "Enabled"))]])]
        [:p.debug-empty (if catalog "No subscribers registered." "Loading subscriber catalog…")])
      (when form
        [:form.debug-editor {:on-submit (fn [e] (.preventDefault e) (dispatch [:subscribers/submit :save]))}
@@ -236,10 +249,10 @@
            #(input! [:match :category] %)]
           [:label "Emitter ID" [:input {:value (str (:emitter-id match)) :placeholder ":audio/input or device ID"
                                         :on-change #(let [v (raw %)] (input! [:match :emitter-id] (not-empty v)))}]]
-          [:label.debug-check [:input {:type "checkbox" :checked (boolean (:enabled? form))
+          [:label.debug-check [:input {:type "checkbox" :checked (get form :enabled? true)
                                        :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
          (for [[i action] (map-indexed vector (:actions form))]
-           ^{:key i} [action-view i action registry (count (:actions form)) (:actions catalog)])
+           ^{:key i} [action-view i action registry (count (:actions form)) catalog])
          [:div.debug-form-actions
           [:button.button {:type "button" :on-click #(dispatch [:subscribers/append])} "Add step"]
           [:button.button.primary {:type "submit"} (if saving? "Saving…" "Save subscriber")]

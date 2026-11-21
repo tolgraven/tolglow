@@ -29,7 +29,10 @@ const {chromium} = require('playwright-core');
     assert.match(await root.locator('.debug-inspector').innerText(), /Timestamp/);
     const type = await row.locator('strong').innerText();
     await root.getByLabel('Event type', {exact:true}).selectOption(type);
-    assert((await root.locator('.debug-row strong').allInnerTexts()).every(v => v===type));
+    await page.waitForFunction(type => {
+      const rows = [...document.querySelectorAll('#view-debug .debug-row strong')];
+      return rows.length && rows.every(row => row.textContent === type);
+    }, type);
     await paused.click();
     if (process.env.STUDIO_QA_IMAGES) await page.screenshot({path:process.env.STUDIO_QA_IMAGES+'/debug-events.png'});
 
@@ -38,7 +41,7 @@ const {chromium} = require('playwright-core');
     await root.locator('.debug-channel').first().waitFor();
     assert.equal(await root.locator('.debug-channel').count(), 64);
     await root.getByLabel('Channel bank').selectOption('7');
-    assert.match(await root.locator('.debug-channel').last().getAttribute('aria-label'), /^Channel 512, value \d+$/);
+    await root.locator('.debug-channel[aria-label^="Channel 512, value "]').waitFor();
     if (process.env.STUDIO_QA_IMAGES) await page.screenshot({path:process.env.STUDIO_QA_IMAGES+'/debug-dmx.png'});
     for (const [width,height] of [[834,1112],[390,844]]) {
       await page.setViewportSize({width,height});
