@@ -86,10 +86,11 @@
                output (assoc :output-index (:index output) :expected-output-name (:name output)))
         live (:live form) pairing (:pairing live)
         pairing (when pairing
-                  (cond-> {:track-index (integer! (:track-index pairing 0) "Live track index" 0 10000)
+                  (cond-> {:track-index (integer! (:track-index pairing 0) "Live track index" 0 9999)
                            (if (contains? pairing :arrangement-index) :arrangement-index :clip-slot-index)
-                           (integer! (or (:arrangement-index pairing) (:clip-slot-index pairing) 0) "Live clip index" 0 9999)
-                           :rack-device-index (integer! (:rack-device-index pairing 0) "Rack device index" 0 10000)}
+                           (integer! (or (:arrangement-index pairing) (:clip-slot-index pairing) 0) "Live clip index" 0 9999)}
+                    (seq (str (:rack-device-index pairing)))
+                    (assoc :rack-device-index (integer! (:rack-device-index pairing) "Rack device index" 0 9999))
                     (seq (:expected-track-name pairing)) (assoc :expected-track-name (:expected-track-name pairing))
                     (seq (:expected-clip-name pairing)) (assoc :expected-clip-name (:expected-clip-name pairing))))]
     (when (and (:enabled? midi) (nil? input) (nil? output)) (throw (js/Error. "Choose at least one MIDI input or output before enabling it.")))
@@ -462,7 +463,7 @@
          [:div.form-row
           [field s [:sync-form :live :pairing :track-index] "Track index · from 0" {:id "live-track" :input-mode "numeric" :disabled disabled?}]
           [field s [:sync-form :live :pairing (if (contains? (:pairing live) :arrangement-index) :arrangement-index :clip-slot-index)] "Clip index · from 0" {:id "live-slot" :input-mode "numeric" :disabled disabled?}]
-          [field s [:sync-form :live :pairing :rack-device-index] "Rack device index · from 0" {:id "live-rack" :input-mode "numeric" :disabled disabled?}]]
+          [field s [:sync-form :live :pairing :rack-device-index] "Rack device index · optional" {:id "live-rack" :input-mode "numeric" :disabled disabled?}]]
          [:div.form-row
           [field s [:sync-form :live :pairing :expected-track-name] "Expected track name · optional" {:disabled disabled?}]
           [field s [:sync-form :live :pairing :expected-clip-name] "Expected clip name · optional" {:disabled disabled?}]]])

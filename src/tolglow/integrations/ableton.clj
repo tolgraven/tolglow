@@ -3,6 +3,7 @@
   are bridge intents: a Live-side Max/Remote Script adapter must execute them.
   MIDI alone does not expose Live recording state or editable clips."
   (:require [afterglow.time :as musical-time]
+            [thi.ng.color.core :as color]
             [tolglow.registry :as registry]))
 
 (defn- fail! [message data] (throw (ex-info message data)))
@@ -20,7 +21,10 @@
      (fail! "A Drum Rack page requires at most 64 pads in MIDI range" {}))
    (mapv (fn [index]
            (let [cue (nth (vec cues) index nil)
-                 color (or (:color cue) [0 0 0])
+                 source (:color cue)
+                 color (cond (satisfies? color/IRGBConvert source) ((juxt :r :g :b) (color/as-rgba source))
+                             (nil? source) [0 0 0]
+                             :else source)
                  _ (when-not (and (vector? color) (= 3 (count color))
                                    (every? #(and (number? %) (Double/isFinite (double %)) (<= 0 % 1)) color))
                      (fail! "Pad color must be normalized RGB" {:cue-id (:id cue)}))
@@ -38,6 +42,26 @@
     :boolean {:type :boolean}
     :enum (when (<= 1 (count (:values schema)) 127) (select-keys schema [:type :values]))
     nil))
+
+(defn bind-registry-ids
+  "Resolve string or keyword wire identities to the registry's original data.
+  Preserve the saved velocity order of enum values across registry revisions."
+  [live registry]
+  (letfn [(resolve-id [entries id]
+            (let [other (cond (keyword? id) (subs (str id) 1) (string? id) (keyword id))]
+              (if (or (contains? entries id) (not (contains? entries other))) id other)))
+          (bind-target [target]
+            (let [cue-id (resolve-id (:cues registry) (:cue-id target))
+                  target (assoc target :cue-id cue-id)]
+              (if-let [param (:param target)]
+                (let [schemas (:params (registry/cue-effect registry (get-in registry [:cues cue-id])))
+                      param (resolve-id schemas param)
+                      choices (set (get-in schemas [param :values]))]
+                  (cond-> (assoc target :param param)
+                    (:values target) (update :values #(mapv (partial resolve-id choices) %))))
+                target)))
+          (bind-table [table] (into {} (map (fn [[control target]] [control (bind-target target)]) table)))]
+    (-> live (update :mappings bind-table) (update :parameters bind-table))))
 
 (defn map-page
   "Allocate stable note and CC assignments for a page. Existing assignments,
@@ -70,7 +94,7 @@
                             lane (or (:lane-note mapping) (first (remove used (concat (range 100 128) (range 36)))))
                             scalar (scalar-schema schema)]
                         (if (or (nil? cc) (nil? lane) (:disabled? mapping) (nil? scalar)) m
-                            (assoc m cc (merge scalar {:cue-id cue-id :param param :lane-note lane} mapping (select-keys scalar [:type :values]))))))
+                            (assoc m cc (merge scalar {:cue-id cue-id :param param :lane-note lane} mapping)))))
                     (:parameters live {}) targets)]
     (assoc live :mappings cue-map :parameters parameters)))
 
@@ -124,12 +148,19 @@
                   (every? midi-number? (keys parameters)) (integer? history-limit) (pos? history-limit))
      (fail! "Invalid Live bridge configuration" {}))
    {:id id :mode mode :channel channel :mappings mappings :parameters parameters
-    :held {} :instances {} :recorded #{} :record-order [] :history-limit history-limit}))
+    :lane-controllers (into {} (keep (fn [[cc mapping]] (when-let [note (:lane-note mapping)] [note cc]))) parameters)
+    :cue-notes (into {} (for [[note mapping] (reverse (sort-by key mappings)) :when (not (:disabled? mapping))]
+                          [(:cue-id mapping) note]))
+    :parameter-controls (group-by (comp :param val) (remove (comp :disabled? val) (sort-by key parameters)))
+    :held {} :instances {} :instance-order clojure.lang.PersistentQueue/EMPTY :recorded #{} :record-order [] :history-limit history-limit}))
 
 (defn- command [state envelope op data]
   (merge envelope {:op op :source {:type :ableton :bridge-id (:id state) :origin :live-playback}} data))
 (defn- child-envelope [envelope suffix]
   (assoc envelope :command-id (str (:command-id envelope) "/" suffix)))
+
+(defn parameter-controller [state {:keys [type controller note]}]
+  (case type :cc controller :note-on (get-in state [:lane-controllers note]) nil))
 
 (defn midi->commands
   "Translate a MIDI event without applying commands. Supply the shared control
@@ -146,10 +177,7 @@
     (fail! "Invalid MIDI event" {:event event}))
   (let [off? (or (= type :note-off) (and (= type :note-on) (zero? (or velocity 0))))
         mapping (get-in state [:mappings note])
-        target (case type
-                 :cc (get-in state [:parameters controller])
-                 :note-on (some #(when (= note (:lane-note %)) %) (vals (:parameters state)))
-                 nil)
+        target (get-in state [:parameters (parameter-controller state event)])
         held (get-in state [:held note])]
     (cond
       (or (not= :lighting (:mode state)) (not= channel (:channel state))
@@ -224,22 +252,30 @@
     (-> state (assoc :record-order (vec (drop (count evicted) order)))
         (update :recorded #(apply disj (conj % id) evicted)))))
 
+(defn- remember-instance [state id cue-id]
+  (if (contains? (:instances state) id) state
+      (let [order (conj (:instance-order state) id)
+            overflow? (> (count order) (:history-limit state))]
+        (cond-> (assoc-in state [:instances id] cue-id)
+          overflow? (update :instances dissoc (peek order))
+          true (assoc :instance-order (if overflow? (pop order) order))))))
+
 (defn- record-one
   "Observe an accepted control command. Return MIDI + bridge clip intents only
   when track is armed, recording, writable and has :destination-id. Param writes
-  additionally need :automation-armed?. Live playback and duplicate command IDs
+  on the native CC route also need :automation-armed?. Live playback and duplicate command IDs
   are never recorded. The adapter must acknowledge execution before UI claims
   that a clip was written. Musical :beat is supplied by the Live bridge."
   [state cmd ack recording]
   (let [state (if (and (= :accepted (:status ack)) (= (:command-id cmd) (:command-id ack))
                        (= :cue/launch (:op cmd)) (:instance-id ack))
-                (assoc-in state [:instances (:instance-id ack)] (:cue-id cmd)) state)
+                (remember-instance state (:instance-id ack) (:cue-id cmd)) state)
         cue-id (or (:cue-id cmd) (get-in state [:instances (:instance-id cmd)]))
-        note (first (for [[note mapping] (sort-by key (:mappings state)) :when (and (not (:disabled? mapping)) (= cue-id (:cue-id mapping)))] note))
-        cc (first (for [[cc mapping] (sort-by key (:parameters state))
-                       :when (and (not (:disabled? mapping)) (= (:param cmd) (:param mapping))
-                                  (or (and (:instance-id mapping) (= (:instance-id cmd) (:instance-id mapping)))
-                                      (= cue-id (:cue-id mapping))))] [cc mapping]))
+        note (get-in state [:cue-notes cue-id])
+        cc (first (for [[controller mapping] (get-in state [:parameter-controls (:param cmd)])
+                        :when (or (and (:instance-id mapping) (= (:instance-id cmd) (:instance-id mapping)))
+                                  (= cue-id (:cue-id mapping)))]
+                    [controller mapping]))
         recording-key [(:show-id cmd) (:epoch cmd) (:command-id cmd)]
         suppressed? (or (not= :accepted (:status ack)) (not= (:command-id cmd) (:command-id ack))
                         (= :live-playback (get-in cmd [:source :origin]))
@@ -260,7 +296,7 @@
         {:state (remember state recording-key) :midi (if (and (= :cc (:type message)) (not (:automation-armed? recording))) [] [message])
          :intents [{:op :live/record-event :protocol-version 1
                     :destination-id (:destination-id recording) :beat (:beat recording)
-                    :time-ms (:time-ms cmd) :epoch (:epoch cmd) :command-id (:command-id cmd)
+                    :time-ms (:time-ms cmd) :epoch (:epoch cmd) :show-id (:show-id cmd) :command-id (:command-id cmd)
                     :cue-id cue-id :event (if-let [lane (and (= :cc (:type message)) (:lane-note (second cc)))]
                                             (-> message (dissoc :controller :value)
                                                 (assoc :type :note-on :note lane :parameter-sample? true

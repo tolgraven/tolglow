@@ -579,14 +579,15 @@
 (defn- midi-control! [manager run event]
   (let [state @(:state manager) callbacks (run-callbacks run) envelope (when-let [provider (:envelope! callbacks)] (provider))]
     (when envelope
-      (let [base (:bridge state)
-            parameters (into {} (map (fn [[cc mapping]]
-                                       [cc (assoc mapping :instance-id
-                                                  (when-let [resolve! (:resolve-instance! callbacks)]
-                                                    (resolve! (:cue-id mapping))))]) (:parameters base)))
+      (let [controller (ableton/parameter-controller (:bridge state) event)
+            mapping (get-in state [:bridge :parameters controller])
+            instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
+                       ((:resolve-instance! callbacks) (:cue-id mapping)))
             result (bridge-step! manager
                                  (fn [current]
-                                   (let [result (ableton/midi->commands (assoc current :parameters parameters) event envelope)]
+                                   (let [resolved (cond-> current instance
+                                                    (assoc-in [:parameters controller :instance-id] instance))
+                                         result (ableton/midi->commands resolved event envelope)]
                                      (update result :state assoc :parameters (:parameters current)))))
             commands (mapv #(update % :source merge
                                     (cond-> {:sync-run-id (:id run) :source-id (or (:source-id event) (get-in state [:config :live :source-id]))}

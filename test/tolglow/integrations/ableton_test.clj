@@ -104,3 +104,14 @@
         (is (= expected (get-in press [:commands 0 :launch :params param])))
         (is (= expected (get-in ack [:commands 0 :value])))
         (is (= "i" (get-in ack [:commands 0 :instance-id])))))))
+
+(deftest saved-enum-lanes-retain-velocity-order-and-registry-identity
+  (let [registry {:cues {"auto/red" {:effect-id :fx}}
+                  :effects {:fx {:params {:shape {:type :enum :values [:saw :square :sine]}}}}}
+        saved {:mappings {36 {:cue-id :auto/red}}
+               :parameters {7 {:cue-id :auto/red :param "shape" :type :enum :values ["sine" "saw" "square"] :lane-note 101}}}
+        config (-> (live/bind-registry-ids saved registry) (live/map-page registry {:cells {[0 0] "auto/red"}}))]
+    (is (= "auto/red" (get-in config [:mappings 36 :cue-id])))
+    (is (= {:cue-id "auto/red" :param :shape :type :enum :values [:sine :saw :square] :lane-note 101}
+           (get-in config [:parameters 7])))
+    (is (= 0xff0000 (:live-color (first (live/pad-page [{:color (thi.ng.color.core/rgba 1 0 0)}])))))))

@@ -23,6 +23,9 @@
     if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
     return "{" + Object.keys(value).sort().map(function (key) { return JSON.stringify(key) + ":" + canonical(value[key]); }).join(",") + "}";
   }
+  function recordingKey(intent) {
+    return canonical([intent["destination-id"], intent["show-id"] || null, intent.epoch, intent["command-id"]]);
+  }
   function Adapter(options) {
     if (!options || typeof options.api !== "function" || typeof options.dictionaryCall !== "function" || typeof options.readDictionary !== "function")
       fault("adapter-options", "LiveAPI, dictionary-call and dictionary-reader boundaries are required");
@@ -108,7 +111,7 @@
     if (!integer(event.note, 0, 127) || !integer(event.channel, 1, 16) || !integer(event.velocity || 0, 0, 127))
       fault("midi-value", "Invalid MIDI note event");
     if (!finite(intent.beat) || intent.beat < 0) fault("clip-beat", "Clip-relative beat must be finite and nonnegative");
-    var key = String(intent.epoch) + "/" + intent["command-id"], body = canonical(intent), previous = this.history[key];
+    var key = recordingKey(intent), body = canonical(intent), previous = this.history[key];
     if (!intent["command-id"]) fault("command-id", "Clip writes require the accepted command identity");
     if (previous) {
       if (previous.body !== body) fault("command-id-conflict", "The command ID was reused with different recording data");
@@ -226,7 +229,7 @@
       return {id: request.id, "protocol-version": 1, status: "executed", result: result};
     } catch (error) {
       if (this.mutated && request && request.op === "record-event" && request.payload && request.payload["command-id"])
-        this.remember(String(request.payload.epoch) + "/" + request.payload["command-id"], canonical(request.payload), {indeterminate: true});
+        this.remember(recordingKey(request.payload), canonical(request.payload), {indeterminate: true});
       return {id: request && request.id, "protocol-version": 1, status: this.mutated ? "indeterminate" : "rejected",
         error: {code: error.code || "live-api-error", message: error.message || String(error)}};
     }

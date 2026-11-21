@@ -639,8 +639,12 @@
             :let [{:keys [command ack]} (get-in after [:control :history id])]]
       (let [instance (get-in after [:instances (:instance-id ack)])
             timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
-        (sync/record! manager (cond-> command (and (= :cue/launch (:op command)) timing)
-                               (assoc :recording-duration timing)) ack))
+        (sync/record! manager (cond-> command
+                               (:instance-id command)
+                               (assoc :cue-id (or (get-in after [:instances (:instance-id command) :cue-id])
+                                                  (get-in before [:instances (:instance-id command) :cue-id])))
+                               (and (= :cue/launch (:op command)) timing) (assoc :recording-duration timing))
+                      ack))
       (acknowledge-sync! runtime manager command ack epoch))
     (doseq [[_ ack command] receipts :when (= :rejected (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))))
@@ -1113,6 +1117,7 @@
       :ports (sync/midi-ports)
       :configure (let [config (sync/validate-config (:config payload payload))
                        model (:model @(:state runtime))
+                       config (update config :live ableton/bind-registry-ids (:registry model))
                        pages (sort-by (comp str :id) (vals (:pages model)))
                        wire-id #(if (keyword? %) (subs (str %) 1) %)
                        page (if-let [id (:page-id payload)]
