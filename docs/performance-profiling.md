@@ -39,6 +39,48 @@ the host lane deliberately times the real production tick without instrumentatio
 One worker is serial effect execution with dispatch overhead; pipeline `:serial`
 is direct `mapv` without dispatch.
 
+## Connected Studio subscribers
+
+`bin/profile-subscribers` runs the same changing show with zero, one and four
+acknowledging clients. Each connected case also holds one slow client at its
+initial, unacknowledged snapshot. It starts an owned loopback Jetty server and
+real JVM WebSocket clients using production Transit encoding, projection and
+delta preparation. Physical output remains an ArtDMX capture.
+
+```sh
+AFTERGLOW_ROOT=../afterglow-performance bin/profile-subscribers \
+  --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
+  --warmup 40 --samples 120 --period-ms 25 --output /tmp/subscribers.edn
+```
+
+Every host tick still matches the scalar model, intents, all packet bytes and
+selected preview values. Clients validate patch base tokens, reconstruct their
+views and compare the final result to the actual production snapshot. The slow
+client must receive exactly one message until it acknowledges, then reconstruct
+the latest view. These are correctness gates, not timing thresholds.
+
+The report separates host tick duration, initial hydration, commit-to-client
+decode/apply latency, decoding time, delivery frequency, bytes and coalesced
+frames. Initial hydration and slow-client catch-up are outside the measured
+window; the final fast-client delivery drain is recorded separately and included
+in allocation/GC totals. A small frame-commit timestamp watch performs no
+projection or socket work. Wall-clock pacing avoids catch-up bursts; `period-ms`
+changes that pacing only, while both oracle and measured shows advance a fixed
+25 ms of logical time per tick.
+
+Allocation covers all live JVM threads, including server and clients, oracle
+comparisons and measurement instrumentation. It is not comparable to the isolated
+profiler's owner/worker allocation. Retired threads whose allocation counters are
+unavailable are counted explicitly. Snapshot preparation and delivery are
+asynchronous, so their cost must not be inferred from host duration alone.
+
+Each run records `:rig-targets` and `:visible-output-targets`: the current
+production view includes all rig definitions but bounds live output to its first
+16 targets. A 10,000-pixel workload therefore does **not** demonstrate streaming
+every pixel's live state. Browser JavaScript/re-frame, rendering, remote network
+latency and physical output are excluded. The retained delivery observations
+describe JVM loopback subscribers, not measured iPad performance.
+
 ## Keeping master under observation
 
 The `Master show performance evidence` workflow runs on master pushes affecting
@@ -53,7 +95,8 @@ Push runs check out the exact pushed master SHA. Scheduled/reusable/manual runs
 check out master, even though the caller's event SHA may belong to effects. Each
 run resolves both checkouts
 once and records their immutable SHAs before running the matrix on Java 21. Raw
-EDN and logs are retained for 90 days, including failed runs. Oracle failures fail
+EDN and logs for both the complete show and connected subscriber matrices are
+retained for 90 days, including failed runs. Oracle failures fail
 the job; timings have no pass/fail threshold. Weekly runs also catch independent
 Afterglow master changes without requiring a Tolglow commit. Compare artifacts
 only after checking their source and machine metadata.

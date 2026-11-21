@@ -11,7 +11,7 @@
 (def max-ports 128)
 (def max-pending 1024)
 (def max-diagnostics 64)
-(def audio-keys [:rms :peak :kick-rms :energy-envelope])
+(def audio-keys [:rms :peak :kick-rms :energy-envelope :low-rms :mid-rms :high-rms :bass-pitch-hz :bass-pitch-confidence])
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :routing/error :invalid-routing))))
 (defn- id? [x] (or (keyword? x) (and (string? x) (<= 1 (count x) 128))))
@@ -109,7 +109,7 @@
                 (diagnostic routing {:code :invalid-observation :source-id (when (id? source-id) source-id)})
                 (let [admitted (assoc observation :epoch (:epoch model) :clock captured)
                       port (-> (select-keys admitted [:source-id :kind :value :gate? :confidence :observed-at-ms :clock :port])
-                               (assoc :range (if (= :midi kind) [0 127] [0.0 1.0])))
+                               (assoc :range (or (get-in observation [:port :range]) (if (= :midi kind) [0 127] [0.0 1.0]))))
                       routing (update routing :ports #(bounded-ports (assoc % source-id port)))]
                   (cond
                     (not (:enabled? routing)) routing
@@ -127,25 +127,33 @@
   (let [observations (into [] (comp (filter #(= :sync/observation (:type %))) (map :observation)) events)]
     (if (seq observations) (admit model observations) model)))
 
+(defn- audio-observation [ports features timestamp run-id key]
+  (let [pitch? (= :bass-pitch-hz key)
+        source-id (str "audio/" (name key))
+        measured (get features key)
+        ;; Loss of periodicity closes an open pitch gate. Keep its last Hz
+        ;; value for the release envelope so silence never becomes a fake note.
+        closed? (and pitch? (contains? features key) (nil? measured) (get-in ports [source-id :gate?]))
+        value (if closed? (get-in ports [source-id :value]) measured)
+        confidence (get features (if pitch? :bass-pitch-confidence :confidence) 1.0)]
+    (when (and (time/finite-number? value) (not (neg? value))
+               (time/finite-number? confidence))
+      {:source-id source-id :event-id (str "audio/" run-id "/" timestamp "/" (name key))
+       :kind :audio :value value :gate? (and (not closed?) (pos? value))
+       :confidence (max 0.0 (min 1.0 confidence)) :origin :audio :observed-at-ms timestamp
+       :port (cond-> {:signal key :transport :audio}
+               pitch? (assoc :range [20.0 180.0] :unit :hz))})))
+
 (defn admit-audio
-  "Publish real analyzer features as stable audio/* scalar ports. Repeated
-  feature timestamps are coalesced; physical sample time remains metadata,
-  while owner clock/epoch govern musical envelope admission."
+  "Publish measured scalar ports at the captured physical time. The show clock
+  and epoch govern parameter and envelope updates."
   [model features]
   (let [timestamp (:time-ms features) previous (get-in model [:routing :last-audio-time])]
     (if-not (and (time/finite-number? timestamp) (<= 0 timestamp)
                  (or (nil? previous) (> timestamp previous))) model
       (let [run-id (get-in features [:capture :run-id] "analysis")
-            observations (into [] (keep (fn [key]
-                                          (let [value (get features key)]
-                                            (when (and (time/finite-number? value) (not (neg? value)))
-                                              {:source-id (str "audio/" (name key))
-                                               :event-id (str "audio/" run-id "/" timestamp "/" (name key))
-                                               :kind :audio :value value :gate? (pos? value)
-                                               :confidence (if (time/finite-number? (:confidence features))
-                                                             (max 0.0 (min 1.0 (:confidence features))) 1.0)
-                                               :origin :audio :observed-at-ms timestamp
-                                               :port {:signal key :transport :audio}})))) audio-keys)]
+            observations (keep #(audio-observation (get-in model [:routing :ports])
+                                                   features timestamp run-id %) audio-keys)]
         (assoc-in (admit model observations) [:routing :last-audio-time] timestamp)))))
 
 (defn- bindings [model]

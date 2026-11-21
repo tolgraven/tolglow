@@ -228,7 +228,7 @@
 
 (defn- get-routes
   [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! audio! sync! waveform! workspace! terminal! sensor! repl! calibration!]}]
+           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration!]}]
   (merge
    {"/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
     "/api/state" (fn [{:keys [query-params]}]
@@ -252,6 +252,7 @@
     "/api/application-agents/events" (read-action app-agent! :events "Application agents unavailable"
                                                  #(query-fields % {:id nil :cursor nil}))
     "/api/fixtures" (read-action fixture! :snapshot "Fixture library unavailable")
+    "/api/rdm" (read-action rdm! :status "RDM service unavailable")
     "/api/audio" (read-action audio! :status "Audio service unavailable")
     "/api/audio/inputs" (read-action audio! :inputs "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
@@ -278,7 +279,7 @@
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
 (defn- post-routes [{:keys [submit! heartbeat! provider-put! chat! chat-select! app-agent!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! audio! sync!]}]
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
    (post-actions "/api/application-agents/" app-agent! ok
@@ -292,6 +293,9 @@
    (post-actions "/api/waveforms/" waveform! ok {"preview" :preview})
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
+   (post-actions "/api/rdm/" rdm! acknowledgement
+                 {"connect" :connect "disconnect" :disconnect "discover" :discover "read" :read "command" :command
+                  "cancel" :cancel "associate" :associate "unassociate" :unassociate "adopt" :adopt} "RDM service unavailable")
    (post-actions "/api/audio/" audio! ok {"start" :start "stop" :stop})
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange})
    (post-actions "/api/" sync! ok {"live" :live})
@@ -324,6 +328,8 @@
         stream (:state-stream! services)
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
+                                   ["/api/debug/events" {:name :api/debug-events
+                                                         :get (available (:debug-stream! services) "Debug stream unavailable" (:debug-stream! services))}]
                                    ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
                                   (merge-with merge gets posts)))]
     (ring/ring-handler
