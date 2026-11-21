@@ -121,4 +121,4 @@
     (is (.includes html "Signal patchbay"))
     (is (.includes html "live/ableton-live/ch/1/note/36"))
     (is (.includes html "Save routing"))
-    (is (.includes html "Session-wide notes"))))
+    (is (.includes html "Live audio sends &amp; returns"))))

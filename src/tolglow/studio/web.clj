@@ -2,11 +2,11 @@
   "Portable Ring application. Services are explicit callbacks; the HTTP adapter
   does not own the show clock, registry, provider credentials, or effect state."
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [tolglow.data :as data]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [ring.middleware.content-type :refer [wrap-content-type]]
@@ -21,11 +21,6 @@
                               (set? x) (vec x)
                               (map? x) (into {} (map (fn [[k v]] [(if (string? k) k (str k)) v])) x)
                               :else x)) data))
-
-(def keyword-fields
-  #{:op :kind :mode :loop :scope :intent :provider :reload-policy :blend :attribute
-    :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
-    :timebase :operation :retrigger :unit :distribution :match})
 
 (def ^:private transit-type "application/transit+json")
 
@@ -55,17 +50,6 @@
                                (if transit? (transit/encode %) (json/write-str (json-data %)))))))
         response))))
 
-(defn read-edn
-  "Read exactly one EDN definition; no trailing forms or custom readers."
-  [source]
-  (when-not (string? source) (throw (ex-info "Definition source must be text" {})))
-  (with-open [reader (java.io.PushbackReader. (java.io.StringReader. source))]
-    (let [eof (Object.) value (edn/read {:eof eof :readers {}} reader)]
-      (when (or (identical? eof value)
-                (not (identical? eof (edn/read {:eof eof :readers {}} reader))))
-        (throw (ex-info "Expected exactly one EDN definition" {})))
-      value)))
-
 (defn- read-body-text [request]
   (with-open [reader (io/reader (or (:body request) (java.io.StringReader. "")) :encoding "UTF-8")]
     (let [buffer (char-array 4096) text (StringBuilder.)
@@ -82,20 +66,6 @@
             (recur))))
       (str text))))
 
-(defn normalize-json [value]
-  ;; Studio widgets emit textual enum choices. Keep typed extension values
-  ;; (particularly thi.ng.color records) intact while converting those choices.
-  (cond
-    (record? value) value
-    (map? value) (into {} (map (fn [[k v]] [k (cond
-                                                (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
-                                                (and (= k :params) (= v "all")) :all
-                                                (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :verified-axis-fixture-ids :categories} k))
-                                                (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
-                                                :else (normalize-json v))])) value)
-    (vector? value) (mapv normalize-json value)
-    :else value))
-
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -110,7 +80,7 @@
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
                      (not (str/starts-with? (:uri request) "/api/fixtures/")))]
-      (handler (assoc request :json-params (if form? (normalize-json data) data))))))
+      (handler (assoc request :json-params (if form? (data/normalize-json data) data))))))
 
 (defn wrap-errors [handler]
   (fn [request]
@@ -181,6 +151,7 @@
 
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+   "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -210,7 +181,7 @@
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
-                    (= operation :definition) (assoc :definition (read-edn (:source json-params))))
+                    (= operation :definition) (assoc :definition (data/read-edn (:source json-params))))
           receipt (deref (submit! operation payload) 5000 {:status :pending :message "Command remains queued"})]
       (acknowledgement receipt))))
 
@@ -256,6 +227,8 @@
     "/api/rdm" (read-action rdm! :status "RDM service unavailable")
     "/api/audio" (read-action audio! :status "Audio service unavailable")
     "/api/audio/inputs" (read-action audio! :inputs "Audio service unavailable")
+    "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
+    "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
@@ -298,7 +271,8 @@
                  {"connect" :connect "disconnect" :disconnect "discover" :discover "read" :read "command" :command
                   "cancel" :cancel "associate" :associate "unassociate" :unassociate "adopt" :adopt} "RDM service unavailable")
    (post-actions "/api/audio/" audio! ok {"start" :start "stop" :stop})
-   (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff})
+   (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
+   (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
     "/api/expressive/preview" (available expressive! "Expressive mapping preview unavailable" #(ok (expressive! (:json-params %))))
@@ -343,7 +317,7 @@
   (-> (routes services)
       wrap-same-origin
       wrap-params
-      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript"}})
+      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript" "mjs" "text/javascript"}})
       wrap-errors
       wrap-response-format
       wrap-isolation))

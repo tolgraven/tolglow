@@ -1,10 +1,10 @@
 # Tolglow / Afterglow architecture program
 
-Tolglow is a complete application project. JVM namespaces live under
-`src/tolglow/`; resources, tests, development support and commands live under
-`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` owns application,
-dependency and build profiles. Browser application source remains
-`src/studio/`, and specialized rendering engines remain `src/engines/`.
+Use the [repository map](../README.md#repository-map) to find the Clojure show
+runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
+and native companions.
+
+The canonical `project.clj` owns dependencies and Leiningen build profiles.
 
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,
@@ -30,6 +30,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
+| [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
+| [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
@@ -55,6 +57,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Docker terminal](terminal.md) | Actual PTY/container lifecycle and tested limits |
 | [Restart ownership](show-restart.md) | Execution reset and in-place input callback renewal |
 | [Scene contract](architecture/preview-scene-contract.md) | Shared fixture/rig optics and active visual acceptance |
+| [Live audio sends and returns](live-audio-returns.md) | Single-track and Drum Rack routing, processed return cues, patch sources and retained echo voices |
 | [3D rig editor](rig-editor.md) | Draft fixture/truss placement, direct musical aim paths, explicit cue creation and saved-path editing |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
@@ -71,7 +74,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
-| [Sync](sync-progress.md) | Selected clock and explicit MIDI/Beat Link/Live sessions |
+| [Sync](sync-progress.md) | Selected clock and explicit MIDI, Pro DJ Link and Live bridge sessions |
+| [Ableton Link and paused lighting](ableton-link.md) | Follow transport, match tempo and phase, set a pause look and restore the pairing |
 | [Runtime replay](runtime-replay.md) | Checked-in command/frame recording and deterministic output gate |
 | [Live routing](live-routing.md) | Typed musical patch graph, source research and host limits |
 | [Development workspace](product/development-workspace.md) | Popup REPL, source/scratch editing, agent branches, reload and Docker terminal |

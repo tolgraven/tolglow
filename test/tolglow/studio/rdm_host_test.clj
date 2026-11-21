@@ -1,14 +1,16 @@
 (ns tolglow.studio.rdm-host-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
-            [tolglow.studio.rdm :as rdm]
-            [tolglow.studio.transit :as transit]
-            [tolglow.studio.rdm-test :as peer])
+            [tolglow.application :as app]
+            [tolglow.rig.rdm :as rdm]
+            [tolglow.transit :as transit]
+            [tolglow.rig.rdm-test :as peer])
   (:import [java.io ByteArrayInputStream]))
 
 (defn request [runtime operation payload & [typed?]]
-  (let [snapshot (studio/snapshot runtime)
+  (let [snapshot (show/snapshot runtime)
         payload (merge {:runtime-id (:runtime-id snapshot) :expected-epoch (:epoch snapshot)} payload)
         result ((studio/handler runtime)
                 {:request-method (if operation :post :get) :uri (str "/api/rdm" (when operation (str "/" (name operation))))
@@ -23,7 +25,7 @@
 
 (deftest actual-ring-device-lifecycle-readback-and-show-restore
   (let [physical (atom {}) transport (peer/loopback-peer (partial peer/fixture-peer physical))
-        runtime (studio/start! {:port 0 :workspace-options nil})]
+        runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:workspace-options nil}))]
     (try
       (is (= 200 (:status (request runtime nil {}))))
       (is (empty? @(:requests transport)))
@@ -56,55 +58,55 @@
                                                :observed-at-ms (get-in (rdm/saved (:model @(:state runtime)))
                                                                       [:observations (rdm/device-key peer/device) :observed-at-ms])}) [:data :status])))
         (is (= 200 (get-in @(:state runtime) [:model :rig :fixtures 0 :address])))
-        (let [saved (studio/export-show runtime) calls (count @(:requests transport))
+        (let [saved (show/export-show runtime) calls (count @(:requests transport))
               before (rdm/saved (:model @(:state runtime)))
-              reply (studio/submit! runtime :import {:source (pr-str saved)})]
+              reply (show/submit! runtime :import {:source (pr-str saved)})]
           (is (= :accepted (:status (deref reply 3000 {}))))
           (peer/wait-until #(not (:connected? (rdm/status (:rdm runtime)))))
           (is (= before (rdm/saved (:model @(:state runtime)))))
           (is (= calls (count @(:requests transport))))
           (is (= 400 (:status (request runtime :read (assoc peer/device :session-id session)))))))
-      (finally (studio/stop! runtime) ((:close! transport))))))
+      (finally (app/stop! runtime) ((:close! transport))))))
 
 (deftest stale-request-identity-rejects-even-before-opening-a-socket
-  (let [calls (atom 0) runtime (studio/create-runtime {:workspace-options nil
+  (let [calls (atom 0) runtime (show/create-runtime {:workspace-options nil
                                                      :rdm-options {:open! (fn [& _] (swap! calls inc) (throw (Exception. "Unexpected IO")))}})]
     (try
       (is (= 400 (:status (request runtime :connect {:runtime-id "old"}))))
       (is (= 400 (:status (request runtime :connect {:expected-epoch -1}))))
       (is (zero? @calls))
       (is (false? (:connected? (rdm/status (:rdm runtime)))))
-      (finally (studio/stop! runtime)))))
+      (finally (app/stop! runtime)))))
 
 (deftest a-blocked-rdm-request-does-not-block-show-commands-or-frame-publication
   (let [entered (promise) release (promise)
-        runtime (studio/start! {:port 0 :workspace-options nil
+        runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:workspace-options nil
                                 :rdm-options {:open! (fn [_ _ register!]
                                                        (register! #(deliver release true))
                                                        {:close! #(deliver release true)
-                                                        :request! (fn [_ _] (deliver entered true) @release {:universe 1 :uids []})})}})]
+                                                        :request! (fn [_ _] (deliver entered true) @release {:universe 1 :uids []})})}}))]
     (try
       (let [session (get-in (request runtime :connect {} true) [:data :session-id])]
         (request runtime :discover {:universe 1 :session-id session} true)
         (is (= true (deref entered 1000 false)))
-        (let [before (:frame-number (studio/snapshot runtime))
-              reply (studio/submit! runtime {:op :cue/launch :cue-id :ember})]
+        (let [before (:frame-number (show/snapshot runtime))
+              reply (show/submit! runtime {:op :cue/launch :cue-id :ember})]
           (is (= :accepted (:status (deref reply 2000 {}))))
-          (peer/wait-until #(> (:frame-number (studio/snapshot runtime)) before))
-          (is (seq (:instances (studio/snapshot runtime))))
+          (peer/wait-until #(> (:frame-number (show/snapshot runtime)) before))
+          (is (seq (:instances (show/snapshot runtime))))
           (is (not (realized? release)))))
-      (finally (deliver release true) (studio/stop! runtime)))))
+      (finally (deliver release true) (app/stop! runtime)))))
 
 (deftest queued-observation-from-disconnected-session-is-rejected-at-commit
-  (let [runtime (studio/create-runtime {:workspace-options nil})
+  (let [runtime (show/create-runtime {:workspace-options nil})
         identity {:runtime-id (:id runtime) :expected-epoch 0}]
     (try
       (let [session (rdm/connect! (:rdm runtime) {} identity)
-            reply (studio/submit! runtime :rdm-update
+            reply (show/submit! runtime :rdm-update
                                   (merge identity {:operation :discovered :universe 1 :uids [(:uid peer/device)]
                                                    :rdm-session-id (:session-id session)}))]
         (rdm/disconnect! (:rdm runtime))
-        (studio/tick! runtime 0)
+        (show/tick! runtime 0)
         (is (= :rejected (:status (deref reply 1000 {}))))
         (is (nil? (:discovered (rdm/saved (:model @(:state runtime)))))))
-      (finally (studio/stop! runtime)))))
+      (finally (app/stop! runtime)))))

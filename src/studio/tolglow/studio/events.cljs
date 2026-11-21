@@ -5,7 +5,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
@@ -37,7 +37,7 @@
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
-    "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff"
+    "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff" "/api/sync/arrange"
     "/api/audio/start" "/api/audio/stop"
     "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
@@ -61,15 +61,15 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? on-success on-failure timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
                  (clj->js (cond-> {:method (if (some? body) "POST" "GET") :cache "no-store"
                                   :signal (.-signal controller)
                                   :headers (cond-> {"Accept" "application/transit+json"}
-                                             (some? body) (assoc "Content-Type" "application/transit+json"
-                                                                 "X-Tolglow-Form" "studio-v1"))}
+                                             (some? body) (assoc "Content-Type" "application/transit+json")
+                                             (and (some? body) (not typed?)) (assoc "X-Tolglow-Form" "studio-v1"))}
                            (some? body) (assoc :body (transit/encode body)))))
         (.then (fn [response]
                  (-> (.text response)

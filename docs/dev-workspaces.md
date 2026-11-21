@@ -1,6 +1,6 @@
 # Paired application workspaces
 
-`tolglow.studio.workspace` owns fresh Git worktrees for changes to the application
+`tolglow.development.workspace` owns fresh Git worktrees for changes to the application
 and its Afterglow dependency. It is separate from show state, effect editing and
 the REPL. Creating a manager creates no directories, branches or processes.
 Creating a workspace uses each repository's committed `HEAD` unless a specific
@@ -129,7 +129,7 @@ catalog recovery described above restores their registrations on explicit startu
 
 ## Validation
 
-`tolglow.studio.workspace-test` creates real disposable Git repositories and
+`tolglow.development.workspace-test` creates real disposable Git repositories and
 paired worktrees. It covers main-checkout preservation, hash conflicts, atomic
 replacement permissions, binary/tree bounds, symlink/metadata traversal,
 captured-Git-directory redirection, current-fingerprint readiness, edits during a

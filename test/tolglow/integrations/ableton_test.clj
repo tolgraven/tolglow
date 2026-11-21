@@ -75,3 +75,43 @@
                                       {:command-id "musical-launch" :show-id :main :epoch 1 :time-ms 0})]
     (is (= {:beats 2} (get-in result [:commands 0 :launch :duration])))
     (is (nil? (get-in result [:commands 0 :launch :duration-ms])))))
+
+(deftest stable-parameter-lanes-respect-manual-mappings-and-pinned-schemas
+  (let [schemas {:level {:type :number :bounds [-4 4]}
+                 :count {:type :integer :bounds [2 7]}
+                 :wave {:type :enum :values [:sine :saw :square]}
+                 :stepped? {:type :boolean} :rgb {:type :color}}
+        registry {:cues {:red {:effect-id :fx :effect-version 3}}
+                  :versions {[:effects :fx 3] {:params schemas}}}
+        page {:cells {[0 0] :red}}
+        manual {:mappings {42 {:cue-id :red :mode :held}}
+                :parameters {7 {:cue-id :red :param :level :bounds [-2 2] :lane-note 12}
+                             8 {:cue-id :red :param :stepped? :disabled? true}}}
+        mapped (live/map-page manual registry page)
+        bridge (live/new-bridge mapped)
+        mapping #(some (fn [[_ m]] (when (= % (:param m)) m)) (:parameters mapped))]
+    (is (= mapped (live/map-page mapped registry page)))
+    (is (= (:mappings manual) (:mappings mapped)))
+    (is (= [-2 2] (:bounds (mapping :level))))
+    (is (nil? (:lane-note (mapping :stepped?))))
+    (is (nil? (mapping :rgb)))
+    (doseq [[param velocity expected] [[:count 1 2] [:count 127 7] [:wave 64 :saw] [:level 1 -2.0]]]
+      (let [note {:type :note-on :note (:lane-note (mapping param)) :velocity velocity :channel 1}
+            early (live/midi->commands bridge note envelope)
+            press (live/midi->commands (:state early) (assoc note :note 42) envelope)
+            queued (live/midi->commands (:state press) note (assoc envelope :command-id "adjust"))
+            ack (live/acknowledge-launch (:state queued) 42 {:command-id "press" :status :accepted :instance-id "i"} envelope)]
+        (is (= expected (get-in press [:commands 0 :launch :params param])))
+        (is (= expected (get-in ack [:commands 0 :value])))
+        (is (= "i" (get-in ack [:commands 0 :instance-id])))))))
+
+(deftest saved-enum-lanes-retain-velocity-order-and-registry-identity
+  (let [registry {:cues {"auto/red" {:effect-id :fx}}
+                  :effects {:fx {:params {:shape {:type :enum :values [:saw :square :sine]}}}}}
+        saved {:mappings {36 {:cue-id :auto/red}}
+               :parameters {7 {:cue-id :auto/red :param "shape" :type :enum :values ["sine" "saw" "square"] :lane-note 101}}}
+        config (-> (live/bind-registry-ids saved registry) (live/map-page registry {:cells {[0 0] "auto/red"}}))]
+    (is (= "auto/red" (get-in config [:mappings 36 :cue-id])))
+    (is (= {:cue-id "auto/red" :param :shape :type :enum :values [:sine :saw :square] :lane-note 101}
+           (get-in config [:parameters 7])))
+    (is (= 0xff0000 (:live-color (first (live/pad-page [{:color (thi.ng.color.core/rgba 1 0 0)}])))))))

@@ -78,7 +78,7 @@ Run `npm run studio:test`, `npm run studio:build`, and `npm run preview:test`.
 The behavioral browser gate is:
 
 ```sh
-node src/engines/preview/editor-browser-qa.mjs http://127.0.0.1:8515 /tmp/rig-editor-qa
+node dev/preview/editor-browser-qa.mjs http://127.0.0.1:8515 /tmp/rig-editor-qa
 ```
 
 Use a dedicated `./bin/studio --port 8515` with no physical-output options. The

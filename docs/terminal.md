@@ -1,6 +1,6 @@
 # Docker development terminal and check runner
 
-`tolglow.studio.terminal` runs actual zsh PTYs and fixed check commands in owned
+`tolglow.development.terminal` runs actual zsh PTYs and fixed check commands in owned
 Docker containers. Its constructor and `status` are inert. `availability!` is an
 explicit bounded image inspection; it does not pull, build or start anything.
 An unavailable Docker executable/image produces a visible error, with no host

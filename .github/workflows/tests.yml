@@ -103,10 +103,10 @@ jobs:
           lein uberjar
       - name: Test the Live bridge boundaries
         working-directory: tolglow
-        run: node --test src/tolglow/integrations/live_bridge/test/*.test.js
+        run: node --test test/js/ableton-live/*.test.js
       - name: Test the browser display bridge
         working-directory: tolglow
-        run: node --test src/tolglow/integrations/display_bridge/*.test.js
+        run: node --test test/js/push-display/*.test.cjs
 
   development-container:
     runs-on: ubuntu-latest

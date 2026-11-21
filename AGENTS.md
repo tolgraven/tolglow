@@ -12,6 +12,8 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - Tolglow owns authoring, registry/compiler, composition/policy, integrations and
   the new studio. The companion `tolgraven/afterglow` fork owns the shared
   runtime/control/render modules, device transports and legacy application.
+  Moving-head calibration, GLSL, GPU dispatch and readback belong in Afterglow.
+  Tolglow can measure a whole show through that API and owns the Studio scene.
   Keep independent repositories and preserve existing `tolmaster` work.
 - The full project has JVM application source under `src/tolglow/`, with
   `resources/`, `test/`, `dev/`, `bin/`, and a root `project.clj` application
@@ -23,7 +25,10 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - The studio frontend is **ClojureScript with re-frame and Reagent**. The backend
   is **Ring**, with a separate Jetty server adapter. Keep domain transitions in
   the common model; re-frame app-db owns client projections/interaction state.
-  Specialized WebGL/Neovim WASM JS engines belong behind explicit interop.
+  Keep `src/` for Clojure, ClojureScript, shared CLJC code and local documentation.
+  Author the Three.js engine in `js/preview/`. Public assets and executable device
+  resources belong under `resources/`. Use `test/js/` for renderer and device
+  JavaScript tests and `dev/` for executable QA and profiling tools.
 - `core` and `live` now have headless require/reload tests. Read source before
   importing unfamiliar scratch/graphics namespaces. `live/start-demo!`, rig
   activation, physical device discovery and output are explicit operations,

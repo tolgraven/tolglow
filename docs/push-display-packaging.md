@@ -6,7 +6,7 @@ options but does not resolve resources, create files, or start processes.
 Calling `:open!` resolves the bundled worker. A file resource runs in place; a
 JAR resource is copied to a private temporary `.cjs` file owned by that opening.
 
-The worker is included at `tolglow/integrations/display_bridge/worker.js` on the
+The worker is included at `devices/push-display/worker.cjs` on the
 classpath. There is no alternate packaged implementation. Each successful
 opening owns its Node process, IPC executor and, when needed, extracted file.
 Close, startup failure, capture failure and interrupted startup retire those
@@ -21,7 +21,7 @@ an absolute path to the installed package. Extraction does not require copying
 `node_modules` into the temporary directory and never downloads dependencies.
 
 ```clojure
-(tolglow.studio/push-browser-display runtime
+(tolglow.show/push-browser-display runtime
   {:browser-executable "/path/to/chromium"
    :node-executable "/path/to/node"
    :playwright-module "/path/to/application/node_modules/playwright-core"

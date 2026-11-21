@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {existsSync} from 'node:fs';
+import {createServer} from 'node:http';
+import {build} from 'esbuild';
+import {chromium} from 'playwright-core';
+
+test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and PCF depth shadows', async t => {
+  const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
+  if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH to run actual GPU-context assertions');
+  const bundle = await build({entryPoints: [new URL('./fog-gpu-fixture.mjs', import.meta.url).pathname],
+    bundle: true, format: 'esm', platform: 'browser', write: false});
+  const server = createServer((request, response) => {
+    response.setHeader('Content-Type', request.url === '/fixture.js' ? 'text/javascript' : 'text/html');
+    response.end(request.url === '/fixture.js' ? bundle.outputFiles[0].text : '<script type="module" src="/fixture.js"></script>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  try {
+    browser = await chromium.launch({executablePath, headless: true,
+      args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
+    const page = await browser.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.waitForFunction(() => typeof window.fogTest === 'function');
+    const result = await page.evaluate(() => window.fogTest());
+    t.diagnostic(JSON.stringify(result));
+    assert.deepEqual(errors, []);
+    assert.equal(result.zeroAmountDifference, 0);
+    assert.equal(result.emptyFieldDifference, 0);
+    assert.equal(result.behindOpaqueDifference, 0);
+    assert.ok(result.extinctionRatio > 0 && result.extinctionRatio < .5);
+    assert.equal(result.noInventedRadiance, true);
+    assert.ok(result.unshadowedRadiance > 1);
+    assert.equal(result.comparisonDepthTexture, true);
+    assert.equal(result.clearShadowDifference, 0);
+    assert.equal(result.clearShadowRatio, 1);
+    assert.ok(result.shadowRatio > 0 && result.shadowRatio < .9);
+    assert.equal(result.shadowSlots, 1);
+    assert.equal(result.blackoutRadiance, 0);
+    assert.ok(result.ambientRadiance > 1);
+    assert.equal(result.emptyAmbientRadiance, 0);
+    assert.equal(result.narrowShaftCoverage, 1);
+    assert.ok(result.narrowShaftMin > 0);
+    assert.equal(result.finiteNonnegative, true);
+    assert.equal(result.behindLensRadiance, 0);
+    assert.ok(result.apertureCoverage.every(value => value > 0));
+    assert.equal(result.glError, 0);
+  } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
+});

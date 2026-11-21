@@ -1,7 +1,7 @@
 (ns tolglow.studio.transit-test
   (:require [cljs.test :refer-macros [deftest is]]
             [thi.ng.color.core :as color]
-            [tolglow.studio.transit :as wire]))
+            [tolglow.transit :as wire]))
 
 (deftest edit-typed-jvm-state
   (let [sent "[\"^ \",\"~:kind\",\"~:demo\",\"~:groups\",[\"~#set\",[\"~:b\",\"~:a\"]],\"kind\",[\"~#tolglow/ratio.v1\",[\"1\",\"3\"]],\"~:color\",[\"~#thi.ng.color/hsla.v1\",[\"^ \",\"~:h\",0.125,\"~:s\",0.5,\"~:l\",0.75,\"~:a\",0.0]]]"

@@ -1,6 +1,7 @@
 (ns tolglow.studio.projection-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.data.json :as json]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.web :as web]))
@@ -108,8 +109,9 @@
     (is (thrown? clojure.lang.ExceptionInfo (projection/project! cache nil nil)))))
 
 (deftest actual-ring-state-deltas-follow-commands-and-show-restarts
-  (let [runtime (studio/create-runtime {:workers 1 :workspace-options nil})
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
         app (studio/handler runtime)
+        projections (get-in @(:observers runtime) [:studio :browser-projections])
         request (fn [query]
                   (let [response (app {:request-method :get :uri "/api/state" :query-string query})]
                     (is (= 200 (:status response)))
@@ -117,8 +119,8 @@
     (try
       (let [full (request "projection=delta-v1")
             token (get full "token")
-            reply (studio/submit! runtime {:op :master/set :value 0.4})]
-        (studio/tick! runtime 25)
+            reply (show/submit! runtime {:op :master/set :value 0.4})]
+        (show/tick! runtime 25)
         (is (= :accepted (:status @reply)))
         (let [delta (request (str "projection=delta-v1&base=" token))
               plain (request "")]
@@ -127,10 +129,10 @@
           (is (some #{["set" ["master"] 0.4]} (get delta "changes")))
           (is (= 0.4 (get plain "master")))
           (is (nil? (get plain "protocol")))
-          (studio/submit! runtime {:op :show/restart})
-          (studio/tick! runtime 50)
+          (show/submit! runtime {:op :show/restart})
+          (show/tick! runtime 50)
           (let [reset (request (str "projection=delta-v1&base=" (get delta "token")))]
             (is (= "full" (get reset "kind")))
             (is (= 1 (get-in reset ["view" "epoch"]))))))
-      (finally (studio/stop! runtime)))
-    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status (:browser-projections runtime))))))
+      (finally (show/stop! runtime)))
+    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status projections)))))

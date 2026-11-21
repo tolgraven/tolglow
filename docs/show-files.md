@@ -2,14 +2,14 @@
 
 A show file stores the complete portable domain model and can also store its
 last committed output frame. It is not a preset containing only cue definitions.
-The pure implementation is `tolglow.studio.persistence`; the studio host owns
+The pure implementation is `tolglow.persistence`; the studio host owns
 file/HTTP IO, clock rebasing, runtime resource recreation and atomic publication.
 There is no schema-1 or old-runtime compatibility adapter.
 
 ## Public API
 
 ```clojure
-(require '[tolglow.studio.persistence :as files])
+(require '[tolglow.persistence :as files])
 
 (files/freeze model)                    ; -> {:schema-version 2 :model ...}
 (files/freeze model portable-output)    ; adds :frame-output
@@ -154,7 +154,7 @@ the host can publish a blank initial output until the next regular frame.
 
 ## Owned resource restoration
 
-`tolglow.studio.connections` owns the agent manager and local credential adapter,
+`tolglow.connections` owns the agent manager and local credential adapter,
 fixture cache, audio capture manager and reactive graph. `create` starts no
 capture or provider request. A saved credential reference may perform an explicit
 local lookup; the default file adapter is otherwise inert until a key operation.

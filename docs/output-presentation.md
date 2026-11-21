@@ -142,7 +142,7 @@ network delivery and preview/UI contention; adding medians does not prove a
 
 ## Running the output scheduler
 
-The host boundary is `tolglow.studio.output-scheduler`. Its name describes its
+The host boundary is `tolglow.output.scheduler`. Its name describes its
 job: send frames on a steady physical clock, even while a render is late. It is
 not the effect evaluator or the 3D preview renderer.
 
@@ -161,7 +161,7 @@ show state in launch/priority order; a separate output thread serializes packets
 so they cannot overtake each other on the wire. Neither thread owns the other
 thread's mutable buffers. The output thread never takes the show-owner lock.
 
-`studio/start!` starts both schedules. `create-runtime` remains inert for tests;
+`show/start!` starts both schedules. `create-runtime` remains inert for tests;
 `:independent-output? true` enables the same handover with manually driven ticks.
 The sender consumes at most three completions per deadline. Excess pending
 completions coalesce to the newest three. Epoch, fixture patch, policy or blackout

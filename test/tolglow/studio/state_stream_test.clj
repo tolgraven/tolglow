@@ -2,10 +2,11 @@
   (:require [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :refer [wrap-params]]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.state-stream :as stream]
-            [tolglow.studio.transit :as transit])
+            [tolglow.transit :as transit])
   (:import [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
@@ -56,7 +57,7 @@
               base changes)))
 
 (deftest clients-get-the-latest-committed-show-at-their-own-pace
-  (let [runtime (studio/create-runtime {:workspace-options nil})
+  (let [runtime (show/create-runtime {:workspace-options nil})
         server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})]
     (try
       (let [slow (connect server "slow") fast (connect server "fast")
@@ -66,8 +67,8 @@
           (is (= (:id runtime) (get-in slow-base [:identity :runtime-id])))
           (is (keyword? (get-in fast-base [:view :rig :fixtures 0 :id])))
           (acknowledge fast fast-base)
-          (let [reply (studio/submit! runtime :command {:op :cue/launch :cue-id :ember})]
-            (studio/tick! runtime 100)
+          (let [reply (show/submit! runtime :command {:op :cue/launch :cue-id :ember})]
+            (show/tick! runtime 100)
             (is (= :accepted (:status @reply))))
           (let [next (receive fast)
                 fast-view (apply-patch (:view fast-base) next)]
@@ -75,7 +76,7 @@
             (is (= (:token fast-base) (:base-token next)))
             (is (= :ember (get-in fast-view [:instances 0 :cue-id])))
             (is (= 100 (:time-ms fast-view))))
-          (doseq [t (range 101 121)] (studio/tick! runtime t))
+          (doseq [t (range 101 121)] (show/tick! runtime t))
           (is (nil? (.poll ^LinkedBlockingQueue (:messages slow) 90 TimeUnit/MILLISECONDS))
               "One unacknowledged snapshot bounds a slow client")
           (acknowledge slow slow-base)
@@ -92,7 +93,7 @@
               (is (nil? (.poll ^LinkedBlockingQueue (:messages slow) 90 TimeUnit/MILLISECONDS))
                   "Acknowledging a publication never generates another snapshot of it")))
           (finally (.abort ^WebSocket (:socket slow)) (.abort ^WebSocket (:socket fast)))))
-      (finally (studio/stop! runtime) (.stop server)))))
+      (finally (show/stop! runtime) (.stop server)))))
 
 (deftest rendering-does-not-wait-for-projection
   (let [entered (promise) release (promise)

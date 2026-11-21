@@ -1,17 +1,30 @@
 # tolglow
 
+[Start a configured show](docs/application-startup.md) with `clojure -M:run` or `lein run`. Use `--headless true` to run the same show without Studio.
+
 Lighting-show authoring, performance controls and Studio built on the paired
 [Afterglow fork](https://github.com/tolgraven/afterglow). The Studio uses
 ClojureScript, re-frame and Reagent; the JVM backend uses Ring.
 
-The complete project contains:
+## Repository map
 
-- `src/tolglow/`: JVM application, effect authoring, integrations and host.
-- `src/studio/`: Studio and shared Push display components.
-- `src/engines/`: specialized browser rendering engines.
-- `resources/`, `test/`, `dev/`, `bin/`: assets, behavioral tests, development tools
-  and command entry points.
-- Root `project.clj`: canonical application, dependency and build configuration.
+| To work on | Open |
+| --- | --- |
+| JVM show logic, effects, fixture definitions and programmatic control | [src/tolglow](src/tolglow/) |
+| Studio and Push UI components written with re-frame and Reagent | [src/studio](src/studio/) |
+| Clojure and ClojureScript code shared across the wire | [src/shared](src/shared/) |
+| Three.js renderer, fog, camera and graphics worker | [js/preview](js/preview/README.md) |
+| Max for Live patch and companion scripts | [resources/devices/ableton-live](resources/devices/ableton-live/README.md) |
+| Push display capture worker shipped in the JVM artifact | [resources/devices/push-display](resources/devices/push-display/README.md) |
+| Browser assets, CSS and generated preview bundles served by Ring | [resources/studio](resources/studio/) |
+| iPhone and Apple Watch companions | [native](native/) |
+| JVM tests, JavaScript tests and browser workflows | [test](test/) |
+| Profilers, development tools and command entry points | [dev](dev/) and [bin](bin/) |
+
+The canonical JVM/build manifest is [project.clj](project.clj); JavaScript
+dependencies and commands live in [package.json](package.json). Run `npm run preview:build` after editing
+the graphics engine. It produces the two files the Studio loads at
+`/studio/preview.js` and `/studio/preview-worker.js`.
 
 Keep Tolglow and Afterglow as sibling checkouts. See the
 [architecture and feature documentation](docs/README.md),

@@ -19,7 +19,7 @@
   :repositories ~(merge {"central" "https://repo.maven.apache.org/maven2/"}
                         (:repositories (tolglow.build-manifest/paired-project ".")))
   :test-paths ["test"]
-  :main tolglow.studio
+  :main tolglow.application
   :target-path "target/%s"
   :jvm-opts ["-Djava.awt.headless=true"]
   :profiles {:dev {:source-paths ["dev"]}
@@ -37,7 +37,7 @@
                                    [com.cognitect/transit-cljs "0.8.280"]
                                    [re-frame "1.4.7"]
                                    [reagent "2.0.1"]]}
-             :uberjar {:aot [tolglow.studio]}}
+             :uberjar {:aot [tolglow.application]}}
   :test-selectors
   {:default (fn [metadata]
               (not= 'tolglow.studio.terminal-docker-test (ns-name (:ns metadata))))

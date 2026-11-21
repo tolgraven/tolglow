@@ -5,15 +5,12 @@ on:
   push:
     branches: [master]
     paths:
-      - 'src/tolglow/compiler.clj'
-      - 'src/tolglow/compiler/**'
-      - 'src/tolglow/studio.clj'
-      - 'src/tolglow/studio/**'
+      - 'src/tolglow/**'
       - 'dev/tolglow/bench_show.clj'
       - 'dev/tolglow/bench_subscribers.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
-      - 'src/shared/tolglow/studio/**'
+      - 'src/shared/tolglow/**'
       - 'project.clj'
       - '.github/workflows/tests.yml'
       - '.github/workflows/performance.yml'
