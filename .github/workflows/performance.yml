@@ -14,6 +14,10 @@ on:
         description: Optional baseline Afterglow revision; run baseline then repeat candidate
         type: string
         default: ''
+      compare_tolglow_ref:
+        description: Optional baseline Tolglow revision; run baseline then repeat candidate
+        type: string
+        default: ''
   workflow_call:
   pull_request:
     branches: [master]
@@ -39,7 +43,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: show-performance-${{ github.event.pull_request.number || (inputs.compare_afterglow_ref && github.run_id) || 'master' }}
+  group: show-performance-${{ github.event.pull_request.number || ((inputs.compare_afterglow_ref || inputs.compare_tolglow_ref) && github.run_id) || 'master' }}
   cancel-in-progress: false
 jobs:
   profile:
@@ -65,6 +69,12 @@ jobs:
           repository: tolgraven/afterglow
           ref: ${{ inputs.compare_afterglow_ref }}
           path: afterglow-baseline
+      - name: Resolve optional Tolglow baseline once
+        if: inputs.compare_tolglow_ref != ''
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.compare_tolglow_ref }}
+          path: tolglow-baseline
       - name: Record immutable measured commits
         run: |
           mkdir -p performance-artifact
@@ -72,6 +82,9 @@ jobs:
           git -C afterglow rev-parse HEAD > performance-artifact/afterglow-commit.txt
           if [[ -d afterglow-baseline ]]; then
             git -C afterglow-baseline rev-parse HEAD > performance-artifact/baseline-afterglow-commit.txt
+          fi
+          if [[ -d tolglow-baseline ]]; then
+            git -C tolglow-baseline rev-parse HEAD > performance-artifact/baseline-tolglow-commit.txt
           fi
           date -u +%FT%TZ > performance-artifact/resolved-at.txt
       - uses: actions/setup-java@v6.3.0
@@ -116,25 +129,35 @@ jobs:
           ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
             --output ../performance-artifact/movers.edn 2>&1 | tee ../performance-artifact/movers.log
       - name: Compare baseline and repeat candidate on the same runner
-        if: inputs.compare_afterglow_ref != ''
+        if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
         working-directory: tolglow
         run: |
           set -euo pipefail
+          comparison_root="$(cd .. && pwd)"
           for pass in baseline candidate-repeat; do
-            if [[ "$pass" == baseline ]]; then
-              export AFTERGLOW_ROOT="$(cd ../afterglow-baseline && pwd)"
+            if [[ "$pass" == baseline && -d "$comparison_root/afterglow-baseline" ]]; then
+              export AFTERGLOW_ROOT="$comparison_root/afterglow-baseline"
             else
-              export AFTERGLOW_ROOT="$(cd ../afterglow && pwd)"
+              export AFTERGLOW_ROOT="$comparison_root/afterglow"
             fi
-            mkdir -p "../performance-artifact/$pass"
-            ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
-              --warmup 40 --samples 120 --output "../performance-artifact/$pass/report.edn" \
-              2>&1 | tee "../performance-artifact/$pass/run.log"
-            ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
-              --warmup 40 --samples 120 --period-ms 25 --output "../performance-artifact/$pass/subscribers.edn" \
-              2>&1 | tee "../performance-artifact/$pass/subscribers.log"
-            ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
-              --output "../performance-artifact/$pass/movers.edn" 2>&1 | tee "../performance-artifact/$pass/movers.log"
+            if [[ "$pass" == baseline && -d "$comparison_root/tolglow-baseline" ]]; then
+              source_root="$comparison_root/tolglow-baseline"
+            else
+              source_root="$comparison_root/tolglow"
+            fi
+            artifact_root="$comparison_root/performance-artifact/$pass"
+            mkdir -p "$artifact_root"
+            (
+              cd "$source_root"
+              ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
+                --warmup 40 --samples 120 --output "$artifact_root/report.edn" \
+                2>&1 | tee "$artifact_root/run.log"
+              ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
+                --warmup 40 --samples 120 --period-ms 25 --output "$artifact_root/subscribers.edn" \
+                2>&1 | tee "$artifact_root/subscribers.log"
+              ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
+                --output "$artifact_root/movers.edn" 2>&1 | tee "$artifact_root/movers.log"
+            )
           done
       - name: Retain evidence including failures
         if: always()

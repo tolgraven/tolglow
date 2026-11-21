@@ -139,8 +139,9 @@ that trigger there too and remove the old copy.
 Profiler changes also run on pull requests, measuring that exact PR head in an
 independent runner before merge. These jobs retain the same oracle gates and
 artifact-only timings and do not share a concurrency group with master runs.
-Push runs check out the exact pushed master SHA. Scheduled/reusable/manual runs
-check out master, even though the caller's event SHA may belong to effects. Each
+Push runs check out the exact pushed master SHA. Scheduled/reusable calls check
+out master, even though the caller's event SHA may belong to effects. Manual
+calls default to master and can select the explicit revisions described below. Each
 run resolves both checkouts
 once and records their immutable SHAs before running the matrix on Java 21. Raw
 EDN and logs for both the complete show and connected subscriber matrices are
@@ -173,13 +174,21 @@ durable handoff for subsequent sessions.
 ## Matched Afterglow comparisons
 
 Manual workflow dispatch accepts `tolglow_ref`, `afterglow_ref` and optional
-`compare_afterglow_ref`. Resolve candidate and baseline once, then run the same
+`compare_afterglow_ref` / `compare_tolglow_ref`. Use branch/tag names or full
+40-character commit SHAs. Resolve candidate and baseline once, then run the same
 complete matrices in candidate → baseline → candidate-repeat order on one runner.
 Each pass has fresh JVMs, identical 40-frame warmup and 120-frame samples, heap,
 workloads and correctness checks. Baseline and repeat data live in separate
 artifact directories. Immutable commits are recorded before execution. Normal
 master, pull-request and weekly calls keep their previous workload and checkout
 selection; the optional comparison has its own concurrency group.
+
+Either repository can supply a baseline independently. If only one comparison
+ref is provided, the other repository stays at its candidate revision in every
+pass. When both are provided, the baseline uses both baseline checkouts. Source
+directories and output paths are explicit; the script never edits source or
+switches a branch between measured passes. Compare workloads and runtime
+dependencies too: older hosts may require a matching older Afterglow revision.
 
 This supports investigating implementation changes without comparing unrelated
 machines or silently changing the workload. Repeated tails and allocations still

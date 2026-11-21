@@ -298,6 +298,7 @@
    :kind :implementation :status :in-progress
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
            "tolglow/.github/workflows/performance.yml"
