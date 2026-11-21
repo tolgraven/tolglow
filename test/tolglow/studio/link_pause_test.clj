@@ -4,7 +4,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer :all]
             [tolglow.studio :as studio]
-            [tolglow.studio.persistence :as files])
+            [tolglow.persistence :as files])
   (:import [java.net InetAddress ServerSocket]))
 
 (defn- commit! [r type payload at]

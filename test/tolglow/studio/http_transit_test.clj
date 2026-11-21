@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
             [thi.ng.color.core :as color]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [tolglow.studio.web :as web])
   (:import [java.io ByteArrayInputStream]))
 

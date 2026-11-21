@@ -6,7 +6,7 @@ show through the same runtime APIs. It is not an execution sandbox. Opening the
 panel, completing a symbol, reading documentation, restoring history or loading
 scratch text does not evaluate that text.
 
-The service lives in `tolglow.studio.repl`. `tolglow.studio.repl-manager` owns up
+The service lives in `tolglow.repl`. `tolglow.repl.sessions` owns up
 to eight named sessions and is part of the connection bundle. The Ring layer
 and re-frame popup are adapters around these services; their UI behavior needs
 separate browser verification. Full-codebase file editing, branch/worktree
@@ -16,7 +16,7 @@ not capabilities implied by a working REPL.
 ## Lifecycle and runtime access
 
 ```clojure
-(require '[tolglow.studio.repl-manager :as repls])
+(require '[tolglow.repl.sessions :as repls])
 
 ;; Construction is inert: no namespaces, workers, callbacks or evaluation.
 (def owner
@@ -35,7 +35,7 @@ not capabilities implied by a working REPL.
 
 Each live session has a unique owned namespace and debug namespace. Its runtime
 supplier runs once at opening and the returned handle is available as `runtime`
-in that namespace and as dynamic `tolglow.studio.repl/*runtime*` during evaluation.
+in that namespace and as dynamic `tolglow.repl/*runtime*` during evaluation.
 Optional `:bindings` map unqualified symbols to live values. The supplier is
 provided by the host after its runtime has been constructed, so these services
 do not import the main studio namespace or introduce a circular dependency.
@@ -136,7 +136,7 @@ The development macro observes ordinary compiler lexical bindings:
 ```clojure
 (let [level 0.7 fixture-id :front]
   ((fn [speed]
-     (tolglow.studio.repl/capture-locals!)
+     (tolglow.repl/capture-locals!)
      (* level speed))
    2))
 ```
@@ -149,7 +149,7 @@ values are interned in that debug namespace for subsequent inspection.
 
 Inside an evaluation the current session is bound automatically. A callback
 invoked later can explicitly pass its still-open session:
-`(tolglow.studio.repl/capture-locals! session)`. A closed session rejects capture.
+`(tolglow.repl/capture-locals! session)`. A closed session rejects capture.
 Use this only in developer code outside pure effects/render workers: capturing
 live values is an intentional debug-boundary side effect. Remove the macro call
 or use normal code once inspection is finished.

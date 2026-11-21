@@ -2,9 +2,9 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
             [tolglow.studio :as studio]
-            [tolglow.studio.rdm :as rdm]
-            [tolglow.studio.transit :as transit]
-            [tolglow.studio.rdm-test :as peer])
+            [tolglow.rig.rdm :as rdm]
+            [tolglow.transit :as transit]
+            [tolglow.rig.rdm-test :as peer])
   (:import [java.io ByteArrayInputStream]))
 
 (defn request [runtime operation payload & [typed?]]

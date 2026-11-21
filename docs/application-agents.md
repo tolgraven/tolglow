@@ -1,6 +1,6 @@
 # Application-agent tasks
 
-`tolglow.studio.app-agents` owns application editing separately from show-authoring
+`tolglow.development.agents` owns application editing separately from show-authoring
 agents. A task creates fresh paired Tolglow/Afterglow Git worktrees from committed
 base references, runs the configured Codex executable through the existing
 Docker execution boundary, and exposes bounded progress and actual Git changes.
@@ -192,8 +192,8 @@ Run:
 
 ```sh
 clojure -Sdeps '{:paths ["src" "resources" "test" "dev"]}' -M \
-  -e '(require (quote tolglow.studio.app-agents-test))
-      (clojure.test/run-tests (quote tolglow.studio.app-agents-test))
+  -e '(require (quote tolglow.development.agents-test))
+      (clojure.test/run-tests (quote tolglow.development.agents-test))
       (shutdown-agents)'
 ```
 
@@ -207,8 +207,8 @@ It is excluded from ordinary test discovery and can be selected explicitly:
 
 ```sh
 clojure -Sdeps '{:paths ["src" "resources" "test" "dev"]}' -M \
-  -e '(require (quote tolglow.studio.app-agents-test))
-      (let [r (tolglow.studio.app-agents-test/docker-smoke!)]
+  -e '(require (quote tolglow.development.agents-test))
+      (let [r (tolglow.development.agents-test/docker-smoke!)]
         (prn r) (shutdown-agents)
         (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))'
 ```

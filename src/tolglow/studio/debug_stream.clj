@@ -2,7 +2,7 @@
   "Bounded Transit event history and opt-in raw universe inspection."
   (:require [ring.websocket :as ws]
             [tolglow.studio.state-stream :as state-stream]
-            [tolglow.studio.transit :as wire])
+            [tolglow.transit :as wire])
   (:import [clojure.lang PersistentQueue]
            [java.util ArrayDeque Date UUID]
            [java.util.concurrent Semaphore]))

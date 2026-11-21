@@ -3,9 +3,9 @@
             [clojure.data.json :as json]
             [ring.core.protocols :as protocols]
             [tolglow.studio :as studio]
-            [tolglow.studio.transit :as wire]
-            [tolglow.studio.agents :as agents]
-            [tolglow.studio.output :as output]))
+            [tolglow.transit :as wire]
+            [tolglow.agents :as agents]
+            [tolglow.output :as output]))
 
 (defmacro with-runtime [[name] & body]
   `(let [~name (studio/create-runtime)]

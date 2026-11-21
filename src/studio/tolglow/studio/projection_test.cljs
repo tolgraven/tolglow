@@ -1,7 +1,7 @@
 (ns tolglow.studio.projection-test
   (:require [cljs.test :refer-macros [deftest is]]
             [tolglow.studio.projection :as projection]
-            [tolglow.studio.transit :as transit]))
+            [tolglow.transit :as transit]))
 
 (def view {:runtime-id "runtime" :show-id "main" :epoch 0 :revision 2 :frame-number 10
            :nullable 3 :drop true

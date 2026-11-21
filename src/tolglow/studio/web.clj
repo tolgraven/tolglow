@@ -6,7 +6,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [ring.middleware.content-type :refer [wrap-content-type]]
@@ -347,7 +347,7 @@
   (-> (routes services)
       wrap-same-origin
       wrap-params
-      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript"}})
+      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript" "mjs" "text/javascript"}})
       wrap-errors
       wrap-response-format
       wrap-isolation))

@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [clojure.data.json :as json]
             [tolglow.studio :as studio]
-            [tolglow.studio.fixtures-test :as catalog]
+            [tolglow.fixtures.definitions-test :as catalog]
             [tolglow.integrations.fixtures-test :as fixture-data])
   (:import [java.io ByteArrayInputStream]))
 

@@ -1,6 +1,7 @@
 (ns tolglow.mover-oracle
   "Generate the moving-head shader corpus using Afterglow's calibrated renderer."
   (:require [afterglow.render.frame :as frame]
+            [afterglow.render.gpu :as gpu]
             [clojure.data.json :as json]))
 
 (defn- fixture [i]
@@ -43,4 +44,7 @@
   (let [n (parse-long heads) k (parse-long frames)]
     (when-not (and n (<= 1 n 512) k (<= 2 k 256))
       (throw (ex-info "Heads must be 1..512 and frames 2..256" {:heads heads :frames frames})))
-    (json/write (corpus n k) *out*)))
+    (json/write (assoc (corpus n k)
+                       :renderer {:vertex (gpu/source :moving-head-vertex)
+                                  :module (gpu/source :moving-head-solver)})
+                *out*)))

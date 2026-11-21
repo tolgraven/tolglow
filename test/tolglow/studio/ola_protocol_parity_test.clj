@@ -2,7 +2,7 @@
   "Independent oracle from the actual ola-clojure generated protobuf classes.
   Runs in the parity lane; production output does not load that client's globals."
   (:require [clojure.test :refer [deftest is]]
-            [tolglow.studio.output :as output])
+            [tolglow.output :as output])
   (:import [com.google.protobuf ByteString]
            [ola.proto Ola$DmxData]
            [ola.rpc Rpc$RpcMessage Rpc$Type]

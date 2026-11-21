@@ -6,7 +6,6 @@ const { chromium } = require('playwright-core');
 async function main() {
   const root = path.resolve(__dirname, '../..');
   const corpus = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-  const shader = fs.readFileSync(path.join(root, 'resources/gpu/mover-aim.vert'), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, 'mover-shader.mjs'), 'utf8');
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
@@ -24,13 +23,18 @@ async function main() {
         'Cross-Origin-Embedder-Policy': 'require-corp' }, body: ''
     }));
     await page.goto('http://localhost/moving-heads');
-    const result = await page.evaluate(async ({ corpus, shader, source }) => {
-      const url = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
+    const result = await page.evaluate(async ({ corpus, source }) => {
+      const moduleUrl = code => URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+      const harness = moduleUrl(source);
+      const solver = moduleUrl(corpus.renderer.module);
       try {
-        const { measure } = await import(url);
-        return await measure(corpus, shader);
-      } finally { URL.revokeObjectURL(url); }
-    }, { corpus, shader, source });
+        const [{ measure }, { createMovingHeadSolver }] = await Promise.all([import(harness), import(solver)]);
+        return await measure(corpus, corpus.renderer.vertex, createMovingHeadSolver);
+      } finally {
+        URL.revokeObjectURL(solver);
+        URL.revokeObjectURL(harness);
+      }
+    }, { corpus, source });
     result.chromium = browser.version();
     result.cpu = require('node:os').cpus()[0]?.model;
     result.driverMessages = [...driverMessages].filter(message => !message.includes('loseContext: context lost'));

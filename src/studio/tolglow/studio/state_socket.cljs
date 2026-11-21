@@ -2,7 +2,7 @@
   "Own the Studio browser's single state subscription and reconnect timer.
   Each callback carries its original connection identity through re-frame."
   (:require [re-frame.core :as rf]
-            [tolglow.studio.transit :as transit]))
+            [tolglow.transit :as transit]))
 
 (defonce ^:private owner (atom nil))
 (defn- current? [id] (and id (= id (:id @owner))))
