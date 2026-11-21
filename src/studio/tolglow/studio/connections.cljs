@@ -14,7 +14,7 @@
    :midi {:enabled? false :input-index "" :output-index "" :control? false}
    :beat-link {:enabled? false :status? false :align-bars? false :peer nil}
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
-          :mode "lighting" :channel 1 :poll-ms 500 :timeout-ms 2000 :pairing nil
+          :mode "lighting" :channel 1 :automap? true :poll-ms 500 :timeout-ms 2000 :pairing nil
           :mappings {} :parameters {}}})
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
 (def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil
@@ -62,13 +62,15 @@
                          (if (= kind :notes)
                            (let [mode (:mode row "one-shot") value (finite! (:duration-value row "1") "Mapping duration")]
                              (when-not (pos? value) (throw (js/Error. "Mapping duration must be positive.")))
-                             (cond-> {:cue-id cue-id :mode mode}
+                             (cond-> (merge (select-keys row [:disabled? :velocity-param]) {:cue-id cue-id :mode mode})
                                (contains? #{"one-shot" "timed"} mode)
                                (assoc :duration (events/musical-duration value (:duration-unit row "beats")))))
                            (let [low (finite! (:low row) "Lower bound") high (finite! (:high row) "Upper bound")]
                              (when (or (str/blank? (:param row)) (>= low high))
                                (throw (js/Error. "Choose a parameter and increasing bounds for each controller.")))
-                             {:cue-id cue-id :param (:param row) :bounds [low high]}))])) rows)]
+                             (cond-> (merge (select-keys row [:type :values :disabled?]) {:cue-id cue-id :param (:param row) :bounds [low high]})
+                               (seq (str (:lane-note row)))
+                               (assoc :lane-note (integer! (:lane-note row) "Parameter lane pitch" 0 127)))))])) rows)]
     (when-not (= (count pairs) (count (distinct (map first pairs)))) (throw (js/Error. "Each MIDI note/controller can have only one mapping.")))
     (into {} pairs)))
 (defn sync-payload [db]
@@ -85,7 +87,8 @@
         live (:live form) pairing (:pairing live)
         pairing (when pairing
                   (cond-> {:track-index (integer! (:track-index pairing 0) "Live track index" 0 10000)
-                           :clip-slot-index (integer! (:clip-slot-index pairing 0) "Live clip slot index" 0 10000)
+                           (if (contains? pairing :arrangement-index) :arrangement-index :clip-slot-index)
+                           (integer! (or (:arrangement-index pairing) (:clip-slot-index pairing) 0) "Live clip index" 0 9999)
                            :rack-device-index (integer! (:rack-device-index pairing 0) "Rack device index" 0 10000)}
                     (seq (:expected-track-name pairing)) (assoc :expected-track-name (:expected-track-name pairing))
                     (seq (:expected-clip-name pairing)) (assoc :expected-clip-name (:expected-clip-name pairing))))]
@@ -177,12 +180,15 @@
     (try
       {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :configure)
                 (update-in [:connections :errors] dissoc :configure))
-       :fx [(req db :configure "/api/sync/configure" {:config (sync-payload db)} (if start? :connections/configured-start :connections/configured))]}
+       :fx [(req db :configure "/api/sync/configure" (cond-> {:config (sync-payload db)} (get-in db [:ui :page-id]) (assoc :page-id (get-in db [:ui :page-id]))) (if start? :connections/configured-start :connections/configured))]}
       (catch :default error {:db (assoc-in db [:connections :errors :configure] (events/error-message error))}))))
 (defn configured [db request-token data]
   (when (current? db request-token)
     {:db (-> db (assoc-in [:connections :sync] data) (assoc-in [:connections :sync-dirty?] false)
                 (assoc-in [:connections :sync-form-loaded?] true)
+                (assoc-in [:connections :unmapped] (:unmapped data))
+                (assoc-in [:connections :notes] (mapping-rows (:config data) :mappings))
+                (assoc-in [:connections :parameters] (mapping-rows (:config data) :parameters))
                 (update-in [:connections :pending] disj :configure))}))
 (rf/reg-event-fx :connections/configured
   (fn [{:keys [db]} [_ request-token _ data]] (configured db request-token data)))
@@ -193,6 +199,7 @@
   (fn [{:keys [db]} [_ operation value]]
     (let [[path body] (case operation
                         :start ["/api/sync/start" {}] :stop ["/api/sync/stop" {}]
+                        :arrange ["/api/sync/arrange" {:request-id (str (random-uuid)) :song-beat (js/Number value)}]
                         :source ["/api/sync/source" {:source-id value}]
                         :handoff ["/api/sync/handoff" {:mode value}]
                         :audio-stop ["/api/audio/stop" {}])]
@@ -360,6 +367,8 @@
       [:label (if (= kind :notes) "Note" "CC") [:input {:type "text" :input-mode "numeric" :value (:control row) :disabled disabled?
                                                          :aria-label (str (name kind) " " (inc index) " number")
                                                          :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :control (text %)])}]]
+      [:label.checkbox-label [:input {:type "checkbox" :checked (not (:disabled? row)) :disabled disabled?
+                                      :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :disabled? (not (.. % -target -checked))])}] "Enabled"]
       [:label "Cue" [:select {:value (:cue-id row) :disabled disabled? :aria-label (str (name kind) " " (inc index) " cue")
                               :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :cue-id (text %)])}
                      (for [cue cues] ^{:key (:id cue)} [:option {:value (:id cue)} (or (:name cue) (:id cue))])]]
@@ -376,6 +385,9 @@
                     :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :duration-unit (text %)])}
            (for [unit ["beats" "bars" "phrases" "ms"]] ^{:key unit} [:option {:value unit} unit])]]]
         [:<>
+         [:label "Clip note" [:input {:value (str (:lane-note row)) :input-mode "numeric" :disabled disabled?
+                                      :aria-label "Parameter velocity lane pitch"
+                                      :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :lane-note (text %)])}]]
          [:label "Parameter" [:input {:value (:param row) :disabled disabled? :placeholder "level"
                                       :on-change #(rf/dispatch-sync [:connections/mapping-edit kind index :param (text %)])}]]
          [:label "Range" [:div.connection-bounds
@@ -434,14 +446,22 @@
                                                              :on-change #(edit! [:sync-form :live :record-route] (text %))}
                                   [:option {:value "bridge"} "Bridge · confirmed clip writes"] [:option {:value "midi"} "MIDI · delivery only"]]]
        [field s [:sync-form :live :channel] "MIDI channel · 1–16" {:id "live-channel" :input-mode "numeric" :disabled disabled?}]]
+      [:label.checkbox-label [:input {:type "checkbox" :checked (:automap? live true) :disabled disabled?
+                                      :on-change #(edit! [:sync-form :live :automap?] (.. % -target -checked))}]
+       "Map this cue page and its parameters when saving"]
       [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (:pairing live)) :disabled disabled?
                                        :on-change #(rf/dispatch-sync [:connections/pairing (.. % -target -checked)])}]
        "Pair a track, clip slot and drum rack"]
       (when (:pairing live)
         [:div.connection-pairing
+         [:label "Destination" [:select {:value (if (contains? (:pairing live) :arrangement-index) "arrangement" "session") :disabled disabled?
+                                         :on-change #(let [k (if (= "arrangement" (text %)) :arrangement-index :clip-slot-index)]
+                                                       (edit! [:sync-form :live :pairing]
+                                                              (assoc (dissoc (:pairing live) :clip-slot-index :arrangement-index :expected-clip-name) k "0")))}
+                                [:option {:value "session"} "Session clip"] [:option {:value "arrangement"} "Arrangement clip"]]]
          [:div.form-row
           [field s [:sync-form :live :pairing :track-index] "Track index · from 0" {:id "live-track" :input-mode "numeric" :disabled disabled?}]
-          [field s [:sync-form :live :pairing :clip-slot-index] "Clip slot · from 0" {:id "live-slot" :input-mode "numeric" :disabled disabled?}]
+          [field s [:sync-form :live :pairing (if (contains? (:pairing live) :arrangement-index) :arrangement-index :clip-slot-index)] "Clip index · from 0" {:id "live-slot" :input-mode "numeric" :disabled disabled?}]
           [field s [:sync-form :live :pairing :rack-device-index] "Rack device index · from 0" {:id "live-rack" :input-mode "numeric" :disabled disabled?}]]
          [:div.form-row
           [field s [:sync-form :live :pairing :expected-track-name] "Expected track name · optional" {:disabled disabled?}]
@@ -452,7 +472,16 @@
                                       :on-click #(rf/dispatch [:connections/action :handoff mode])} title])]
       [:p.small.muted (cond (true? (:recording? recording)) "Live is recording. Accepted lighting actions follow the configured recording route."
                            (map? recording) "Live status received; recording is inactive." :else "No Live recording status received yet.")]
+      (when (and active? (:destination-id recording))
+        [:div.form-row
+         [field s [:arrangement-beat] "Arrangement start · song beats" {:id "live-arrangement-beat" :input-mode "decimal"}]
+         [:button.button {:type "button" :disabled (or (:recording? recording) (str/blank? (:arrangement-beat s)))
+                          :on-click #(rf/dispatch [:connections/action :arrange (:arrangement-beat s)])} "Place clip in Arrangement"]])
       (when execution [:p.small.muted (str "Last write: " (:status execution) (when (:clip-write-confirmed? execution) " · clip write confirmed"))])
+      (when (seq (:unmapped s))
+        [:details.connection-mappings [:summary (str "Unassigned cue and parameter mappings · " (count (:unmapped s)))]
+         (for [{:keys [cue-id param reason]} (:unmapped s)]
+           ^{:key [cue-id param]} [:p.small (str cue-id (when param (str " / " param)) " · " reason)])])
       [mapping-editor s :notes cues disabled?] [mapping-editor s :parameters cues disabled?]]]))
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))

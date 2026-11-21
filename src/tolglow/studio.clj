@@ -17,6 +17,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
+            [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
@@ -548,6 +549,7 @@
         manager (connections/sync (:connections runtime))
         current? #(and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))]
     {:envelope! #(sync-envelope runtime epoch)
+     :pads (fn [mappings] (ableton/mapped-pads (get-in @(:state runtime) [:model :registry]) mappings))
      :resolve-instance! (fn [cue-id]
                           (when (current?)
                             (->> (vals (get-in @(:state runtime) [:model :instances]))
@@ -602,7 +604,10 @@
     ;; Include automation, composition and controller commands, not only HTTP.
     (doseq [id (get-in after [:control :history-order]) :when (not (old-ids id))
             :let [{:keys [command ack]} (get-in after [:control :history id])]]
-      (sync/record! manager command ack)
+      (let [instance (get-in after [:instances (:instance-id ack)])
+            timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
+        (sync/record! manager (cond-> command (and (= :cue/launch (:op command)) timing)
+                               (assoc :recording-duration timing)) ack))
       (acknowledge-sync! runtime manager command ack epoch))
     (doseq [[_ ack command] receipts :when (= :rejected (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))))
@@ -1038,7 +1043,18 @@
                        (case operation
       :status (assoc (sync/status manager) :clock (sync/clock-at manager (now-ms runtime)))
       :ports (sync/midi-ports)
-      :configure (sync/configure! manager (:config payload payload))
+      :configure (let [config (sync/validate-config (:config payload payload))
+                       model (:model @(:state runtime))
+                       pages (sort-by (comp str :id) (vals (:pages model)))
+                       wire-id #(if (keyword? %) (subs (str %) 1) %)
+                       page (if-let [id (:page-id payload)]
+                              (some #(when (= (wire-id id) (wire-id (:id %))) %) pages)
+                              (first pages))
+                       map? (and page (get-in config [:live :enabled?]) (get-in config [:live :automap?]))
+                       config (if map? (update config :live ableton/map-page (:registry model) page) config)]
+                   (cond-> (sync/configure! manager config)
+                     map? (assoc :unmapped (ableton/unmapped-fields (:live config) (:registry model) page))))
+      :arrange {:accepted? (sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
       :start (do (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
                  (sync/status manager))
       :stop (let [generation (:generation (connections/status (:connections runtime)))]
