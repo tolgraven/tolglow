@@ -162,7 +162,7 @@
   (let [{:keys [workers warmup samples period-ms]} opts
         sink (bench/capture-sink)
         runtime (studio/create-runtime {:model model :workers workers :sink sink :workspace-options nil})
-        commits (ConcurrentHashMap.) clients (atom []) server (atom nil)
+        commits (ConcurrentHashMap.) clients (atom []) server (atom nil) http-client (atom nil)
         sequence-number (AtomicLong.)
         executor (when (pos? client-count)
                    (Executors/newFixedThreadPool (+ 2 client-count)
@@ -190,6 +190,7 @@
         (reset! server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false}))
         (let [http (.build (.executor (HttpClient/newBuilder) executor))
               port (.getLocalPort (first (.getConnectors @server)))]
+          (reset! http-client http)
           (doseq [i (range client-count)]
             (swap! clients conj (connect-client http port (str "profile-fast-" i) true commits)))
           (swap! clients conj (connect-client http port "profile-slow" false commits))))
@@ -236,7 +237,15 @@
         (doseq [client @clients] (.abort ^WebSocket (:socket client)))
         (studio/stop! runtime)
         (when @server (.stop @server))
-        (when executor (.shutdownNow executor))))))
+        ;; Java21's client owns a selector as well as the supplied executor.
+        ;; Bound teardown even if a failed connection still owns a handshake.
+        ;; Older JDKs reclaim their client on GC after sockets abort.
+        (try
+          (when (instance? java.lang.AutoCloseable @http-client)
+            (.shutdownNow ^HttpClient @http-client)
+            (when-not (.awaitTermination ^HttpClient @http-client (java.time.Duration/ofSeconds 5))
+              (throw (ex-info "Owned subscriber client did not stop" {}))))
+          (finally (when executor (.shutdownNow executor))))))))
 
 (defn -main [& args]
   (try
