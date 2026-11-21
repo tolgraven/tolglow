@@ -4,7 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { performance } = require("node:perf_hooks");
 const { chromium } = require("playwright-core");
-const { createWorker } = require("./worker.js");
+const { createWorker } = require("../../resources/devices/push-display/worker.cjs");
 
 const sampleView = {
   title: "Tolglow", page: "main", origin: [0, 0], status: "ready", master: 0.82,

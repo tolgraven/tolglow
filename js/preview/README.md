@@ -60,7 +60,7 @@ was wrong: the real CPU renderer uses elevation 0 along +Z and -90 degrees down.
 calibration and fixture rotation. A checked-in oracle is captured by the actual
 `afterglow.render.frame/resolve-frame`, with geometry and servo round-trip tests.
 Regenerate it from the repo root with
-`clojure -M src/engines/preview/capture-oracle.clj`.
+`clojure -M dev/tolglow/capture_preview_oracle.clj`.
 
 A finite aperture uses the same lens radius as the mesh (default .119m, optional
 `lens-radius-m`). The optical origin stays at the saved fixture position. A
@@ -120,18 +120,18 @@ textures, shadow maps, render targets and postprocessing resources.
   The r187 controlled images exposed a shadow-texture migration bug missed by
   the older ratio-only test. Sampling comparison depth textures and asserting
   exact unoccluded equality fixed it; all eight beams now remain visible.
-- `fog-visual-qa.mjs` reads the real host rig but replaces only the browser-local
+- `dev/preview/fog-visual-qa.mjs` reads the real host rig but replaces only the browser-local
   output for deterministic diagnostic scenes; it never mutates a show or sends
   hardware output. Its evidence JSON retains inputs and field times.
 - Initial complex-shader compilation in software Chromium can take seconds;
   the captured 5077ms first lit draw is **not a steady-state frame benchmark**.
 
-`lighting-visual-qa.mjs` records controlled blackout, no-fog surface, narrow
+`dev/preview/lighting-visual-qa.mjs` records controlled blackout, no-fog surface, narrow
 finite-aperture, crossing-light, dense-plume and dispersed-plume scenes using
 the actual host rig with browser-only output projections. It never modifies the
 show or opens hardware output.
 
-`browser-qa.mjs` exercises the actual re-frame application's camera, atmosphere,
+`dev/preview/browser-qa.mjs` exercises the actual re-frame application's camera, atmosphere,
 worklight, quality and expanded/fullscreen controls at desktop, iPad and phone
 viewports. It does not send lighting commands or claim physical touch-device
 performance. Captures and per-control dimensions go under `/tmp/studio-qa/preview-app`.

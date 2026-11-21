@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { Adapter } = require("../live_api.js");
+const { Adapter } = require("../../../resources/devices/ableton-live/live_api.js");
 
 function fixture() {
   const writes = [], methods = [], entities = {}, paths = {}, notes = new Map(); let nextNote = 100;
@@ -122,12 +122,12 @@ test("mode transfer and feedback origin suppress MIDI echo", () => {
 });
 
 test("the editable Max patch routes every LiveAPI message through deferlow", () => {
-  const patch = JSON.parse(fs.readFileSync(path.join(__dirname, "../tolglow-live-bridge.maxpat"), "utf8")).patcher;
+  const patch = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../resources/devices/ableton-live/tolglow-live-bridge.maxpat"), "utf8")).patcher;
   const boxes = new Map(patch.boxes.map(x => [x.box.id, x.box]));
   assert.ok(boxes.get("node").text.includes("node.script node_bridge.js"));
   assert.equal(boxes.get("low").text, "deferlow");
   const jsInputs = patch.lines.filter(x => x.patchline.destination[0] === "max-js");
   assert.equal(jsInputs.length, 1); assert.equal(jsInputs[0].patchline.source[0], "low");
   for (const { patchline } of patch.lines) { assert.ok(boxes.has(patchline.source[0])); assert.ok(boxes.has(patchline.destination[0])); }
-  assert.ok(!fs.existsSync(path.join(__dirname, "../tolglow-live-bridge.amxd")), "No fabricated compiled device is shipped");
+  assert.ok(!fs.existsSync(path.join(__dirname, "../../../resources/devices/ableton-live/tolglow-live-bridge.amxd")), "No fabricated compiled device is shipped");
 });

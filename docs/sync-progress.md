@@ -102,7 +102,7 @@ from `(sync/validate-config {})` rather than copied into another implementation.
 ## Live control, recording and connection ownership
 
 The companion source assets and installation steps live in
-[`live_bridge/README.md`](../src/tolglow/integrations/live_bridge/README.md). It is a
+[`ableton-live/README.md`](../resources/devices/ableton-live/README.md). It is a
 Max for Live device source patch, not a fabricated `.amxd` binary. It must be
 opened and saved in an actual licensed Max/Live installation. The current
 dictionary-call codec for Live's note editing APIs still needs actual-host

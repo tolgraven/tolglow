@@ -1,5 +1,5 @@
 // Read-only host snapshot; all scene/field manipulation remains in this browser.
-// Run: node src/engines/preview/fog-visual-qa.mjs [http://127.0.0.1:8500] [output-dir]
+// Run: node dev/preview/fog-visual-qa.mjs [http://127.0.0.1:8500] [output-dir]
 import {chromium} from 'playwright-core';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PreviewActivity} from './preview-activity.js';
+import {PreviewActivity} from '../../../js/preview/preview-activity.js';
 
 test('intersection, document visibility, window focus and page lifecycle all gate the preview', () => {
   const doc = new EventTarget(), win = new EventTarget(), changes = [];

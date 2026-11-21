@@ -1,6 +1,6 @@
 // Deterministic browser fixture. No host/show/device access.
 import * as THREE from 'three';
-import {VolumetricFog} from './fog.js';
+import {VolumetricFog} from '../../../js/preview/fog.js';
 
 // Both full and half-resolution targets have an exact centre ray.
 const width = 99, height = 99;

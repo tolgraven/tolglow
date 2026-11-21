@@ -8,8 +8,8 @@ import {chromium} from 'playwright-core';
 test('actual worker renders while input runs, fences epochs, resizes and safely falls back', {timeout: 120000}, async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
   if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH to exercise the actual worker and WebGL renderer');
-  const bundle = await build({entryPoints: {preview: new URL('./index.js', import.meta.url).pathname,
-    'preview-worker': new URL('./worker.js', import.meta.url).pathname}, outdir: '/virtual', bundle: true,
+  const bundle = await build({entryPoints: {preview: new URL('../../../js/preview/index.js', import.meta.url).pathname,
+    'preview-worker': new URL('../../../js/preview/worker.js', import.meta.url).pathname}, outdir: '/virtual', bundle: true,
     format: 'esm', platform: 'browser', write: false});
   const files = new Map(bundle.outputFiles.map(file => [file.path.split('/').at(-1), file.text]));
   const server = createServer((request, response) => {

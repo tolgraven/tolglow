@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {LightingSamples} from './lighting-samples.js';
-import {DisplayClock} from './display-clock.js';
+import {LightingSamples} from '../../../js/preview/lighting-samples.js';
+import {DisplayClock} from '../../../js/preview/display-clock.js';
 
 const rig = {id: 'rig'}, fixtures = [{id: 'head', fixture: {calibration: {pan: {'min-deg': -270, 'max-deg': 270}}}}];
 const first = {'emitted-color': [0,.25,1], dimmer: .2, intensity: .2, pan: .2, tilt: .25, shutter: 5, gobo: 1, focus: .1, direction: [0,1,0]};

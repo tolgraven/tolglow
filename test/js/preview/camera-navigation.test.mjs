@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {constrainCamera, tourPose, tourSubjects} from './camera-navigation.js';
+import {constrainCamera, tourPose, tourSubjects} from '../../../js/preview/camera-navigation.js';
 
 test('tour selects only emitted light, ranks deterministically and bounds candidate count', () => {
   const fixtures = [{id: 'dark', position: [0, 3, 0]}, {id: 'green', position: [1, 3, 0]}, {id: 'red', position: [-1, 3, 0]}];

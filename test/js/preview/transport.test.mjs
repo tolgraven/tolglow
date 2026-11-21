@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {LatestStateChannel} from './mailbox.js';
-import {presentFrame, showIdentity} from './presentation.js';
+import {LatestStateChannel} from '../../../js/preview/mailbox.js';
+import {presentFrame, showIdentity} from '../../../js/preview/presentation.js';
 
 test('slow renderer receives one state at a time and the newest pending projection', () => {
   const sent = [], channel = new LatestStateChannel(message => sent.push(message));

@@ -1,4 +1,4 @@
-(ns preview.capture-oracle
+(ns tolglow.capture-preview-oracle
   (:require [afterglow.render.frame :as frame] [clojure.data.json :as json]))
 (let [cases (for [[rotation target] [[[0 0 0] [0 -1 0]]
                                      [[0 0 0] [0 0 1]]
@@ -14,5 +14,5 @@
                     output (get-in result [:values "oracle-head"])]
                 {:fixture fixture :output (select-keys output [:pan :tilt :pan-deg :tilt-deg :direction])
                  :servo-output (select-keys output [:pan :tilt]) :expected (:direction output)}))]
-  (spit "src/engines/preview/fixtures/aim-oracle.json"
+  (spit "test/js/preview/fixtures/aim-oracle.json"
         (json/write-str {:source "afterglow.render.frame/resolve-frame" :cases (vec cases)})))

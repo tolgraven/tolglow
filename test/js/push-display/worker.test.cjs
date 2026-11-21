@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { createWorker, launchOwned, localDisplayUrl } = require("./worker.js");
+const { createWorker, launchOwned, localDisplayUrl } = require("../../../resources/devices/push-display/worker.cjs");
 
 function harness(overrides = {}) {
   const calls = [], browser = { close: async () => calls.push("close") };
@@ -86,7 +86,7 @@ test("an extracted worker resolves the installed module from the launch director
     const modulePath = path.join(cwd, "node_modules", "playwright-core");
     fs.mkdirSync(path.dirname(script), { recursive: true });
     fs.mkdirSync(modulePath, { recursive: true });
-    fs.copyFileSync(path.join(__dirname, "worker.js"), script);
+    fs.copyFileSync(require.resolve("../../../resources/devices/push-display/worker.cjs"), script);
     // Distinct errors prove which real Node module was loaded, before any
     // browser startup. An extracted worker cannot resolve this via __dirname.
     fs.writeFileSync(path.join(modulePath, "index.js"), "throw new Error('installed launch-directory module');");

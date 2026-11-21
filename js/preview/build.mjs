@@ -1,6 +1,6 @@
 import {build} from 'esbuild';
 import {writeFile} from 'node:fs/promises';
-const result = await build({entryPoints: {'preview': 'src/engines/preview/index.js', 'preview-worker': 'src/engines/preview/worker.js'}, bundle: true, format: 'esm', platform: 'browser',
+const result = await build({entryPoints: {'preview': 'js/preview/index.js', 'preview-worker': 'js/preview/worker.js'}, bundle: true, format: 'esm', platform: 'browser',
   target: ['es2022'], outdir: 'resources/studio', sourcemap: false, minify: true,
   legalComments: 'eof', logLevel: 'info', write: false});
 // Three's multiline GLSL chunks contain mixed indentation/trailing whitespace.

@@ -1,7 +1,15 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :render/calibrated-moving-head-shader
+ [{:id :foundation/javascript-source-layout
+   :title "Keep the Clojure source tree independent of JavaScript engines and packaged device assets"
+   :kind :implementation :status :in-progress :owner "javascript_engine_bridge_and_browser_tooling_directory_layout"
+   :paths ["tolglow/test/tolglow/build_manifest_test.clj" "tolglow/dev/push-display/benchmark.cjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Build both renderer bundles and exercise the worker, its fallback and WebGL fog"
+                "Load the actual packaged Push worker and keep the editable Max patch with its scripts"
+                "Reject non-Clojure implementation files in src and document the repository layout"]}
+  {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
    :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
@@ -101,10 +109,10 @@
    :depends-on [:foundation/tests :authoring/aim-path-effects]
    :paths ["tolglow/src/studio/tolglow/studio/rig_editor.cljs"
            "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
-           "tolglow/src/engines/preview/editor.js"
-           "tolglow/src/engines/preview/editor.test.js"
-           "tolglow/src/engines/preview/editor-browser-qa.mjs"
-           "tolglow/src/engines/preview/overlay.js"
+           "tolglow/js/preview/editor.js"
+           "tolglow/test/js/preview/editor.test.mjs"
+           "tolglow/dev/preview/editor-browser-qa.mjs"
+           "tolglow/js/preview/overlay.js"
            "tolglow/resources/studio/rig-editor.css"
            "tolglow/docs/rig-editor.md"
            "tolglow/docs/benchmarks/rig-editor-browser.json"]
@@ -177,9 +185,9 @@
   {:id :preview/camera-navigation-v1
    :title "Explore the rig with keyboard and touch and follow active fixtures automatically"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/engines/preview/camera-navigation.js"
-           "tolglow/src/engines/preview/camera-navigation.test.js"
-           "tolglow/src/engines/preview/camera-navigation.test.mjs"
+   :paths ["tolglow/js/preview/camera-navigation.js"
+           "tolglow/test/js/preview/camera-navigation.test.mjs"
+           "tolglow/test/js/preview/camera-navigation-browser.test.mjs"
            "tolglow/src/studio/tolglow/studio/camera_controls.cljs"
            "tolglow/src/studio/tolglow/studio/camera_controls_test.cljs"
            "tolglow/resources/studio/camera-navigation.css"
@@ -1424,8 +1432,8 @@
    :owner nil}
   {:evidence
    ["15 Node tests passed; JS syntax and whitespace checks passed"
-    "tolglow/src/tolglow/integrations/live_bridge/README.md"],
-   :paths ["tolglow/src/tolglow/integrations/live_bridge"],
+    "tolglow/resources/devices/ableton-live/README.md"],
+   :paths ["tolglow/resources/devices/ableton-live"],
    :acceptance
    ["Real loopback acknowledgements/deduplication and documented LiveAPI subset"
     "Source Max patch and no fabricated binary host artifact"
@@ -1781,7 +1789,7 @@
     "tolglow/src/studio/tolglow/studio/push_display_test.cljs"
     "tolglow/src/studio/tolglow/studio/parameter_widgets.cljs"
     "tolglow/resources/studio/push-display.css"
-    "tolglow/src/tolglow/integrations/display_bridge"],
+    "tolglow/resources/devices/push-display"],
    :acceptance
    ["Shared typed widgets consume pushed projections without own model/API polling"
     "Owned Node/Chromium capture and lifecycle measured"],
@@ -1924,17 +1932,17 @@
   {:evidence
    ["Five math tests with JVM aim oracle; initial frame not visually accepted, correction active"],
    :paths
-   ["tolglow/src/engines/preview/capture-oracle.clj"
-    "tolglow/src/engines/preview/materials.js"
-    "tolglow/src/engines/preview/room.js"
-    "tolglow/src/engines/preview/geometry.js"
-    "tolglow/src/engines/preview/build.mjs"
-    "tolglow/src/engines/preview/math.test.js"
-    "tolglow/src/engines/preview/math.js"
-    "tolglow/src/engines/preview/package.json"
-    "tolglow/src/engines/preview/AGENTS.md"
-    "tolglow/src/engines/preview/index.js"
-    "tolglow/src/engines/preview/fixtures/aim-oracle.json"
+   ["tolglow/dev/tolglow/capture_preview_oracle.clj"
+    "tolglow/js/preview/materials.js"
+    "tolglow/js/preview/room.js"
+    "tolglow/js/preview/geometry.js"
+    "tolglow/js/preview/build.mjs"
+    "tolglow/test/js/preview/math.test.mjs"
+    "tolglow/js/preview/math.js"
+    "tolglow/js/preview/package.json"
+    "tolglow/js/preview/AGENTS.md"
+    "tolglow/js/preview/index.js"
+    "tolglow/test/js/preview/fixtures/aim-oracle.json"
     "tolglow/resources/studio/preview.js"],
    :acceptance
    ["Match actual runtime aim/fixture/rig data"
@@ -1949,12 +1957,12 @@
   {:evidence
    ["Eight CPU tests and one SwiftShader GPU suite passed before latest visual corrections; rerun pending"],
    :paths
-   ["tolglow/src/engines/preview/fog.js"
-    "tolglow/src/engines/preview/fog-field.js"
-    "tolglow/src/engines/preview/fog.test.mjs"
-    "tolglow/src/engines/preview/fog-gpu.test.mjs"
-    "tolglow/src/engines/preview/fog-gpu-fixture.js"
-    "tolglow/src/engines/preview/fog.md"],
+   ["tolglow/js/preview/fog.js"
+    "tolglow/js/preview/fog-field.js"
+    "tolglow/test/js/preview/fog.test.mjs"
+    "tolglow/test/js/preview/fog-gpu.test.mjs"
+    "tolglow/test/js/preview/fog-gpu-fixture.mjs"
+    "tolglow/js/preview/fog.md"],
    :acceptance
    ["Empty fog and behind-opaque pixels preserve scene; real depth/shadow gates"
     "Actual visual acceptance and performance tier evidence"],
@@ -2098,8 +2106,8 @@
    :owner nil
    :paths ["tolglow/src/tolglow/studio/display.clj"
            "tolglow/test/tolglow/studio/display_test.clj"
-           "tolglow/src/tolglow/integrations/display_bridge/worker.js"
-           "tolglow/src/tolglow/integrations/display_bridge/worker.test.js"
+           "tolglow/resources/devices/push-display/worker.cjs"
+           "tolglow/test/js/push-display/worker.test.cjs"
            "tolglow/docs/push-display-packaging.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Checkout and executable-JAR workers open only at explicit connection"

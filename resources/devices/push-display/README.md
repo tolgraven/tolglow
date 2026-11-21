@@ -85,7 +85,7 @@ tree when its deadline expires. A failed screenshot is not retried implicitly.
 Run the boundary tests:
 
 ```sh
-node --test src/tolglow/integrations/display_bridge/worker.test.js
+node --test test/js/push-display/worker.test.cjs
 ```
 
 `tolglow.studio.display-test` covers the latest-view mailbox with blocked captures,
@@ -109,7 +109,7 @@ a validated 960x160 image and closed its browser process.
 Reproduce and save a screenshot plus JSON measurements with:
 
 ```sh
-node src/tolglow/integrations/display_bridge/benchmark.js \
+node dev/push-display/benchmark.cjs \
   http://127.0.0.1:8500/push-display /path/to/chromium /tmp/push-display-benchmark
 ```
 

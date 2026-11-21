@@ -17,9 +17,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => {if (message.type() === 'error') errors.push(message.text());});
     console.log(`${name}: opening studio`);
-    const stateLoaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/state' && response.ok());
     await page.goto(origin, {waitUntil: 'domcontentloaded'});
-    await stateLoaded;
     await page.waitForFunction(() => document.querySelector('#connection-label')?.textContent === 'Studio connected');
     console.log(`${name}: connected`);
     await page.locator('[data-view="perform"]').click();

@@ -2,7 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
-const { createBridge, loopbackUrl } = require("../node_bridge.js");
+const { createBridge, loopbackUrl } = require("../../../resources/devices/ableton-live/node_bridge.js");
 
 function post(port, body, headers = {}) {
   const bytes = Buffer.from(typeof body === "string" ? body : JSON.stringify(body));

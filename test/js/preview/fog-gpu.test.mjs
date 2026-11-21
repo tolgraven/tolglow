@@ -8,7 +8,7 @@ import {chromium} from 'playwright-core';
 test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and PCF depth shadows', async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
   if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH to run actual GPU-context assertions');
-  const bundle = await build({entryPoints: [new URL('./fog-gpu-fixture.js', import.meta.url).pathname],
+  const bundle = await build({entryPoints: [new URL('./fog-gpu-fixture.mjs', import.meta.url).pathname],
     bundle: true, format: 'esm', platform: 'browser', write: false});
   const server = createServer((request, response) => {
     response.setHeader('Content-Type', request.url === '/fixture.js' ? 'text/javascript' : 'text/html');

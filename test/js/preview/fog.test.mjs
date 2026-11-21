@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { FogField, FOG_QUALITY, intersectRoom, intersectCone, integrateHomogeneous } from './fog-field.js';
+import { FogField, FOG_QUALITY, intersectRoom, intersectCone, integrateHomogeneous } from '../../../js/preview/fog-field.js';
 
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
 

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {planePoint, projectPoint, pickEditor, RigEditorInput} from './editor.js';
-import {structuralKey} from './math.js';
-import {SceneRenderer} from './scene-renderer.js';
-import {RigOverlay} from './overlay.js';
-import {LightingSamples} from './lighting-samples.js';
+import {planePoint, projectPoint, pickEditor, RigEditorInput} from '../../../js/preview/editor.js';
+import {structuralKey} from '../../../js/preview/math.js';
+import {SceneRenderer} from '../../../js/preview/scene-renderer.js';
+import {RigOverlay} from '../../../js/preview/overlay.js';
+import {LightingSamples} from '../../../js/preview/lighting-samples.js';
 const bounds = {left: 0, top: 0, width: 1000, height: 800};
 const camera = new THREE.PerspectiveCamera(49, 1.25, .1, 100); camera.position.set(0, 8, 10); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
 const rig = {fixtures: [{id: 'a', position: [0, 3, 0], 'rotation-deg': [0, 0, 0]}], trusses: [{id: 't', position: [0, 4, 0], length: 4}]};

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {apertureRadius, opticalFrustum} from './optics.js';
-import {fixtureDirection, emittedColor, axisDegrees, beamAngle, structuralKey} from './math.js';
+import {apertureRadius, opticalFrustum} from '../../../js/preview/optics.js';
+import {fixtureDirection, emittedColor, axisDegrees, beamAngle, structuralKey} from '../../../js/preview/math.js';
 const near = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-10, `${a} != ${b}`));
 test('resolved direction/aim use exact world coordinates before servo angles', () => {
   near(fixtureDirection({position: [2, 4, 1]}, {direction: [0, -3, 4], pan: 0}), [0, -.6, .8]);

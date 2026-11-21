@@ -88,11 +88,11 @@ At most 16 supplied lights and four active machine sources are retained. The
 scene owner may expose fewer tiers and must display its selected limits. These
 are bounded work settings, not measured phone/iPad frame-rate guarantees.
 
-Run `node --test src/engines/preview/fog.test.mjs` for deterministic field,
+Run `node --test test/js/preview/fog.test.mjs` for deterministic field,
 cone-membership, diffusion, cooling, extinction and long-gap tests. The test logs
 informational Node CPU field timings without unstable timing assertions.
 
-Run `node --test src/engines/preview/fog-gpu.test.mjs` for a real isolated WebGL2
+Run `node --test test/js/preview/fog-gpu.test.mjs` for a real isolated WebGL2
 context. `CHROMIUM_PATH` defaults to `/usr/bin/chromium`; a missing browser skips
 this explicit integration gate rather than claiming GPU validation. The fixture
 bundles the production module, renders real half-float/depth/shadow targets and

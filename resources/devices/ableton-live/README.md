@@ -196,7 +196,7 @@ dictionary representation.
 ## Run the source tests
 
 ```sh
-node --test src/tolglow/integrations/live_bridge/test/*.test.js
+node --test test/js/ableton-live/*.test.js
 ```
 
 Tests inject only the external Live API boundary and exercise actual adapter
