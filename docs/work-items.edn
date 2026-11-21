@@ -2011,6 +2011,7 @@
     "Five math tests with JVM aim oracle; initial frame not visually accepted, correction active"],
    :paths
    ["tolglow/dev/tolglow/capture_preview_oracle.clj"
+    "tolglow/test/js/preview/fixture-pose-browser.test.mjs"
     "tolglow/js/preview/materials.js"
     "tolglow/js/preview/room.js"
     "tolglow/js/preview/geometry.js"
@@ -2035,9 +2036,7 @@
   {:evidence
    ["Eight CPU tests and one SwiftShader GPU suite passed before latest visual corrections; rerun pending"],
    :paths
-   ["afterglow/src/afterglow/render/frame.clj"
-    "tolglow/test/js/preview/fixture-pose-browser.test.mjs"
-    "tolglow/js/preview/fog.js"
+   ["tolglow/js/preview/fog.js"
     "tolglow/js/preview/fog-field.js"
     "tolglow/test/js/preview/fog.test.mjs"
     "tolglow/test/js/preview/fog-gpu.test.mjs"
