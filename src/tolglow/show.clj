@@ -17,6 +17,7 @@
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
+            [tolglow.compute :as compute]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
@@ -108,6 +109,7 @@
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   :compute (compute/status (:compute runtime))
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
@@ -136,10 +138,8 @@
                           (get before id)))]
     ((:close! observer))))
 
-(defn create-runtime
-  "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
-  ([] (create-runtime {}))
-  ([{:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
+(defn- configure-runtime
+  [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (calibration/disarm-restored (or model (demo/model)))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
@@ -147,7 +147,7 @@
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
          patch (render/compile-patch fixtures)
-         compiler-context (atom {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures {:enabled? batch?}) :cache (atom {})})
+         compiler-context (atom {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures (compute/compiler-options compute-owner batch?)) :cache (atom {})})
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
@@ -199,7 +199,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
-      :compiler-context compiler-context :batch? batch?
+      :compute compute-owner :compiler-context compiler-context :batch? batch?
       :patch (atom {:fixtures (get-in model [:rig :fixtures]) :compiled patch})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
@@ -208,7 +208,18 @@
                          (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
                          compiled))))}]
        (reset! runtime-ref runtime)
-       runtime))))
+       runtime)))
+
+(defn create-runtime
+  "Create an unscheduled show. The CPU backend is the default. Explicit
+  :compute-backend :native-gpu acquires one session owned by this show."
+  ([] (create-runtime {}))
+  ([options]
+   (let [owner (compute/open! options)]
+     (try (configure-runtime owner options)
+          (catch Throwable error
+            (try (compute/close! owner) (catch Throwable cleanup (.addSuppressed error cleanup)))
+            (throw error))))))
 
 (defn- restart-model [model time-ms]
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
@@ -511,7 +522,7 @@
 (defn- prepare-compiler! [runtime fixtures]
   (when-not (= fixtures (:fixtures @(:compiler-context runtime)))
     (reset! (:compiler-context runtime)
-            {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures {:enabled? (:batch? runtime)}) :cache (atom {})})))
+            {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures (compute/compiler-options (:compute runtime) (:batch? runtime))) :cache (atom {})})))
 
 (defn- advance-transport [model time-ms]
   (let [transport (:transport model)
@@ -737,7 +748,8 @@
   this cycle with fresh command identity and the captured source epoch."
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms]
-   (let [retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
+   (let [frame-start-ns (System/nanoTime)
+         retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
          committed-fault-events (volatile! [])]
      (try
@@ -826,9 +838,10 @@
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
                            pause-layer (pause-layer! runtime model)
+                           evaluate-fields (compute/frame-evaluator (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
                                      #(render/resolve-contributions
-                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % pause-layer (conj pause-layer))
+                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> (evaluate-fields %) pause-layer (conj pause-layer))
                                      {:master (:master model) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
@@ -976,6 +989,7 @@
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(effect-faults/close! (:effect-logs runtime))
+                              #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))

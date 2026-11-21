@@ -110,6 +110,19 @@
    :evidence ["Afterglow PR 23; Lein IR tests, 11 tests and 118 assertions"
               "Chromium SwiftShader read back aim, color and focus for 2,048 positions; 14,336 exact comparisons against evaluate-batch in an arithmetic workload"]}
 
+  {:id :render/show-native-fields
+   :title "Configure native effect expression rendering through the show module"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/compute.clj" "tolglow/src/tolglow/compiler/batch.clj"
+           "tolglow/src/tolglow/show.clj" "tolglow/test-native/tolglow/native_show_test.clj"]
+   :depends-on [:render/named-glsl-fields]
+   :acceptance ["Effect workers emit pure ordered requests and share one native session per show"
+                "Recover late and failed requests on the CPU with the same frame inputs and report the fallback"
+                "Close native resources on shutdown or startup failure and discard late results after restart"]
+   :evidence ["docs/native-shader-show.md"
+              "Lein native show tests on Mesa llvmpipe with eight fixtures, two concurrent shader programs and a capture sink"
+              "A blocked real native draw spans show restart without an extra publication"]}
+
   {:id :render/physical-output-in-afterglow
    :title "Own physical DMX publication and fixture protocol handling in Afterglow"
    :kind :implementation :status :done :owner nil

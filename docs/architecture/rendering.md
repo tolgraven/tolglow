@@ -18,7 +18,7 @@ independent record with typed field offsets. A 2,048-position WebGL run compared
 14,336 arithmetic components with the CPU and matched them exactly. This workload
 used exactly representable inputs and outputs. Trigonometric precision varies by
 driver. The shipping CPU renderer remains the default for physical output.
-[Expression interface](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/numeric-shader-fields.md)
+[Show configuration and CPU fallback](../native-shader-show.md) · [Expression interface](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/numeric-shader-fields.md)
 
 The remaining targets include physical GPU timing on live-show hardware,
 complete frame deadlines including readback and transfer, and wider fixture
