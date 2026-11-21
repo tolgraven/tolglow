@@ -283,8 +283,7 @@
 (rf/reg-event-fx :connections/settings-saved
   (fn [{:keys [db]} [_ request-token key _ack]]
     (when (current? db request-token)
-      {:db (-> db (update-in [:connections :pending] disj key) (update-in [:connections :errors] dissoc key))
-       :dispatch [:studio/poll]})))
+      {:db (-> db (update-in [:connections :pending] disj key) (update-in [:connections :errors] dissoc key))})))
 
 (defn- output-panel [db s]
   (let [form (merge {:mode "direct" :fade-ms 100 :latency-ms 25}

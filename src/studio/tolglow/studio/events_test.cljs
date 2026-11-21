@@ -24,6 +24,17 @@
                 :effects [{:id "ember" :version 2}]
                 :pages [{:id "main" :cells []}]
                 :instances [{:id "7:9" :cue-id "ember" :phase "running" :params {:level 0.7}}]}))
+(defn with-stream [db]
+  (:db (transition db [:studio/stream-opening (:session db) "connected"])))
+
+(defn stream-event [db envelope]
+  (transition db [:studio/stream-frame (:session db) "connected" envelope]))
+
+(defn full-frame [db view]
+  (stream-event (with-stream db)
+                {:protocol projection/protocol :kind :full :token "full"
+                 :identity (projection/identity-of view) :view view}))
+
 (defn first-command [effects] (second (first (:fx effects))))
 
 (deftest rapid-rotary-keypresses-use-current-app-db-instead-of-a-stale-rendered-value
@@ -137,7 +148,7 @@
   (let [old-show (assoc (:show base) :runtime-id "old-process" :epoch 8 :revision 40 :frame-number 200)
         new-show (assoc (:show base) :runtime-id "new-process" :epoch 0 :revision 0 :frame-number 1)
         db (assoc base :show old-show :snapshot-order [8 40 200])
-        changed (transition db [:studio/state new-show])]
+        changed (full-frame db (assoc new-show :show-id :main))]
     (is (= "new-process" (get-in changed [:db :show :runtime-id])))
     (is (= [0 0 1] (get-in changed [:db :snapshot-order])))
     (is (= :studio/release-pointers (get-in changed [:fx 0 1 0])))))
@@ -166,77 +177,75 @@
     (is (nil? (get-in stale [:db :drafts ["7:9" :level] :revision])))
     (is (= "replacement" (get-in stale [:db :drafts ["7:9" :level] :runtime-id])))))
 
-(deftest incomplete-numeric-edit-survives-frame-polls-until-blur
+(deftest incomplete-numeric-edit-survives-pushed-frames-until-blur
   (let [editing (transition base [:studio/numeric-edit "fixture-x" ""])
-        frame (transition (:db editing) [:studio/state (:show base)])
+        frame (full-frame (:db editing) (assoc (:show base) :runtime-id "r" :show-id :main))
         ended (transition (:db frame) [:studio/numeric-blur "fixture-x"])]
     (is (= "" (get-in frame [:db :ui :numeric-edits "fixture-x"])))
     (is (nil? (get-in ended [:db :ui :numeric-edits "fixture-x"])))))
 
-(deftest partial-projection-preserves-library-and-rig
-  (let [show (assoc (:show base) :runtime-id "process" :rig {:fixtures [{:id "head-1"}]})
-        partial {:partial? true :runtime-id "process" :epoch 7 :revision 3 :frame-number 15
-                 :time-ms 12345 :output {:values {:head-1 {:emitted-color [1 0 0]}}}}
-        merged (events/merge-projection show partial)]
-    (is (= (:cues show) (:cues merged)))
-    (is (= (:effects show) (:effects merged)))
-    (is (= (:rig show) (:rig merged)))
-    (is (= 15 (:frame-number merged)))
-    (is (nil? (:partial? merged)))
-    (is (nil? (events/merge-projection show (assoc partial :runtime-id "replacement"))))
-    (is (nil? (events/merge-projection show (assoc partial :revision 4))))))
-
-(deftest mismatched-partial-requests-a-full-snapshot
-  (let [db (-> base (assoc-in [:show :runtime-id] "current")
-              (assoc :server-projection {:token "accepted-base" :view (:show base)}))
-        rejected (transition db [:studio/state {:partial? true :runtime-id "old" :epoch 7 :revision 3}])
-        url (events/state-url (:db rejected))]
-    (is (true? (get-in rejected [:db :force-full?])))
-    (is (= (:show db) (get-in rejected [:db :show])))
-    (is (not (str/includes? url "&base=")))
-    (is (str/includes? (events/state-url db) "base=accepted-base"))))
+(deftest initialization-opens-one-stream-and-awaits-an-initial-full
+  (let [initial (transition {} [:studio/initialize "s"])
+        opened (with-stream (:db initial))
+        patch (stream-event opened {:kind :patch :changes []})]
+    (is (= "s" (:studio/open-stream initial)))
+    (is (nil? (:studio/http initial)))
+    (is (nil? (:dispatch-later initial)))
+    (is (= ["connected" {:op :resync}] (:studio/stream-reply patch)))
+    (is (nil? (get-in patch [:db :show])))))
 
 (deftest delta-baseline-stays-independent-from-optimistic-knob-edits
   (let [view (assoc (:show base) :runtime-id "runtime" :show-id "main")
-        full {:protocol projection/protocol :kind "full" :token "base"
+        full {:protocol projection/protocol :kind :full :token "base"
               :identity (projection/identity-of view) :view view}
-        initial (:db (transition base [:studio/state-response nil full]))
+        initial (:db (stream-event (with-stream base) full))
         edited (:db (transition initial [:studio/param-set "7:9" :level 0.9]))
-        patch {:protocol projection/protocol :kind "patch" :base-token "base" :token "next"
+        patch {:protocol projection/protocol :kind :patch :base-token "base" :token "next"
                :identity (projection/identity-of view)
-               :changes [["set" ["frame-number"] 13] ["set" ["master"] 0.3]]}
-        next (:db (transition edited [:studio/state-response "base" patch]))
+               :changes [[:set [:frame-number] 13] [:set [:master] 0.3]]}
+        next (:db (stream-event edited patch))
         acknowledged (-> next (assoc-in [:drafts ["7:9" :level] :revision] 4))
         echo (assoc patch :base-token "next" :token "echo"
-                    :changes [["set" ["revision"] 4] ["set" ["instances" 0 "params" "level"] 0.9]])
-        finished (:db (transition acknowledged [:studio/state-response "next" echo]))]
+                    :changes [[:set [:revision] 4] [:set [:instances 0 :params :level] 0.9]])
+        finished (:db (stream-event acknowledged echo))]
     (is (= 0.9 (get-in next [:show :instances 0 :params :level])))
     (is (= 0.7 (get-in next [:server-projection :view :instances 0 :params :level])))
     (is (= 0.3 (get-in next [:show :master])))
     (is (= 0.9 (get-in finished [:server-projection :view :instances 0 :params :level])))
     (is (empty? (:drafts finished)))
-    (is (= [:studio/state-response "echo"] (get-in (transition finished [:studio/poll]) [:studio/http :on-success])))))
+    (is (= ["connected" {:op :ack :token "echo"}] (:studio/stream-reply (stream-event finished echo))))))
 
 (deftest late-full-response-cannot-restore-a-replaced-runtime
   (let [view (assoc (:show base) :runtime-id "new-runtime" :show-id "main")
         db (assoc base :show view :server-projection {:token "new-base" :view view})
         stale-view (assoc view :runtime-id "old-runtime")
-        stale {:protocol projection/protocol :kind "full" :token "old-result"
+        stale {:protocol projection/protocol :kind :full :token "old-result"
                :identity (projection/identity-of stale-view) :view stale-view}
-        result (transition db [:studio/state-response "old-request" stale])]
-    (is (= "new-runtime" (get-in result [:db :show :runtime-id])))
-    (is (= "new-base" (get-in result [:db :server-projection :token])))
-    (is (empty? (transition db [:studio/poll-response-failed "old-request" "late failure"])))))
+        opened (with-stream db)
+        result (transition opened [:studio/stream-frame (:session db) "old-connection" stale])]
+    (is (empty? result))
+    (is (empty? (transition opened [:studio/stream-closed (:session db) "old-connection" "late close"])))))
 
 (deftest invalid-delta-requests-a-full-view-without-dropping-visible-state
   (let [view (assoc (:show base) :runtime-id "runtime" :show-id "main")
         db (assoc base :show view :server-projection {:token "current" :view view})
-        patch {:protocol projection/protocol :kind "patch" :base-token "missing" :token "next"
+        patch {:protocol projection/protocol :kind :patch :base-token "missing" :token "next"
                :identity (projection/identity-of view) :changes []}
-        result (transition db [:studio/state-response "current" patch])]
+        result (stream-event (assoc db :stream-id "connected") patch)]
     (is (= view (get-in result [:db :show])))
-    (is (true? (get-in result [:db :force-full?])))
-    (is (not (str/includes? (events/state-url (:db result)) "&base=")))))
+    (is (true? (get-in result [:db :awaiting-full?])))
+    (is (= ["connected" {:op :resync}] (:studio/stream-reply result)))
+    (is (nil? (:studio/http result)))))
+
+(deftest socket-loss-during-knob-debounce-preserves-the-scheduled-command
+  (let [opened (with-stream base)
+        edit (transition opened [:studio/param-set "7:9" :level 0.9])
+        queued (transition (:db edit) (:dispatch edit))
+        closed (transition (:db queued) [:studio/stream-closed (:session base) "connected" "lost"])
+        flushed (transition (:db closed) [:studio/flush-params])]
+    (is (= 0.9 (get-in closed [:db :drafts ["7:9" :level] :fields :value])))
+    (is (= 0.9 (get-in (first-command flushed) [:fields :value])))
+    (is (= 7 (:epoch (first-command flushed))))))
 
 (deftest saved-preferences-restore-only-supported-portable-fields
   (let [settings {:ui {:view "rig" :page-id "second" :launch-mode "held"

@@ -2,6 +2,7 @@
   (:require [re-frame.core :as rf]
             [reagent.dom.client :as rdom]
             [tolglow.studio.events]
+            [tolglow.studio.navigation :as nav]
             [tolglow.studio.subs]
             [tolglow.studio.interop]
             [tolglow.studio.views :as views]
@@ -11,12 +12,14 @@
 (defonce root (atom nil))
 (defonce listeners (atom []))
 
-(defn repl-popup? [] (= "/repl" (.-pathname js/location)))
-(defn device-display? [] (= "/push-display" (.-pathname js/location)))
-
 (defn mount! []
   (when-not @root (reset! root (rdom/create-root (.getElementById js/document "app"))))
-  (rdom/render @root (cond (device-display?) [push-display/component] (repl-popup?) [repl/console-view] :else [views/studio])))
+  (rdom/render @root
+               (case (get-in (nav/current-match) [:data :surface])
+                 :push-display [push-display/component]
+                 :repl [repl/console-view]
+                 :studio [views/studio]
+                 [:main [:h1 "Page not found"] [:a {:href (nav/href :home)} "Open Studio"]])))
 
 (defn- listen! [target event handler]
   (.addEventListener target event handler)
@@ -51,11 +54,15 @@
                  nil))))))
 
 (defn ^:export init! []
-  (cond
-    (device-display?) (do (.add (.-classList (.-body js/document)) "push-display-page")
-        (push-display/install-api!)
-        (rf/dispatch-sync [:push-display/update {}]))
-    (repl-popup?) (rf/dispatch-sync [:repl/open true (or (.get (js/URLSearchParams. (.-search js/location)) "session-id") "main")])
-    :else (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
-        (install-listeners!)))
+  (let [match (nav/current-match)]
+    (case (get-in match [:data :surface])
+      :push-display (do (.add (.-classList (.-body js/document)) "push-display-page")
+                        (push-display/install-api!)
+                        (rf/dispatch-sync [:push-display/update {}]))
+      :repl (let [session (get-in match [:query-params :session-id])]
+              (rf/dispatch-sync [:repl/open true (if (string? session) session "main")]))
+      :studio (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
+                  (nav/start!)
+                  (install-listeners!))
+      nil))
   (mount!))
