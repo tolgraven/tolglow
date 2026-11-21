@@ -209,7 +209,7 @@
   (let [r (shell/sh "git" "rev-parse" "HEAD" :dir directory)] (when (zero? (:exit r)) (str/trim (:out r)))))
 
 (defn source-status [directory]
-  (let [r (shell/sh "git" "status" "--short" "--" "src" "dev" "bin" "deps.edn" "project.clj" :dir directory)]
+  (let [r (shell/sh "git" "status" "--short" "--" "src" "resources" "dev" "bin" "project.clj" :dir directory)]
     (when (zero? (:exit r)) (str/trim (:out r)))))
 
 (defn- system-file [path]
