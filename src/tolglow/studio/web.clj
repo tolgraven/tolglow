@@ -142,7 +142,7 @@
       (catch Exception error (.close input) (.close output) (throw error))))))
 
 (def operations
-  {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig
+  {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release

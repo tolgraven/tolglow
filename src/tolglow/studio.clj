@@ -17,6 +17,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
+            [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
@@ -363,6 +364,27 @@
     {:model (-> model (update :modulation #(modulation/release-hold (or % (modulation/new-state))
                                                                   (:instance-id payload) (:params payload)))
                 (update :revision inc)) :ack {:status :accepted}}
+    :aim-path
+    (let [definition (aim-paths/definition model payload)
+          id (:id definition)
+          requested-cue-id (:cue-id payload id)
+          wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
+          previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
+                         (vals (get-in model [:registry :cues])))
+          cue-id (:id previous requested-cue-id)
+          _ (when (and previous (not= id (:effect-id previous)))
+              (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
+          _ (compiler/compile-effect definition)
+          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
+          _ (when (= :rejected (get-in published [:ack :status]))
+              (throw (ex-info "Cannot publish aim path" (:ack published))))
+          cue (merge previous {:id cue-id :effect-id id :name (:name definition)
+                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+          result (apply-message (:model published)
+                                {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
+      (when (= :rejected (get-in result [:ack :status]))
+        (throw (ex-info "Cannot publish aim path cue" (:ack result))))
+      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
