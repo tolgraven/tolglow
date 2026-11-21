@@ -2,7 +2,7 @@
 // dedicated ./bin/studio without physical output flags; this mutates its show.
 import {chromium} from 'playwright-core';
 import assert from 'node:assert/strict';
-import {mkdir, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, writeFile} from 'node:fs/promises';
 const origin = process.argv[2] || 'http://127.0.0.1:8515';
 const directory = process.argv[3] || '/tmp/studio-qa/rig-editor';
 const state = async () => (await fetch(`${origin}/api/state`)).json();
@@ -103,11 +103,11 @@ try {
 
   const downloadPromise = page.waitForEvent('download'); await page.locator('#export-show').click();
   const download = await downloadPromise; await download.saveAs(`${directory}/show.edn`);
-  const exported = await (await fetch(`${origin}/api/export`)).text(), exportState = await state();
+  const exported = await readFile(`${directory}/show.edn`), exportState = await state();
   assert.ok(exported.includes(id));
   await panel.getByLabel('Selected rig object').selectOption('fixtures:3'); await number(page, 'X · m', 7);
   await posted(page, '/api/rig', () => page.getByRole('button', {name: 'Save rig', exact: true}).click());
-  await posted(page, '/api/import', () => page.locator('#import-show').setInputFiles({name: 'rig-roundtrip.edn', mimeType: 'text/plain', buffer: Buffer.from(exported)}));
+  await posted(page, '/api/import', () => page.locator('#import-show').setInputFiles({name: 'rig-roundtrip.edn', mimeType: 'text/plain', buffer: exported}));
   await page.waitForFunction(epoch => document.querySelector('.rig-editor canvas')?.tolglowPreview.snapshot.epoch > epoch, exportState.epoch);
   const restored = await state(); assert.deepEqual(restored.rig, exportState.rig);
   assert.deepEqual(restored.effects.find(e => e.id === id).editor, exportState.effects.find(e => e.id === id).editor);

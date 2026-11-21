@@ -67,7 +67,11 @@ export class RigEditorInput {
     if (this.identity !== identity || snapshot?.editor?.tool !== this.snapshot?.editor?.tool) this.cancel();
     this.identity = identity; this.snapshot = snapshot;
     const active = Boolean(snapshot?.editor && snapshot.editor.tool !== 'navigate');
-    if (this.interacting !== active) {this.interacting = active; this.engine.setInteractionActive?.(active);}
+    if (active && !this.interacting) {
+      this.previousInteraction = Boolean(this.engine.getNavigationState?.().interacting);
+      this.engine.setInteractionActive?.(true);
+    } else if (!active && this.interacting) this.engine.setInteractionActive?.(this.previousInteraction);
+    this.interacting = active;
     this.canvas.style.cursor = !active ? '' : snapshot.editor.tool === 'draw' ? 'crosshair' : 'grab';
   }
   down(event) {
@@ -101,5 +105,5 @@ export class RigEditorInput {
     this.emit('cancel'); const pointer = this.gesture.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
-  dispose() {this.cancel(); this.abort.abort(); this.engine.setInteractionActive?.(false); this.canvas.style.cursor = '';}
+  dispose() {this.cancel(); this.abort.abort(); if (this.interacting) this.engine.setInteractionActive?.(this.previousInteraction); this.interacting = false; this.canvas.style.cursor = '';}
 }

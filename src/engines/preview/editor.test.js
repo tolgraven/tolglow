@@ -75,3 +75,11 @@ test('authoring hints render onto the presented canvas after composer and restor
   assert.equal(draws[0].target, null); assert.equal(draws[0].autoClear, false); assert.ok(draws[0].children > 0);
   assert.equal(renderer.target, composite); assert.equal(renderer.autoClear, true); overlay.dispose();
 });
+
+test('an inactive editor does not unlock another interaction owner, including fallback startup', () => {
+  const canvas = new EventTarget(); Object.assign(canvas, {style: {}, hasPointerCapture: () => false});
+  const calls = [], engine = {canvas, camera, getNavigationState: () => ({interacting: true}), setInteractionActive: active => calls.push(active)};
+  const input = new RigEditorInput(engine); input.update({rig}); assert.deepEqual(calls, []);
+  input.update({rig, editor: {tool: 'move'}}); input.update({rig, editor: {tool: 'navigate'}});
+  assert.deepEqual(calls, [true, true]); input.dispose(); assert.deepEqual(calls, [true, true]);
+});
