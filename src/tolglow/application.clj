@@ -46,6 +46,7 @@
     (doseq [action actions]
       (if (fn? action) (action) (accepted! (show/submit! runtime action))))
     {:value {:load-file load-file :save-file save-file}
+     :abort! (constantly nil)
      :stop! (when save-file #(show/save-show! runtime save-file))}))
 
 (defn- start-audio [context options]
