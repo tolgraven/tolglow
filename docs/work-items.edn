@@ -1,7 +1,21 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :development/git-metadata-isolation
+ [{:id :control/cue-preset-integration
+   :title "Validate and restore shared cue parameter presets"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/registry.clj" "tolglow/src/tolglow/studio/persistence.clj"
+           "tolglow/src/tolglow/studio/composition.clj" "tolglow/test/tolglow/registry_test.clj"
+           "tolglow/test/tolglow/studio/persistence_test.clj" "tolglow/test/tolglow/studio/composition_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Saved cue values validate against the referenced effect schema"
+                "Show round trips preserve saved values and reject malformed presets"
+                "Composition validation and launching agree on parameter precedence"]
+   :evidence ["Registry/persistence/composition regression gate: 40 tests / 324 assertions passed"
+              "Full Tolglow parity against merged Afterglow f951313: 480 tests / 3737 assertions passed"
+              "Malformed saved values failed the new regression tests before the fix"
+              "docs/show-files.md"]}
+  {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/workspace.clj"
@@ -1716,14 +1730,16 @@
     "Bounded PCM summaries/band colors/beat markers shared by web and Push"],
    :title
    "Project live parameter and captured audio waveforms off the lighting deadline",
-   :status :in-progress,
+   :status :done,
    :id :web/waveform-projection-v1,
    :kind :implementation,
    :notes
    "Backend only; studio_push_touch_interface owns shared UI. Root delegates exact waveform-action! handler section; root retains other studio.clj host edits. Central documentation ownership transfers to replacement pending a dedicated docs agent.",
    :depends-on [:authoring/signals-v1],
-   :owner "audio_capture_waveform_projections"}
-  {:evidence [],
+   :owner nil}
+  {:evidence ["Backend 22 tests / 157 assertions passed; Docker fixture checks used actual isolated worktrees"
+              "Ten actual browser workflows passed, including streamed task events, cancellation, diffs and check results"
+              "docs/application-agents.md"],
    :paths
    ["tolglow/src/tolglow/studio/app_agents.clj"
     "tolglow/test/tolglow/studio/app_agents_test.clj"
@@ -1733,16 +1749,16 @@
     "No user branch changes or implicit live-show activation"],
    :title
    "Run application agents in explicit isolated paired workspaces",
-   :status :in-progress,
+   :status :done,
    :id :development/application-agents-v1,
    :kind :implementation,
    :depends-on
    [:development/workspace-service-v1 :development/terminal-v1],
-   :owner "application_agents_isolated_code_changes"}
+   :owner nil}
   {:id :foundation/dependency-upgrades-2026
    :title "Update JVM, frontend and development dependencies to verified stable releases"
-   :kind :implementation :status :in-progress
-   :owner "dependency_upgrades_clojure_jvm_frontend"
+   :kind :implementation :status :done
+   :owner nil
    :paths ["tolglow/deps.edn" "tolglow/project.clj" "tolglow/dev/tolglow/build_manifest.clj"
            "tolglow/package.json" "tolglow/package-lock.json"
            "tolglow/docs/dependency-upgrades.md" "tolglow/docs/dependency-inventory-2026-11-21.json"
@@ -1753,11 +1769,14 @@
    :acceptance ["Registry-verified stable versions and required source migrations"
                 "Paired JVM tests and frontend release/browser gates after updates"]
    :notes "Version pins only in shared CI/Dockerfile; root owns paired commit refs and terminal agent owns lifecycle code."
-   :evidence []}
+   :evidence ["Lein parity 477 tests / 3717 assertions; executable uberjar HTTP and cue smoke passed"
+              "Frontend 133 tests / 701 assertions; production build 147 files with zero warnings"
+              "Tolglow PR3 and Afterglow PR3 merged after Java17/21/25 and Studio CI passed"
+              "docs/dependency-upgrades.md"]}
   {:id :development/terminal-reliability-and-recovery
    :title "Repair Docker creation cancellation and recover owned development workspaces"
-   :kind :implementation :status :in-progress
-   :owner "development_terminal_reliability_feature_parity"
+   :kind :implementation :status :done
+   :owner nil
    :paths ["tolglow/src/tolglow/studio/terminal.clj" "tolglow/test/tolglow/studio/terminal_test.clj"
            "tolglow/test/tolglow/studio/terminal_docker_test.clj" "tolglow/resources/tolglow/terminal/pty_bridge.py"
            "tolglow/docs/terminal.md" "tolglow/src/tolglow/studio/workspace.clj"
@@ -1767,8 +1786,10 @@
    :acceptance ["Delayed daemon-side create cancellation cannot orphan containers"
                 "Persist and validate owned workspace catalog across application restart"
                 "Concrete original control feature parity checklist with source evidence"]
-   :evidence ["Root reclaimed eight owned Created VFS containers; image retained; delayed creation race still under repair"
-              "Workspace streaming fingerprint gate passed 12 tests / 81 assertions"]}
+   :evidence ["Delayed-create ownership and cancellation cleanup fixed and verified with actual Docker"
+              "Workspace/terminal combined gate: 22 tests / 139 assertions; updated-image Docker gate 7 / 59"
+              "Packaged PTY resource and terminal gate 7 tests / 43 assertions"
+              "docs/terminal.md" "docs/dev-workspaces.md" "docs/control-parity-audit.md"]}
   {:id :devices/push-packaged-webview-v1
    :title "Own packaged Push webview worker extraction and process cleanup"
    :kind :implementation :status :done

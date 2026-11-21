@@ -50,6 +50,19 @@
     (is (thrown? clojure.lang.ExceptionInfo (registry/publish empty :cues cue)))
     (is (thrown? clojure.lang.ExceptionInfo (registry/publish r1 :cues (assoc cue :params {:level 4}))))))
 
+(deftest saved-cue-parameters-validate-against-the-selected-effect-version
+  (let [r (-> (registry/new-registry)
+              (registry/publish :effects effect)
+              (registry/publish :effects (-> effect (assoc :version 2)
+                                             (assoc-in [:params :level :bounds] [0 0.5]))))
+        cue {:id :preset :effect-id :red :effect-version 1 :saved-params {:level 0.8}}]
+    (is (= {:level 0.8} (get-in (registry/publish r :cues cue) [:cues :preset :saved-params])))
+    (doseq [bad [nil [] {:level 2} {:unknown 0.2}]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (registry/publish r :cues (assoc cue :saved-params bad)))))
+    (is (thrown? clojure.lang.ExceptionInfo (registry/publish r :cues (dissoc cue :effect-version))))
+    (is (thrown? clojure.lang.ExceptionInfo (registry/publish r :cues (assoc cue :effect-version 99))))))
+
 (deftest page-generation-is-stable-and-does-not-overwrite-layout
   (let [registry (-> (registry/new-registry)
                      (registry/publish :effects effect)
