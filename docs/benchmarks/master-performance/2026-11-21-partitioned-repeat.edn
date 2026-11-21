@@ -1,0 +1,1385 @@
+{:benchmark :master-mixed-show,
+ :version 1,
+ :measured-at "2026-11-21T09:12:12.894014402Z",
+ :source-revisions {:tolglow "e0c56302c3c28fbcf63d444fd87bcc4aa62c9fe8", :afterglow "41e3643e300e3a84cbc5882a88f28b1f013513ee"},
+ :environment
+ {:heap-bytes 805306368,
+  :processors 4,
+  :architecture "amd64",
+  :clojure "1.12.7",
+  :jvm-arguments ["-Duser.home=/workspace/.tools/java-home" "-XX:-OmitStackTraceInFastThrow" "-Xms768m" "-Xmx768m" "-Dclojure.basis=.cpcache/3377702167.basis"],
+  :java "21.0.13",
+  :os "Linux",
+  :cgroup-cpu "400000 100000",
+  :cpu-model "AMD EPYC 9V74 80-Core Processor"},
+ :options {:heads [10000], :movers [0 8], :workers [1 2], :warmup 40, :samples 120, :scope :all},
+ :notes
+ ["Every packet byte, model and intent is checked against scalar compiler/general renderer; preview tolerance 1e-9."
+  "Pipeline replays one captured frame; stage timings include timer overhead."
+  "Host ticks advance musical time, admission/master commands, effects, rendering, reactive publication and ArtDMX capture; construction/compilation warmup excluded."
+  "No sockets or physical devices. Async scheduler jitter, external browser/UI load and packet delivery are excluded."
+  "Host output uses synchronous capture to include encoding; independent publication clock is not measured."
+  "Allocation includes owner plus warmed runtime worker threads; GC counts cover measured loop including outside-timing oracle checks."],
+ :results
+ [{:pixels 10000,
+   :moving-heads 0,
+   :effects 3,
+   :universes 79,
+   :runs
+   [{:scope :pipeline,
+     :execution :serial,
+     :result
+     {:observations
+      [{:ms 40.749757, :bytes 10103800, :stages-ms {:engine 21.668253, :render 18.616568, :preview 0.118868, :packet-encoding 0.314872}}
+       {:ms 29.837605, :bytes 10103728, :stages-ms {:engine 18.055161, :render 11.531067, :preview 0.060601, :packet-encoding 0.172288}}
+       {:ms 38.730781, :bytes 10103728, :stages-ms {:engine 30.001926, :render 8.493432, :preview 0.049995, :packet-encoding 0.171808}}
+       {:ms 26.299625, :bytes 9795376, :stages-ms {:engine 12.906728, :render 12.882442, :preview 0.06719, :packet-encoding 0.424397}}
+       {:ms 68.065326, :bytes 9795376, :stages-ms {:engine 25.4559, :render 42.200573, :preview 0.115333, :packet-encoding 0.272489}}
+       {:ms 47.164864, :bytes 9550120, :stages-ms {:engine 23.985076, :render 22.824976, :preview 0.10003, :packet-encoding 0.234832}}
+       {:ms 67.884284, :bytes 9550120, :stages-ms {:engine 43.480822, :render 24.010073, :preview 0.095093, :packet-encoding 0.277646}}
+       {:ms 40.903158, :bytes 9549856, :stages-ms {:engine 19.418721, :render 21.118468, :preview 0.081392, :packet-encoding 0.265138}}
+       {:ms 52.922806, :bytes 9549904, :stages-ms {:engine 12.394796, :render 40.052667, :preview 0.156215, :packet-encoding 0.298467}}
+       {:ms 44.483004, :bytes 9549904, :stages-ms {:engine 20.971939, :render 23.01385, :preview 0.105308, :packet-encoding 0.367761}}
+       {:ms 63.224589, :bytes 9549904, :stages-ms {:engine 36.512325, :render 26.393697, :preview 0.061111, :packet-encoding 0.240952}}
+       {:ms 30.761144, :bytes 9549904, :stages-ms {:engine 15.879654, :render 14.663062, :preview 0.052539, :packet-encoding 0.151847}}
+       {:ms 69.818539, :bytes 9549904, :stages-ms {:engine 44.425092, :render 25.006097, :preview 0.108483, :packet-encoding 0.262884}}
+       {:ms 23.951195, :bytes 8569840, :stages-ms {:engine 16.241447, :render 7.409278, :preview 0.106329, :packet-encoding 0.179158}}
+       {:ms 17.623359, :bytes 8569896, :stages-ms {:engine 10.583075, :render 6.708327, :preview 0.045738, :packet-encoding 0.271067}}
+       {:ms 33.17404, :bytes 8569840, :stages-ms {:engine 11.277585, :render 21.65988, :preview 0.05328, :packet-encoding 0.167161}}
+       {:ms 21.195333, :bytes 8569840, :stages-ms {:engine 12.213319, :render 8.771219, :preview 0.044827, :packet-encoding 0.150535}}
+       {:ms 19.784669, :bytes 8569840, :stages-ms {:engine 11.211747, :render 8.368345, :preview 0.044326, :packet-encoding 0.144197}}
+       {:ms 20.322115, :bytes 8566680, :stages-ms {:engine 11.304136, :render 8.755786, :preview 0.042223, :packet-encoding 0.189514}}
+       {:ms 33.782654, :bytes 8566680, :stages-ms {:engine 10.995373, :render 8.688695, :preview 0.037937, :packet-encoding 14.028069}}
+       {:ms 20.801353, :bytes 8566680, :stages-ms {:engine 12.092959, :render 8.500152, :preview 0.06661, :packet-encoding 0.122233}}
+       {:ms 19.71182, :bytes 8566680, :stages-ms {:engine 11.238117, :render 8.276437, :preview 0.048733, :packet-encoding 0.132929}}
+       {:ms 18.935166, :bytes 8566680, :stages-ms {:engine 10.374723, :render 8.339381, :preview 0.056204, :packet-encoding 0.148914}}
+       {:ms 30.71218, :bytes 8566680, :stages-ms {:engine 15.626015, :render 14.794187, :preview 0.080741, :packet-encoding 0.191277}}
+       {:ms 38.87715, :bytes 8566680, :stages-ms {:engine 24.228651, :render 14.352936, :preview 0.084847, :packet-encoding 0.188513}}
+       {:ms 33.566479, :bytes 8566680, :stages-ms {:engine 18.639091, :render 14.602591, :preview 0.082694, :packet-encoding 0.184376}}
+       {:ms 39.40401, :bytes 8566680, :stages-ms {:engine 18.499944, :render 20.643857, :preview 0.066649, :packet-encoding 0.151427}}
+       {:ms 27.976739, :bytes 8566680, :stages-ms {:engine 14.091024, :render 13.621049, :preview 0.082254, :packet-encoding 0.164146}}
+       {:ms 31.524368, :bytes 8566680, :stages-ms {:engine 16.884992, :render 14.324023, :preview 0.074152, :packet-encoding 0.22043}}
+       {:ms 42.342546, :bytes 8566680, :stages-ms {:engine 17.235348, :render 24.745125, :preview 0.088062, :packet-encoding 0.254061}}
+       {:ms 33.214492, :bytes 8566680, :stages-ms {:engine 18.129919, :render 14.756401, :preview 0.093961, :packet-encoding 0.209744}}
+       {:ms 33.151306, :bytes 8566680, :stages-ms {:engine 18.013684, :render 14.849029, :preview 0.078678, :packet-encoding 0.18645}}
+       {:ms 43.993631, :bytes 8566680, :stages-ms {:engine 28.489388, :render 15.225915, :preview 0.083365, :packet-encoding 0.171958}}
+       {:ms 34.345998, :bytes 8566680, :stages-ms {:engine 19.000733, :render 15.049781, :preview 0.078798, :packet-encoding 0.194272}}
+       {:ms 32.479009, :bytes 8566680, :stages-ms {:engine 19.040263, :render 13.220088, :preview 0.075604, :packet-encoding 0.122333}}
+       {:ms 45.012628, :bytes 8566680, :stages-ms {:engine 30.178441, :render 14.499987, :preview 0.074541, :packet-encoding 0.238207}}
+       {:ms 33.023445, :bytes 8566560, :stages-ms {:engine 18.179743, :render 14.493106, :preview 0.077266, :packet-encoding 0.252198}}
+       {:ms 30.608896, :bytes 8566560, :stages-ms {:engine 18.34412, :render 12.041962, :preview 0.056815, :packet-encoding 0.146059}}
+       {:ms 37.941208, :bytes 8566560, :stages-ms {:engine 22.549413, :render 14.999916, :preview 0.131678, :packet-encoding 0.240901}}
+       {:ms 32.367371, :bytes 8566560, :stages-ms {:engine 17.720375, :render 14.279145, :preview 0.131347, :packet-encoding 0.205799}}
+       {:ms 33.149377, :bytes 8566560, :stages-ms {:engine 17.911842, :render 14.933208, :preview 0.124637, :packet-encoding 0.157206}}
+       {:ms 35.535665, :bytes 8566560, :stages-ms {:engine 20.665271, :render 14.57445, :preview 0.114692, :packet-encoding 0.159199}}
+       {:ms 58.197129, :bytes 8566560, :stages-ms {:engine 44.950501, :render 13.052457, :preview 0.060081, :packet-encoding 0.116574}}
+       {:ms 22.769346, :bytes 8566560, :stages-ms {:engine 14.317865, :render 8.25767, :preview 0.062484, :packet-encoding 0.114181}}
+       {:ms 17.574849, :bytes 8566560, :stages-ms {:engine 8.623338, :render 8.746693, :preview 0.065609, :packet-encoding 0.120951}}
+       {:ms 17.083953, :bytes 8566560, :stages-ms {:engine 9.073232, :render 7.844952, :preview 0.045107, :packet-encoding 0.105188}}
+       {:ms 16.202881, :bytes 8566560, :stages-ms {:engine 8.262717, :render 7.765972, :preview 0.049985, :packet-encoding 0.108773}}
+       {:ms 16.177273, :bytes 8566560, :stages-ms {:engine 8.254866, :render 7.748707, :preview 0.049715, :packet-encoding 0.109764}}
+       {:ms 22.614835, :bytes 8566560, :stages-ms {:engine 8.447856, :render 13.945216, :preview 0.060982, :packet-encoding 0.143154}}
+       {:ms 16.375421, :bytes 8569432, :stages-ms {:engine 8.369417, :render 7.829148, :preview 0.045107, :packet-encoding 0.115544}}
+       {:ms 15.8419, :bytes 8566560, :stages-ms {:engine 8.27766, :render 7.403809, :preview 0.045799, :packet-encoding 0.100701}}
+       {:ms 16.523853, :bytes 8566560, :stages-ms {:engine 8.293624, :render 8.032161, :preview 0.065318, :packet-encoding 0.116425}}
+       {:ms 18.925208, :bytes 8566560, :stages-ms {:engine 8.730319, :render 9.958274, :preview 0.103536, :packet-encoding 0.115673}}
+       {:ms 23.608584, :bytes 8566560, :stages-ms {:engine 10.184719, :render 13.043655, :preview 0.174382, :packet-encoding 0.185878}}
+       {:ms 20.566262, :bytes 8566560, :stages-ms {:engine 10.953611, :render 9.410188, :preview 0.061282, :packet-encoding 0.12023}}
+       {:ms 20.591971, :bytes 8566560, :stages-ms {:engine 10.510838, :render 9.877568, :preview 0.068793, :packet-encoding 0.116806}}
+       {:ms 20.997399, :bytes 8566560, :stages-ms {:engine 10.595555, :render 10.126692, :preview 0.074902, :packet-encoding 0.180641}}
+       {:ms 17.909179, :bytes 8566560, :stages-ms {:engine 9.479652, :render 8.216468, :preview 0.049494, :packet-encoding 0.145007}}
+       {:ms 19.355758, :bytes 8566560, :stages-ms {:engine 9.790718, :render 9.368385, :preview 0.064907, :packet-encoding 0.114853}}
+       {:ms 28.708865, :bytes 8566560, :stages-ms {:engine 14.805481, :render 13.628823, :preview 0.077196, :packet-encoding 0.178507}}
+       {:ms 30.50267, :bytes 8566560, :stages-ms {:engine 16.211144, :render 14.02127, :preview 0.087121, :packet-encoding 0.161552}}
+       {:ms 29.031214, :bytes 8566560, :stages-ms {:engine 15.722791, :render 13.014372, :preview 0.076194, :packet-encoding 0.194622}}
+       {:ms 27.135787, :bytes 8566560, :stages-ms {:engine 16.679275, :render 10.273447, :preview 0.050987, :packet-encoding 0.114281}}
+       {:ms 17.292895, :bytes 8566560, :stages-ms {:engine 8.793413, :render 8.343869, :preview 0.038397, :packet-encoding 0.100681}}
+       {:ms 17.995699, :bytes 8566560, :stages-ms {:engine 8.630419, :render 9.202056, :preview 0.049895, :packet-encoding 0.098587}}
+       {:ms 28.501721, :bytes 8566560, :stages-ms {:engine 15.118186, :render 13.152118, :preview 0.062443, :packet-encoding 0.151277}}
+       {:ms 29.443822, :bytes 8566616, :stages-ms {:engine 15.831474, :render 13.314231, :preview 0.085819, :packet-encoding 0.190956}}
+       {:ms 29.879806, :bytes 8566560, :stages-ms {:engine 16.137954, :render 13.443906, :preview 0.111947, :packet-encoding 0.164076}}
+       {:ms 29.347518, :bytes 8566560, :stages-ms {:engine 15.862701, :render 13.20715, :preview 0.080741, :packet-encoding 0.174522}}
+       {:ms 26.231211, :bytes 8566560, :stages-ms {:engine 16.360017, :render 9.670093, :preview 0.070796, :packet-encoding 0.110616}}
+       {:ms 16.590482, :bytes 8566560, :stages-ms {:engine 8.827284, :render 7.607585, :preview 0.042033, :packet-encoding 0.098468}}
+       {:ms 20.988846, :bytes 8566560, :stages-ms {:engine 11.018128, :render 9.703738, :preview 0.109064, :packet-encoding 0.141452}}
+       {:ms 30.202369, :bytes 8566560, :stages-ms {:engine 16.604683, :render 13.282934, :preview 0.131788, :packet-encoding 0.161672}}
+       {:ms 29.705425, :bytes 8566560, :stages-ms {:engine 17.453396, :render 12.035003, :preview 0.082203, :packet-encoding 0.115343}}
+       {:ms 22.962911, :bytes 8566560, :stages-ms {:engine 11.253151, :render 11.378453, :preview 0.091948, :packet-encoding 0.219509}}
+       {:ms 31.527347, :bytes 8566560, :stages-ms {:engine 17.238474, :render 14.025137, :preview 0.076514, :packet-encoding 0.16633}}
+       {:ms 29.631945, :bytes 8566560, :stages-ms {:engine 16.231735, :render 13.125888, :preview 0.078027, :packet-encoding 0.174772}}
+       {:ms 31.533866, :bytes 8566560, :stages-ms {:engine 15.825185, :render 15.397574, :preview 0.117045, :packet-encoding 0.174412}}
+       {:ms 30.305374, :bytes 8566560, :stages-ms {:engine 17.08911, :render 12.952619, :preview 0.080721, :packet-encoding 0.161121}}
+       {:ms 29.625625, :bytes 8566560, :stages-ms {:engine 16.333758, :render 13.045137, :preview 0.070465, :packet-encoding 0.155413}}
+       {:ms 26.425397, :bytes 8566560, :stages-ms {:engine 15.513518, :render 10.716176, :preview 0.059739, :packet-encoding 0.115764}}
+       {:ms 35.29548, :bytes 8566560, :stages-ms {:engine 22.817233, :render 12.227772, :preview 0.07981, :packet-encoding 0.152108}}
+       {:ms 21.096518, :bytes 8566560, :stages-ms {:engine 13.229824, :render 7.709859, :preview 0.037937, :packet-encoding 0.102584}}
+       {:ms 30.063361, :bytes 8566560, :stages-ms {:engine 16.534599, :render 13.23383, :preview 0.070456, :packet-encoding 0.205618}}
+       {:ms 30.233706, :bytes 8566560, :stages-ms {:engine 16.766517, :render 13.223314, :preview 0.071988, :packet-encoding 0.148683}}
+       {:ms 29.70197, :bytes 8566560, :stages-ms {:engine 16.731854, :render 12.713711, :preview 0.079309, :packet-encoding 0.155022}}
+       {:ms 21.71799, :bytes 8566560, :stages-ms {:engine 13.963564, :render 7.520114, :preview 0.072128, :packet-encoding 0.136615}}
+       {:ms 17.99616, :bytes 8566560, :stages-ms {:engine 9.512741, :render 8.142047, :preview 0.201302, :packet-encoding 0.123034}}
+       {:ms 17.551193, :bytes 8566560, :stages-ms {:engine 8.889687, :render 8.466824, :preview 0.044436, :packet-encoding 0.13327}}
+       {:ms 21.082081, :bytes 8566560, :stages-ms {:engine 12.092033, :render 8.785201, :preview 0.068693, :packet-encoding 0.118338}}
+       {:ms 16.514079, :bytes 8566560, :stages-ms {:engine 8.701174, :render 7.65008, :preview 0.044006, :packet-encoding 0.104106}}
+       {:ms 17.235829, :bytes 8566560, :stages-ms {:engine 8.269738, :render 8.714034, :preview 0.119449, :packet-encoding 0.114732}}
+       {:ms 17.88914, :bytes 8566560, :stages-ms {:engine 9.348595, :render 8.322818, :preview 0.085017, :packet-encoding 0.115283}}
+       {:ms 19.068168, :bytes 8566560, :stages-ms {:engine 10.142486, :render 8.662898, :preview 0.059689, :packet-encoding 0.185468}}
+       {:ms 17.170552, :bytes 8566560, :stages-ms {:engine 8.720193, :render 8.27723, :preview 0.05391, :packet-encoding 0.102324}}
+       {:ms 16.268319, :bytes 8566560, :stages-ms {:engine 8.420084, :render 7.612632, :preview 0.043265, :packet-encoding 0.158127}}
+       {:ms 19.721526, :bytes 8566560, :stages-ms {:engine 8.778451, :render 10.728063, :preview 0.061753, :packet-encoding 0.136425}}
+       {:ms 24.639199, :bytes 8566560, :stages-ms {:engine 8.439382, :render 15.933518, :preview 0.075733, :packet-encoding 0.170937}}
+       {:ms 21.948695, :bytes 8566560, :stages-ms {:engine 11.459741, :render 10.296996, :preview 0.058698, :packet-encoding 0.11317}}
+       {:ms 21.121776, :bytes 8566560, :stages-ms {:engine 10.249797, :render 10.655245, :preview 0.056855, :packet-encoding 0.142514}}
+       {:ms 60.11501, :bytes 8566560, :stages-ms {:engine 42.589836, :render 17.214458, :preview 0.131978, :packet-encoding 0.157927}}
+       {:ms 40.538055, :bytes 8566560, :stages-ms {:engine 19.480636, :render 20.864189, :preview 0.055714, :packet-encoding 0.117887}}
+       {:ms 17.665054, :bytes 8566560, :stages-ms {:engine 9.246202, :render 8.262367, :preview 0.042954, :packet-encoding 0.098197}}
+       {:ms 17.068238, :bytes 8566560, :stages-ms {:engine 8.642036, :render 8.260303, :preview 0.049465, :packet-encoding 0.100701}}
+       {:ms 17.161088, :bytes 8566560, :stages-ms {:engine 8.832492, :render 8.133103, :preview 0.049063, :packet-encoding 0.130135}}
+       {:ms 22.889266, :bytes 8566560, :stages-ms {:engine 8.589888, :render 14.103545, :preview 0.069884, :packet-encoding 0.110075}}
+       {:ms 22.623436, :bytes 8566560, :stages-ms {:engine 14.879137, :render 7.580584, :preview 0.041483, :packet-encoding 0.10723}}
+       {:ms 16.605265, :bytes 8566560, :stages-ms {:engine 8.12382, :render 8.299993, :preview 0.059499, :packet-encoding 0.106861}}
+       {:ms 16.565916, :bytes 8566560, :stages-ms {:engine 9.087123, :render 7.331482, :preview 0.038668, :packet-encoding 0.095663}}
+       {:ms 16.30854, :bytes 8566560, :stages-ms {:engine 8.512832, :render 7.652593, :preview 0.038888, :packet-encoding 0.092199}}
+       {:ms 16.693536, :bytes 8566560, :stages-ms {:engine 7.767585, :render 8.783698, :preview 0.037586, :packet-encoding 0.092389}}
+       {:ms 15.822491, :bytes 8566560, :stages-ms {:engine 8.334445, :render 7.349699, :preview 0.034211, :packet-encoding 0.090266}}
+       {:ms 15.538705, :bytes 8566560, :stages-ms {:engine 8.01753, :render 7.394145, :preview 0.030166, :packet-encoding 0.084937}}
+       {:ms 16.325535, :bytes 8566560, :stages-ms {:engine 7.476119, :render 8.690368, :preview 0.049224, :packet-encoding 0.096815}}
+       {:ms 16.498735, :bytes 8566616, :stages-ms {:engine 8.431541, :render 7.926153, :preview 0.034962, :packet-encoding 0.09342}}
+       {:ms 16.099722, :bytes 8566560, :stages-ms {:engine 8.072452, :render 7.869173, :preview 0.045017, :packet-encoding 0.099249}}
+       {:ms 16.111474, :bytes 8566560, :stages-ms {:engine 7.829297, :render 8.141206, :preview 0.0401, :packet-encoding 0.087731}}
+       {:ms 23.321414, :bytes 8566560, :stages-ms {:engine 9.936017, :render 13.142072, :preview 0.070055, :packet-encoding 0.157376}}
+       {:ms 25.699398, :bytes 8566560, :stages-ms {:engine 15.755291, :render 9.786872, :preview 0.045488, :packet-encoding 0.095974}}
+       {:ms 16.380397, :bytes 8566560, :stages-ms {:engine 8.437119, :render 7.789548, :preview 0.050496, :packet-encoding 0.090105}}],
+      :gc-after {"G1 Young Generation" {:collections 12, :ms 458}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 8566560, :p95 9550120, :p99 10103728, :min 8566560, :max 10103800, :mean 8691209.533333333},
+      :frames-per-second 36.18177037237805,
+      :over-25ms 59,
+      :gc-before {"G1 Young Generation" {:collections 10, :ms 407}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 1,
+      :milliseconds {:p50 23.951195, :p95 52.922806, :p99 68.065326, :min 15.538705, :max 69.818539, :mean 27.638227475000004},
+      :stages-ms
+      {:engine {:p50 12.906728, :p95 30.001926, :p99 44.425092, :min 7.476119, :max 44.950501, :mean 14.899033225},
+       :render {:p50 10.716176, :p95 23.01385, :p99 40.052667, :min 6.708327, :max 42.200573, :mean 12.37427132499999},
+       :preview {:p50 0.066649, :p95 0.131347, :p99 0.174382, :min 0.030166, :max 0.201302, :mean 0.07230872499999998},
+       :packet-encoding {:p50 0.148914, :p95 0.272489, :p99 0.424397, :min 0.084937, :max 14.028069, :mean 0.2733790416666667}}}}
+    {:scope :pipeline,
+     :execution :workers,
+     :workers 1,
+     :result
+     {:observations
+      [{:ms 33.554135, :bytes 8567864, :stages-ms {:engine 25.125398, :render 8.1976, :preview 0.055033, :packet-encoding 0.147391}}
+       {:ms 26.342832, :bytes 8567864, :stages-ms {:engine 14.440489, :render 11.721112, :preview 0.047742, :packet-encoding 0.111287}}
+       {:ms 17.8025, :bytes 8567864, :stages-ms {:engine 9.379962, :render 8.213204, :preview 0.070345, :packet-encoding 0.113}}
+       {:ms 19.20338, :bytes 8567864, :stages-ms {:engine 9.656768, :render 9.371039, :preview 0.043024, :packet-encoding 0.111037}}
+       {:ms 26.898476, :bytes 8567864, :stages-ms {:engine 11.138449, :render 15.570003, :preview 0.055102, :packet-encoding 0.112479}}
+       {:ms 20.61084, :bytes 8567864, :stages-ms {:engine 11.88648, :render 8.529928, :preview 0.041362, :packet-encoding 0.131848}}
+       {:ms 31.125674, :bytes 8567864, :stages-ms {:engine 22.57211, :render 8.391631, :preview 0.040761, :packet-encoding 0.100321}}
+       {:ms 19.135543, :bytes 8567864, :stages-ms {:engine 8.553724, :render 10.399947, :preview 0.05368, :packet-encoding 0.106921}}
+       {:ms 18.821838, :bytes 8567832, :stages-ms {:engine 11.027212, :render 7.623509, :preview 0.045308, :packet-encoding 0.10639}}
+       {:ms 26.823224, :bytes 8567832, :stages-ms {:engine 19.100386, :render 7.570229, :preview 0.037807, :packet-encoding 0.096494}}
+       {:ms 28.887639, :bytes 8567800, :stages-ms {:engine 18.855208, :render 9.820322, :preview 0.063145, :packet-encoding 0.1136}}
+       {:ms 16.90551, :bytes 8567864, :stages-ms {:engine 9.028119, :render 7.519003, :preview 0.03973, :packet-encoding 0.098988}}
+       {:ms 15.746457, :bytes 8567864, :stages-ms {:engine 8.356037, :render 7.261777, :preview 0.030065, :packet-encoding 0.0797}}
+       {:ms 15.549863, :bytes 8567864, :stages-ms {:engine 8.227184, :render 7.189609, :preview 0.03324, :packet-encoding 0.083946}}
+       {:ms 34.047754, :bytes 8567864, :stages-ms {:engine 8.25092, :render 25.614972, :preview 0.051016, :packet-encoding 0.112679}}
+       {:ms 17.465835, :bytes 8567864, :stages-ms {:engine 8.711911, :render 8.553573, :preview 0.044657, :packet-encoding 0.133991}}
+       {:ms 16.04187, :bytes 8567864, :stages-ms {:engine 8.732592, :render 7.163941, :preview 0.036955, :packet-encoding 0.089905}}
+       {:ms 14.683965, :bytes 8567864, :stages-ms {:engine 7.550811, :render 7.013314, :preview 0.027571, :packet-encoding 0.076205}}
+       {:ms 15.723512, :bytes 8567864, :stages-ms {:engine 7.900525, :render 7.673333, :preview 0.037226, :packet-encoding 0.095623}}
+       {:ms 17.55556, :bytes 8567864, :stages-ms {:engine 9.529867, :render 7.87781, :preview 0.037517, :packet-encoding 0.09388}}
+       {:ms 26.808342, :bytes 8567864, :stages-ms {:engine 18.793335, :render 7.847745, :preview 0.037727, :packet-encoding 0.110926}}
+       {:ms 15.998495, :bytes 8567864, :stages-ms {:engine 8.455236, :render 7.416579, :preview 0.032148, :packet-encoding 0.078258}}
+       {:ms 14.379708, :bytes 8567864, :stages-ms {:engine 7.397701, :render 6.862528, :preview 0.027231, :packet-encoding 0.077366}}
+       {:ms 14.349433, :bytes 8567864, :stages-ms {:engine 7.269218, :render 6.925943, :preview 0.029194, :packet-encoding 0.110977}}
+       {:ms 19.600776, :bytes 8567864, :stages-ms {:engine 12.503295, :render 6.951521, :preview 0.035123, :packet-encoding 0.095814}}
+       {:ms 28.824334, :bytes 8567864, :stages-ms {:engine 7.769549, :render 20.863028, :preview 0.041752, :packet-encoding 0.115173}}
+       {:ms 16.761248, :bytes 8567864, :stages-ms {:engine 8.47781, :render 8.126342, :preview 0.036725, :packet-encoding 0.102574}}
+       {:ms 17.988984, :bytes 8567864, :stages-ms {:engine 8.555922, :render 9.265481, :preview 0.051968, :packet-encoding 0.097156}}
+       {:ms 19.939173, :bytes 8567864, :stages-ms {:engine 9.298029, :render 10.457929, :preview 0.047321, :packet-encoding 0.113841}}
+       {:ms 19.948577, :bytes 8567864, :stages-ms {:engine 11.649445, :render 8.118722, :preview 0.050436, :packet-encoding 0.105878}}
+       {:ms 29.411233, :bytes 8567832, :stages-ms {:engine 10.707713, :render 18.518733, :preview 0.058938, :packet-encoding 0.103916}}
+       {:ms 19.030982, :bytes 8567800, :stages-ms {:engine 9.654845, :render 9.194624, :preview 0.055423, :packet-encoding 0.104597}}
+       {:ms 17.89569, :bytes 8567864, :stages-ms {:engine 8.180294, :render 9.504499, :preview 0.056645, :packet-encoding 0.131197}}
+       {:ms 27.164255, :bytes 8567832, :stages-ms {:engine 8.843908, :render 18.112314, :preview 0.069614, :packet-encoding 0.115033}}
+       {:ms 20.202448, :bytes 8567864, :stages-ms {:engine 8.861866, :render 10.873682, :preview 0.336224, :packet-encoding 0.109534}}
+       {:ms 18.351843, :bytes 8567864, :stages-ms {:engine 10.229446, :render 7.914646, :preview 0.055764, :packet-encoding 0.104376}}
+       {:ms 18.352744, :bytes 8567864, :stages-ms {:engine 7.881326, :render 10.285099, :preview 0.051577, :packet-encoding 0.108904}}
+       {:ms 28.973147, :bytes 8567864, :stages-ms {:engine 13.85455, :render 14.875071, :preview 0.075363, :packet-encoding 0.141753}}
+       {:ms 22.897473, :bytes 8567864, :stages-ms {:engine 8.395332, :render 14.226478, :preview 0.092218, :packet-encoding 0.155033}}
+       {:ms 23.378639, :bytes 8567864, :stages-ms {:engine 8.977279, :render 14.093148, :preview 0.07991, :packet-encoding 0.198788}}
+       {:ms 26.709007, :bytes 8567864, :stages-ms {:engine 9.122467, :render 15.013949, :preview 2.426623, :packet-encoding 0.1197}}
+       {:ms 18.281017, :bytes 8567864, :stages-ms {:engine 9.901935, :render 8.15761, :preview 0.093901, :packet-encoding 0.103665}}
+       {:ms 18.714696, :bytes 8567864, :stages-ms {:engine 9.080443, :render 9.454824, :preview 0.050336, :packet-encoding 0.10685}}
+       {:ms 23.868995, :bytes 8567920, :stages-ms {:engine 15.025627, :render 8.656488, :preview 0.054331, :packet-encoding 0.109224}}
+       {:ms 21.692592, :bytes 8567864, :stages-ms {:engine 10.453091, :render 10.664378, :preview 0.076185, :packet-encoding 0.472638}}
+       {:ms 22.374434, :bytes 8567864, :stages-ms {:engine 10.92553, :render 11.257697, :preview 0.055503, :packet-encoding 0.109675}}
+       {:ms 17.777182, :bytes 8567864, :stages-ms {:engine 9.38497, :render 8.212642, :preview 0.054221, :packet-encoding 0.102775}}
+       {:ms 20.107846, :bytes 8567864, :stages-ms {:engine 12.482313, :render 7.466424, :preview 0.045168, :packet-encoding 0.092298}}
+       {:ms 22.112311, :bytes 8567864, :stages-ms {:engine 11.458869, :render 8.618952, :preview 1.889883, :packet-encoding 0.121042}}
+       {:ms 19.004792, :bytes 8567864, :stages-ms {:engine 10.52607, :render 8.294105, :preview 0.055803, :packet-encoding 0.105058}}
+       {:ms 24.430176, :bytes 8567864, :stages-ms {:engine 16.116341, :render 8.135217, :preview 0.052368, :packet-encoding 0.105348}}
+       {:ms 25.771718, :bytes 8567864, :stages-ms {:engine 16.044895, :render 9.541825, :preview 0.054031, :packet-encoding 0.108152}}
+       {:ms 16.972805, :bytes 8567864, :stages-ms {:engine 9.237529, :render 7.572332, :preview 0.044877, :packet-encoding 0.096304}}
+       {:ms 22.616647, :bytes 8567864, :stages-ms {:engine 14.931676, :render 7.511862, :preview 0.045097, :packet-encoding 0.105979}}
+       {:ms 17.549481, :bytes 8567864, :stages-ms {:engine 8.909728, :render 7.388837, :preview 1.064366, :packet-encoding 0.141672}}
+       {:ms 19.166254, :bytes 8567864, :stages-ms {:engine 9.808625, :render 9.103489, :preview 0.098107, :packet-encoding 0.104006}}
+       {:ms 16.305625, :bytes 8567864, :stages-ms {:engine 9.014654, :render 7.134156, :preview 0.03982, :packet-encoding 0.096174}}
+       {:ms 45.0769, :bytes 8567800, :stages-ms {:engine 37.191778, :render 7.69077, :preview 0.054141, :packet-encoding 0.120211}}
+       {:ms 16.243492, :bytes 8567864, :stages-ms {:engine 8.181746, :render 7.901325, :preview 0.043786, :packet-encoding 0.095413}}
+       {:ms 23.420222, :bytes 8567920, :stages-ms {:engine 15.037474, :render 8.1974, :preview 0.06007, :packet-encoding 0.105268}}
+       {:ms 24.502865, :bytes 8567832, :stages-ms {:engine 15.594139, :render 8.709487, :preview 0.0598, :packet-encoding 0.116595}}
+       {:ms 15.834269, :bytes 8567832, :stages-ms {:engine 8.068887, :render 7.587485, :preview 0.050886, :packet-encoding 0.103876}}
+       {:ms 21.809266, :bytes 8567832, :stages-ms {:engine 13.892707, :render 7.759343, :preview 0.045408, :packet-encoding 0.091858}}
+       {:ms 23.495585, :bytes 8567864, :stages-ms {:engine 10.240042, :render 13.024347, :preview 0.066279, :packet-encoding 0.144507}}
+       {:ms 29.718734, :bytes 8567800, :stages-ms {:engine 15.512056, :render 13.979158, :preview 0.063255, :packet-encoding 0.1404}}
+       {:ms 18.78352, :bytes 8567864, :stages-ms {:engine 10.575164, :render 8.031021, :preview 0.049824, :packet-encoding 0.105048}}
+       {:ms 18.655018, :bytes 8567864, :stages-ms {:engine 8.961785, :render 9.533062, :preview 0.042925, :packet-encoding 0.095403}}
+       {:ms 27.917915, :bytes 8567864, :stages-ms {:engine 19.009489, :render 8.712121, :preview 0.061893, :packet-encoding 0.11313}}
+       {:ms 22.876246, :bytes 8567864, :stages-ms {:engine 14.665857, :render 8.03111, :preview 0.052098, :packet-encoding 0.105809}}
+       {:ms 18.19632, :bytes 8567864, :stages-ms {:engine 10.232331, :render 7.791921, :preview 0.047251, :packet-encoding 0.104647}}
+       {:ms 17.581678, :bytes 8567864, :stages-ms {:engine 8.95843, :render 8.405392, :preview 0.050445, :packet-encoding 0.147211}}
+       {:ms 25.992738, :bytes 8567864, :stages-ms {:engine 17.026256, :render 8.748375, :preview 0.054381, :packet-encoding 0.104657}}
+       {:ms 18.239385, :bytes 8567864, :stages-ms {:engine 9.681074, :render 8.360394, :preview 0.064927, :packet-encoding 0.102504}}
+       {:ms 19.651126, :bytes 8567864, :stages-ms {:engine 8.519202, :render 10.457473, :preview 0.083485, :packet-encoding 0.564506}}
+       {:ms 37.490877, :bytes 8567864, :stages-ms {:engine 21.610539, :render 15.581059, :preview 0.078437, :packet-encoding 0.194292}}
+       {:ms 32.713569, :bytes 8567864, :stages-ms {:engine 19.519589, :render 12.052459, :preview 0.05355, :packet-encoding 1.064556}}
+       {:ms 23.231089, :bytes 8567864, :stages-ms {:engine 15.376913, :render 7.692963, :preview 0.049835, :packet-encoding 0.091317}}
+       {:ms 27.499497, :bytes 8567800, :stages-ms {:engine 15.828189, :render 11.466, :preview 0.076585, :packet-encoding 0.108632}}
+       {:ms 28.490624, :bytes 8567864, :stages-ms {:engine 14.591646, :render 13.730465, :preview 0.044807, :packet-encoding 0.103435}}
+       {:ms 29.037573, :bytes 8567864, :stages-ms {:engine 20.176289, :render 8.686052, :preview 0.051337, :packet-encoding 0.101642}}
+       {:ms 17.076331, :bytes 8567864, :stages-ms {:engine 9.517068, :render 7.411782, :preview 0.0331, :packet-encoding 0.095262}}
+       {:ms 30.199565, :bytes 8567864, :stages-ms {:engine 17.547638, :render 12.469845, :preview 0.057196, :packet-encoding 0.107321}}
+       {:ms 28.509831, :bytes 8567864, :stages-ms {:engine 8.435407, :render 19.881856, :preview 0.060471, :packet-encoding 0.109484}}
+       {:ms 31.591768, :bytes 8567864, :stages-ms {:engine 16.761374, :render 14.60765, :preview 0.061001, :packet-encoding 0.139349}}
+       {:ms 29.233527, :bytes 8567864, :stages-ms {:engine 15.524966, :render 13.462653, :preview 0.064056, :packet-encoding 0.158858}}
+       {:ms 32.29055, :bytes 8567864, :stages-ms {:engine 15.808119, :render 16.243222, :preview 0.06659, :packet-encoding 0.14694}}
+       {:ms 31.599495, :bytes 8567864, :stages-ms {:engine 16.468249, :render 14.890965, :preview 0.059429, :packet-encoding 0.155694}}
+       {:ms 26.899617, :bytes 8567864, :stages-ms {:engine 14.604204, :render 12.031738, :preview 0.091057, :packet-encoding 0.145107}}
+       {:ms 28.040889, :bytes 8567864, :stages-ms {:engine 14.775612, :render 13.061401, :preview 0.054262, :packet-encoding 0.128052}}
+       {:ms 24.713751, :bytes 8567864, :stages-ms {:engine 12.289996, :render 12.17342, :preview 0.061282, :packet-encoding 0.167692}}
+       {:ms 18.070156, :bytes 8567864, :stages-ms {:engine 9.810702, :render 8.019133, :preview 0.057836, :packet-encoding 0.15983}}
+       {:ms 23.839971, :bytes 8567864, :stages-ms {:engine 14.825567, :render 8.816247, :preview 0.057987, :packet-encoding 0.11968}}
+       {:ms 17.006426, :bytes 8567864, :stages-ms {:engine 8.70456, :render 8.140875, :preview 0.042464, :packet-encoding 0.098648}}
+       {:ms 19.008918, :bytes 8567864, :stages-ms {:engine 8.620954, :render 10.189606, :preview 0.045909, :packet-encoding 0.124116}}
+       {:ms 16.45559, :bytes 8567864, :stages-ms {:engine 9.189687, :render 7.134987, :preview 0.031668, :packet-encoding 0.080561}}
+       {:ms 15.646928, :bytes 8567864, :stages-ms {:engine 8.740453, :render 6.79027, :preview 0.029475, :packet-encoding 0.070545}}
+       {:ms 15.567559, :bytes 8567864, :stages-ms {:engine 8.09061, :render 7.358041, :preview 0.029875, :packet-encoding 0.075072}}
+       {:ms 16.020968, :bytes 8567864, :stages-ms {:engine 8.068927, :render 7.814445, :preview 0.037846, :packet-encoding 0.082885}}
+       {:ms 18.463224, :bytes 8567864, :stages-ms {:engine 10.295328, :render 8.007074, :preview 0.062424, :packet-encoding 0.080991}}
+       {:ms 16.316159, :bytes 8567864, :stages-ms {:engine 8.659832, :render 7.513704, :preview 0.047541, :packet-encoding 0.079099}}
+       {:ms 16.223731, :bytes 8567864, :stages-ms {:engine 8.619301, :render 7.476177, :preview 0.035193, :packet-encoding 0.076815}}
+       {:ms 16.688187, :bytes 8567864, :stages-ms {:engine 9.094794, :render 7.366113, :preview 0.038868, :packet-encoding 0.171026}}
+       {:ms 16.231292, :bytes 8567864, :stages-ms {:engine 8.390959, :render 7.701686, :preview 0.035743, :packet-encoding 0.084477}}
+       {:ms 16.391462, :bytes 8567864, :stages-ms {:engine 8.994353, :render 7.268106, :preview 0.0335, :packet-encoding 0.078498}}
+       {:ms 16.484452, :bytes 8567864, :stages-ms {:engine 8.075786, :render 8.260193, :preview 0.045568, :packet-encoding 0.086229}}
+       {:ms 17.818602, :bytes 8567864, :stages-ms {:engine 9.877407, :render 7.80474, :preview 0.035594, :packet-encoding 0.083835}}
+       {:ms 15.924913, :bytes 8567864, :stages-ms {:engine 8.187253, :render 7.536669, :preview 0.097656, :packet-encoding 0.084507}}
+       {:ms 17.162038, :bytes 8567864, :stages-ms {:engine 9.521282, :render 7.499363, :preview 0.038127, :packet-encoding 0.083556}}
+       {:ms 16.268327, :bytes 8567864, :stages-ms {:engine 8.376126, :render 7.755687, :preview 0.038367, :packet-encoding 0.08016}}
+       {:ms 16.157672, :bytes 8567864, :stages-ms {:engine 8.761995, :render 7.269598, :preview 0.031818, :packet-encoding 0.078047}}
+       {:ms 16.651037, :bytes 8567864, :stages-ms {:engine 8.67525, :render 7.821535, :preview 0.047752, :packet-encoding 0.090035}}
+       {:ms 16.92371, :bytes 8567864, :stages-ms {:engine 8.462496, :render 8.310108, :preview 0.043485, :packet-encoding 0.089214}}
+       {:ms 17.272073, :bytes 8567864, :stages-ms {:engine 9.535906, :render 7.599843, :preview 0.034772, :packet-encoding 0.082664}}
+       {:ms 17.654767, :bytes 8567864, :stages-ms {:engine 10.094683, :render 7.427765, :preview 0.036695, :packet-encoding 0.077647}}
+       {:ms 17.854896, :bytes 8567864, :stages-ms {:engine 10.514682, :render 7.196999, :preview 0.043926, :packet-encoding 0.081563}}
+       {:ms 35.276423, :bytes 8567864, :stages-ms {:engine 26.604232, :render 8.510879, :preview 0.04656, :packet-encoding 0.096825}}
+       {:ms 19.390809, :bytes 8567864, :stages-ms {:engine 11.296174, :render 7.867574, :preview 0.040812, :packet-encoding 0.16705}}
+       {:ms 28.354205, :bytes 8567864, :stages-ms {:engine 12.106008, :render 16.064592, :preview 0.050606, :packet-encoding 0.112779}}
+       {:ms 19.863627, :bytes 8567800, :stages-ms {:engine 11.765117, :render 7.948647, :preview 0.041612, :packet-encoding 0.089494}}
+       {:ms 17.298372, :bytes 8567864, :stages-ms {:engine 9.249565, :render 7.912082, :preview 0.034541, :packet-encoding 0.084898}}],
+      :gc-after {"G1 Young Generation" {:collections 15, :ms 518}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 8567864, :p95 8567864, :p99 8567920, :min 8567800, :max 8567920, :mean 8567859.866666667},
+      :frames-per-second 46.12652798376235,
+      :over-25ms 33,
+      :gc-before {"G1 Young Generation" {:collections 13, :ms 488}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 2,
+      :milliseconds {:p50 19.135543, :p95 32.29055, :p99 37.490877, :min 14.349433, :max 45.0769, :mean 21.679498625},
+      :stages-ms
+      {:engine {:p50 9.681074, :p95 19.519589, :p99 26.604232, :min 7.269218, :max 37.191778, :mean 11.729993483333333},
+       :render {:p50 8.212642, :p95 16.064592, :p99 20.863028, :min 6.79027, :max 25.614972, :mean 9.705343391666673},
+       :preview {:p50 0.050336, :p95 0.093901, :p99 1.889883, :min 0.027231, :max 2.426623, :mean 0.09684396666666663},
+       :packet-encoding {:p50 0.105058, :p95 0.167692, :p99 0.564506, :min 0.070545, :max 1.064556, :mean 0.12355634166666667}}}}
+    {:scope :pipeline,
+     :execution :workers,
+     :workers 2,
+     :result
+     {:observations
+      [{:ms 38.966645, :bytes 8567920, :stages-ms {:engine 24.866327, :render 13.872797, :preview 0.081802, :packet-encoding 0.123666}}
+       {:ms 15.744678, :bytes 8567952, :stages-ms {:engine 7.791646, :render 7.810138, :preview 0.03368, :packet-encoding 0.090205}}
+       {:ms 37.251433, :bytes 8567920, :stages-ms {:engine 13.142342, :render 23.928761, :preview 0.058938, :packet-encoding 0.101563}}
+       {:ms 23.954521, :bytes 8567952, :stages-ms {:engine 7.992171, :render 15.797803, :preview 0.054061, :packet-encoding 0.088472}}
+       {:ms 15.563481, :bytes 8567952, :stages-ms {:engine 8.128194, :render 7.292853, :preview 0.04632, :packet-encoding 0.077997}}
+       {:ms 16.345403, :bytes 8567920, :stages-ms {:engine 8.061434, :render 8.155647, :preview 0.034321, :packet-encoding 0.076875}}
+       {:ms 15.881507, :bytes 8567920, :stages-ms {:engine 7.963408, :render 7.808826, :preview 0.027511, :packet-encoding 0.065719}}
+       {:ms 17.541382, :bytes 8567920, :stages-ms {:engine 6.658967, :render 10.70601, :preview 0.044707, :packet-encoding 0.114752}}
+       {:ms 27.077562, :bytes 8567952, :stages-ms {:engine 15.599615, :render 11.090535, :preview 0.044858, :packet-encoding 0.321311}}
+       {:ms 22.657781, :bytes 8567952, :stages-ms {:engine 10.405339, :render 12.079243, :preview 0.04059, :packet-encoding 0.109815}}
+       {:ms 16.104973, :bytes 8567952, :stages-ms {:engine 8.082997, :render 7.910239, :preview 0.025758, :packet-encoding 0.0665}}
+       {:ms 15.303401, :bytes 8567920, :stages-ms {:engine 7.402527, :render 7.787734, :preview 0.029424, :packet-encoding 0.069344}}
+       {:ms 15.220838, :bytes 8567920, :stages-ms {:engine 7.379503, :render 7.719091, :preview 0.032179, :packet-encoding 0.075062}}
+       {:ms 54.957437, :bytes 8567920, :stages-ms {:engine 47.022812, :render 7.468907, :preview 0.338908, :packet-encoding 0.108733}}
+       {:ms 13.51549, :bytes 8567952, :stages-ms {:engine 6.338371, :render 7.06414, :preview 0.028933, :packet-encoding 0.065528}}
+       {:ms 13.209393, :bytes 8567952, :stages-ms {:engine 6.37636, :render 6.723819, :preview 0.028352, :packet-encoding 0.067261}}
+       {:ms 13.763088, :bytes 8567952, :stages-ms {:engine 6.679644, :render 6.92109, :preview 0.040661, :packet-encoding 0.097266}}
+       {:ms 17.780364, :bytes 8567952, :stages-ms {:engine 7.107795, :render 10.545318, :preview 0.034021, :packet-encoding 0.075463}}
+       {:ms 19.476067, :bytes 8567920, :stages-ms {:engine 11.542253, :render 7.798591, :preview 0.035573, :packet-encoding 0.083075}}
+       {:ms 24.845767, :bytes 8567920, :stages-ms {:engine 9.371569, :render 15.317562, :preview 0.048693, :packet-encoding 0.089785}}
+       {:ms 20.181719, :bytes 8567952, :stages-ms {:engine 8.082191, :render 11.935652, :preview 0.054462, :packet-encoding 0.088022}}
+       {:ms 16.175459, :bytes 8567888, :stages-ms {:engine 8.015315, :render 8.021476, :preview 0.036294, :packet-encoding 0.084437}}
+       {:ms 18.210229, :bytes 8567920, :stages-ms {:engine 7.401425, :render 7.555877, :preview 0.076114, :packet-encoding 3.12171}}
+       {:ms 20.299911, :bytes 8567920, :stages-ms {:engine 11.956093, :render 7.989567, :preview 0.07967, :packet-encoding 0.139609}}
+       {:ms 17.696839, :bytes 8567888, :stages-ms {:engine 8.284529, :render 9.150137, :preview 0.144306, :packet-encoding 0.077266}}
+       {:ms 14.114859, :bytes 8567888, :stages-ms {:engine 6.445563, :render 7.549617, :preview 0.027712, :packet-encoding 0.07338}}
+       {:ms 13.524054, :bytes 8567952, :stages-ms {:engine 5.989158, :render 7.423329, :preview 0.025388, :packet-encoding 0.068793}}
+       {:ms 13.973528, :bytes 8567952, :stages-ms {:engine 6.310199, :render 7.541556, :preview 0.025658, :packet-encoding 0.080942}}
+       {:ms 24.147469, :bytes 8567952, :stages-ms {:engine 16.617061, :render 7.408676, :preview 0.030295, :packet-encoding 0.07304}}
+       {:ms 19.23843, :bytes 8567920, :stages-ms {:engine 11.541301, :render 7.555907, :preview 0.029144, :packet-encoding 0.093981}}
+       {:ms 14.688499, :bytes 8567952, :stages-ms {:engine 6.552623, :render 8.011039, :preview 0.026911, :packet-encoding 0.078718}}
+       {:ms 14.352325, :bytes 8567920, :stages-ms {:engine 7.088456, :render 7.152472, :preview 0.024517, :packet-encoding 0.069634}}
+       {:ms 17.782397, :bytes 8567920, :stages-ms {:engine 5.999483, :render 11.62672, :preview 0.031307, :packet-encoding 0.108703}}
+       {:ms 42.359225, :bytes 8567920, :stages-ms {:engine 26.125149, :render 16.085704, :preview 0.037546, :packet-encoding 0.091638}}
+       {:ms 20.213843, :bytes 8567952, :stages-ms {:engine 11.971426, :render 8.105091, :preview 0.037035, :packet-encoding 0.078157}}
+       {:ms 23.444425, :bytes 8567952, :stages-ms {:engine 12.932777, :render 10.371247, :preview 0.030526, :packet-encoding 0.090035}}
+       {:ms 20.656145, :bytes 8567952, :stages-ms {:engine 13.42157, :render 7.096068, :preview 0.027691, :packet-encoding 0.09364}}
+       {:ms 42.440343, :bytes 8568008, :stages-ms {:engine 25.788089, :render 16.502038, :preview 0.046409, :packet-encoding 0.08647}}
+       {:ms 21.193911, :bytes 8567952, :stages-ms {:engine 12.375803, :render 8.65214, :preview 0.030205, :packet-encoding 0.113841}}
+       {:ms 14.934429, :bytes 8567920, :stages-ms {:engine 7.613994, :render 7.180514, :preview 0.026981, :packet-encoding 0.095323}}
+       {:ms 14.30198, :bytes 8567920, :stages-ms {:engine 6.8647, :render 7.295868, :preview 0.025328, :packet-encoding 0.097576}}
+       {:ms 14.299126, :bytes 8567952, :stages-ms {:engine 6.23755, :render 7.935696, :preview 0.031358, :packet-encoding 0.078848}}
+       {:ms 28.32407, :bytes 8567920, :stages-ms {:engine 19.049567, :render 8.769647, :preview 0.384416, :packet-encoding 0.103114}}
+       {:ms 43.380962, :bytes 8567920, :stages-ms {:engine 26.170833, :render 17.002017, :preview 0.055143, :packet-encoding 0.134852}}
+       {:ms 47.142231, :bytes 8567952, :stages-ms {:engine 18.739102, :render 26.770511, :preview 1.468221, :packet-encoding 0.136825}}
+       {:ms 34.924165, :bytes 8567952, :stages-ms {:engine 18.619533, :render 16.088088, :preview 0.045648, :packet-encoding 0.141863}}
+       {:ms 28.401447, :bytes 8567952, :stages-ms {:engine 19.51169, :render 8.704168, :preview 0.027902, :packet-encoding 0.107671}}
+       {:ms 34.635251, :bytes 8567920, :stages-ms {:engine 11.949324, :render 22.527791, :preview 0.036144, :packet-encoding 0.103745}}
+       {:ms 14.238445, :bytes 8567888, :stages-ms {:engine 6.465463, :render 7.632131, :preview 0.028642, :packet-encoding 0.070636}}
+       {:ms 17.754866, :bytes 8567920, :stages-ms {:engine 8.094304, :render 7.159653, :preview 0.024987, :packet-encoding 2.458015}}
+       {:ms 18.770919, :bytes 8567952, :stages-ms {:engine 8.953012, :render 9.604557, :preview 0.036896, :packet-encoding 0.158037}}
+       {:ms 15.207938, :bytes 8567920, :stages-ms {:engine 7.233494, :render 7.417229, :preview 0.027141, :packet-encoding 0.509744}}
+       {:ms 28.127226, :bytes 8567952, :stages-ms {:engine 7.028736, :render 7.611681, :preview 13.384294, :packet-encoding 0.085058}}
+       {:ms 29.985552, :bytes 8567920, :stages-ms {:engine 18.21079, :render 11.627922, :preview 0.032418, :packet-encoding 0.095083}}
+       {:ms 15.210602, :bytes 8567952, :stages-ms {:engine 7.29152, :render 7.79797, :preview 0.030425, :packet-encoding 0.071968}}
+       {:ms 15.386686, :bytes 8567952, :stages-ms {:engine 7.367755, :render 7.419612, :preview 0.023886, :packet-encoding 0.075213}}
+       {:ms 25.867819, :bytes 8567920, :stages-ms {:engine 18.109308, :render 7.579332, :preview 0.028263, :packet-encoding 0.076895}}
+       {:ms 20.484027, :bytes 8567952, :stages-ms {:engine 12.699198, :render 7.6649, :preview 0.028092, :packet-encoding 0.079699}}
+       {:ms 17.100345, :bytes 8567920, :stages-ms {:engine 9.404699, :render 7.581215, :preview 0.024917, :packet-encoding 0.078287}}
+       {:ms 15.548219, :bytes 8567952, :stages-ms {:engine 7.014606, :render 8.421995, :preview 0.027882, :packet-encoding 0.07344}}
+       {:ms 17.051442, :bytes 8567952, :stages-ms {:engine 8.729576, :render 8.130338, :preview 0.030897, :packet-encoding 0.150706}}
+       {:ms 14.232636, :bytes 8567952, :stages-ms {:engine 6.811952, :render 7.320164, :preview 0.022634, :packet-encoding 0.069143}}
+       {:ms 20.840893, :bytes 8567920, :stages-ms {:engine 12.895712, :render 7.817109, :preview 0.041973, :packet-encoding 0.076815}}
+       {:ms 21.595664, :bytes 8567952, :stages-ms {:engine 13.441981, :render 8.040673, :preview 0.025398, :packet-encoding 0.078097}}
+       {:ms 22.892348, :bytes 8567920, :stages-ms {:engine 14.827979, :render 7.95105, :preview 0.027861, :packet-encoding 0.075454}}
+       {:ms 14.156231, :bytes 8567952, :stages-ms {:engine 6.759993, :render 7.287445, :preview 0.028232, :packet-encoding 0.070536}}
+       {:ms 36.003573, :bytes 8567920, :stages-ms {:engine 22.068903, :render 13.754359, :preview 0.035093, :packet-encoding 0.134812}}
+       {:ms 27.056941, :bytes 8567952, :stages-ms {:engine 19.188666, :render 7.740794, :preview 0.032208, :packet-encoding 0.082924}}
+       {:ms 18.392082, :bytes 8567920, :stages-ms {:engine 9.528865, :render 8.746922, :preview 0.02669, :packet-encoding 0.078718}}
+       {:ms 16.945673, :bytes 8567920, :stages-ms {:engine 9.068204, :render 7.769026, :preview 0.023095, :packet-encoding 0.075373}}
+       {:ms 16.623781, :bytes 8567920, :stages-ms {:engine 8.24498, :render 8.270819, :preview 0.024687, :packet-encoding 0.074031}}
+       {:ms 42.977022, :bytes 8567952, :stages-ms {:engine 29.609102, :render 13.191646, :preview 0.042914, :packet-encoding 0.122895}}
+       {:ms 41.192972, :bytes 8567952, :stages-ms {:engine 17.113295, :render 23.887519, :preview 0.050326, :packet-encoding 0.12716}}
+       {:ms 24.321335, :bytes 8567952, :stages-ms {:engine 14.056257, :render 10.119189, :preview 0.043586, :packet-encoding 0.088472}}
+       {:ms 34.614846, :bytes 8567856, :stages-ms {:engine 25.402753, :render 9.077961, :preview 0.034132, :packet-encoding 0.087982}}
+       {:ms 21.736811, :bytes 8567832, :stages-ms {:engine 13.652028, :render 7.97, :preview 0.028693, :packet-encoding 0.076205}}
+       {:ms 15.977206, :bytes 8567800, :stages-ms {:engine 8.072815, :render 7.798642, :preview 0.02669, :packet-encoding 0.070786}}
+       {:ms 16.318106, :bytes 8567800, :stages-ms {:engine 8.227506, :render 7.984592, :preview 0.024356, :packet-encoding 0.07303}}
+       {:ms 16.917746, :bytes 8567800, :stages-ms {:engine 8.051903, :render 8.745502, :preview 0.032319, :packet-encoding 0.079048}}
+       {:ms 34.500203, :bytes 8567832, :stages-ms {:engine 24.029048, :render 10.293979, :preview 0.045238, :packet-encoding 0.120751}}
+       {:ms 29.462905, :bytes 8567832, :stages-ms {:engine 14.264868, :render 15.061232, :preview 0.037826, :packet-encoding 0.0864}}
+       {:ms 27.291729, :bytes 8567800, :stages-ms {:engine 14.500702, :render 12.619711, :preview 0.043305, :packet-encoding 0.114902}}
+       {:ms 28.566261, :bytes 8567832, :stages-ms {:engine 10.268651, :render 18.166563, :preview 0.034171, :packet-encoding 0.084076}}
+       {:ms 17.712617, :bytes 8567800, :stages-ms {:engine 9.418662, :render 8.167445, :preview 0.030166, :packet-encoding 0.08673}}
+       {:ms 15.80692, :bytes 8567832, :stages-ms {:engine 7.649098, :render 8.044792, :preview 0.029434, :packet-encoding 0.07306}}
+       {:ms 17.917053, :bytes 8567832, :stages-ms {:engine 9.555617, :render 8.212823, :preview 0.05948, :packet-encoding 0.078327}}
+       {:ms 15.437687, :bytes 8567856, :stages-ms {:engine 6.600927, :render 8.657431, :preview 0.072188, :packet-encoding 0.07374}}
+       {:ms 38.235903, :bytes 8567856, :stages-ms {:engine 12.849205, :render 25.163453, :preview 0.058007, :packet-encoding 0.154081}}
+       {:ms 15.840922, :bytes 8567576, :stages-ms {:engine 7.380216, :render 8.334897, :preview 0.02662, :packet-encoding 0.089444}}
+       {:ms 16.648802, :bytes 8567544, :stages-ms {:engine 8.23658, :render 8.29733, :preview 0.027371, :packet-encoding 0.077817}}
+       {:ms 91.198674, :bytes 8567544, :stages-ms {:engine 60.823756, :render 29.986916, :preview 0.100841, :packet-encoding 0.27313}}
+       {:ms 29.274082, :bytes 8567576, :stages-ms {:engine 14.761293, :render 14.285318, :preview 0.042564, :packet-encoding 0.128182}}
+       {:ms 29.865429, :bytes 8567576, :stages-ms {:engine 14.717537, :render 14.971507, :preview 0.04003, :packet-encoding 0.122484}}
+       {:ms 34.666728, :bytes 8567576, :stages-ms {:engine 13.981383, :render 20.429591, :preview 0.052218, :packet-encoding 0.189725}}
+       {:ms 30.624467, :bytes 8567576, :stages-ms {:engine 15.235243, :render 15.131357, :preview 0.043646, :packet-encoding 0.19985}}
+       {:ms 23.919264, :bytes 8567544, :stages-ms {:engine 9.83755, :render 13.869646, :preview 0.076835, :packet-encoding 0.121071}}
+       {:ms 25.052573, :bytes 8567576, :stages-ms {:engine 8.048748, :render 16.611446, :preview 0.287852, :packet-encoding 0.092068}}
+       {:ms 17.336784, :bytes 8567544, :stages-ms {:engine 9.07076, :render 8.147847, :preview 0.032579, :packet-encoding 0.075503}}
+       {:ms 14.874602, :bytes 8567576, :stages-ms {:engine 6.576941, :render 8.19683, :preview 0.022173, :packet-encoding 0.070386}}
+       {:ms 16.022023, :bytes 8567544, :stages-ms {:engine 7.304733, :render 8.606414, :preview 0.030245, :packet-encoding 0.072579}}
+       {:ms 20.783021, :bytes 8567544, :stages-ms {:engine 8.03675, :render 12.63877, :preview 0.022995, :packet-encoding 0.074782}}
+       {:ms 31.731937, :bytes 8567576, :stages-ms {:engine 11.524399, :render 20.031164, :preview 0.046159, :packet-encoding 0.12}}
+       {:ms 24.370079, :bytes 8567576, :stages-ms {:engine 8.569058, :render 15.613781, :preview 0.043815, :packet-encoding 0.129054}}
+       {:ms 24.472683, :bytes 8567576, :stages-ms {:engine 8.676959, :render 15.619009, :preview 0.041091, :packet-encoding 0.120851}}
+       {:ms 24.649868, :bytes 8567576, :stages-ms {:engine 9.167325, :render 15.317776, :preview 0.037537, :packet-encoding 0.11349}}
+       {:ms 36.836611, :bytes 8567576, :stages-ms {:engine 20.119215, :render 16.452258, :preview 0.083105, :packet-encoding 0.166269}}
+       {:ms 26.936117, :bytes 8567544, :stages-ms {:engine 11.340273, :render 15.425648, :preview 0.041112, :packet-encoding 0.113811}}
+       {:ms 30.415213, :bytes 8567576, :stages-ms {:engine 15.505738, :render 14.746801, :preview 0.038708, :packet-encoding 0.111307}}
+       {:ms 36.656601, :bytes 8567544, :stages-ms {:engine 13.826471, :render 22.54975, :preview 0.051217, :packet-encoding 0.213089}}
+       {:ms 25.798846, :bytes 8567576, :stages-ms {:engine 14.729855, :render 10.938846, :preview 0.029755, :packet-encoding 0.08645}}
+       {:ms 18.643012, :bytes 8567576, :stages-ms {:engine 8.99776, :render 9.519133, :preview 0.030626, :packet-encoding 0.085348}}
+       {:ms 15.12666, :bytes 8567576, :stages-ms {:engine 6.762078, :render 8.253275, :preview 0.025047, :packet-encoding 0.077246}}
+       {:ms 16.617235, :bytes 8567576, :stages-ms {:engine 7.949129, :render 8.558612, :preview 0.026039, :packet-encoding 0.074632}}
+       {:ms 25.463999, :bytes 8567576, :stages-ms {:engine 16.715232, :render 8.502408, :preview 0.028353, :packet-encoding 0.082183}}
+       {:ms 16.294591, :bytes 8567576, :stages-ms {:engine 7.282079, :render 8.886753, :preview 0.03974, :packet-encoding 0.074752}}
+       {:ms 15.095994, :bytes 8567544, :stages-ms {:engine 6.656892, :render 8.314546, :preview 0.024377, :packet-encoding 0.091457}}
+       {:ms 21.08895, :bytes 8567576, :stages-ms {:engine 12.601254, :render 8.379724, :preview 0.024897, :packet-encoding 0.074041}}
+       {:ms 16.728231, :bytes 8567544, :stages-ms {:engine 7.639274, :render 8.973895, :preview 0.025569, :packet-encoding 0.08}}
+       {:ms 23.233555, :bytes 8567576, :stages-ms {:engine 6.409079, :render 16.706259, :preview 0.028222, :packet-encoding 0.08011}}
+       {:ms 16.263465, :bytes 8567544, :stages-ms {:engine 7.851021, :render 8.296309, :preview 0.028753, :packet-encoding 0.078168}}],
+      :gc-after {"G1 Young Generation" {:collections 17, :ms 560}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 8567920, :p95 8567952, :p99 8567952, :min 8567544, :max 8568008, :mean 8567823.866666667},
+      :frames-per-second 42.838925145236345,
+      :over-25ms 38,
+      :gc-before {"G1 Young Generation" {:collections 15, :ms 518}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 3,
+      :milliseconds {:p50 20.181719, :p95 42.359225, :p99 54.957437, :min 13.209393, :max 91.198674, :mean 23.34325608333334},
+      :stages-ms
+      {:engine {:p50 9.068204, :p95 25.402753, :p99 47.022812, :min 5.989158, :max 60.823756, :mean 12.038870766666665},
+       :render {:p50 8.421995, :p95 22.527791, :p99 26.770511, :min 6.723819, :max 29.986916, :mean 10.965924241666665},
+       :preview {:p50 0.032319, :p95 0.100841, :p99 1.468221, :min 0.022173, :max 13.384294, :mean 0.16867628333333334},
+       :packet-encoding {:p50 0.0864, :p95 0.19985, :p99 2.458015, :min 0.065528, :max 3.12171, :mean 0.14696527499999998}}}}
+    {:scope :host-tick,
+     :execution :workers,
+     :workers 1,
+     :result
+     {:observations
+      [{:ms 16.516892, :bytes 8673736, :stages-ms nil}
+       {:ms 20.437539, :bytes 8667032, :stages-ms nil}
+       {:ms 16.027298, :bytes 8667032, :stages-ms nil}
+       {:ms 14.274009, :bytes 8667032, :stages-ms nil}
+       {:ms 14.163343, :bytes 8667032, :stages-ms nil}
+       {:ms 14.272407, :bytes 8667032, :stages-ms nil}
+       {:ms 14.43511, :bytes 8667032, :stages-ms nil}
+       {:ms 14.370964, :bytes 8667032, :stages-ms nil}
+       {:ms 14.688931, :bytes 8674008, :stages-ms nil}
+       {:ms 16.558213, :bytes 8667144, :stages-ms nil}
+       {:ms 14.745927, :bytes 8667144, :stages-ms nil}
+       {:ms 25.99481, :bytes 8667112, :stages-ms nil}
+       {:ms 48.692753, :bytes 8667144, :stages-ms nil}
+       {:ms 45.352425, :bytes 8667144, :stages-ms nil}
+       {:ms 114.355207, :bytes 8667144, :stages-ms nil}
+       {:ms 152.425441, :bytes 8667144, :stages-ms nil}
+       {:ms 117.317838, :bytes 8673976, :stages-ms nil}
+       {:ms 24.977315, :bytes 8667144, :stages-ms nil}
+       {:ms 21.799671, :bytes 8667144, :stages-ms nil}
+       {:ms 19.867054, :bytes 8667144, :stages-ms nil}
+       {:ms 20.406723, :bytes 8667144, :stages-ms nil}
+       {:ms 17.78362, :bytes 8667144, :stages-ms nil}
+       {:ms 17.723801, :bytes 8667144, :stages-ms nil}
+       {:ms 22.180021, :bytes 8667144, :stages-ms nil}
+       {:ms 18.131051, :bytes 8674024, :stages-ms nil}
+       {:ms 18.887195, :bytes 8667144, :stages-ms nil}
+       {:ms 18.213785, :bytes 8667144, :stages-ms nil}
+       {:ms 19.133595, :bytes 8667144, :stages-ms nil}
+       {:ms 23.664067, :bytes 8667144, :stages-ms nil}
+       {:ms 19.171151, :bytes 8667144, :stages-ms nil}
+       {:ms 17.222149, :bytes 8667144, :stages-ms nil}
+       {:ms 22.774688, :bytes 8667144, :stages-ms nil}
+       {:ms 20.233322, :bytes 8674168, :stages-ms nil}
+       {:ms 26.556342, :bytes 8667192, :stages-ms nil}
+       {:ms 20.503298, :bytes 8667256, :stages-ms nil}
+       {:ms 19.775547, :bytes 8667256, :stages-ms nil}
+       {:ms 19.05786, :bytes 8667256, :stages-ms nil}
+       {:ms 22.280292, :bytes 8667256, :stages-ms nil}
+       {:ms 21.321325, :bytes 8667256, :stages-ms nil}
+       {:ms 20.247985, :bytes 8667256, :stages-ms nil}
+       {:ms 20.002818, :bytes 8674160, :stages-ms nil}
+       {:ms 18.000326, :bytes 8667256, :stages-ms nil}
+       {:ms 34.744989, :bytes 8667256, :stages-ms nil}
+       {:ms 17.457061, :bytes 8667256, :stages-ms nil}
+       {:ms 15.924814, :bytes 8667256, :stages-ms nil}
+       {:ms 15.633767, :bytes 8667256, :stages-ms nil}
+       {:ms 16.08989, :bytes 8667256, :stages-ms nil}
+       {:ms 16.077313, :bytes 8667256, :stages-ms nil}
+       {:ms 16.329521, :bytes 8674304, :stages-ms nil}
+       {:ms 16.217854, :bytes 8667368, :stages-ms nil}
+       {:ms 19.183799, :bytes 8667368, :stages-ms nil}
+       {:ms 17.811392, :bytes 8667368, :stages-ms nil}
+       {:ms 16.136681, :bytes 8667368, :stages-ms nil}
+       {:ms 16.438124, :bytes 8667368, :stages-ms nil}
+       {:ms 16.53624, :bytes 8667368, :stages-ms nil}
+       {:ms 16.085034, :bytes 8667368, :stages-ms nil}
+       {:ms 16.674217, :bytes 8674368, :stages-ms nil}
+       {:ms 15.844633, :bytes 8667368, :stages-ms nil}
+       {:ms 15.667368, :bytes 8667368, :stages-ms nil}
+       {:ms 16.064423, :bytes 8667368, :stages-ms nil}
+       {:ms 15.83623, :bytes 8667368, :stages-ms nil}
+       {:ms 15.570723, :bytes 8667368, :stages-ms nil}
+       {:ms 15.586317, :bytes 8667368, :stages-ms nil}
+       {:ms 15.950091, :bytes 8667368, :stages-ms nil}
+       {:ms 17.879244, :bytes 8674384, :stages-ms nil}
+       {:ms 16.734268, :bytes 8667368, :stages-ms nil}
+       {:ms 16.423682, :bytes 8667368, :stages-ms nil}
+       {:ms 16.555609, :bytes 8667368, :stages-ms nil}
+       {:ms 16.629521, :bytes 8667224, :stages-ms nil}
+       {:ms 16.904252, :bytes 8667224, :stages-ms nil}
+       {:ms 16.88299, :bytes 8667224, :stages-ms nil}
+       {:ms 16.126135, :bytes 8667224, :stages-ms nil}
+       {:ms 17.327446, :bytes 8674744, :stages-ms nil}
+       {:ms 16.257023, :bytes 8668544, :stages-ms nil}
+       {:ms 16.8697, :bytes 8668544, :stages-ms nil}
+       {:ms 16.776741, :bytes 8668544, :stages-ms nil}
+       {:ms 16.737883, :bytes 8668544, :stages-ms nil}
+       {:ms 16.318014, :bytes 8668544, :stages-ms nil}
+       {:ms 16.488429, :bytes 8668544, :stages-ms nil}
+       {:ms 16.342059, :bytes 8668544, :stages-ms nil}
+       {:ms 15.977713, :bytes 8675560, :stages-ms nil}
+       {:ms 15.875, :bytes 8668544, :stages-ms nil}
+       {:ms 15.004975, :bytes 8668544, :stages-ms nil}
+       {:ms 14.926267, :bytes 8668544, :stages-ms nil}
+       {:ms 14.934199, :bytes 8668544, :stages-ms nil}
+       {:ms 16.019016, :bytes 8668544, :stages-ms nil}
+       {:ms 15.212266, :bytes 8668544, :stages-ms nil}
+       {:ms 18.160275, :bytes 8669384, :stages-ms nil}
+       {:ms 17.426386, :bytes 8676392, :stages-ms nil}
+       {:ms 16.222219, :bytes 8669480, :stages-ms nil}
+       {:ms 15.804744, :bytes 8669480, :stages-ms nil}
+       {:ms 18.721547, :bytes 8669480, :stages-ms nil}
+       {:ms 16.997482, :bytes 8669480, :stages-ms nil}
+       {:ms 16.839295, :bytes 8669480, :stages-ms nil}
+       {:ms 15.665505, :bytes 8669480, :stages-ms nil}
+       {:ms 16.252476, :bytes 8669480, :stages-ms nil}
+       {:ms 16.732946, :bytes 8676472, :stages-ms nil}
+       {:ms 17.813916, :bytes 8669480, :stages-ms nil}
+       {:ms 17.50985, :bytes 8669480, :stages-ms nil}
+       {:ms 17.771932, :bytes 8669480, :stages-ms nil}
+       {:ms 30.84038, :bytes 8669416, :stages-ms nil}
+       {:ms 17.07643, :bytes 8669480, :stages-ms nil}
+       {:ms 16.399676, :bytes 8669480, :stages-ms nil}
+       {:ms 16.437142, :bytes 8669480, :stages-ms nil}
+       {:ms 17.832034, :bytes 8676512, :stages-ms nil}
+       {:ms 16.647497, :bytes 8669480, :stages-ms nil}
+       {:ms 16.55588, :bytes 8669480, :stages-ms nil}
+       {:ms 17.064573, :bytes 8669480, :stages-ms nil}
+       {:ms 16.297693, :bytes 8669480, :stages-ms nil}
+       {:ms 15.97542, :bytes 8669480, :stages-ms nil}
+       {:ms 16.232285, :bytes 8669480, :stages-ms nil}
+       {:ms 16.047557, :bytes 8669480, :stages-ms nil}
+       {:ms 15.943573, :bytes 8676520, :stages-ms nil}
+       {:ms 15.682331, :bytes 8669576, :stages-ms nil}
+       {:ms 15.752065, :bytes 8669576, :stages-ms nil}
+       {:ms 16.159085, :bytes 8669576, :stages-ms nil}
+       {:ms 20.445672, :bytes 8669576, :stages-ms nil}
+       {:ms 15.92864, :bytes 8669576, :stages-ms nil}
+       {:ms 16.870142, :bytes 8669576, :stages-ms nil}
+       {:ms 16.690282, :bytes 8669576, :stages-ms nil}],
+      :gc-after {"G1 Young Generation" {:collections 76, :ms 2182}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 8667368, :p95 8674384, :p99 8676512, :min 8667032, :max 8676520, :mean 8668872.666666666},
+      :frames-per-second 47.87735829738164,
+      :over-25ms 9,
+      :gc-before {"G1 Young Generation" {:collections 74, :ms 2156}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 2,
+      :milliseconds {:p50 16.674217, :p95 30.84038, :p99 117.317838, :min 14.163343, :max 152.425441, :mean 20.88669959166667},
+      :stages-ms {}}}
+    {:scope :host-tick,
+     :execution :workers,
+     :workers 2,
+     :result
+     {:observations
+      [{:ms 13.921921, :bytes 8673680, :stages-ms nil}
+       {:ms 14.385587, :bytes 8666976, :stages-ms nil}
+       {:ms 13.958616, :bytes 8666976, :stages-ms nil}
+       {:ms 14.617474, :bytes 8666976, :stages-ms nil}
+       {:ms 13.779227, :bytes 8666976, :stages-ms nil}
+       {:ms 13.55425, :bytes 8666976, :stages-ms nil}
+       {:ms 13.24087, :bytes 8666976, :stages-ms nil}
+       {:ms 13.141291, :bytes 8666976, :stages-ms nil}
+       {:ms 13.138627, :bytes 8673912, :stages-ms nil}
+       {:ms 13.151446, :bytes 8667088, :stages-ms nil}
+       {:ms 13.0138, :bytes 8667088, :stages-ms nil}
+       {:ms 13.538657, :bytes 8667088, :stages-ms nil}
+       {:ms 14.552622, :bytes 8667088, :stages-ms nil}
+       {:ms 14.772015, :bytes 8667064, :stages-ms nil}
+       {:ms 15.165496, :bytes 8667016, :stages-ms nil}
+       {:ms 14.940247, :bytes 8667016, :stages-ms nil}
+       {:ms 14.704434, :bytes 8673888, :stages-ms nil}
+       {:ms 14.443663, :bytes 8667016, :stages-ms nil}
+       {:ms 14.834309, :bytes 8667016, :stages-ms nil}
+       {:ms 14.699036, :bytes 8667016, :stages-ms nil}
+       {:ms 14.595181, :bytes 8667016, :stages-ms nil}
+       {:ms 15.12137, :bytes 8666760, :stages-ms nil}
+       {:ms 14.879907, :bytes 8666760, :stages-ms nil}
+       {:ms 19.53779, :bytes 8666760, :stages-ms nil}
+       {:ms 15.658394, :bytes 8673640, :stages-ms nil}
+       {:ms 15.371419, :bytes 8666760, :stages-ms nil}
+       {:ms 14.211506, :bytes 8666760, :stages-ms nil}
+       {:ms 13.567279, :bytes 8666760, :stages-ms nil}
+       {:ms 15.297314, :bytes 8666760, :stages-ms nil}
+       {:ms 15.621349, :bytes 8666760, :stages-ms nil}
+       {:ms 14.339547, :bytes 8666760, :stages-ms nil}
+       {:ms 14.499357, :bytes 8666760, :stages-ms nil}
+       {:ms 14.363769, :bytes 8673784, :stages-ms nil}
+       {:ms 15.434008, :bytes 8666872, :stages-ms nil}
+       {:ms 14.879908, :bytes 8666872, :stages-ms nil}
+       {:ms 15.682731, :bytes 8666872, :stages-ms nil}
+       {:ms 15.506808, :bytes 8666872, :stages-ms nil}
+       {:ms 21.007594, :bytes 8666872, :stages-ms nil}
+       {:ms 14.415811, :bytes 8666872, :stages-ms nil}
+       {:ms 15.472136, :bytes 8666872, :stages-ms nil}
+       {:ms 14.897473, :bytes 8673776, :stages-ms nil}
+       {:ms 14.824354, :bytes 8666872, :stages-ms nil}
+       {:ms 14.122041, :bytes 8666872, :stages-ms nil}
+       {:ms 16.016442, :bytes 8666872, :stages-ms nil}
+       {:ms 16.173426, :bytes 8666872, :stages-ms nil}
+       {:ms 14.836762, :bytes 8666872, :stages-ms nil}
+       {:ms 13.937104, :bytes 8666872, :stages-ms nil}
+       {:ms 15.940007, :bytes 8666872, :stages-ms nil}
+       {:ms 29.395509, :bytes 8673880, :stages-ms nil}
+       {:ms 16.247197, :bytes 8666984, :stages-ms nil}
+       {:ms 15.302391, :bytes 8666984, :stages-ms nil}
+       {:ms 15.027769, :bytes 8666984, :stages-ms nil}
+       {:ms 14.129942, :bytes 8666984, :stages-ms nil}
+       {:ms 15.18795, :bytes 8667040, :stages-ms nil}
+       {:ms 14.699287, :bytes 8666984, :stages-ms nil}
+       {:ms 15.605805, :bytes 8666984, :stages-ms nil}
+       {:ms 14.798766, :bytes 8673968, :stages-ms nil}
+       {:ms 16.411113, :bytes 8666984, :stages-ms nil}
+       {:ms 15.148009, :bytes 8666984, :stages-ms nil}
+       {:ms 14.891784, :bytes 8666984, :stages-ms nil}
+       {:ms 15.032847, :bytes 8666984, :stages-ms nil}
+       {:ms 15.434178, :bytes 8666984, :stages-ms nil}
+       {:ms 15.011614, :bytes 8666984, :stages-ms nil}
+       {:ms 15.063432, :bytes 8666984, :stages-ms nil}
+       {:ms 13.939988, :bytes 8674000, :stages-ms nil}
+       {:ms 14.349081, :bytes 8666984, :stages-ms nil}
+       {:ms 14.048631, :bytes 8666984, :stages-ms nil}
+       {:ms 15.052517, :bytes 8666984, :stages-ms nil}
+       {:ms 15.96231, :bytes 8666984, :stages-ms nil}
+       {:ms 92.349506, :bytes 8666952, :stages-ms nil}
+       {:ms 62.693513, :bytes 8666984, :stages-ms nil}
+       {:ms 170.918595, :bytes 8666984, :stages-ms nil}
+       {:ms 36.168903, :bytes 8674504, :stages-ms nil}
+       {:ms 19.240135, :bytes 8668304, :stages-ms nil}
+       {:ms 20.911619, :bytes 8668304, :stages-ms nil}
+       {:ms 18.468878, :bytes 8668304, :stages-ms nil}
+       {:ms 17.115359, :bytes 8668304, :stages-ms nil}
+       {:ms 17.907155, :bytes 8668304, :stages-ms nil}
+       {:ms 16.084573, :bytes 8668304, :stages-ms nil}
+       {:ms 16.208749, :bytes 8668304, :stages-ms nil}
+       {:ms 17.405092, :bytes 8675320, :stages-ms nil}
+       {:ms 20.140113, :bytes 8668304, :stages-ms nil}
+       {:ms 15.290122, :bytes 8668304, :stages-ms nil}
+       {:ms 14.984434, :bytes 8668304, :stages-ms nil}
+       {:ms 16.384513, :bytes 8668304, :stages-ms nil}
+       {:ms 15.392646, :bytes 8668304, :stages-ms nil}
+       {:ms 16.680017, :bytes 8668304, :stages-ms nil}
+       {:ms 16.278955, :bytes 8669168, :stages-ms nil}
+       {:ms 15.942371, :bytes 8676136, :stages-ms nil}
+       {:ms 14.970873, :bytes 8669240, :stages-ms nil}
+       {:ms 14.545386, :bytes 8669240, :stages-ms nil}
+       {:ms 14.643383, :bytes 8669240, :stages-ms nil}
+       {:ms 14.831345, :bytes 8669240, :stages-ms nil}
+       {:ms 15.315129, :bytes 8669264, :stages-ms nil}
+       {:ms 15.703152, :bytes 8669240, :stages-ms nil}
+       {:ms 19.82438, :bytes 8669240, :stages-ms nil}
+       {:ms 15.850413, :bytes 8676272, :stages-ms nil}
+       {:ms 15.751905, :bytes 8669240, :stages-ms nil}
+       {:ms 14.705376, :bytes 8669240, :stages-ms nil}
+       {:ms 14.757904, :bytes 8669240, :stages-ms nil}
+       {:ms 14.250654, :bytes 8669240, :stages-ms nil}
+       {:ms 13.838196, :bytes 8669240, :stages-ms nil}
+       {:ms 13.908241, :bytes 8669240, :stages-ms nil}
+       {:ms 15.487168, :bytes 8669240, :stages-ms nil}
+       {:ms 15.155841, :bytes 8676272, :stages-ms nil}
+       {:ms 14.813829, :bytes 8669240, :stages-ms nil}
+       {:ms 21.610778, :bytes 8669240, :stages-ms nil}
+       {:ms 13.745326, :bytes 8669240, :stages-ms nil}
+       {:ms 14.005166, :bytes 8669240, :stages-ms nil}
+       {:ms 14.571706, :bytes 8669240, :stages-ms nil}
+       {:ms 13.793889, :bytes 8669240, :stages-ms nil}
+       {:ms 14.353248, :bytes 8669240, :stages-ms nil}
+       {:ms 15.082421, :bytes 8676280, :stages-ms nil}
+       {:ms 15.183463, :bytes 8669336, :stages-ms nil}
+       {:ms 15.517017, :bytes 8669336, :stages-ms nil}
+       {:ms 14.810934, :bytes 8669336, :stages-ms nil}
+       {:ms 14.195952, :bytes 8669336, :stages-ms nil}
+       {:ms 15.015862, :bytes 8669336, :stages-ms nil}
+       {:ms 14.658726, :bytes 8669336, :stages-ms nil}
+       {:ms 15.437233, :bytes 8669336, :stages-ms nil}],
+      :gc-after {"G1 Young Generation" {:collections 80, :ms 2218}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 8667088, :p95 8674000, :p99 8676272, :min 8666760, :max 8676280, :mean 8668605.733333332},
+      :frames-per-second 55.82941332806903,
+      :over-25ms 5,
+      :gc-before {"G1 Young Generation" {:collections 78, :ms 2202}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 3,
+      :milliseconds {:p50 15.011614, :p95 21.007594, :p99 92.349506, :min 13.0138, :max 170.918595, :mean 17.911705325},
+      :stages-ms {}}}]}
+  {:pixels 10000,
+   :moving-heads 8,
+   :effects 4,
+   :universes 79,
+   :runs
+   [{:scope :pipeline,
+     :execution :serial,
+     :result
+     {:observations
+      [{:ms 19.989586, :bytes 12931536, :stages-ms {:engine 8.2972, :render 11.569672, :preview 0.030746, :packet-encoding 0.079659}}
+       {:ms 20.651183, :bytes 12931536, :stages-ms {:engine 9.36422, :render 11.174404, :preview 0.025528, :packet-encoding 0.072018}}
+       {:ms 21.094939, :bytes 12931536, :stages-ms {:engine 10.079883, :render 10.887104, :preview 0.026109, :packet-encoding 0.087712}}
+       {:ms 18.575221, :bytes 12931536, :stages-ms {:engine 8.064842, :render 10.412021, :preview 0.022404, :packet-encoding 0.064346}}
+       {:ms 18.04767, :bytes 12931536, :stages-ms {:engine 7.969819, :render 9.981876, :preview 0.021933, :packet-encoding 0.061472}}
+       {:ms 18.069923, :bytes 12931536, :stages-ms {:engine 8.4168, :render 9.558772, :preview 0.021442, :packet-encoding 0.062433}}
+       {:ms 17.703594, :bytes 12931536, :stages-ms {:engine 7.719424, :render 9.887254, :preview 0.023485, :packet-encoding 0.064547}}
+       {:ms 18.813698, :bytes 12931536, :stages-ms {:engine 8.262208, :render 10.451961, :preview 0.023305, :packet-encoding 0.064547}}
+       {:ms 17.437775, :bytes 12931536, :stages-ms {:engine 7.956249, :render 9.384981, :preview 0.022644, :packet-encoding 0.061833}}
+       {:ms 16.995862, :bytes 12931536, :stages-ms {:engine 7.682269, :render 9.221666, :preview 0.020731, :packet-encoding 0.060911}}
+       {:ms 19.104804, :bytes 12931536, :stages-ms {:engine 7.834447, :render 11.148776, :preview 0.034662, :packet-encoding 0.07363}}
+       {:ms 19.001299, :bytes 12931536, :stages-ms {:engine 8.104802, :render 10.785862, :preview 0.024076, :packet-encoding 0.070545}}
+       {:ms 19.12846, :bytes 12931536, :stages-ms {:engine 8.139885, :render 10.8646, :preview 0.025868, :packet-encoding 0.083866}}
+       {:ms 20.412675, :bytes 12931536, :stages-ms {:engine 8.106153, :render 12.183518, :preview 0.031697, :packet-encoding 0.076885}}
+       {:ms 19.744343, :bytes 12931536, :stages-ms {:engine 8.179253, :render 11.442997, :preview 0.024056, :packet-encoding 0.085478}}
+       {:ms 21.173836, :bytes 12931536, :stages-ms {:engine 7.769229, :render 13.310987, :preview 0.021733, :packet-encoding 0.06008}}
+       {:ms 21.694788, :bytes 12931536, :stages-ms {:engine 7.732864, :render 13.809265, :preview 0.022033, :packet-encoding 0.119359}}
+       {:ms 21.735499, :bytes 12931536, :stages-ms {:engine 8.026234, :render 13.563747, :preview 0.023395, :packet-encoding 0.069714}}
+       {:ms 21.398954, :bytes 12931536, :stages-ms {:engine 7.990931, :render 13.126851, :preview 0.205378, :packet-encoding 0.062013}}
+       {:ms 20.533777, :bytes 12931536, :stages-ms {:engine 8.02304, :render 12.417277, :preview 0.022303, :packet-encoding 0.061362}}
+       {:ms 22.369009, :bytes 12931536, :stages-ms {:engine 7.817161, :render 14.444166, :preview 0.026009, :packet-encoding 0.069785}}
+       {:ms 25.047414, :bytes 12931536, :stages-ms {:engine 9.74495, :render 15.196615, :preview 0.024647, :packet-encoding 0.06662}}
+       {:ms 23.299985, :bytes 12931536, :stages-ms {:engine 8.526864, :render 14.655354, :preview 0.039839, :packet-encoding 0.064858}}
+       {:ms 23.028747, :bytes 12931536, :stages-ms {:engine 8.097991, :render 14.830676, :preview 0.022584, :packet-encoding 0.064146}}
+       {:ms 23.031211, :bytes 12931536, :stages-ms {:engine 7.968307, :render 14.958498, :preview 0.02669, :packet-encoding 0.066099}}
+       {:ms 34.289211, :bytes 12931536, :stages-ms {:engine 21.392554, :render 12.788645, :preview 0.023585, :packet-encoding 0.070115}}
+       {:ms 21.357703, :bytes 12931536, :stages-ms {:engine 9.53103, :render 11.694064, :preview 0.057576, :packet-encoding 0.061412}}
+       {:ms 20.9228, :bytes 12931536, :stages-ms {:engine 9.192903, :render 11.61145, :preview 0.038768, :packet-encoding 0.06643}}
+       {:ms 19.964444, :bytes 12931536, :stages-ms {:engine 8.035377, :render 11.829086, :preview 0.023886, :packet-encoding 0.063795}}
+       {:ms 20.288209, :bytes 12931536, :stages-ms {:engine 8.885933, :render 11.301465, :preview 0.022824, :packet-encoding 0.063605}}
+       {:ms 20.324994, :bytes 12931536, :stages-ms {:engine 9.164079, :render 11.055477, :preview 0.023445, :packet-encoding 0.067761}}
+       {:ms 21.454678, :bytes 12931536, :stages-ms {:engine 9.573494, :render 11.748956, :preview 0.023585, :packet-encoding 0.094973}}
+       {:ms 21.357512, :bytes 12931536, :stages-ms {:engine 9.923879, :render 11.28503, :preview 0.028112, :packet-encoding 0.1069}}
+       {:ms 20.255781, :bytes 12931536, :stages-ms {:engine 8.398352, :render 11.744439, :preview 0.022674, :packet-encoding 0.077396}}
+       {:ms 19.600708, :bytes 12931536, :stages-ms {:engine 8.099564, :render 11.39863, :preview 0.023435, :packet-encoding 0.066941}}
+       {:ms 18.900068, :bytes 12931536, :stages-ms {:engine 7.91679, :render 10.87117, :preview 0.027751, :packet-encoding 0.070316}}
+       {:ms 21.418884, :bytes 12931536, :stages-ms {:engine 9.516618, :render 11.794053, :preview 0.025238, :packet-encoding 0.068663}}
+       {:ms 20.384393, :bytes 12931536, :stages-ms {:engine 9.038482, :render 11.239772, :preview 0.025088, :packet-encoding 0.066399}}
+       {:ms 22.258022, :bytes 12931536, :stages-ms {:engine 9.024551, :render 13.121303, :preview 0.025498, :packet-encoding 0.070496}}
+       {:ms 21.48958, :bytes 12931536, :stages-ms {:engine 8.721536, :render 12.650408, :preview 0.026129, :packet-encoding 0.074802}}
+       {:ms 21.357291, :bytes 12931536, :stages-ms {:engine 8.878662, :render 12.360933, :preview 0.026109, :packet-encoding 0.075924}}
+       {:ms 21.247637, :bytes 12931592, :stages-ms {:engine 9.271381, :render 11.870959, :preview 0.023505, :packet-encoding 0.065428}}
+       {:ms 20.127688, :bytes 12931536, :stages-ms {:engine 8.846534, :render 11.179652, :preview 0.023305, :packet-encoding 0.065318}}
+       {:ms 19.256642, :bytes 12931536, :stages-ms {:engine 8.149539, :render 10.987914, :preview 0.040261, :packet-encoding 0.066129}}
+       {:ms 19.566316, :bytes 12931536, :stages-ms {:engine 8.135828, :render 11.33175, :preview 0.021803, :packet-encoding 0.065328}}
+       {:ms 19.335691, :bytes 12931536, :stages-ms {:engine 7.899214, :render 11.31835, :preview 0.033941, :packet-encoding 0.069975}}
+       {:ms 19.603902, :bytes 12931536, :stages-ms {:engine 8.581646, :render 10.920143, :preview 0.025658, :packet-encoding 0.063455}}
+       {:ms 19.483712, :bytes 12931536, :stages-ms {:engine 8.467666, :render 10.919652, :preview 0.021983, :packet-encoding 0.063566}}
+       {:ms 19.755441, :bytes 12931536, :stages-ms {:engine 8.287576, :render 11.366883, :preview 0.024246, :packet-encoding 0.065258}}
+       {:ms 21.181909, :bytes 12931536, :stages-ms {:engine 9.639312, :render 11.432011, :preview 0.023956, :packet-encoding 0.074321}}
+       {:ms 21.598613, :bytes 12931536, :stages-ms {:engine 8.264221, :render 13.215805, :preview 0.02679, :packet-encoding 0.076635}}
+       {:ms 24.128547, :bytes 12931536, :stages-ms {:engine 12.23273, :render 11.781805, :preview 0.025268, :packet-encoding 0.071387}}
+       {:ms 19.582591, :bytes 12931536, :stages-ms {:engine 8.631953, :render 10.846412, :preview 0.025008, :packet-encoding 0.065338}}
+       {:ms 19.191444, :bytes 12931536, :stages-ms {:engine 8.493424, :render 10.596568, :preview 0.025748, :packet-encoding 0.063636}}
+       {:ms 23.410591, :bytes 12931536, :stages-ms {:engine 10.289958, :render 13.00557, :preview 0.030726, :packet-encoding 0.070476}}
+       {:ms 22.957671, :bytes 12931536, :stages-ms {:engine 9.459423, :render 13.297256, :preview 0.025569, :packet-encoding 0.128873}}
+       {:ms 26.14186, :bytes 12931536, :stages-ms {:engine 9.89757, :render 16.091661, :preview 0.026951, :packet-encoding 0.074401}}
+       {:ms 23.640881, :bytes 12931536, :stages-ms {:engine 9.864701, :render 13.659975, :preview 0.02623, :packet-encoding 0.078928}}
+       {:ms 19.845735, :bytes 12931536, :stages-ms {:engine 8.526133, :render 11.218781, :preview 0.023595, :packet-encoding 0.067752}}
+       {:ms 19.858735, :bytes 12931536, :stages-ms {:engine 8.0968, :render 11.657238, :preview 0.024967, :packet-encoding 0.069855}}
+       {:ms 19.926867, :bytes 12931536, :stages-ms {:engine 8.663941, :render 11.162696, :preview 0.023125, :packet-encoding 0.068282}}
+       {:ms 18.680187, :bytes 12931536, :stages-ms {:engine 8.079224, :render 10.505621, :preview 0.025008, :packet-encoding 0.062153}}
+       {:ms 19.153627, :bytes 12931536, :stages-ms {:engine 7.969348, :render 11.085792, :preview 0.024066, :packet-encoding 0.065218}}
+       {:ms 27.893051, :bytes 12931536, :stages-ms {:engine 7.969549, :render 19.817663, :preview 0.026119, :packet-encoding 0.071547}}
+       {:ms 20.074238, :bytes 12931536, :stages-ms {:engine 8.981586, :render 10.989417, :preview 0.023926, :packet-encoding 0.069384}}
+       {:ms 19.363212, :bytes 12931536, :stages-ms {:engine 8.613144, :render 10.633233, :preview 0.023946, :packet-encoding 0.082934}}
+       {:ms 18.351464, :bytes 12931408, :stages-ms {:engine 8.240405, :render 10.010759, :preview 0.024697, :packet-encoding 0.067511}}
+       {:ms 18.510153, :bytes 12931264, :stages-ms {:engine 8.288247, :render 10.103358, :preview 0.022974, :packet-encoding 0.085558}}
+       {:ms 18.548971, :bytes 12931264, :stages-ms {:engine 8.62377, :render 9.825121, :preview 0.028613, :packet-encoding 0.062704}}
+       {:ms 19.440528, :bytes 12931264, :stages-ms {:engine 8.725392, :render 10.619923, :preview 0.023786, :packet-encoding 0.063635}}
+       {:ms 17.603604, :bytes 12931264, :stages-ms {:engine 8.019664, :render 9.494285, :preview 0.023074, :packet-encoding 0.058969}}
+       {:ms 19.005286, :bytes 12931336, :stages-ms {:engine 8.786474, :render 10.122047, :preview 0.023715, :packet-encoding 0.06685}}
+       {:ms 18.184985, :bytes 12931264, :stages-ms {:engine 7.867106, :render 10.226022, :preview 0.022504, :packet-encoding 0.062283}}
+       {:ms 17.99462, :bytes 12931264, :stages-ms {:engine 7.844852, :render 10.03124, :preview 0.023575, :packet-encoding 0.086991}}
+       {:ms 17.579688, :bytes 12931264, :stages-ms {:engine 7.884291, :render 9.601787, :preview 0.023405, :packet-encoding 0.062383}}
+       {:ms 18.357484, :bytes 12931264, :stages-ms {:engine 7.99089, :render 10.272392, :preview 0.024177, :packet-encoding 0.062263}}
+       {:ms 17.091385, :bytes 12931264, :stages-ms {:engine 7.784711, :render 9.213204, :preview 0.02623, :packet-encoding 0.06063}}
+       {:ms 16.698737, :bytes 12931264, :stages-ms {:engine 7.816179, :render 8.795868, :preview 0.022003, :packet-encoding 0.058698}}
+       {:ms 17.119308, :bytes 12931264, :stages-ms {:engine 7.800726, :render 9.225893, :preview 0.022794, :packet-encoding 0.063125}}
+       {:ms 19.78147, :bytes 12931264, :stages-ms {:engine 9.683919, :render 9.998001, :preview 0.024997, :packet-encoding 0.06647}}
+       {:ms 19.832675, :bytes 12931264, :stages-ms {:engine 7.90389, :render 11.825781, :preview 0.024297, :packet-encoding 0.069764}}
+       {:ms 19.14249, :bytes 12931264, :stages-ms {:engine 8.259264, :render 10.788064, :preview 0.022594, :packet-encoding 0.064357}}
+       {:ms 18.787279, :bytes 12931264, :stages-ms {:engine 8.210019, :render 10.478311, :preview 0.023815, :packet-encoding 0.06643}}
+       {:ms 19.027709, :bytes 12931264, :stages-ms {:engine 8.672984, :render 10.261726, :preview 0.021763, :packet-encoding 0.062974}}
+       {:ms 30.255878, :bytes 12931264, :stages-ms {:engine 14.758558, :render 15.321276, :preview 0.031868, :packet-encoding 0.135303}}
+       {:ms 104.633701, :bytes 12931264, :stages-ms {:engine 18.338886, :render 85.090088, :preview 0.32694, :packet-encoding 0.772098}}
+       {:ms 47.825707, :bytes 12931264, :stages-ms {:engine 28.524088, :render 19.066477, :preview 0.096224, :packet-encoding 0.088963}}
+       {:ms 26.151449, :bytes 12931264, :stages-ms {:engine 11.686532, :render 14.346991, :preview 0.04687, :packet-encoding 0.062153}}
+       {:ms 23.199604, :bytes 12931264, :stages-ms {:engine 10.072092, :render 12.99262, :preview 0.024167, :packet-encoding 0.10059}}
+       {:ms 24.266624, :bytes 12931264, :stages-ms {:engine 10.628015, :render 13.518478, :preview 0.045178, :packet-encoding 0.06656}}
+       {:ms 20.726866, :bytes 12931264, :stages-ms {:engine 9.232353, :render 11.308114, :preview 0.027531, :packet-encoding 0.149374}}
+       {:ms 19.927938, :bytes 12931264, :stages-ms {:engine 8.481307, :render 11.320453, :preview 0.054942, :packet-encoding 0.063055}}
+       {:ms 20.042781, :bytes 12931264, :stages-ms {:engine 8.779924, :render 11.146643, :preview 0.024516, :packet-encoding 0.0667}}
+       {:ms 19.914258, :bytes 12931264, :stages-ms {:engine 8.342478, :render 11.463157, :preview 0.025148, :packet-encoding 0.074572}}
+       {:ms 19.996922, :bytes 12931264, :stages-ms {:engine 8.552743, :render 11.343958, :preview 0.024507, :packet-encoding 0.0669}}
+       {:ms 18.742001, :bytes 12931264, :stages-ms {:engine 8.223961, :render 10.427484, :preview 0.022564, :packet-encoding 0.06022}}
+       {:ms 18.504094, :bytes 12931264, :stages-ms {:engine 7.979584, :render 10.429848, :preview 0.022804, :packet-encoding 0.064136}}
+       {:ms 17.993939, :bytes 12931264, :stages-ms {:engine 7.97629, :render 9.926192, :preview 0.023536, :packet-encoding 0.06006}}
+       {:ms 21.179445, :bytes 12931264, :stages-ms {:engine 10.227534, :render 10.852562, :preview 0.027481, :packet-encoding 0.064947}}
+       {:ms 19.26203, :bytes 12931264, :stages-ms {:engine 8.393584, :render 10.769167, :preview 0.024717, :packet-encoding 0.06643}}
+       {:ms 18.975801, :bytes 12931264, :stages-ms {:engine 8.29718, :render 10.586473, :preview 0.023365, :packet-encoding 0.061312}}
+       {:ms 18.543383, :bytes 12931264, :stages-ms {:engine 7.859904, :render 10.578611, :preview 0.02683, :packet-encoding 0.070296}}
+       {:ms 32.206839, :bytes 12931264, :stages-ms {:engine 20.559776, :render 11.541725, :preview 0.025548, :packet-encoding 0.070586}}
+       {:ms 21.372795, :bytes 12931264, :stages-ms {:engine 9.276559, :render 11.973072, :preview 0.041852, :packet-encoding 0.070356}}
+       {:ms 20.581418, :bytes 12931264, :stages-ms {:engine 9.160635, :render 11.321965, :preview 0.022113, :packet-encoding 0.067872}}
+       {:ms 18.892756, :bytes 12931264, :stages-ms {:engine 8.267096, :render 10.514965, :preview 0.022584, :packet-encoding 0.080711}}
+       {:ms 18.803553, :bytes 12931264, :stages-ms {:engine 8.141096, :render 10.569016, :preview 0.023165, :packet-encoding 0.063505}}
+       {:ms 19.153537, :bytes 12931264, :stages-ms {:engine 8.134076, :render 10.921996, :preview 0.023755, :packet-encoding 0.065288}}
+       {:ms 23.335467, :bytes 12931264, :stages-ms {:engine 9.140955, :render 14.0594, :preview 0.052438, :packet-encoding 0.07304}}
+       {:ms 21.188038, :bytes 12931264, :stages-ms {:engine 9.648116, :render 11.441654, :preview 0.024287, :packet-encoding 0.064797}}
+       {:ms 18.855961, :bytes 12931264, :stages-ms {:engine 8.069028, :render 10.678471, :preview 0.021912, :packet-encoding 0.078879}}
+       {:ms 18.609372, :bytes 12931264, :stages-ms {:engine 8.59056, :render 9.930088, :preview 0.022804, :packet-encoding 0.059129}}
+       {:ms 18.163643, :bytes 12931264, :stages-ms {:engine 8.076459, :render 9.991611, :preview 0.026991, :packet-encoding 0.060871}}
+       {:ms 19.693377, :bytes 12931264, :stages-ms {:engine 8.322087, :render 11.264981, :preview 0.025738, :packet-encoding 0.071577}}
+       {:ms 20.203341, :bytes 12931264, :stages-ms {:engine 8.957951, :render 11.148755, :preview 0.023275, :packet-encoding 0.064847}}
+       {:ms 18.157835, :bytes 12931264, :stages-ms {:engine 7.991502, :render 10.070359, :preview 0.023825, :packet-encoding 0.064507}}
+       {:ms 18.86839, :bytes 12931264, :stages-ms {:engine 8.325323, :render 10.447664, :preview 0.023055, :packet-encoding 0.063996}}
+       {:ms 19.117373, :bytes 12931264, :stages-ms {:engine 8.398633, :render 10.62515, :preview 0.022885, :packet-encoding 0.061882}}
+       {:ms 19.506738, :bytes 12931264, :stages-ms {:engine 8.351742, :render 11.05153, :preview 0.025359, :packet-encoding 0.069003}}
+       {:ms 19.850933, :bytes 12931264, :stages-ms {:engine 8.8311, :render 10.923058, :preview 0.023956, :packet-encoding 0.063004}}],
+      :gc-after {"G1 Young Generation" {:collections 85, :ms 2284}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 12931536, :p95 12931536, :p99 12931536, :min 12931264, :max 12931592, :mean 1.2931415866666667E7},
+      :frames-per-second 46.75670296622393,
+      :over-25ms 9,
+      :gc-before {"G1 Young Generation" {:collections 82, :ms 2251}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 1,
+      :milliseconds {:p50 19.845735, :p95 26.151449, :p99 47.825707, :min 16.698737, :max 104.633701, :mean 21.38730784166666},
+      :stages-ms
+      {:engine {:p50 8.351742, :p95 11.686532, :p99 21.392554, :min 7.682269, :max 28.524088, :mean 9.112347666666665},
+       :render {:p50 11.162696, :p95 14.958498, :p99 19.817663, :min 8.795868, :max 85.090088, :mean 12.154286850000004},
+       :preview {:p50 0.024177, :p95 0.04687, :p99 0.205378, :min 0.020731, :max 0.32694, :mean 0.030887025000000005},
+       :packet-encoding {:p50 0.06647, :p95 0.10059, :p99 0.149374, :min 0.058698, :max 0.772098, :mean 0.07687114166666668}}}}
+    {:scope :pipeline,
+     :execution :workers,
+     :workers 1,
+     :result
+     {:observations
+      [{:ms 20.002541, :bytes 12932856, :stages-ms {:engine 8.492162, :render 11.41154, :preview 0.023766, :packet-encoding 0.065919}}
+       {:ms 20.318084, :bytes 12932856, :stages-ms {:engine 8.577981, :render 11.61182, :preview 0.024898, :packet-encoding 0.092779}}
+       {:ms 21.627877, :bytes 12932856, :stages-ms {:engine 9.396338, :render 11.98529, :preview 0.024727, :packet-encoding 0.209274}}
+       {:ms 20.770332, :bytes 12932856, :stages-ms {:engine 8.724862, :render 11.946181, :preview 0.023776, :packet-encoding 0.064987}}
+       {:ms 19.151605, :bytes 12932856, :stages-ms {:engine 8.420645, :render 10.637219, :preview 0.022203, :packet-encoding 0.062344}}
+       {:ms 19.347148, :bytes 12932856, :stages-ms {:engine 8.440665, :render 10.81157, :preview 0.023435, :packet-encoding 0.062234}}
+       {:ms 19.223292, :bytes 12932856, :stages-ms {:engine 8.302648, :render 10.820374, :preview 0.024036, :packet-encoding 0.067401}}
+       {:ms 20.448028, :bytes 12932856, :stages-ms {:engine 8.79107, :render 11.555345, :preview 0.023806, :packet-encoding 0.067}}
+       {:ms 20.20861, :bytes 12932856, :stages-ms {:engine 9.103128, :render 11.008275, :preview 0.022314, :packet-encoding 0.064827}}
+       {:ms 20.20196, :bytes 12932856, :stages-ms {:engine 8.362208, :render 11.743397, :preview 0.023315, :packet-encoding 0.063816}}
+       {:ms 19.998925, :bytes 12932912, :stages-ms {:engine 8.620014, :render 11.279502, :preview 0.023305, :packet-encoding 0.065929}}
+       {:ms 20.100227, :bytes 12932856, :stages-ms {:engine 8.77767, :render 11.220244, :preview 0.023685, :packet-encoding 0.068132}}
+       {:ms 20.714588, :bytes 12932856, :stages-ms {:engine 8.974516, :render 11.615956, :preview 0.023264, :packet-encoding 0.089645}}
+       {:ms 19.671745, :bytes 12932856, :stages-ms {:engine 8.715157, :render 10.862717, :preview 0.021482, :packet-encoding 0.061973}}
+       {:ms 19.637303, :bytes 12932856, :stages-ms {:engine 8.493746, :render 11.010448, :preview 0.024396, :packet-encoding 0.09949}}
+       {:ms 19.840829, :bytes 12932856, :stages-ms {:engine 8.629268, :render 11.116287, :preview 0.022604, :packet-encoding 0.062764}}
+       {:ms 20.730913, :bytes 12932856, :stages-ms {:engine 8.414616, :render 12.180583, :preview 0.024908, :packet-encoding 0.074702}}
+       {:ms 21.221558, :bytes 12932856, :stages-ms {:engine 9.373624, :render 11.748655, :preview 0.024087, :packet-encoding 0.063214}}
+       {:ms 19.78202, :bytes 12932856, :stages-ms {:engine 8.449498, :render 11.237499, :preview 0.021963, :packet-encoding 0.063074}}
+       {:ms 28.692931, :bytes 12932856, :stages-ms {:engine 17.692487, :render 10.902306, :preview 0.022975, :packet-encoding 0.065107}}
+       {:ms 19.438645, :bytes 12932856, :stages-ms {:engine 8.856369, :render 10.484169, :preview 0.022844, :packet-encoding 0.064767}}
+       {:ms 19.563803, :bytes 12932856, :stages-ms {:engine 8.681467, :render 10.782296, :preview 0.023425, :packet-encoding 0.066199}}
+       {:ms 18.593287, :bytes 12932856, :stages-ms {:engine 8.433615, :render 10.06451, :preview 0.021492, :packet-encoding 0.063676}}
+       {:ms 18.239587, :bytes 12932912, :stages-ms {:engine 8.2038, :render 9.939032, :preview 0.023695, :packet-encoding 0.064527}}
+       {:ms 66.508238, :bytes 12932856, :stages-ms {:engine 8.736138, :render 55.883578, :preview 0.777186, :packet-encoding 1.079909}}
+       {:ms 60.722322, :bytes 12932856, :stages-ms {:engine 37.381427, :render 22.987656, :preview 0.025648, :packet-encoding 0.157006}}
+       {:ms 30.738392, :bytes 12932856, :stages-ms {:engine 14.70608, :render 15.920875, :preview 0.02678, :packet-encoding 0.07297}}
+       {:ms 27.750918, :bytes 12932856, :stages-ms {:engine 12.628786, :render 13.203486, :preview 0.023936, :packet-encoding 1.880079}}
+       {:ms 31.297846, :bytes 12932856, :stages-ms {:engine 14.431627, :render 16.729533, :preview 0.030106, :packet-encoding 0.094391}}
+       {:ms 26.788715, :bytes 12932856, :stages-ms {:engine 13.353391, :render 13.313051, :preview 0.029003, :packet-encoding 0.079279}}
+       {:ms 22.601197, :bytes 12932856, :stages-ms {:engine 10.726282, :render 11.730999, :preview 0.025829, :packet-encoding 0.106459}}
+       {:ms 21.880046, :bytes 12932856, :stages-ms {:engine 9.806333, :render 11.909706, :preview 0.030917, :packet-encoding 0.121682}}
+       {:ms 22.0103, :bytes 12933016, :stages-ms {:engine 9.489447, :render 12.392831, :preview 0.025168, :packet-encoding 0.091197}}
+       {:ms 22.98378, :bytes 12932856, :stages-ms {:engine 9.183709, :render 13.69914, :preview 0.023745, :packet-encoding 0.065238}}
+       {:ms 25.786898, :bytes 12932856, :stages-ms {:engine 9.115522, :render 16.554831, :preview 0.027381, :packet-encoding 0.077286}}
+       {:ms 21.80931, :bytes 12932856, :stages-ms {:engine 9.054236, :render 12.648614, :preview 0.025148, :packet-encoding 0.067381}}
+       {:ms 26.770138, :bytes 12932856, :stages-ms {:engine 11.614594, :render 15.05295, :preview 0.023855, :packet-encoding 0.06629}}
+       {:ms 22.678472, :bytes 12932856, :stages-ms {:engine 10.369027, :render 12.203857, :preview 0.026209, :packet-encoding 0.067652}}
+       {:ms 25.076348, :bytes 12932856, :stages-ms {:engine 9.500334, :render 15.455943, :preview 0.028193, :packet-encoding 0.079579}}
+       {:ms 22.154998, :bytes 12932856, :stages-ms {:engine 9.57105, :render 12.481524, :preview 0.023705, :packet-encoding 0.066199}}
+       {:ms 20.517293, :bytes 12932856, :stages-ms {:engine 9.042458, :render 11.382185, :preview 0.022584, :packet-encoding 0.059519}}
+       {:ms 37.779664, :bytes 12932856, :stages-ms {:engine 9.349198, :render 28.31951, :preview 0.0268, :packet-encoding 0.07295}}
+       {:ms 22.912133, :bytes 12932856, :stages-ms {:engine 10.369417, :render 12.437598, :preview 0.025859, :packet-encoding 0.06696}}
+       {:ms 20.62906, :bytes 12932856, :stages-ms {:engine 9.304571, :render 11.227103, :preview 0.022374, :packet-encoding 0.064246}}
+       {:ms 21.146846, :bytes 12932856, :stages-ms {:engine 8.972232, :render 12.075785, :preview 0.025088, :packet-encoding 0.063765}}
+       {:ms 20.577763, :bytes 12932856, :stages-ms {:engine 8.760986, :render 11.717558, :preview 0.023115, :packet-encoding 0.065808}}
+       {:ms 20.220457, :bytes 12932856, :stages-ms {:engine 8.611772, :render 11.511459, :preview 0.022264, :packet-encoding 0.065398}}
+       {:ms 21.586565, :bytes 12932856, :stages-ms {:engine 9.115196, :render 12.367994, :preview 0.023756, :packet-encoding 0.069033}}
+       {:ms 19.786256, :bytes 12932856, :stages-ms {:engine 8.596098, :render 11.096478, :preview 0.023185, :packet-encoding 0.06001}}
+       {:ms 20.311864, :bytes 12932856, :stages-ms {:engine 8.63706, :render 11.582636, :preview 0.022835, :packet-encoding 0.061161}}
+       {:ms 22.316921, :bytes 12932856, :stages-ms {:engine 8.173536, :render 14.01346, :preview 0.025869, :packet-encoding 0.092248}}
+       {:ms 21.342881, :bytes 12932856, :stages-ms {:engine 9.026724, :render 12.209656, :preview 0.025739, :packet-encoding 0.068392}}
+       {:ms 22.412473, :bytes 12932856, :stages-ms {:engine 8.653133, :render 13.633221, :preview 0.023966, :packet-encoding 0.066019}}
+       {:ms 22.408859, :bytes 12932856, :stages-ms {:engine 8.574636, :render 13.620101, :preview 0.023656, :packet-encoding 0.178708}}
+       {:ms 22.17652, :bytes 12932856, :stages-ms {:engine 8.873855, :render 13.200002, :preview 0.024266, :packet-encoding 0.067331}}
+       {:ms 20.560417, :bytes 12932856, :stages-ms {:engine 8.958491, :render 11.503118, :preview 0.023845, :packet-encoding 0.064597}}
+       {:ms 20.899695, :bytes 12932856, :stages-ms {:engine 8.287816, :render 12.507493, :preview 0.024607, :packet-encoding 0.068923}}
+       {:ms 38.594376, :bytes 12932856, :stages-ms {:engine 8.426334, :render 30.033871, :preview 0.024987, :packet-encoding 0.098218}}
+       {:ms 21.887817, :bytes 12932856, :stages-ms {:engine 9.399503, :render 12.345731, :preview 0.023755, :packet-encoding 0.108222}}
+       {:ms 20.697411, :bytes 12932856, :stages-ms {:engine 8.74376, :render 11.833923, :preview 0.024246, :packet-encoding 0.064777}}
+       {:ms 20.580747, :bytes 12932856, :stages-ms {:engine 8.876909, :render 11.597969, :preview 0.025078, :packet-encoding 0.070125}}
+       {:ms 20.348119, :bytes 12932856, :stages-ms {:engine 9.120054, :render 11.130599, :preview 0.023375, :packet-encoding 0.062794}}
+       {:ms 19.343423, :bytes 12932856, :stages-ms {:engine 8.885403, :render 10.365812, :preview 0.023485, :packet-encoding 0.059369}}
+       {:ms 20.212365, :bytes 12932856, :stages-ms {:engine 8.585803, :render 11.521665, :preview 0.025368, :packet-encoding 0.070185}}
+       {:ms 20.012174, :bytes 12932856, :stages-ms {:engine 8.962017, :render 10.950698, :preview 0.022814, :packet-encoding 0.06659}}
+       {:ms 20.159726, :bytes 12932856, :stages-ms {:engine 8.659404, :render 11.370828, :preview 0.024086, :packet-encoding 0.094061}}
+       {:ms 19.285546, :bytes 12932856, :stages-ms {:engine 8.957791, :render 10.231951, :preview 0.024196, :packet-encoding 0.060741}}
+       {:ms 19.508791, :bytes 12932856, :stages-ms {:engine 8.596159, :render 10.816908, :preview 0.022854, :packet-encoding 0.063706}}
+       {:ms 18.993998, :bytes 12932856, :stages-ms {:engine 8.333294, :render 10.543188, :preview 0.022875, :packet-encoding 0.085958}}
+       {:ms 18.266558, :bytes 12932856, :stages-ms {:engine 8.408927, :render 9.764361, :preview 0.022343, :packet-encoding 0.062844}}
+       {:ms 20.484653, :bytes 12932856, :stages-ms {:engine 8.832372, :render 11.549026, :preview 0.025138, :packet-encoding 0.067821}}
+       {:ms 19.803862, :bytes 12932856, :stages-ms {:engine 9.042598, :render 10.653694, :preview 0.034321, :packet-encoding 0.062804}}
+       {:ms 19.326236, :bytes 12932856, :stages-ms {:engine 8.482198, :render 10.75124, :preview 0.021722, :packet-encoding 0.061843}}
+       {:ms 19.089211, :bytes 12932856, :stages-ms {:engine 8.336929, :render 10.65789, :preview 0.022474, :packet-encoding 0.062714}}
+       {:ms 19.003803, :bytes 12932856, :stages-ms {:engine 8.417701, :render 10.490088, :preview 0.023295, :packet-encoding 0.063525}}
+       {:ms 19.546447, :bytes 12932856, :stages-ms {:engine 8.804461, :render 10.63751, :preview 0.025748, :packet-encoding 0.068172}}
+       {:ms 20.31597, :bytes 12932856, :stages-ms {:engine 9.074355, :render 11.145591, :preview 0.022043, :packet-encoding 0.063705}}
+       {:ms 19.153177, :bytes 12932856, :stages-ms {:engine 8.459183, :render 10.599482, :preview 0.022294, :packet-encoding 0.063265}}
+       {:ms 19.89581, :bytes 12932856, :stages-ms {:engine 8.994005, :render 10.803067, :preview 0.023195, :packet-encoding 0.06664}}
+       {:ms 19.060566, :bytes 12932856, :stages-ms {:engine 8.444229, :render 10.519261, :preview 0.023315, :packet-encoding 0.062944}}
+       {:ms 19.619974, :bytes 12932856, :stages-ms {:engine 8.263398, :render 11.23222, :preview 0.025228, :packet-encoding 0.070956}}
+       {:ms 20.496798, :bytes 12932856, :stages-ms {:engine 9.225961, :render 11.167662, :preview 0.023706, :packet-encoding 0.067681}}
+       {:ms 19.051282, :bytes 12932856, :stages-ms {:engine 8.474064, :render 10.482645, :preview 0.022274, :packet-encoding 0.062203}}
+       {:ms 18.578693, :bytes 12932856, :stages-ms {:engine 8.290739, :render 10.195725, :preview 0.021472, :packet-encoding 0.062104}}
+       {:ms 19.082137, :bytes 12932856, :stages-ms {:engine 8.574986, :render 10.409505, :preview 0.023245, :packet-encoding 0.066119}}
+       {:ms 19.153395, :bytes 12932856, :stages-ms {:engine 8.46456, :render 10.58615, :preview 0.024207, :packet-encoding 0.068362}}
+       {:ms 19.812152, :bytes 12932856, :stages-ms {:engine 8.973964, :render 10.742675, :preview 0.022974, :packet-encoding 0.063004}}
+       {:ms 18.807466, :bytes 12932856, :stages-ms {:engine 8.551411, :render 10.163326, :preview 0.022274, :packet-encoding 0.061221}}
+       {:ms 18.918272, :bytes 12932856, :stages-ms {:engine 8.55775, :render 10.263036, :preview 0.023846, :packet-encoding 0.065198}}
+       {:ms 19.145252, :bytes 12932856, :stages-ms {:engine 8.553743, :render 10.495194, :preview 0.023966, :packet-encoding 0.063536}}
+       {:ms 19.475608, :bytes 12932856, :stages-ms {:engine 8.66502, :render 10.709966, :preview 0.023836, :packet-encoding 0.0664}}
+       {:ms 20.372803, :bytes 12932856, :stages-ms {:engine 9.269667, :render 11.001694, :preview 0.027231, :packet-encoding 0.063274}}
+       {:ms 20.015206, :bytes 12932856, :stages-ms {:engine 8.740664, :render 11.178679, :preview 0.023736, :packet-encoding 0.062573}}
+       {:ms 20.573694, :bytes 12932856, :stages-ms {:engine 8.879222, :render 11.597306, :preview 0.024637, :packet-encoding 0.063485}}
+       {:ms 19.722338, :bytes 12932856, :stages-ms {:engine 8.662326, :render 10.961013, :preview 0.023886, :packet-encoding 0.065338}}
+       {:ms 19.781356, :bytes 12932856, :stages-ms {:engine 8.925641, :render 10.748835, :preview 0.025578, :packet-encoding 0.070396}}
+       {:ms 34.899351, :bytes 12932856, :stages-ms {:engine 21.996487, :render 12.800771, :preview 0.024887, :packet-encoding 0.065999}}
+       {:ms 20.438481, :bytes 12932856, :stages-ms {:engine 8.879471, :render 11.462054, :preview 0.024016, :packet-encoding 0.062734}}
+       {:ms 19.426184, :bytes 12932856, :stages-ms {:engine 8.547745, :render 10.78553, :preview 0.022453, :packet-encoding 0.061653}}
+       {:ms 19.212543, :bytes 12932856, :stages-ms {:engine 8.414265, :render 10.706941, :preview 0.023706, :packet-encoding 0.057857}}
+       {:ms 19.827926, :bytes 12932856, :stages-ms {:engine 8.590619, :render 11.141463, :preview 0.023385, :packet-encoding 0.061813}}
+       {:ms 19.329859, :bytes 12932856, :stages-ms {:engine 8.683719, :render 10.553341, :preview 0.023275, :packet-encoding 0.058568}}
+       {:ms 19.789748, :bytes 12932856, :stages-ms {:engine 8.648446, :render 11.046881, :preview 0.024186, :packet-encoding 0.060411}}
+       {:ms 19.687575, :bytes 12932856, :stages-ms {:engine 8.668967, :render 10.91922, :preview 0.024396, :packet-encoding 0.063946}}
+       {:ms 19.29049, :bytes 12932856, :stages-ms {:engine 8.549988, :render 10.650787, :preview 0.022614, :packet-encoding 0.057616}}
+       {:ms 20.314115, :bytes 12932856, :stages-ms {:engine 8.592832, :render 11.629164, :preview 0.023586, :packet-encoding 0.058387}}
+       {:ms 19.606865, :bytes 12932856, :stages-ms {:engine 8.601545, :render 10.908714, :preview 0.023255, :packet-encoding 0.061772}}
+       {:ms 19.084962, :bytes 12932856, :stages-ms {:engine 8.404129, :render 10.588985, :preview 0.023365, :packet-encoding 0.058027}}
+       {:ms 19.352703, :bytes 12932856, :stages-ms {:engine 8.461415, :render 10.778789, :preview 0.023065, :packet-encoding 0.079609}}
+       {:ms 19.275728, :bytes 12932856, :stages-ms {:engine 8.493003, :render 10.689485, :preview 0.022805, :packet-encoding 0.06056}}
+       {:ms 19.985652, :bytes 12932856, :stages-ms {:engine 8.741144, :render 11.147863, :preview 0.023926, :packet-encoding 0.061001}}
+       {:ms 19.376008, :bytes 12932856, :stages-ms {:engine 8.851089, :render 10.431088, :preview 0.022163, :packet-encoding 0.060701}}
+       {:ms 19.242768, :bytes 12932856, :stages-ms {:engine 8.441956, :render 10.707723, :preview 0.022103, :packet-encoding 0.05999}}
+       {:ms 18.69706, :bytes 12932856, :stages-ms {:engine 8.289357, :render 10.317869, :preview 0.022994, :packet-encoding 0.057997}}
+       {:ms 18.856389, :bytes 12932856, :stages-ms {:engine 8.276467, :render 10.491329, :preview 0.022213, :packet-encoding 0.057606}}
+       {:ms 19.324632, :bytes 12932856, :stages-ms {:engine 8.263649, :render 10.959921, :preview 0.023635, :packet-encoding 0.066941}}
+       {:ms 20.328076, :bytes 12932856, :stages-ms {:engine 9.015886, :render 11.215414, :preview 0.023245, :packet-encoding 0.061622}}
+       {:ms 19.687205, :bytes 12932856, :stages-ms {:engine 8.740033, :render 10.852389, :preview 0.023796, :packet-encoding 0.060441}}
+       {:ms 19.121337, :bytes 12932856, :stages-ms {:engine 8.452692, :render 10.578599, :preview 0.023025, :packet-encoding 0.057065}}
+       {:ms 19.108507, :bytes 12932856, :stages-ms {:engine 8.398812, :render 10.61919, :preview 0.022674, :packet-encoding 0.058027}}],
+      :gc-after {"G1 Young Generation" {:collections 89, :ms 2329}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 12932856, :p95 12932856, :p99 12932912, :min 12932856, :max 12933016, :mean 1.2932858266666668E7},
+      :frames-per-second 45.93985831150036,
+      :over-25ms 13,
+      :gc-before {"G1 Young Generation" {:collections 86, :ms 2293}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 2,
+      :milliseconds {:p50 20.012174, :p95 30.738392, :p99 60.722322, :min 18.239587, :max 66.508238, :mean 21.767589991666668},
+      :stages-ms
+      {:engine {:p50 8.683719, :p95 12.628786, :p99 21.996487, :min 8.173536, :max 37.381427, :mean 9.390191141666664},
+       :render {:p50 11.145591, :p95 15.920875, :p99 30.033871, :min 9.764361, :max 55.883578, :mean 12.239855333333331},
+       :preview {:p50 0.023706, :p95 0.027381, :p99 0.034321, :min 0.021472, :max 0.777186, :mean 0.03030740833333333},
+       :packet-encoding {:p50 0.064987, :p95 0.108222, :p99 1.079909, :min 0.057065, :max 1.880079, :mean 0.09453884166666664}}}}
+    {:scope :pipeline,
+     :execution :workers,
+     :workers 2,
+     :result
+     {:observations
+      [{:ms 19.390204, :bytes 12933000, :stages-ms {:engine 6.27637, :render 13.001164, :preview 0.026891, :packet-encoding 0.072799}}
+       {:ms 19.092944, :bytes 12932848, :stages-ms {:engine 6.817287, :render 12.162066, :preview 0.028072, :packet-encoding 0.07329}}
+       {:ms 19.562598, :bytes 12932848, :stages-ms {:engine 6.323647, :render 13.124369, :preview 0.026079, :packet-encoding 0.075163}}
+       {:ms 20.330374, :bytes 12932848, :stages-ms {:engine 7.122589, :render 13.096657, :preview 0.026721, :packet-encoding 0.072298}}
+       {:ms 19.142032, :bytes 12932848, :stages-ms {:engine 6.166176, :render 12.570879, :preview 0.088793, :packet-encoding 0.303455}}
+       {:ms 19.616884, :bytes 12932848, :stages-ms {:engine 7.017923, :render 12.482557, :preview 0.032208, :packet-encoding 0.071277}}
+       {:ms 20.322882, :bytes 12932904, :stages-ms {:engine 7.379465, :render 12.825471, :preview 0.031978, :packet-encoding 0.073931}}
+       {:ms 23.951344, :bytes 12932848, :stages-ms {:engine 7.508349, :render 16.326941, :preview 0.031727, :packet-encoding 0.072138}}
+       {:ms 19.057941, :bytes 12932848, :stages-ms {:engine 6.681529, :render 12.261731, :preview 0.026539, :packet-encoding 0.075704}}
+       {:ms 18.815702, :bytes 12932848, :stages-ms {:engine 7.010171, :render 11.692251, :preview 0.027512, :packet-encoding 0.074331}}
+       {:ms 19.512087, :bytes 12932848, :stages-ms {:engine 6.208479, :render 13.182436, :preview 0.025729, :packet-encoding 0.082864}}
+       {:ms 20.346954, :bytes 12932848, :stages-ms {:engine 7.696525, :render 12.53152, :preview 0.02652, :packet-encoding 0.08041}}
+       {:ms 22.241615, :bytes 12932872, :stages-ms {:engine 9.637156, :render 12.487003, :preview 0.028603, :packet-encoding 0.076705}}
+       {:ms 30.277479, :bytes 12932872, :stages-ms {:engine 16.407642, :render 13.649506, :preview 0.132429, :packet-encoding 0.075643}}
+       {:ms 21.203824, :bytes 12932872, :stages-ms {:engine 6.744032, :render 14.34515, :preview 0.02674, :packet-encoding 0.074702}}
+       {:ms 20.459147, :bytes 12932848, :stages-ms {:engine 7.579244, :render 12.736247, :preview 0.027181, :packet-encoding 0.103826}}
+       {:ms 18.694265, :bytes 12932488, :stages-ms {:engine 6.787802, :render 11.795887, :preview 0.026179, :packet-encoding 0.072239}}
+       {:ms 19.886534, :bytes 12932528, :stages-ms {:engine 6.675164, :render 13.095266, :preview 0.028052, :packet-encoding 0.075683}}
+       {:ms 20.37447, :bytes 12932528, :stages-ms {:engine 6.808008, :render 13.455235, :preview 0.023986, :packet-encoding 0.075042}}
+       {:ms 18.192348, :bytes 12932528, :stages-ms {:engine 6.660176, :render 11.425231, :preview 0.024347, :packet-encoding 0.071147}}
+       {:ms 21.216286, :bytes 12932528, :stages-ms {:engine 6.438754, :render 14.640156, :preview 0.0267, :packet-encoding 0.097697}}
+       {:ms 22.625676, :bytes 12932552, :stages-ms {:engine 8.707156, :render 13.806782, :preview 0.027681, :packet-encoding 0.071397}}
+       {:ms 21.063533, :bytes 12932552, :stages-ms {:engine 6.767788, :render 14.184258, :preview 0.026129, :packet-encoding 0.0735}}
+       {:ms 19.282843, :bytes 12932528, :stages-ms {:engine 6.543822, :render 12.63175, :preview 0.02629, :packet-encoding 0.069134}}
+       {:ms 21.36219, :bytes 12932528, :stages-ms {:engine 7.707336, :render 13.541444, :preview 0.027061, :packet-encoding 0.074792}}
+       {:ms 24.348559, :bytes 12932528, :stages-ms {:engine 7.484232, :render 16.730285, :preview 0.027061, :packet-encoding 0.09356}}
+       {:ms 19.576623, :bytes 12932528, :stages-ms {:engine 6.363371, :render 13.100784, :preview 0.025017, :packet-encoding 0.074352}}
+       {:ms 21.603122, :bytes 12932528, :stages-ms {:engine 7.295089, :render 14.138439, :preview 0.027992, :packet-encoding 0.128463}}
+       {:ms 19.599328, :bytes 12932528, :stages-ms {:engine 6.595299, :render 12.894825, :preview 0.024737, :packet-encoding 0.071898}}
+       {:ms 22.2755, :bytes 12932552, :stages-ms {:engine 7.072975, :render 15.032961, :preview 0.02691, :packet-encoding 0.075624}}
+       {:ms 20.039227, :bytes 12932528, :stages-ms {:engine 6.278254, :render 13.648114, :preview 0.025218, :packet-encoding 0.071316}}
+       {:ms 19.760609, :bytes 12932528, :stages-ms {:engine 6.614459, :render 13.036997, :preview 0.024667, :packet-encoding 0.072689}}
+       {:ms 19.798657, :bytes 12932528, :stages-ms {:engine 7.012275, :render 12.659842, :preview 0.025949, :packet-encoding 0.070756}}
+       {:ms 19.693488, :bytes 12932528, :stages-ms {:engine 6.450221, :render 13.132221, :preview 0.025378, :packet-encoding 0.072749}}
+       {:ms 19.938356, :bytes 12932552, :stages-ms {:engine 6.743812, :render 13.08497, :preview 0.025508, :packet-encoding 0.072259}}
+       {:ms 18.207616, :bytes 12932552, :stages-ms {:engine 6.035866, :render 12.045171, :preview 0.02686, :packet-encoding 0.087782}}
+       {:ms 17.250956, :bytes 12932552, :stages-ms {:engine 6.106816, :render 11.040584, :preview 0.025288, :packet-encoding 0.066981}}
+       {:ms 17.767381, :bytes 12932528, :stages-ms {:engine 6.13512, :render 11.527785, :preview 0.023815, :packet-encoding 0.068934}}
+       {:ms 17.834181, :bytes 12932528, :stages-ms {:engine 6.419245, :render 11.308176, :preview 0.025027, :packet-encoding 0.069975}}
+       {:ms 23.607637, :bytes 12932528, :stages-ms {:engine 12.18453, :render 11.318521, :preview 0.023766, :packet-encoding 0.068863}}
+       {:ms 18.553249, :bytes 12932528, :stages-ms {:engine 6.727037, :render 11.718771, :preview 0.023125, :packet-encoding 0.072518}}
+       {:ms 18.377726, :bytes 12931976, :stages-ms {:engine 6.661548, :render 11.595397, :preview 0.039218, :packet-encoding 0.070266}}
+       {:ms 18.213831, :bytes 12931952, :stages-ms {:engine 6.079807, :render 11.96498, :preview 0.023496, :packet-encoding 0.132839}}
+       {:ms 18.42752, :bytes 12931976, :stages-ms {:engine 6.470802, :render 11.855396, :preview 0.022724, :packet-encoding 0.067291}}
+       {:ms 17.767856, :bytes 12931976, :stages-ms {:engine 6.143647, :render 11.527544, :preview 0.023846, :packet-encoding 0.062294}}
+       {:ms 18.340335, :bytes 12931952, :stages-ms {:engine 6.29252, :render 11.929939, :preview 0.038948, :packet-encoding 0.068613}}
+       {:ms 19.092342, :bytes 12931976, :stages-ms {:engine 6.256906, :render 12.707684, :preview 0.025168, :packet-encoding 0.089955}}
+       {:ms 18.699939, :bytes 12931952, :stages-ms {:engine 6.339225, :render 12.225732, :preview 0.039008, :packet-encoding 0.084878}}
+       {:ms 18.897355, :bytes 12931976, :stages-ms {:engine 6.374598, :render 12.408265, :preview 0.023786, :packet-encoding 0.080571}}
+       {:ms 19.48107, :bytes 12931952, :stages-ms {:engine 6.24906, :render 13.122556, :preview 0.026971, :packet-encoding 0.071036}}
+       {:ms 18.870044, :bytes 12931976, :stages-ms {:engine 7.055059, :render 11.709608, :preview 0.025067, :packet-encoding 0.069645}}
+       {:ms 27.407766, :bytes 12931976, :stages-ms {:engine 15.153831, :render 12.078712, :preview 0.036104, :packet-encoding 0.126419}}
+       {:ms 17.023796, :bytes 12931976, :stages-ms {:engine 6.060718, :render 10.861856, :preview 0.024667, :packet-encoding 0.06618}}
+       {:ms 17.519665, :bytes 12931952, :stages-ms {:engine 6.017258, :render 11.395647, :preview 0.025989, :packet-encoding 0.071106}}
+       {:ms 18.585427, :bytes 12931976, :stages-ms {:engine 7.652264, :render 10.830289, :preview 0.024516, :packet-encoding 0.068103}}
+       {:ms 18.779639, :bytes 12931976, :stages-ms {:engine 7.828058, :render 10.851431, :preview 0.024557, :packet-encoding 0.064697}}
+       {:ms 18.837681, :bytes 12931976, :stages-ms {:engine 7.902844, :render 10.839043, :preview 0.022453, :packet-encoding 0.063425}}
+       {:ms 19.82114, :bytes 12931976, :stages-ms {:engine 7.609239, :render 12.105311, :preview 0.024857, :packet-encoding 0.071588}}
+       {:ms 23.905569, :bytes 12931976, :stages-ms {:engine 8.091107, :render 15.705619, :preview 0.026059, :packet-encoding 0.071998}}
+       {:ms 79.920375, :bytes 12931952, :stages-ms {:engine 38.197069, :render 41.211809, :preview 0.190465, :packet-encoding 0.278097}}
+       {:ms 28.720815, :bytes 12931952, :stages-ms {:engine 12.844259, :render 15.682164, :preview 0.069464, :packet-encoding 0.112238}}
+       {:ms 25.799504, :bytes 12931952, :stages-ms {:engine 9.072343, :render 16.533531, :preview 0.026139, :packet-encoding 0.154442}}
+       {:ms 23.051444, :bytes 12931952, :stages-ms {:engine 8.741217, :render 14.089847, :preview 0.041442, :packet-encoding 0.167441}}
+       {:ms 21.560518, :bytes 12931952, :stages-ms {:engine 7.851683, :render 13.557619, :preview 0.070816, :packet-encoding 0.069264}}
+       {:ms 22.250243, :bytes 12931952, :stages-ms {:engine 8.492454, :render 13.641585, :preview 0.024076, :packet-encoding 0.080621}}
+       {:ms 21.509111, :bytes 12931976, :stages-ms {:engine 6.688319, :render 14.663817, :preview 0.025178, :packet-encoding 0.120611}}
+       {:ms 21.753938, :bytes 12931976, :stages-ms {:engine 7.828138, :render 13.788014, :preview 0.023705, :packet-encoding 0.103476}}
+       {:ms 18.816253, :bytes 12931952, :stages-ms {:engine 6.554527, :render 12.15126, :preview 0.023826, :packet-encoding 0.075433}}
+       {:ms 21.537493, :bytes 12931952, :stages-ms {:engine 7.128539, :render 14.303597, :preview 0.024657, :packet-encoding 0.069354}}
+       {:ms 20.751606, :bytes 12931976, :stages-ms {:engine 6.8088, :render 13.811409, :preview 0.024677, :packet-encoding 0.068943}}
+       {:ms 21.137294, :bytes 12931976, :stages-ms {:engine 7.001478, :render 14.031629, :preview 0.025218, :packet-encoding 0.068413}}
+       {:ms 18.794666, :bytes 12931952, :stages-ms {:engine 6.074718, :render 12.614049, :preview 0.024687, :packet-encoding 0.070756}}
+       {:ms 18.370886, :bytes 12931952, :stages-ms {:engine 6.617743, :render 11.630629, :preview 0.024938, :packet-encoding 0.08694}}
+       {:ms 19.73436, :bytes 12931976, :stages-ms {:engine 7.763411, :render 11.81087, :preview 0.079469, :packet-encoding 0.070756}}
+       {:ms 19.383464, :bytes 12931976, :stages-ms {:engine 7.867166, :render 11.413824, :preview 0.024447, :packet-encoding 0.066579}}
+       {:ms 19.444335, :bytes 12931976, :stages-ms {:engine 7.923611, :render 11.41794, :preview 0.025649, :packet-encoding 0.065838}}
+       {:ms 20.406758, :bytes 12931976, :stages-ms {:engine 8.228889, :render 12.072481, :preview 0.025108, :packet-encoding 0.068092}}
+       {:ms 19.609062, :bytes 12931976, :stages-ms {:engine 7.809419, :render 11.699333, :preview 0.024276, :packet-encoding 0.064467}}
+       {:ms 19.338467, :bytes 12931976, :stages-ms {:engine 7.734197, :render 11.502347, :preview 0.024587, :packet-encoding 0.067}}
+       {:ms 19.212628, :bytes 12931856, :stages-ms {:engine 7.842039, :render 11.237029, :preview 0.024146, :packet-encoding 0.098237}}
+       {:ms 19.115091, :bytes 12931832, :stages-ms {:engine 6.017482, :render 12.968936, :preview 0.029224, :packet-encoding 0.086049}}
+       {:ms 21.092727, :bytes 12931856, :stages-ms {:engine 6.783512, :render 14.18569, :preview 0.029524, :packet-encoding 0.080721}}
+       {:ms 20.710664, :bytes 12931832, :stages-ms {:engine 7.026887, :render 13.504409, :preview 0.030986, :packet-encoding 0.134502}}
+       {:ms 20.036173, :bytes 12931832, :stages-ms {:engine 6.237352, :render 13.676808, :preview 0.028012, :packet-encoding 0.081632}}
+       {:ms 19.53434, :bytes 12931856, :stages-ms {:engine 6.489971, :render 12.895005, :preview 0.029584, :packet-encoding 0.106961}}
+       {:ms 21.504605, :bytes 12931832, :stages-ms {:engine 8.611924, :render 12.745731, :preview 0.029073, :packet-encoding 0.105338}}
+       {:ms 21.786527, :bytes 12931856, :stages-ms {:engine 8.904571, :render 12.750459, :preview 0.036725, :packet-encoding 0.082213}}
+       {:ms 21.433833, :bytes 12931856, :stages-ms {:engine 8.287131, :render 13.005962, :preview 0.046489, :packet-encoding 0.081352}}
+       {:ms 22.007539, :bytes 12931856, :stages-ms {:engine 8.221367, :render 13.664719, :preview 0.028603, :packet-encoding 0.079599}}
+       {:ms 29.55784, :bytes 12931856, :stages-ms {:engine 8.111192, :render 21.320008, :preview 0.030165, :packet-encoding 0.083064}}
+       {:ms 22.206507, :bytes 12931856, :stages-ms {:engine 8.808127, :render 13.264008, :preview 0.029274, :packet-encoding 0.091868}}
+       {:ms 20.289964, :bytes 12931856, :stages-ms {:engine 6.697703, :render 13.443027, :preview 0.038057, :packet-encoding 0.098407}}
+       {:ms 20.474149, :bytes 12931832, :stages-ms {:engine 6.823942, :render 13.474654, :preview 0.062875, :packet-encoding 0.099249}}
+       {:ms 19.059518, :bytes 12931856, :stages-ms {:engine 6.169741, :render 12.712661, :preview 0.040601, :packet-encoding 0.123445}}
+       {:ms 22.465335, :bytes 12931832, :stages-ms {:engine 9.29671, :render 13.03207, :preview 0.028503, :packet-encoding 0.095513}}
+       {:ms 17.964446, :bytes 12931856, :stages-ms {:engine 6.253006, :render 11.582758, :preview 0.025458, :packet-encoding 0.090205}}
+       {:ms 19.956873, :bytes 12931856, :stages-ms {:engine 7.558673, :render 12.236067, :preview 0.025368, :packet-encoding 0.123575}}
+       {:ms 27.035813, :bytes 12931832, :stages-ms {:engine 6.22898, :render 20.675927, :preview 0.034762, :packet-encoding 0.082554}}
+       {:ms 19.297075, :bytes 12931856, :stages-ms {:engine 6.727918, :render 12.44476, :preview 0.02615, :packet-encoding 0.085057}}
+       {:ms 19.526498, :bytes 12931856, :stages-ms {:engine 6.989079, :render 12.426162, :preview 0.027582, :packet-encoding 0.071226}}
+       {:ms 18.389394, :bytes 12931832, :stages-ms {:engine 6.415279, :render 11.866233, :preview 0.025017, :packet-encoding 0.070596}}
+       {:ms 19.593358, :bytes 12931832, :stages-ms {:engine 6.42953, :render 13.049697, :preview 0.025568, :packet-encoding 0.075684}}
+       {:ms 19.463304, :bytes 12931856, :stages-ms {:engine 7.03598, :render 12.310949, :preview 0.025518, :packet-encoding 0.07989}}
+       {:ms 18.368563, :bytes 12931856, :stages-ms {:engine 6.15546, :render 12.100544, :preview 0.025598, :packet-encoding 0.073611}}
+       {:ms 19.276484, :bytes 12931856, :stages-ms {:engine 6.750181, :render 12.412121, :preview 0.025839, :packet-encoding 0.076264}}
+       {:ms 17.934993, :bytes 12931856, :stages-ms {:engine 6.042461, :render 11.687674, :preview 0.028533, :packet-encoding 0.163776}}
+       {:ms 18.748782, :bytes 12931832, :stages-ms {:engine 6.701378, :render 11.938831, :preview 0.024387, :packet-encoding 0.072348}}
+       {:ms 17.829534, :bytes 12931832, :stages-ms {:engine 6.184303, :render 11.53753, :preview 0.023625, :packet-encoding 0.072749}}
+       {:ms 17.2735, :bytes 12931832, :stages-ms {:engine 6.330863, :render 10.836849, :preview 0.025067, :packet-encoding 0.069965}}
+       {:ms 17.518027, :bytes 12931832, :stages-ms {:engine 5.959486, :render 11.44407, :preview 0.027701, :packet-encoding 0.075764}}
+       {:ms 18.236213, :bytes 12931832, :stages-ms {:engine 6.506936, :render 11.618772, :preview 0.024086, :packet-encoding 0.074401}}
+       {:ms 17.700541, :bytes 12931832, :stages-ms {:engine 6.614949, :render 10.977439, :preview 0.023776, :packet-encoding 0.072769}}
+       {:ms 16.890626, :bytes 12931856, :stages-ms {:engine 6.049571, :render 10.73794, :preview 0.024097, :packet-encoding 0.068552}}
+       {:ms 18.142113, :bytes 12931832, :stages-ms {:engine 6.184243, :render 11.846312, :preview 0.029134, :packet-encoding 0.071467}}
+       {:ms 17.583414, :bytes 12931832, :stages-ms {:engine 6.126126, :render 11.344149, :preview 0.024497, :packet-encoding 0.076394}}
+       {:ms 17.865708, :bytes 12931832, :stages-ms {:engine 6.099616, :render 11.596288, :preview 0.023655, :packet-encoding 0.134121}}
+       {:ms 19.22791, :bytes 12931856, :stages-ms {:engine 6.552555, :render 12.553253, :preview 0.029494, :packet-encoding 0.07985}}
+       {:ms 20.186698, :bytes 12931856, :stages-ms {:engine 6.143451, :render 13.908014, :preview 0.043435, :packet-encoding 0.077867}}
+       {:ms 18.918717, :bytes 12931856, :stages-ms {:engine 6.605795, :render 12.201115, :preview 0.025638, :packet-encoding 0.073911}}
+       {:ms 19.369073, :bytes 12931856, :stages-ms {:engine 6.446236, :render 12.810629, :preview 0.025338, :packet-encoding 0.074021}}],
+      :gc-after {"G1 Young Generation" {:collections 93, :ms 2368}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 12931976, :p95 12932848, :p99 12932904, :min 12931832, :max 12933000, :mean 1.2932162866666667E7},
+      :frames-per-second 48.41440728277595,
+      :over-25ms 7,
+      :gc-before {"G1 Young Generation" {:collections 90, :ms 2342}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 3,
+      :milliseconds {:p50 19.53434, :p95 25.799504, :p99 30.277479, :min 16.890626, :max 79.920375, :mean 20.655008625},
+      :stages-ms
+      {:engine {:p50 6.727918, :p95 9.29671, :p99 16.407642, :min 5.959486, :max 38.197069, :mean 7.467328066666666},
+       :render {:p50 12.570879, :p95 15.705619, :p99 21.320008, :min 10.73794, :max 41.211809, :mean 13.056986875000009},
+       :preview {:p50 0.026059, :p95 0.062875, :p99 0.132429, :min 0.022453, :max 0.190465, :mean 0.031565725},
+       :packet-encoding {:p50 0.074401, :p95 0.134121, :p99 0.278097, :min 0.062294, :max 0.303455, :mean 0.08601931666666669}}}}
+    {:scope :host-tick,
+     :execution :workers,
+     :workers 1,
+     :result
+     {:observations
+      [{:ms 23.141169, :bytes 13056432, :stages-ms nil}
+       {:ms 23.476492, :bytes 13049552, :stages-ms nil}
+       {:ms 25.785773, :bytes 13049552, :stages-ms nil}
+       {:ms 25.749409, :bytes 13049552, :stages-ms nil}
+       {:ms 28.168285, :bytes 13049552, :stages-ms nil}
+       {:ms 28.366882, :bytes 13049552, :stages-ms nil}
+       {:ms 28.948825, :bytes 13049608, :stages-ms nil}
+       {:ms 46.064321, :bytes 13049552, :stages-ms nil}
+       {:ms 29.692439, :bytes 13056576, :stages-ms nil}
+       {:ms 19.888904, :bytes 13049664, :stages-ms nil}
+       {:ms 20.261722, :bytes 13049664, :stages-ms nil}
+       {:ms 21.403213, :bytes 13049664, :stages-ms nil}
+       {:ms 21.23462, :bytes 13049664, :stages-ms nil}
+       {:ms 27.645931, :bytes 13049664, :stages-ms nil}
+       {:ms 20.297957, :bytes 13049664, :stages-ms nil}
+       {:ms 20.540135, :bytes 13049664, :stages-ms nil}
+       {:ms 20.54429, :bytes 13056688, :stages-ms nil}
+       {:ms 31.649309, :bytes 13049776, :stages-ms nil}
+       {:ms 21.091981, :bytes 13049776, :stages-ms nil}
+       {:ms 20.198052, :bytes 13049776, :stages-ms nil}
+       {:ms 20.216449, :bytes 13049776, :stages-ms nil}
+       {:ms 19.264502, :bytes 13049776, :stages-ms nil}
+       {:ms 22.52554, :bytes 13049776, :stages-ms nil}
+       {:ms 20.055848, :bytes 13049776, :stages-ms nil}
+       {:ms 21.397749, :bytes 13056696, :stages-ms nil}
+       {:ms 26.38098, :bytes 13049776, :stages-ms nil}
+       {:ms 56.242795, :bytes 13049776, :stages-ms nil}
+       {:ms 150.852721, :bytes 13049776, :stages-ms nil}
+       {:ms 41.725846, :bytes 13049776, :stages-ms nil}
+       {:ms 25.798648, :bytes 13049776, :stages-ms nil}
+       {:ms 25.208148, :bytes 13049776, :stages-ms nil}
+       {:ms 28.042987, :bytes 13049776, :stages-ms nil}
+       {:ms 23.501424, :bytes 13056784, :stages-ms nil}
+       {:ms 21.49141, :bytes 13049888, :stages-ms nil}
+       {:ms 21.633338, :bytes 13049888, :stages-ms nil}
+       {:ms 21.958831, :bytes 13049792, :stages-ms nil}
+       {:ms 19.928727, :bytes 13049792, :stages-ms nil}
+       {:ms 20.38352, :bytes 13049792, :stages-ms nil}
+       {:ms 22.95214, :bytes 13049792, :stages-ms nil}
+       {:ms 23.007483, :bytes 13049792, :stages-ms nil}
+       {:ms 21.403699, :bytes 13057256, :stages-ms nil}
+       {:ms 21.312092, :bytes 13051016, :stages-ms nil}
+       {:ms 20.109919, :bytes 13051016, :stages-ms nil}
+       {:ms 20.767105, :bytes 13051016, :stages-ms nil}
+       {:ms 22.206783, :bytes 13051016, :stages-ms nil}
+       {:ms 30.187167, :bytes 13051016, :stages-ms nil}
+       {:ms 21.996137, :bytes 13051016, :stages-ms nil}
+       {:ms 21.198932, :bytes 13051016, :stages-ms nil}
+       {:ms 20.642748, :bytes 13058008, :stages-ms nil}
+       {:ms 20.025222, :bytes 13051016, :stages-ms nil}
+       {:ms 20.736689, :bytes 13051016, :stages-ms nil}
+       {:ms 21.720373, :bytes 13051016, :stages-ms nil}
+       {:ms 21.429698, :bytes 13051016, :stages-ms nil}
+       {:ms 19.952003, :bytes 13051016, :stages-ms nil}
+       {:ms 20.616678, :bytes 13051016, :stages-ms nil}
+       {:ms 20.176729, :bytes 13051016, :stages-ms nil}
+       {:ms 19.238242, :bytes 13058032, :stages-ms nil}
+       {:ms 19.498101, :bytes 13051016, :stages-ms nil}
+       {:ms 18.797942, :bytes 13051016, :stages-ms nil}
+       {:ms 18.993607, :bytes 13051016, :stages-ms nil}
+       {:ms 19.072554, :bytes 13051016, :stages-ms nil}
+       {:ms 20.064752, :bytes 13051016, :stages-ms nil}
+       {:ms 19.738673, :bytes 13051016, :stages-ms nil}
+       {:ms 20.030099, :bytes 13051016, :stages-ms nil}
+       {:ms 20.608722, :bytes 13058048, :stages-ms nil}
+       {:ms 20.533945, :bytes 13051016, :stages-ms nil}
+       {:ms 20.091292, :bytes 13051016, :stages-ms nil}
+       {:ms 19.864055, :bytes 13051016, :stages-ms nil}
+       {:ms 19.850901, :bytes 13051016, :stages-ms nil}
+       {:ms 18.817872, :bytes 13051016, :stages-ms nil}
+       {:ms 19.087776, :bytes 13051016, :stages-ms nil}
+       {:ms 19.570841, :bytes 13051016, :stages-ms nil}
+       {:ms 19.341267, :bytes 13058000, :stages-ms nil}
+       {:ms 25.596339, :bytes 13051112, :stages-ms nil}
+       {:ms 22.081365, :bytes 13051112, :stages-ms nil}
+       {:ms 19.779644, :bytes 13051112, :stages-ms nil}
+       {:ms 23.315335, :bytes 13051112, :stages-ms nil}
+       {:ms 21.149838, :bytes 13051112, :stages-ms nil}
+       {:ms 20.14342, :bytes 13051112, :stages-ms nil}
+       {:ms 20.165433, :bytes 13051112, :stages-ms nil}
+       {:ms 19.859513, :bytes 13058144, :stages-ms nil}
+       {:ms 19.84378, :bytes 13051112, :stages-ms nil}
+       {:ms 19.99722, :bytes 13051112, :stages-ms nil}
+       {:ms 19.767415, :bytes 13051112, :stages-ms nil}
+       {:ms 30.335384, :bytes 13051112, :stages-ms nil}
+       {:ms 19.647185, :bytes 13051112, :stages-ms nil}
+       {:ms 20.232073, :bytes 13051112, :stages-ms nil}
+       {:ms 20.946742, :bytes 13052208, :stages-ms nil}
+       {:ms 20.783378, :bytes 13059248, :stages-ms nil}
+       {:ms 20.433954, :bytes 13052304, :stages-ms nil}
+       {:ms 18.913606, :bytes 13052304, :stages-ms nil}
+       {:ms 19.31648, :bytes 13052304, :stages-ms nil}
+       {:ms 19.790579, :bytes 13052304, :stages-ms nil}
+       {:ms 20.022097, :bytes 13052304, :stages-ms nil}
+       {:ms 21.90596, :bytes 13052304, :stages-ms nil}
+       {:ms 21.78591, :bytes 13052304, :stages-ms nil}
+       {:ms 20.403368, :bytes 13059352, :stages-ms nil}
+       {:ms 20.016709, :bytes 13052304, :stages-ms nil}
+       {:ms 19.082999, :bytes 13052304, :stages-ms nil}
+       {:ms 19.174577, :bytes 13052304, :stages-ms nil}
+       {:ms 19.285182, :bytes 13052304, :stages-ms nil}
+       {:ms 21.270168, :bytes 13052304, :stages-ms nil}
+       {:ms 19.104832, :bytes 13052304, :stages-ms nil}
+       {:ms 19.356189, :bytes 13052304, :stages-ms nil}
+       {:ms 19.076069, :bytes 13059368, :stages-ms nil}
+       {:ms 18.750111, :bytes 13052304, :stages-ms nil}
+       {:ms 20.394324, :bytes 13052304, :stages-ms nil}
+       {:ms 19.221927, :bytes 13052304, :stages-ms nil}
+       {:ms 19.007987, :bytes 13052304, :stages-ms nil}
+       {:ms 19.353925, :bytes 13052304, :stages-ms nil}
+       {:ms 19.552614, :bytes 13052304, :stages-ms nil}
+       {:ms 20.821695, :bytes 13052304, :stages-ms nil}
+       {:ms 20.937279, :bytes 13059320, :stages-ms nil}
+       {:ms 20.386563, :bytes 13052400, :stages-ms nil}
+       {:ms 21.577909, :bytes 13052400, :stages-ms nil}
+       {:ms 23.295953, :bytes 13052400, :stages-ms nil}
+       {:ms 22.311238, :bytes 13052400, :stages-ms nil}
+       {:ms 22.018388, :bytes 13052704, :stages-ms nil}
+       {:ms 23.394191, :bytes 13052400, :stages-ms nil}
+       {:ms 25.940862, :bytes 13052400, :stages-ms nil}],
+      :gc-after {"G1 Young Generation" {:collections 153, :ms 3441}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 13051016, :p95 13058032, :p99 13059352, :min 13049552, :max 13059368, :mean 1.3051822666666666E7},
+      :frames-per-second 42.94995896093839,
+      :over-25ms 20,
+      :gc-before {"G1 Young Generation" {:collections 150, :ms 3405}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 2,
+      :milliseconds {:p50 20.54429, :p95 30.187167, :p99 56.242795, :min 18.750111, :max 150.852721, :mean 23.282909325000006},
+      :stages-ms {}}}
+    {:scope :host-tick,
+     :execution :workers,
+     :workers 2,
+     :result
+     {:observations
+      [{:ms 22.397586, :bytes 13055848, :stages-ms nil}
+       {:ms 18.040798, :bytes 13048968, :stages-ms nil}
+       {:ms 18.760075, :bytes 13048968, :stages-ms nil}
+       {:ms 19.977159, :bytes 13048968, :stages-ms nil}
+       {:ms 18.749389, :bytes 13048968, :stages-ms nil}
+       {:ms 18.804772, :bytes 13048968, :stages-ms nil}
+       {:ms 17.020369, :bytes 13048968, :stages-ms nil}
+       {:ms 17.771894, :bytes 13048968, :stages-ms nil}
+       {:ms 17.760287, :bytes 13055992, :stages-ms nil}
+       {:ms 19.249619, :bytes 13049080, :stages-ms nil}
+       {:ms 19.659133, :bytes 13049080, :stages-ms nil}
+       {:ms 17.724343, :bytes 13049080, :stages-ms nil}
+       {:ms 17.386597, :bytes 13049136, :stages-ms nil}
+       {:ms 18.026856, :bytes 13049080, :stages-ms nil}
+       {:ms 17.963241, :bytes 13049080, :stages-ms nil}
+       {:ms 17.714428, :bytes 13049080, :stages-ms nil}
+       {:ms 20.801625, :bytes 13056104, :stages-ms nil}
+       {:ms 20.279272, :bytes 13049192, :stages-ms nil}
+       {:ms 21.053252, :bytes 13049216, :stages-ms nil}
+       {:ms 19.249194, :bytes 13049160, :stages-ms nil}
+       {:ms 20.863167, :bytes 13049192, :stages-ms nil}
+       {:ms 17.746586, :bytes 13049216, :stages-ms nil}
+       {:ms 20.00127, :bytes 13049192, :stages-ms nil}
+       {:ms 16.822862, :bytes 13049192, :stages-ms nil}
+       {:ms 17.70863, :bytes 13056072, :stages-ms nil}
+       {:ms 20.995165, :bytes 13049192, :stages-ms nil}
+       {:ms 18.987597, :bytes 13049192, :stages-ms nil}
+       {:ms 38.430265, :bytes 13049192, :stages-ms nil}
+       {:ms 24.75134, :bytes 13049192, :stages-ms nil}
+       {:ms 23.568698, :bytes 13049192, :stages-ms nil}
+       {:ms 19.166504, :bytes 13049192, :stages-ms nil}
+       {:ms 18.469229, :bytes 13049216, :stages-ms nil}
+       {:ms 18.639215, :bytes 13056240, :stages-ms nil}
+       {:ms 18.54935, :bytes 13049304, :stages-ms nil}
+       {:ms 18.75627, :bytes 13049304, :stages-ms nil}
+       {:ms 18.467477, :bytes 13049304, :stages-ms nil}
+       {:ms 19.0232, :bytes 13049328, :stages-ms nil}
+       {:ms 17.808109, :bytes 13049304, :stages-ms nil}
+       {:ms 17.665901, :bytes 13049304, :stages-ms nil}
+       {:ms 19.567997, :bytes 13049304, :stages-ms nil}
+       {:ms 21.45537, :bytes 13056768, :stages-ms nil}
+       {:ms 127.044757, :bytes 13050552, :stages-ms nil}
+       {:ms 105.014944, :bytes 13050528, :stages-ms nil}
+       {:ms 33.566297, :bytes 13050528, :stages-ms nil}
+       {:ms 25.424345, :bytes 13050528, :stages-ms nil}
+       {:ms 24.123985, :bytes 13050528, :stages-ms nil}
+       {:ms 22.93299, :bytes 13050528, :stages-ms nil}
+       {:ms 20.905931, :bytes 13050552, :stages-ms nil}
+       {:ms 27.257388, :bytes 13057520, :stages-ms nil}
+       {:ms 21.942546, :bytes 13050528, :stages-ms nil}
+       {:ms 20.529297, :bytes 13050528, :stages-ms nil}
+       {:ms 19.115967, :bytes 13050528, :stages-ms nil}
+       {:ms 19.197049, :bytes 13050528, :stages-ms nil}
+       {:ms 18.818903, :bytes 13050528, :stages-ms nil}
+       {:ms 18.833976, :bytes 13050528, :stages-ms nil}
+       {:ms 19.77114, :bytes 13050552, :stages-ms nil}
+       {:ms 20.362246, :bytes 13057544, :stages-ms nil}
+       {:ms 20.423879, :bytes 13050528, :stages-ms nil}
+       {:ms 21.735825, :bytes 13050528, :stages-ms nil}
+       {:ms 20.780583, :bytes 13050528, :stages-ms nil}
+       {:ms 21.377398, :bytes 13050552, :stages-ms nil}
+       {:ms 19.335116, :bytes 13050840, :stages-ms nil}
+       {:ms 19.896568, :bytes 13050528, :stages-ms nil}
+       {:ms 21.012771, :bytes 13050528, :stages-ms nil}
+       {:ms 20.071661, :bytes 13057520, :stages-ms nil}
+       {:ms 33.841444, :bytes 13050448, :stages-ms nil}
+       {:ms 20.27823, :bytes 13050448, :stages-ms nil}
+       {:ms 18.291967, :bytes 13050440, :stages-ms nil}
+       {:ms 18.631837, :bytes 13050448, :stages-ms nil}
+       {:ms 21.391299, :bytes 13050472, :stages-ms nil}
+       {:ms 19.276113, :bytes 13050528, :stages-ms nil}
+       {:ms 18.73698, :bytes 13050472, :stages-ms nil}
+       {:ms 20.008235, :bytes 13057496, :stages-ms nil}
+       {:ms 19.191061, :bytes 13050568, :stages-ms nil}
+       {:ms 19.165061, :bytes 13050568, :stages-ms nil}
+       {:ms 16.714949, :bytes 13050568, :stages-ms nil}
+       {:ms 19.565572, :bytes 13050568, :stages-ms nil}
+       {:ms 19.022378, :bytes 13050440, :stages-ms nil}
+       {:ms 18.267906, :bytes 13050440, :stages-ms nil}
+       {:ms 18.692062, :bytes 13050440, :stages-ms nil}
+       {:ms 19.480845, :bytes 13057472, :stages-ms nil}
+       {:ms 20.029467, :bytes 13050440, :stages-ms nil}
+       {:ms 20.15761, :bytes 13050440, :stages-ms nil}
+       {:ms 18.362739, :bytes 13050440, :stages-ms nil}
+       {:ms 17.902298, :bytes 13050440, :stages-ms nil}
+       {:ms 17.385103, :bytes 13050440, :stages-ms nil}
+       {:ms 17.040506, :bytes 13050416, :stages-ms nil}
+       {:ms 16.561248, :bytes 13051512, :stages-ms nil}
+       {:ms 17.352314, :bytes 13058576, :stages-ms nil}
+       {:ms 17.483871, :bytes 13051608, :stages-ms nil}
+       {:ms 17.866996, :bytes 13051632, :stages-ms nil}
+       {:ms 17.372684, :bytes 13051632, :stages-ms nil}
+       {:ms 25.212998, :bytes 13051632, :stages-ms nil}
+       {:ms 18.995567, :bytes 13051608, :stages-ms nil}
+       {:ms 19.346023, :bytes 13051632, :stages-ms nil}
+       {:ms 21.510838, :bytes 13051608, :stages-ms nil}
+       {:ms 18.16344, :bytes 13058656, :stages-ms nil}
+       {:ms 18.181287, :bytes 13051608, :stages-ms nil}
+       {:ms 19.179424, :bytes 13051608, :stages-ms nil}
+       {:ms 18.522483, :bytes 13051608, :stages-ms nil}
+       {:ms 19.816023, :bytes 13051608, :stages-ms nil}
+       {:ms 17.500355, :bytes 13051608, :stages-ms nil}
+       {:ms 19.158662, :bytes 13051720, :stages-ms nil}
+       {:ms 29.775859, :bytes 13051608, :stages-ms nil}
+       {:ms 19.087204, :bytes 13058632, :stages-ms nil}
+       {:ms 20.243999, :bytes 13051608, :stages-ms nil}
+       {:ms 19.252854, :bytes 13051608, :stages-ms nil}
+       {:ms 17.798903, :bytes 13051608, :stages-ms nil}
+       {:ms 18.595838, :bytes 13051608, :stages-ms nil}
+       {:ms 17.931411, :bytes 13051608, :stages-ms nil}
+       {:ms 19.316479, :bytes 13051608, :stages-ms nil}
+       {:ms 20.423819, :bytes 13051608, :stages-ms nil}
+       {:ms 18.761367, :bytes 13058664, :stages-ms nil}
+       {:ms 18.394877, :bytes 13051704, :stages-ms nil}
+       {:ms 17.921005, :bytes 13051704, :stages-ms nil}
+       {:ms 19.180555, :bytes 13051704, :stages-ms nil}
+       {:ms 18.576725, :bytes 13051704, :stages-ms nil}
+       {:ms 20.003353, :bytes 13051704, :stages-ms nil}
+       {:ms 18.388958, :bytes 13051640, :stages-ms nil}
+       {:ms 18.261046, :bytes 13051704, :stages-ms nil}],
+      :gc-after {"G1 Young Generation" {:collections 159, :ms 3493}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocated-bytes {:p50 13050528, :p95 13057520, :p99 13058656, :min 13048968, :max 13058664, :mean 1.3051230733333332E7},
+      :frames-per-second 46.49573681751515,
+      :over-25ms 9,
+      :gc-before {"G1 Young Generation" {:collections 156, :ms 3465}, "G1 Concurrent GC" {:collections 4, :ms 23}, "G1 Old Generation" {:collections 0, :ms 0}},
+      :allocation-thread-count 3,
+      :milliseconds {:p50 19.165061, :p95 27.257388, :p99 105.014944, :min 16.561248, :max 127.044757, :mean 21.50734816666666},
+      :stages-ms {}}}]}]}
