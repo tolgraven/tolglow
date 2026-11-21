@@ -93,7 +93,11 @@ module.exports = { WIDTH, HEIGHT, createWorker, launchOwned, localDisplayUrl, de
 if (require.main === module) {
   (async () => {
     const options = JSON.parse(process.argv[2] || "{}");
-    const playwright = require(options.playwrightModule || "playwright-core");
+    // A packaged worker lives in a temporary directory. Resolve installed
+    // modules from the launch directory as well as a source checkout; never
+    // install/download them or derive their location from the display URL.
+    const playwright = require(require.resolve(options.playwrightModule || "playwright-core",
+      { paths: [process.cwd(), __dirname] }));
     const worker = await createWorker(options, config => launchOwned(playwright.chromium, config));
     const write = value => process.stdout.write(JSON.stringify(value) + "\n");
     write({ status: "ready", width: WIDTH, height: HEIGHT });

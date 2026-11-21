@@ -5,11 +5,13 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.modulation :as modulation]
+            [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
@@ -70,9 +72,8 @@
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
                                  [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"]]]
         ^{:key view}
-        [:button.nav-item {:class (when (= view (:view ui)) "selected") :data-view (name view)
-                           :aria-current (when (= view (:view ui)) "page")
-                           :on-click #(send! [:studio/set-view view])}
+        [:a.nav-item {:href (nav/href view) :class (when (= view (:view ui)) "selected") :data-view (name view)
+                       :aria-current (when (= view (:view ui)) "page")}
          [:span.nav-icon {:aria-hidden true} icon] title [:span.nav-key n]])]
      [:div.sidebar-bottom
       [:div.connection [:i#connection-dot {:class (if (:connected? connection) "connected" "failed")}]
@@ -272,6 +273,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [interop/preview (:show db)]
+   [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
       [:label "Work light"

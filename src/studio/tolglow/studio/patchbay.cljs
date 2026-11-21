@@ -191,7 +191,7 @@
                 (= operation :save) (assoc :revision (inc (:revision s)))
                 (and (= operation :save) unchanged?) (assoc :dirty? false)
                 (= operation :save) (assoc :notice (if unchanged? "Routes saved. Enable routing when ready." "Saved the submitted version; your newer edits are still local.")))]
-        {:db (assoc db :patchbay s) :dispatch (when (not= operation :load) [:studio/poll])}))))
+        {:db (assoc db :patchbay s)}))))
 (rf/reg-event-db :patchbay/failed
   (fn [db [_ request-token error]]
     (if (current? db request-token) (update db :patchbay merge {:pending nil :error (events/error-message error)}) db)))

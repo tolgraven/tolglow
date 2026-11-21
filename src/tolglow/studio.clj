@@ -4,6 +4,7 @@
   (:gen-class)
   (:require [afterglow.control.model :as control]
             [afterglow.control.categories :as categories]
+            [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
@@ -16,16 +17,20 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
+            [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.studio.waveforms :as waveforms]
+            [tolglow.studio.expressive :as expressive]
             [tolglow.automation.policy :as policy]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.composition :as composition]
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.projection :as projection]
+            [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -58,8 +63,7 @@
 (defn repls [runtime] (connections/repls (:connections runtime)))
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
-(defn snapshot [runtime]
-  (let [{:keys [model output status modulation-view]} @(:state runtime)]
+(defn- project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :waveform-revision (get-in model [:waveforms :revision] 0)
@@ -97,9 +101,11 @@
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
+                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
 
-(declare send-output! submit!)
+(defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(declare send-output! heartbeat! submit!)
 
 (defn create-runtime
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
@@ -138,6 +144,8 @@
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
+      :browser-projections (projection/create)
+      :state-stream (state-stream/create #(project-snapshot @runtime-ref %) #(heartbeat! @runtime-ref %))
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
@@ -160,6 +168,7 @@
                          (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
                          compiled))))}]
        (reset! runtime-ref runtime)
+       (state-stream/publish! (:state-stream runtime) @(:state runtime))
        runtime))))
 
 (defn- restart-model [model time-ms]
@@ -361,6 +370,27 @@
     {:model (-> model (update :modulation #(modulation/release-hold (or % (modulation/new-state))
                                                                   (:instance-id payload) (:params payload)))
                 (update :revision inc)) :ack {:status :accepted}}
+    :aim-path
+    (let [definition (aim-paths/definition model payload)
+          id (:id definition)
+          requested-cue-id (:cue-id payload id)
+          wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
+          previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
+                         (vals (get-in model [:registry :cues])))
+          cue-id (:id previous requested-cue-id)
+          _ (when (and previous (not= id (:effect-id previous)))
+              (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
+          _ (compiler/compile-effect definition)
+          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
+          _ (when (= :rejected (get-in published [:ack :status]))
+              (throw (ex-info "Cannot publish aim path" (:ack published))))
+          cue (merge previous {:id cue-id :effect-id id :name (:name definition)
+                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+          result (apply-message (:model published)
+                                {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
+      (when (= :rejected (get-in result [:ack :status]))
+        (throw (ex-info "Cannot publish aim path cue" (:ack result))))
+      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
@@ -383,8 +413,10 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      {:model (-> model (update-in [:settings scope] merge values) (update :revision inc))
-       :ack {:status :accepted}})
+      (let [settings (merge (get-in model [:settings scope]) values)
+            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
+        {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
+         :ack {:status :accepted}}))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state
@@ -707,7 +739,8 @@
              (try (connections/publish! (:connections runtime) (:model next-state))
                   (catch Exception error (vreset! reactive-error (error-data error))))
              (when @reactive-error
-               (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error)))))
+               (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
+             (state-stream/publish! (:state-stream runtime) @(:state runtime)))))
        (finally (finish-resource-work! runtime @retired @candidates @retired-devices
                                        @restored-generation @restarted-generation)
                 (rdm/reconcile! (:rdm runtime)))))))
@@ -757,6 +790,8 @@
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(rdm/close! (:rdm runtime))
+                              #(state-stream/close! (:state-stream runtime))
+                              #(projection/clear! (:browser-projections runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
@@ -893,7 +928,8 @@
       (submit! runtime :import {:source (str source)}))))
 
 (defn browser-snapshot
-  "Bound preview values; omit unchanged authoring data on conditional polls."
+  "Bound preview values. Delta clients receive versioned, exact-base envelopes;
+  inspection requests can retrieve a complete or authoring-conditional view."
   [runtime query]
   (let [view (snapshot runtime)
         preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
@@ -902,10 +938,13 @@
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]
-    (if partial?
+    (cond
+      (= "delta-v1" (get query "projection"))
+      (projection/project! (:browser-projections runtime) view (get query "base"))
+      partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
-      view)))
+      :else view)))
 
 (defn rdm-action!
   "Explicit, independently owned RDM service. Status never touches a device."
@@ -921,7 +960,7 @@
                          (throw (ex-info "RDM action belongs to a previous show session" {})))
                        {:runtime-id (:id runtime) :expected-epoch epoch}))]
       (case operation
-        :connect (rdm/connect! (:rdm runtime) (:config payload {}))
+        :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
         :disconnect (rdm/disconnect! (:rdm runtime))
         :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
         (:associate :unassociate :adopt)
@@ -1109,6 +1148,7 @@
   "Create the portable Ring application for this explicitly owned runtime."
   [runtime]
   (web/app {:snapshot! #(browser-snapshot runtime %)
+            :state-stream! #(state-stream/response (:state-stream runtime) %)
             :definition! (fn [kind id]
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
                              (or (get definitions id)
@@ -1124,6 +1164,18 @@
             :rdm! #(rdm-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
+            :expressive! (fn [payload]
+                           (let [wire-id #(if (keyword? %) (subs (str %) 1) %)
+                                 options (some (fn [[id device]]
+                                                 (let [options (:options device)]
+                                                   (when (= (wire-id (:device-id payload))
+                                                            (wire-id (or (:mapping-id options) id))) options)))
+                                               @(:devices runtime))
+                                 profile (when options
+                                           {:id (get-in options [:profile :id])
+                                            :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                                            :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+                             (expressive/preview (:model @(:state runtime)) payload profile)))
             :patch! #(:patch (snapshot runtime))
             :repl! #(repl-action! runtime %1 %2)
             :repl-eval! #(repl-eval! runtime %1 %2 %3)

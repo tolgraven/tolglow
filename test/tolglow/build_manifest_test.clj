@@ -14,6 +14,6 @@
     (is (string? (versions 'org.jogamp.java3d/java3d-core)))
     (is (not (contains? versions 'tolgraven/afterglow)))
     (is (= (count versions) (count (:dependencies config))))
-    (is (= ["src" "../afterglow/src"] (:source-paths config)))
+    (is (= ["src" "src/shared" "../afterglow/src"] (:source-paths config)))
     (is (= ["resources" "../afterglow/resources"] (:resource-paths config)))
     (is (every? #(.isDirectory (io/file %)) (concat (:source-paths config) (:resource-paths config))))))

@@ -85,7 +85,7 @@
     (is (true? (get-in accepted [:db :patchbay :dirty?])))
     (is (= 1 (get-in accepted [:db :patchbay :revision])))
     (is (nil? (get-in accepted [:db :patchbay :pending])))
-    (is (= [:studio/poll] (:dispatch accepted)))))
+    (is (nil? (:dispatch accepted)))))
 
 (deftest refresh-retains-local-edits-and-explicit-enable-is-separate
   (let [edited (:db (transition base [:patchbay/edit [:routes 0 :release] "2"]))
