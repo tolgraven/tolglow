@@ -32,7 +32,7 @@
                        [k (cond
                             (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
                             (and (= k :params) (= v "all")) :all
-                            (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :categories} k))
+                            (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :verified-axis-fixture-ids :categories} k))
                             (mapv #(if (string? %) (keyword %) %) v)
                             :else v)])) x) x)) data))
 
@@ -142,7 +142,7 @@
       (catch Exception error (.close input) (.close output) (throw error))))))
 
 (def operations
-  {"/api/command" :command "/api/definition" :definition "/api/rig" :rig
+  {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -160,7 +160,7 @@
         (#{"/" "/push-display" "/repl"} uri) (response/content-type "text/html; charset=utf-8")))))
 
 (defn- routes [{:keys [snapshot! definition! export! submit! heartbeat! provider-get! provider-put! chat!
-                      chat-history! chat-select! fixture! audio! sync! waveform! patch! repl! repl-eval! workspace! terminal! sensor! app-agent!]}]
+                      chat-history! chat-select! fixture! audio! sync! waveform! patch! repl! repl-eval! workspace! terminal! sensor! app-agent! calibration!]}]
   (fn [{:keys [uri request-method json-params query-params] :as request}]
     (case request-method
       :get
@@ -217,6 +217,8 @@
                           (json-response 200 (terminal! (if (get query-params "session-id") :read :status)
                                                        {:session-id (get query-params "session-id") :cursor (get query-params "cursor")}))
                           (json-response 503 {:message "Docker terminal unavailable"}))
+        "/api/calibration" (if calibration! (json-response 200 (calibration!))
+                                (json-response 503 {:message "Rig calibration unavailable"}))
         "/api/sensors" (if sensor! (json-response 200 (sensor! :status {}))
                             (json-response 503 {:message "Sensor inputs unavailable"}))
         (or (asset uri) (json-response 404 {:message "Route not found"}))))

@@ -1,7 +1,22 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :development/git-metadata-isolation
+ [{:id :native/lidar-rig-calibration-v1
+   :title "Identify fixtures and propose rig calibration from committed patterns and AR depth"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/studio/calibration.clj"
+           "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
+           "tolglow/src/tolglow/studio/output_scheduler.clj" "tolglow/docs/rig-calibration.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Depth observations and temporal identity require physical output receipts"
+                "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
+                "Owned calibration overrides release on cancel or timeout without ending human effects"
+                "ARKit capture checks camera permission and LiDAR capability; native hardware evidence remains explicit"]
+   :evidence ["Focused calibration: 8 tests / 84 assertions passed, including actual full-show import disarming"
+              "Integrated pure: 465 tests / 3690 assertions passed; subsequent parity: 487 tests / 3817 assertions passed"
+              "Native static contracts: 6 existing plus 2 calibration checks passed; Swift/Xcode and physical LiDAR/output unrun"
+              "docs/rig-calibration.md; tap-assisted capture and fitting foundation, automatic photometric detection remains planned"]}
+  {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/workspace.clj"
