@@ -125,3 +125,11 @@ three raw matrices and verified artifact provenance from run 44900142541.
 It separates actual host ticks from instrumented aiming/packing, checks all
 heads through layered opacity sweeps, and records the remaining 10,000-pixel
 subscriber deadline misses without claiming a matched speedup.
+
+## General-row scan comparison
+
+[The matched candidate/baseline/repeat report](2026-11-21-general-row-comparison/README.md)
+retains the complete verified artifact archive from run 44901945679. Mixed-rig
+owner/worker allocation falls by approximately 394 KB/tick in both candidates;
+timing and whole-JVM benefits are unproven, and the unfavorable pixel-only
+control is explicitly retained for follow-up attribution.
