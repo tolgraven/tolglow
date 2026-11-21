@@ -26,6 +26,7 @@
             [tolglow.studio.repl-manager :as repl-manager]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.routing :as routing]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
@@ -241,6 +242,8 @@
     (try (expressive/normalize-config (get-in model [:settings :expressive]))
          (catch clojure.lang.ExceptionInfo error
            (check-errors! (:errors (ex-data error)) [:settings :expressive]))))
+  (when (contains? (get-in model [:settings :output] {}) :pause-look)
+    (pause-look/normalize (get-in model [:settings :output :pause-look])))
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))
@@ -432,9 +435,8 @@
                       model [:ableton :audio :analysis])
         model (if-let [bridge (get-in model [:integrations :ableton])]
                 (assoc-in model [:integrations :ableton]
-                          (assoc bridge :held {} :recorded #{} :record-order []
-                                 :instances (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
-                                                         :when (ids old-id)] [(ids old-id) cue])))) model)
+                          (ableton/restore-bridge bridge (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
+                                                                  :when (ids old-id)] [(ids old-id) cue])))) model)
         model (assoc model :control
                      (assoc (:control saved) :next-instance (count ids)
                             :next-order (max (get-in saved [:control :next-order])

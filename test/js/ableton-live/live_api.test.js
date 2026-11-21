@@ -5,38 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Adapter } = require("../../../resources/devices/ableton-live/live_api.js");
 
-function fixture() {
-  const writes = [], methods = [], entities = {}, paths = {}, notes = new Map(); let nextNote = 100;
-  function object(id, props, canonicalPath) {
-    const value = { id, props,
-      get(key) { const value = this.props[key]; return Array.isArray(value) ? value : [value]; },
-      set(key, value) { writes.push({ id: this.id, key, value }); this.props[key] = value; },
-      call(method, argument) {
-        methods.push({ method, argument });
-        if (method === "add_new_notes") {
-          return JSON.parse(argument).notes.map(note => { const id = ++nextNote; notes.set(id, { ...note, note_id: id, probability: 1 }); return id; });
-        }
-        if (method === "get_notes_by_id") return JSON.stringify({ notes: notes.has(argument) ? [{ ...notes.get(argument) }] : [] });
-        if (method === "apply_note_modifications") { for (const note of JSON.parse(argument).notes) notes.set(note.note_id, { ...note }); return null; }
-        throw new Error("Unexpected Live method " + method);
-      }
-    };
-    entities[id] = value; if (canonicalPath) paths[canonicalPath] = value; return value;
-  }
-  const song = object(1, { current_song_time: 10, tempo: 120, is_playing: 1, signature_numerator: 4, signature_denominator: 4, session_automation_record: 1 }, "live_set");
-  const track = object(2, { arm: 1, name: "Lights" }, "live_set tracks 0");
-  const clip = object(3, { is_midi_clip: 1, is_recording: 1, playing_position: 2, loop_start: 0, loop_end: 4, looping: 1, name: "Light sequence", color: 0 }, "live_set tracks 0 clip_slots 0 clip");
-  object(4, { has_drum_pads: 1, drum_pads: ["id", 10, "id", 11] }, "live_set tracks 0 devices 1");
-  object(10, { note: 36, name: "Old pad", chains: ["id", 20] }); object(11, { note: 37, name: "Empty", chains: [] });
-  const chain = object(20, { name: "Old chain", color: 0, is_auto_colored: 1 });
-  const api = key => (typeof key === "object" ? entities[key.id] : paths[key]) || { id: 0 };
-  const adapter = new Adapter({ api, dictionaryCall: (object, method, data) => object.call(method, JSON.stringify(data)), readDictionary: JSON.parse });
-  function request(op, payload, id = "request-" + Math.random()) { return adapter.handle({ id, op, payload }); }
-  function pair(extra = {}) { return request("configure-destination", { "track-index": 0, "clip-slot-index": 0, "rack-device-index": 1, ...extra }); }
-  function intent(type, id, beat, songBeat, extra = {}) { return { "protocol-version": 1, "destination-id": "clip:3", epoch: 2, "command-id": id,
-    "instance-id": "2:7", beat, "song-beat": songBeat, event: { type, note: 36, velocity: type === "note-on" ? 100 : 0, channel: 1, origin: "tolglow-feedback" }, ...extra }; }
-  return { adapter, request, pair, intent, writes, methods, notes, song, track, clip, chain, entities, paths };
-}
+const { fixture } = require("./behavioral_host.js");
 
 test("inspection separates absolute transport beat from clip position", () => {
   const f = fixture(); const response = f.pair(); assert.equal(response.status, "executed");
@@ -130,4 +99,42 @@ test("the editable Max patch routes every LiveAPI message through deferlow", () 
   assert.equal(jsInputs.length, 1); assert.equal(jsInputs[0].patchline.source[0], "low");
   for (const { patchline } of patch.lines) { assert.ok(boxes.has(patchline.source[0])); assert.ok(boxes.has(patchline.destination[0])); }
   assert.ok(!fs.existsSync(path.join(__dirname, "../../../resources/devices/ableton-live/tolglow-live-bridge.amxd")), "No fabricated compiled device is shipped");
+});
+
+test("parameter samples remain editable through Session overdub without disturbing the cue note", () => {
+  const f = fixture();
+  f.pair();
+  f.clip.props.is_recording = 0;
+  f.clip.props.is_overdubbing = 1;
+  f.song.props.session_automation_record = 0;
+  const start = f.request("record-event", f.intent("note-on", "launch", 0, 4));
+  const sample = f.request("record-event", f.intent("note-on", "sample", 0.5, 4.5, {
+    event: {type: "note-on", note: 100, velocity: 64, channel: 1, "parameter-sample?": true}
+  }));
+  assert.equal(sample.result["pairing"], "parameter-lane");
+  assert.equal(sample.result["provisional?"], false);
+  assert.equal(f.notes.get(sample.result["note-id"]).velocity, 64);
+  f.request("record-event", f.intent("note-off", "release", 1.5, 5.5));
+  assert.equal(f.notes.get(start.result["note-id"]).duration, 1.5);
+  assert.equal(f.notes.get(sample.result["note-id"]).duration, 1/16);
+});
+
+test("places a finished clip into empty Arrangement time and validates its recording range", () => {
+  const f = fixture();
+  f.pair();
+  const placement = {"destination-id": "clip:3", "song-beat": 32};
+  assert.equal(f.request("place-in-arrangement", placement).error.code, "recording-active");
+  f.clip.props.is_recording = 0;
+  assert.equal(f.request("place-in-arrangement", placement).result["song-beat"], 32);
+  assert.equal(f.request("place-in-arrangement", placement).error.code, "placement-overlap");
+  const pair = {"track-index": 0, "arrangement-index": 0};
+  assert.equal(f.request("configure-destination", {...pair, "clip-slot-index": 0}).error.code, "destination");
+  const placed = f.request("configure-destination", pair);
+  assert.equal(placed.result.destination["clip-id"], 200);
+  f.song.props.record_mode = 1;
+  assert.equal(f.adapter.inspect()["recording?"], false);
+  f.song.props.current_song_time = 34;
+  assert.equal(f.adapter.inspect()["recording?"], true);
+  f.song.props.current_song_time = 36;
+  assert.equal(f.adapter.inspect()["recording?"], false);
 });

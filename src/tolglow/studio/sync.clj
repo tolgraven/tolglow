@@ -9,6 +9,7 @@
             [afterglow.control.codecs.midi :as midi-codec]
             [afterglow.control.devices.transports :as device-transports]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.ableton-link :as link]
             [tolglow.integrations.providers :as providers])
   (:import [javax.sound.midi MidiSystem MidiDevice MidiMessage Receiver ShortMessage]
            [java.lang.reflect Proxy InvocationHandler]
@@ -32,8 +33,10 @@
 (defn- live-pairing? [pairing]
   (or (nil? pairing)
       (and (map? pairing)
-           (every? #{:track-index :clip-slot-index :rack-device-index :expected-track-name :expected-clip-name} (keys pairing))
-           (every? #(and (integer? %) (<= 0 % 16383)) ((juxt :track-index :clip-slot-index) pairing))
+           (every? #{:track-index :clip-slot-index :arrangement-index :rack-device-index :expected-track-name :expected-clip-name} (keys pairing))
+           (= 1 (count (select-keys pairing [:clip-slot-index :arrangement-index])))
+           (every? #(and (integer? %) (<= 0 % 9999))
+                   [(:track-index pairing) (or (:clip-slot-index pairing) (:arrangement-index pairing))])
            (or (nil? (:rack-device-index pairing)) (and (integer? (:rack-device-index pairing)) (<= 0 (:rack-device-index pairing) 16383)))
            (every? #(or (nil? %) (and (string? %) (<= 1 (count %) 512)))
                    ((juxt :expected-track-name :expected-clip-name) pairing)))))
@@ -41,10 +44,14 @@
   (when-not (and (map? values) (<= (count values) 128)) (fail! :invalid-config "Mappings must be bounded maps"))
   (into {} (map (fn [[key value]]
                  (when-not (and (map? value) (identifier? (:cue-id value))
+                                (boolean? (:disabled? value false))
                                 (if (= kind :notes)
                                   (and (#{:persistent :held :timed :one-shot} (get value :mode :persistent))
                                        (or (nil? (:duration-ms value)) (and (finite? (:duration-ms value)) (pos? (:duration-ms value)))))
                                   (and (identifier? (:param value)) (not (contains? value :instance-id))
+                                       (or (nil? (:lane-note value)) (and (integer? (:lane-note value)) (<= 0 (:lane-note value) 127)))
+                                       (#{:number :integer :boolean :enum} (:type value :number))
+                                       (or (not= :enum (:type value)) (and (vector? (:values value)) (<= 1 (count (:values value)) 127)))
                                        (let [[low high] (get value :bounds [0 1])]
                                          (and (every? finite? [low high]) (< low high))))))
                    (fail! :invalid-config "Invalid logical cue/parameter mapping"))
@@ -59,45 +66,51 @@
   is explicit; selecting an unconnected source waits rather than choosing a peer.
   Live object IDs/held instances are runtime state, never durable mappings."
   [input]
-  (when-not (and (map? input) (every? #{:selected-source :clock :midi :beat-link :live} (keys input)))
+  (when-not (and (map? input) (every? #{:selected-source :clock :midi :beat-link :link :live} (keys input)))
     (fail! :invalid-config "Unknown synchronization configuration field"))
   (doseq [[section allowed] [[:clock #{:bpm :beat :playing? :meter :timeout-ms :on-stale}]
+                             [:link #{:enabled? :source-id :port :follow-transport?}]
                              [:midi #{:enabled? :source-id :input-index :output-index :control? :expected-input-name :expected-output-name}]
                              [:beat-link #{:enabled? :source-id :status? :align-bars? :peer}]
-                             [:live #{:enabled? :source-id :bridge-id :endpoint :poll-ms :timeout-ms :record-route :mode :channel :mappings :parameters :pairing}]]]
+                             [:live #{:enabled? :source-id :bridge-id :endpoint :poll-ms :timeout-ms :record-route :mode :channel :mappings :parameters :pairing :automap?}]]]
     (when (contains? input section)
       (when-not (and (map? (get input section)) (every? allowed (keys (get input section))))
         (fail! :invalid-config "Unknown synchronization section field"))))
   (let [base {:selected-source :manual :clock {:bpm 120.0 :beat 0.0 :playing? false :meter {:beats-per-bar 4 :bars-per-phrase 4}
                                              :timeout-ms 1500.0 :on-stale :hold}
+              :link {:enabled? false :source-id :ableton-link :port 17000 :follow-transport? true}
               :midi {:enabled? false :source-id :midi-clock :input-index nil :output-index nil :control? false}
               :beat-link {:enabled? false :source-id :beat-link :status? false :align-bars? false :peer nil}
               :live {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
                      :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
-                     :mappings {} :parameters {} :pairing nil}}
+                     :mappings {} :parameters {} :pairing nil :automap? true}}
         config (reduce (fn [out key] (assoc out key (merge (get base key) (get input key))))
-                       (assoc base :selected-source (source-id (get input :selected-source :manual))) [:clock :midi :beat-link :live])
-        config (reduce #(update-in %1 [%2 :source-id] source-id) config [:midi :beat-link :live])
+                       (assoc base :selected-source (source-id (get input :selected-source :manual))) [:clock :midi :beat-link :link :live])
+        config (reduce #(update-in %1 [%2 :source-id] source-id) config [:midi :beat-link :link :live])
         config (-> config (update-in [:clock :on-stale] #(if (string? %) (keyword %) %))
                    (update-in [:live :mode] #(if (string? %) (keyword %) %))
                    (update-in [:live :record-route] #(if (string? %) (keyword %) %))
                    (update-in [:live :mappings] #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
                    (update-in [:live :parameters] #(mappings % :parameters)))
         midi (:midi config) dj (:beat-link config) live (:live config)
-        ids (mapv #(get-in config [% :source-id]) [:midi :beat-link :live])
+        ids (mapv #(get-in config [% :source-id]) [:midi :beat-link :link :live])
         peer (:peer dj)]
     (when-not (and (every? boolean? [(:enabled? midi) (:control? midi) (:enabled? dj) (:status? dj)
-                                    (:align-bars? dj) (:enabled? live)])
+                                    (:align-bars? dj) (:enabled? live) (:automap? live)
+                                    (get-in config [:link :enabled?]) (get-in config [:link :follow-transport?])])
+                   (integer? (get-in config [:link :port])) (<= 1 (get-in config [:link :port]) 65535)
                    (every? port? ((juxt :input-index :output-index) midi))
                    (or (not (:enabled? midi)) (some some? ((juxt :input-index :output-index) midi)))
                    (every? #(or (nil? %) (and (string? %) (<= (count %) 512))) ((juxt :expected-input-name :expected-output-name) midi))
-                   (= 3 (count (set ids))) (not (some #{:manual} ids))
+                   (= 4 (count (set ids))) (not (some #{:manual} ids))
                    (some #{(:selected-source config)} (conj ids :manual))
                    (#{:lighting :live} (:mode live)) (#{:bridge :midi} (:record-route live))
                    (string? (:bridge-id live)) (<= 1 (count (:bridge-id live)) 128)
                    (integer? (:channel live)) (<= 1 (:channel live) 16)
                    (integer? (:poll-ms live)) (<= 100 (:poll-ms live) 10000)
                    (integer? (:timeout-ms live)) (<= 50 (:timeout-ms live) 10000)
+                   (let [notes (concat (keys (:mappings live)) (keep :lane-note (vals (:parameters live))))]
+                     (= (count notes) (count (set notes))))
                    (live-pairing? (:pairing live))
                    (or (nil? peer)
                        (and (map? peer) (every? #{:device-number :address :hardware-address :device-name} (keys peer))
@@ -288,15 +301,15 @@
 
 (defn create-manager
   "Create inert resources/settings. Options inject :now-ms, :midi-factory
-  [config clock-ms], :beat-link-factory [config clock-ms], :live-factory [config]
+  [config clock-ms], :beat-link-factory and :link-factory [config clock-ms], :live-factory [config]
   and :queue-capacity (256). Factories return open!/close! plus optional
   send!/request!. No factory or device is invoked before explicit start!."
   ([] (create-manager {}))
   ([options]
    (let [options (merge {:now-ms now-ms :midi-factory midi-transport :beat-link-factory beat-link-transport
-                        :live-factory live-http-transport :queue-capacity 256} options)
+                        :link-factory link/transport :live-factory live-http-transport :queue-capacity 256} options)
          config (validate-config (get options :config {}))]
-     (when-not (and (every? ifn? ((juxt :now-ms :midi-factory :beat-link-factory :live-factory) options))
+     (when-not (and (every? ifn? ((juxt :now-ms :midi-factory :beat-link-factory :link-factory :live-factory) options))
                     (integer? (:queue-capacity options)) (<= 8 (:queue-capacity options) 4096))
        (fail! :invalid-options "Invalid synchronization boundary options"))
      {:lock (Object.) :options options
@@ -322,8 +335,12 @@
   "Selected external clock projection for the next owner frame. Manual selection
   returns clock nil so this boundary cannot overwrite the host's manual transport."
   [manager at-ms]
-  (let [result (clock/snapshot (:clock @(:state manager)) at-ms)]
-    (if (= :manual (:selected-source result)) (assoc result :clock nil) result)))
+  (let [{:keys [config clock]} @(:state manager)
+        result (clock/snapshot clock at-ms)]
+    (cond-> result
+      (= :manual (:selected-source result)) (assoc :clock nil)
+      (= (get-in config [:link :source-id]) (:selected-source result))
+      (assoc :follow-transport? (get-in config [:link :follow-transport?])))))
 
 (defn configure! [manager config]
   (let [config (validate-config config)]
@@ -483,6 +500,14 @@
                                             :time-ms (/ (+ start end) 2.0) :received-at-ms end :round-trip-ms (- end start)})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
+(defn place-in-arrangement! [manager beat request-id]
+  (when-not (and (finite? beat) (<= 0 beat) (string? request-id) (<= 1 (count request-id) 128))
+    (fail! :invalid-placement "Placement requires a nonnegative song beat and a stable request ID"))
+  (let [{:keys [active recording]} @(:state manager)]
+    (when-not (and active (:destination-id recording)) (fail! :unpaired "Pair a MIDI clip before placing it"))
+    (live-request! manager active request-id :place-in-arrangement
+                   {:destination-id (:destination-id recording) :song-beat beat})))
+
 (defn- midi-bytes [event]
   (midi-codec/encode
    (merge {:channel (dec (:channel event))}
@@ -507,7 +532,9 @@
       :bridge (let [{:keys [transport handle]} (:live resources)]
                 (when-not (:request! transport) (fail! :not-connected "Live bridge is not connected"))
                 (let [results (mapv (fn [intent]
-                                      ((:request! transport) handle id :record-event
+                                      ((:request! transport) handle (if (= (:command-id intent) (:command-id command)) id
+                                                                      (str (UUID/nameUUIDFromBytes
+                                                                            (.getBytes (pr-str [id (:command-id intent)]) "UTF-8")))) :record-event
                                        (assoc intent :song-beat (:song-beat recording)
                                               :instance-id (or (:instance-id acknowledgement) (:instance-id command))))) (:intents plan))]
                   {:id id :route :bridge :status (if (every? #(= :executed (:status %)) results) :executed
@@ -545,20 +572,27 @@
     (when transport
       (apply-clock! manager run (merge transport {:type :clock :kind :ableton-live :source-id source :time-ms at-ms
                                                 :confidence (max 0.0 (- 1.0 (/ round-trip-ms (/ 60000.0 (:bpm transport 120)))))})))
+    (when (and (:mode result) (compare-and-set! (:setup-mode? run) false true)
+               (not= (keyword (:mode result)) (get-in config [:live :mode])))
+      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (get-in config [:live :mode])}))
+    (when-let [rack (get-in result [:destination :rack-device-index])]
+      (let [pair [(:destination-id result) rack]]
+        (when (not= pair @(:mirrored-pair run))
+          (when-let [pads (:pads (run-callbacks run))]
+            (doseq [page (partition-all 64 (pads (get-in config [:live :mappings])))]
+              (live-request! manager run (str (UUID/randomUUID)) :pad-page {:pads (vec page)})))
+          (reset! (:mirrored-pair run) pair))))
     (swap! (:state manager) assoc :recording recording)
     (emit! manager run {:type :live/status :status recording})))
 
 (defn- midi-control! [manager run event]
   (let [state @(:state manager) callbacks (run-callbacks run) envelope (when-let [provider (:envelope! callbacks)] (provider))]
     (when envelope
-      (let [base (:bridge state)
-            parameters (into {} (keep (fn [[cc mapping]]
-                                       (when-let [instance (when-let [resolve! (:resolve-instance! callbacks)] (resolve! (:cue-id mapping)))]
-                                         [cc (assoc mapping :instance-id instance)])) (:parameters base)))
-            result (bridge-step! manager
-                                 (fn [current]
-                                   (let [result (ableton/midi->commands (assoc current :parameters parameters) event envelope)]
-                                     (update result :state assoc :parameters (:parameters current)))))
+      (let [controller (ableton/parameter-controller (:bridge state) event)
+            mapping (get-in state [:bridge :parameters controller])
+            instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
+                       ((:resolve-instance! callbacks) (:cue-id mapping)))
+            result (bridge-step! manager #(ableton/midi->commands % event envelope instance))
             commands (mapv #(update % :source merge
                                     (cond-> {:sync-run-id (:id run) :source-id (or (:source-id event) (get-in state [:config :live :source-id]))}
                                       (contains? event :note) (assoc :note (:note event)))) (:commands result))]
@@ -618,6 +652,12 @@
       (when (paired-peer? config peers (:peer event))
         (when (or (not= :beat-link/beat (:type event)) (:bpm event))
           (apply-clock! manager run (assoc event :align-bars? (get-in config [:beat-link :align-bars?])))))
+      :link/lost (apply-clock! manager run (assoc event :type :source/lost :kind :ableton-link))
+      :link/status
+      (let [previous (get-in @(:state manager) [:clock :sources (:source-id event)])
+            frozen? (and (false? (:playing? event)) (false? (:playing? previous)) (:connected? previous))]
+        (apply-clock! manager run (cond-> (assoc event :type :clock :kind :ableton-link :confidence 1.0)
+                                    frozen? (assoc :beat (:beat previous)))))
       :live/status (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
       :live/midi (do (observe-midi! manager run (:event event) :live (get event :time-ms at))
                     (midi-control! manager run (:event event)))
@@ -633,7 +673,7 @@
       (let [cmd (:command event) ack (:ack event) recording (recording-at (:recording @(:state manager))
                                                                                        (get cmd :time-ms at) (max 1500 (* 3 (get-in config [:live :poll-ms]))))
             plan (bridge-step! manager #(ableton/record-command % cmd ack recording))]
-        (when (seq (:intents plan))
+        (when (seq (if (= :midi (get-in config [:live :record-route])) (:midi plan) (:intents plan)))
           (enqueue-io! manager run
                        (fn []
                          (let [result (try (execute-plan! @(:resources run) (get-in config [:live :record-route]) plan recording cmd ack)
@@ -646,6 +686,7 @@
         (when (= :executed (:status response))
           (when (#{:inspect :configure-destination} (:op event))
             (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))))
+        (when (= :place-in-arrangement (:op event)) (swap! (:state manager) assoc :last-execution response))
         (when-not (= :inspect (:op event)) (emit! manager run (assoc response :type :live/execution :op (:op event))))
         (when (and (= :inspect (:op event)) (not= :executed (:status response)))
           (swap! (:state manager) assoc :last-error (:error response))))
@@ -699,6 +740,7 @@
                 (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
               (let [run {:id (str (UUID/randomUUID)) :cancelled? (atom false) :resources (atom {})
                          :queue (ArrayBlockingQueue. (int (get-in manager [:options :queue-capacity])))
+                         :setup-mode? (atom false) :mirrored-pair (atom nil)
                          :poll-pending? (atom false) :overflow-sources (atom #{}) :callback-ids (atom []) :event-sequence (atom 0)
                          :callbacks (atom callbacks) :binding-lock (Object.) :binding-generation (atom 0)
                          :thread (atom nil) :result (promise)
@@ -713,7 +755,7 @@
                    (let [outcome
                          (try
                            (let [config (:config @(:state manager)) options (:options manager)]
-                             (doseq [kind [:beat-link :midi :live] :when (and (get-in config [kind :enabled?]) (not @(:cancelled? run)))]
+                             (doseq [kind [:beat-link :link :midi :live] :when (and (get-in config [kind :enabled?]) (not @(:cancelled? run)))]
                                (let [factory (get options (keyword (str (name kind) "-factory")))
                                      transport (if (= kind :live) (factory (assoc (get config kind) :sync-session-id (:id run)))
                                                    (factory (get config kind) (:now-ms options)))

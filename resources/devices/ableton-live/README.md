@@ -84,12 +84,52 @@ track at the same time would record it twice. The alternative native MIDI route
 can deliver notes and CC, but a successful MIDI send does not prove Live recorded
 an editable clip event.
 
-The verified Clip note API does not provide arbitrary MIDI CC envelope writing.
-`record-event` with a CC event therefore returns `unsupported-cc-recording`.
-Parameter recording through native MIDI routing remains a separate integration
-choice; this device does not claim to insert CC envelopes through a nonexistent
-Clip method. Clip note dictionaries also do not carry a per-note MIDI channel;
-configure the track's MIDI routing to match the shared channel mapping.
+## Record and edit a lighting performance
+
+1. Select a cue page in Studio. In **Connections → Ableton Live**, enable the
+   bridge, choose **Bridge · confirmed clip writes** and pair the track with a
+   Session clip slot or an Arrangement clip. Use zero-based indices. Save and
+   start. The saved show includes the generated note numbers, CCs and pairing.
+2. The 8×8 grid maps to Drum Rack pitches 36–99, with the upper-left pad at 92.
+   Insufficient space and incompatible fields appear under **Unassigned cue
+   and parameter mappings** after saving. Existing assignments reserve their
+   pitches. Disable automatic mapping to maintain your own layout, or clear
+   **Enabled** on an individual row to reserve it without responding. Moving an
+   assignment changes which notes existing clips address.
+3. Record or overdub the paired MIDI clip on its armed track. A cue launch adds
+   a note. A held release sets that note’s length. Timed launches carry their
+   musical duration. Explicit launch overrides and parameter changes add
+   short notes on dedicated pitches. **Pitch selects the parameter, velocity
+   supplies its value.** Velocity 1 is the low endpoint, 64 the midpoint and
+   127 the high endpoint. Integers and enum choices snap, booleans switch at
+   the midpoint. Note-off for a parameter sample leaves the last value in
+   effect. A parameter arriving before its launch applies when the cue starts.
+4. Open the clip’s piano roll to move cue starts, resize held notes, edit
+   velocities or draw additional samples. In Lighting mode the same recorded
+   notes drive the common cue and parameter handlers when the clip plays.
+   Native CC input continues to work with its original 0–127 range. Choose
+   the separate **MIDI · delivery only** recording route for native CC
+   automation, with a routed MIDI output and automation recording enabled.
+5. After recording finishes enter an Arrangement start in quarter-note beats
+   (beat 0 begins the song), then choose **Place clip in Arrangement**. The
+   bridge copies the paired clip to the same track and refuses overlap with
+   an existing Arrangement clip. The copy is independent of its source. To
+   record against an existing Arrangement clip, pair **Arrangement clip** and
+   enable global recording while that clip is playing on the armed track.
+6. To follow an existing instrument part, route a copy of its MIDI to a
+   separate monitored lighting track and assign that track's note and CC
+   numbers in Studio. The music track can continue feeding its instrument.
+   With stored lighting clips, use Live's ordinary Session or Arrangement
+   transport. Each participating computer needs its own routed MIDI or
+   companion callback. Beat synchronization alone carries no note data.
+
+One bridge channel has 128 pitches. The 64 Drum Rack pitches leave 64 automatic
+parameter lanes. Scalar numeric parameters need bounds or a recommended
+range. Enum lanes support up to 127 choices. Color components, arbitrary
+vectors and ranges need separate scalar controls. One note stream per cue
+addresses the latest running activation for parameter editing. Simultaneous
+independently edited voices of the same cue need separate cue mappings.
+Clip note dictionaries use the track's routed MIDI channel.
 
 ## HTTP and IPC protocol
 
@@ -109,8 +149,9 @@ most 32 pending Max executions.
 | Operation | Payload |
 | --- | --- |
 | `inspect` | `{"expected-bridge-id":"tolglow-m4l","sync-session-id":"studio-run-uuid"}` establishes callback ownership after Max acknowledges |
-| `configure-destination` | Zero-based track/clip-slot indices; optional Rack index and expected names |
+| `configure-destination` | Track index plus exactly one of `clip-slot-index` or `arrangement-index`, optional Rack index and expected names |
 | `record-event` | Existing protocol-v1 `live/record-event` intent, optionally augmented with `song-beat` and `instance-id` |
+| `place-in-arrangement` | `{"destination-id":"clip:42","song-beat":32}` |
 | `pad-page` | `{"pads":[...],"clip-color":16711680}`; clip color optional |
 | `handoff` | `{"mode":"lighting"}` or `{"mode":"live"}` |
 
@@ -183,15 +224,12 @@ The adapter uses these official Cycling ’74 pages, inspected on 2026-11-21:
 - [JavaScript LiveAPI](https://docs.cycling74.com/apiref/js/liveapi/): object
   IDs, `get`/`set`/`call`, and the low-priority scheduling requirement.
 
-`max_adapter.js` isolates the host dictionary codec. Its current implementation
-passes a JSON dictionary string to note methods and accepts JSON or named Max
-dictionary results. The official pages establish the dictionary parameter
-schema, but an official JavaScript serialization example and an actual Max host
-execution were not verified here. **That codec, active-recording note edits,
-device freezing, playback/record timing, Drum Rack display behavior and physical
-Push mode handoff remain real-host acceptance requirements.** The tests below
-establish source/protocol behavior, not that Live accepted the host-specific
-dictionary representation.
+The Max JS adapter passes a JavaScript object as the note dictionary and reads
+JSON or named Max dictionary responses. The JS host calling convention is
+demonstrated in the [clip-generation example](https://adammurray.link/max-for-live/js-in-live/generating-midi-clips/)
+and the [Arrangement clip reference example](https://cycling74.com/forums/syntax-for-duplicate_clip_to_arrangement).
+Device freezing, playback timing, editing while actively recording, Drum Rack
+display colors and physical Push handoff still require a Live installation.
 
 ## Run the source tests
 
