@@ -67,7 +67,7 @@ export class RigEditorInput {
     if (this.identity !== identity || snapshot?.editor?.tool !== this.snapshot?.editor?.tool) this.cancel();
     this.identity = identity; this.snapshot = snapshot;
     const active = Boolean(snapshot?.editor && snapshot.editor.tool !== 'navigate');
-    this.engine.setInteractionActive?.(active);
+    if (this.interacting !== active) {this.interacting = active; this.engine.setInteractionActive?.(active);}
     this.canvas.style.cursor = !active ? '' : snapshot.editor.tool === 'draw' ? 'crosshair' : 'grab';
   }
   down(event) {
