@@ -160,7 +160,7 @@
         (#{"/" "/push-display" "/repl"} uri) (response/content-type "text/html; charset=utf-8")))))
 
 (defn- routes [{:keys [snapshot! definition! export! submit! heartbeat! provider-get! provider-put! chat!
-                      chat-history! chat-select! fixture! audio! sync! waveform! patch! repl! repl-eval! workspace! terminal! sensor! app-agent! calibration!]}]
+                      chat-history! chat-select! fixture! audio! sync! waveform! expressive! patch! repl! repl-eval! workspace! terminal! sensor! app-agent! calibration!]}]
   (fn [{:keys [uri request-method json-params query-params] :as request}]
     (case request-method
       :get
@@ -253,6 +253,9 @@
                                       (json-response 503 {:message "REPL unavailable"}))
         (and repl! (#{"/api/repl/session" "/api/repl/scratch" "/api/repl/interrupt"} uri))
         (json-response 200 (repl! (keyword (subs uri 10)) json-params))
+        (= uri "/api/expressive/preview")
+        (if expressive! (json-response 200 (expressive! json-params))
+            (json-response 503 {:message "Expressive mapping preview unavailable"}))
         (and waveform! (= uri "/api/waveforms/preview"))
         (json-response 200 (waveform! :preview json-params))
         (= uri "/api/providers") (if provider-put! (json-response 200 (provider-put! json-params))

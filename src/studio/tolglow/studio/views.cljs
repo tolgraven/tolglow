@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-library :as fixture-library]
@@ -272,6 +273,7 @@
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [interop/preview (:show db)]
+   [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
       [:label "Work light"

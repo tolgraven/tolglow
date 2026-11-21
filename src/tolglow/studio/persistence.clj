@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [afterglow.control.model :as control]
             [afterglow.control.system :as system]
+            [afterglow.control.devices.expressive :as expressive]
             [afterglow.reactive.registry :as reactive-registry]
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
@@ -67,13 +68,6 @@
     (doseq [[index child] (map-indexed vector value)] (portable! child (conj path index) (inc depth)))
     :else (fail! path "Expected portable EDN; functions, refs, records, symbols and Java objects are forbidden")))
 
-(defn- effect-for [registry cue]
-  (if-let [version (:effect-version cue)]
-    (or (get-in registry [:versions [:effects (:effect-id cue) version]])
-        (let [current (get-in registry [:effects (:effect-id cue)])]
-          (when (= version (:version current)) current)))
-    (get-in registry [:effects (:effect-id cue)])))
-
 (defn- validate-registry! [r]
   (check! (map? r) [:registry] "Registry must be a map")
   (check! (every? #{:effects :cues :fixtures :versions :revision :extensions} (keys r))
@@ -100,9 +94,9 @@
                      (for [[[k entry-id version] _] (:versions r) :when (and (= kind k) (= id entry-id))] version))
               [:registry kind id :version] "Current version precedes recorded history"))
     (doseq [[id cue] (:cues r)]
-      (let [effect (effect-for r cue)]
+      (let [effect (registry/cue-effect r cue)]
         (check! effect [:registry :cues id :effect-id] "Cue references an unavailable effect version")
-        (check-errors! (registry/validate-params (:params effect {}) (:params cue {})) [:registry :cues id])))))
+        (check-errors! (registry/validate-cue-params effect cue) [:registry :cues id])))))
 
 (defn- timer! [timer path]
   (check! (and (map? timer) (registry/finite-number? (:started-at timer))) path "Timer needs a finite origin")
@@ -237,6 +231,10 @@
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (when (contains? (:settings model) :expressive)
+    (try (expressive/normalize-config (get-in model [:settings :expressive]))
+         (catch clojure.lang.ExceptionInfo error
+           (check-errors! (:errors (ex-data error)) [:settings :expressive]))))
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))

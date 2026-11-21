@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 1dcce88fa071c4c9c3c5a999f293ff8e18f6c34e
+          ref: c1badfdb6e93d9a51650bae54cef0babf83fa5c6
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 1dcce88fa071c4c9c3c5a999f293ff8e18f6c34e
+          ref: c1badfdb6e93d9a51650bae54cef0babf83fa5c6
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -99,6 +99,12 @@ jobs:
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
+      - name: Run actual preview shader and worker regressions
+        working-directory: tolglow
+        run: |
+          npx --no-install playwright-core install --with-deps chromium
+          export CHROMIUM_PATH="$(node --input-type=module -e 'import {chromium} from "playwright-core"; process.stdout.write(chromium.executablePath())')"
+          npm run preview:test
       - name: Run re-frame tests and production build
         working-directory: tolglow
         run: |

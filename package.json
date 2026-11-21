@@ -6,7 +6,7 @@
     "studio:build": "npm run preview:build && shadow-cljs release studio",
     "studio:dev": "shadow-cljs watch studio",
     "studio:check": "shadow-cljs compile studio",
-    "studio:test": "shadow-cljs compile studio-test",
+    "studio:test": "shadow-cljs compile studio-test && node target/studio-tests.js",
     "preview:build": "node src/engines/preview/build.mjs",
     "preview:test": "node --test src/engines/preview/*.test.js src/engines/preview/*.test.mjs"
   },
