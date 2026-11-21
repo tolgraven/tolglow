@@ -9,7 +9,7 @@
            "tolglow/test/js/ableton-live/parameter_observers.test.js"]
    :depends-on [:integration/live-bridge-assets-v1]
    :acceptance ["Observe actual DeviceParameter.value on change" "Keep stable nested-rack paths, native ranges and names in saved show settings" "Disarm replaced or renamed sources and release all observer subscriptions"]
-   :evidence ["The behavioral Max host learned a nested Rack parameter, routed its native value through Ring and the patchbay to the running cue, verified its saved descriptor and released subscriptions on forget."
+   :evidence ["The behavioral Max host learned a nested Rack parameter, routed its native value through Ring and the patchbay to the running cue, reloaded it from a complete Transit show, and released all subscriptions on forget. A Chromium touch-viewport test learned and removed the source through the production Studio UI."
               "resources/devices/ableton-live/README.md"]}
   {:id :application/configured-startup
    :kind :implementation :status :done :owner nil

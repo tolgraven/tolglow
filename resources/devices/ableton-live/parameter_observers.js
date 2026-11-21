@@ -83,15 +83,17 @@
     if (!sources || typeof sources !== "object" || Array.isArray(sources) || Object.keys(sources).length > 64)
       fail("Expected up to 64 named Live parameter sources");
     var next = Object.create(null), self = this, skipped = [];
-    Object.keys(sources).sort().forEach(function (id) {
-      var spec = sources[id];
-      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id) || !spec || !parameterPath.test(spec.path))
+    var ids = Object.keys(sources).sort();
+    ids.forEach(function (id) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id) || !sources[id] || !parameterPath.test(sources[id].path))
         fail("Invalid parameter source name or canonical Live path");
-      var target = self.api(spec.path);
+    });
+    ids.forEach(function (id) {
+      var spec = sources[id];
       // An unrelated Set can be opened between runs. One missing source should
       // not prevent the remaining verified sources from being reconnected.
       try {
-        var actual = self.describe(target);
+        var target = self.api(spec.path), actual = self.describe(target);
         if (actual.name !== spec.name || actual["track-name"] !== spec["track-name"] || actual["device-name"] !== spec["device-name"] ||
             actual.range[0] !== spec.range[0] || actual.range[1] !== spec.range[1] || actual["quantized?"] !== spec["quantized?"])
           fail("The saved parameter identity or range changed");
@@ -109,8 +111,9 @@
         });
       });
     } catch (error) { this.release(next); throw error; }
-    this.release(this.entries);
+    var previous = this.entries;
     this.entries = next;
+    this.release(previous);
     Object.keys(next).forEach(function (id) { self.schedule(id, next[id]); });
     return {observing: Object.keys(next), skipped: skipped};
   };

@@ -181,7 +181,7 @@ most 32 pending Max executions.
 | `configure-destination` | Track index plus exactly one of `clip-slot-index` or `arrangement-index`, optional Rack index and expected names |
 | `record-event` | Existing protocol-v1 `live/record-event` intent, optionally augmented with `song-beat` and `instance-id` |
 | `describe-selected-parameter` | Read the selected control and its durable address |
-| `watch-parameters` | `{"sources":{...}}` replaces the observed source set |
+| `watch-parameters` | `{"sources":{...},"generation":"<request-id>"}` replaces the observed source set and fences old callbacks |
 | `place-in-arrangement` | `{"destination-id":"clip:42","song-beat":32}` |
 | `pad-page` | `{"pads":[...],"clip-color":16711680}`; clip color optional |
 | `handoff` | `{"mode":"lighting"}` or `{"mode":"live"}` |

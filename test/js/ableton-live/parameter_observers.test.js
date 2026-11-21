@@ -79,3 +79,14 @@ test("renamed and missing saved sources remain disconnected without dropping oth
   old(false); flush();
   assert.equal(emissions.length, 1);
 });
+
+test("a malformed replacement keeps current subscriptions and allocates no partial sources", () => {
+  const {observers, handlers, slots} = setup(), spec = observers.selected();
+  observers.replace({existing: spec});
+  assert.throws(() => observers.replace({added: spec, invalid: {path: "no such object"}}), /Invalid/);
+  assert.equal(handlers.size, 1);
+  assert.equal(slots.size, 1);
+  observers.close();
+  assert.equal(handlers.size, 0);
+  assert.equal(slots.size, 0);
+});
