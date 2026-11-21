@@ -3,6 +3,7 @@
             [clojure.data.json :as json]
             [clojure.string :as str]
             [ring.core.protocols :as protocols]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.repl-manager :as repl-manager])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream]))
@@ -22,7 +23,7 @@
          (mapv #(json/read-str (subs % 6) :key-fn keyword)))))
 
 (deftest repl-streams-real-runtime-evaluation-with-stable-identities
-  (let [runtime (studio/create-runtime)]
+  (let [runtime (show/create-runtime)]
     (try
       (let [events (evaluate! runtime {:source "(println \"hello λ\") (:id runtime)"
                                       :request-id "browser-1" :session-id "main"
@@ -34,38 +35,38 @@
         (is (str/includes? (apply str (map :text events)) "hello λ"))
         (is (= (pr-str (:id runtime)) (:value (last (filter #(= "result" (:type %)) events)))))
         (is (not-any? #(= "chat/done" (:type %)) events)))
-      (let [snapshot (studio/repl-action! runtime :snapshot {:session-id "main"})]
+      (let [snapshot (show/repl-action! runtime :snapshot {:session-id "main"})]
         (is (= (:id runtime) (:runtime-id snapshot)))
         (is (= 1 (count (:history snapshot)))))
       (is (= 400 (:status (request runtime "/api/repl/eval"
                                   {:source "(throw (Exception. \"must not run\"))"
                                    :expected-epoch 99 :runtime-id (:id runtime)}))))
-      (is (= 1 (count (:history (repl-manager/snapshot (studio/repls runtime) "main")))))
-      (finally (studio/stop! runtime)))))
+      (is (= 1 (count (:history (repl-manager/snapshot (show/repls runtime) "main")))))
+      (finally (show/stop! runtime)))))
 
 (deftest show-files-restore-repl-text-without-replaying-code
-  (let [runtime (studio/create-runtime)]
+  (let [runtime (show/create-runtime)]
     (try
       (evaluate! runtime {:source "(def saved-value 42) saved-value" :request-id "saved"})
-      (studio/repl-action! runtime :scratch {:source "(+ saved-value 1)" :name "scratch.clj"})
-      (let [saved (studio/export-show runtime)
+      (show/repl-action! runtime :scratch {:source "(+ saved-value 1)" :name "scratch.clj"})
+      (let [saved (show/export-show runtime)
             before (get-in saved [:model :integrations :repl])
-            receipt (studio/submit! runtime :import {:source (pr-str saved)})]
-        (studio/tick! runtime 0)
+            receipt (show/submit! runtime :import {:source (pr-str saved)})]
+        (show/tick! runtime 0)
         (is (= :accepted (:status @receipt)))
-        (let [restored (studio/repl-action! runtime :snapshot {})]
+        (let [restored (show/repl-action! runtime :snapshot {})]
           (is (= :not-started (:status restored)))
           (is (= "(+ saved-value 1)" (get-in restored [:scratch "scratch.clj"])))
           (is (= (get-in before [:sessions "main" :history]) (:history restored))))
         (let [events (evaluate! runtime {:source "(resolve 'saved-value)" :request-id "after-restore"})]
           (is (= "nil" (:result (last events))) "Saved source was not evaluated on restore")))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest detaching-a-popup-does-not-interrupt-its-owned-evaluation
   (let [gate (promise) started (promise) done (promise) observed (atom [])
-        runtime (studio/create-runtime {:repl-options {:session-options {:bindings {'gate gate}}}})]
+        runtime (show/create-runtime {:repl-options {:session-options {:bindings {'gate gate}}}})]
     (try
-      (let [handle (studio/repl-eval! runtime {:source "@gate 42" :request-id "detach"}
+      (let [handle (show/repl-eval! runtime {:source "@gate 42" :request-id "detach"}
                                      #(do (swap! observed conj %) (when (= :started (:type %)) (deliver started true)))
                                      #(deliver done %))]
         (is (= true (deref started 2000 false)))
@@ -73,5 +74,5 @@
         (deliver gate :continue)
         (is (= :completed (:status (deref done 2000 {})))))
       (is (not-any? #(= :result (:type %)) @observed))
-      (is (= "42" (:result (last (:history (studio/repl-action! runtime :snapshot {}))))))
-      (finally (deliver gate :continue) (studio/stop! runtime)))))
+      (is (= "42" (:result (last (:history (show/repl-action! runtime :snapshot {}))))))
+      (finally (deliver gate :continue) (show/stop! runtime)))))

@@ -20,9 +20,10 @@ and shared [v1 contract](../../docs/implementation-contract-v1.md).
 - `composition/` and `automation/` own reusable pure tween/envelope/sequence,
   macro/response and seeded policy logic. Use explicit logical time and RNG.
   Beat/bar/phrase authoring is primary; milliseconds are a boundary representation.
-- `studio.clj` and `studio/` host the model, frame publication, Ring API,
-  composition sessions, output and provider sessions. Keep handler/middleware
-  independent from the server adapter; starting/stopping the host is explicit.
+- `application` and `modules` own ordered config startup and teardown; `show`
+  runs headless and owns frame commits. `studio` binds Ring routes and attaches
+  observers to that same runtime. Keep configured service lifecycles usable
+  from code. Exercise the actual CLI entry points when changing startup.
 - `studio/connections.clj` owns provider/fixture/audio/sync/reactive resources.
   Prepare replacements outside the model lock, commit ownership with model/output,
   and retire or abort resources outside it. Capture/sync resumption follows

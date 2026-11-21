@@ -31,12 +31,12 @@ There is currently one physical sink per Studio process, not implicit fan-out.
 In the REPL:
 
 ```clojure
-(require '[tolglow.studio :as studio])
-(def running (studio/start! {:ola {:host "127.0.0.1" :port 9010
+(require '[tolglow.show :as show])
+(def running (show/start! {:ola {:host "127.0.0.1" :port 9010
                                   :connect-timeout-ms 1000
                                   :write-timeout-ms 25}}))
 ;; Stop sends the host's final blackout, then closes the owned connection.
-(studio/stop! running)
+(show/stop! running)
 ```
 
 The connect and write defaults are each 1000ms. These are transport timeouts,

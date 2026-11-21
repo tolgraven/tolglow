@@ -2,7 +2,7 @@
   "Portable Ring application. Services are explicit callbacks; the HTTP adapter
   does not own the show clock, registry, provider credentials, or effect state."
   (:require [clojure.data.json :as json]
-            [clojure.edn :as edn]
+            [tolglow.data :as data]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
@@ -21,11 +21,6 @@
                               (set? x) (vec x)
                               (map? x) (into {} (map (fn [[k v]] [(if (string? k) k (str k)) v])) x)
                               :else x)) data))
-
-(def keyword-fields
-  #{:op :kind :mode :loop :scope :intent :provider :reload-policy :blend :attribute
-    :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
-    :timebase :operation :retrigger :unit :distribution :match})
 
 (def ^:private transit-type "application/transit+json")
 
@@ -55,17 +50,6 @@
                                (if transit? (transit/encode %) (json/write-str (json-data %)))))))
         response))))
 
-(defn read-edn
-  "Read exactly one EDN definition; no trailing forms or custom readers."
-  [source]
-  (when-not (string? source) (throw (ex-info "Definition source must be text" {})))
-  (with-open [reader (java.io.PushbackReader. (java.io.StringReader. source))]
-    (let [eof (Object.) value (edn/read {:eof eof :readers {}} reader)]
-      (when (or (identical? eof value)
-                (not (identical? eof (edn/read {:eof eof :readers {}} reader))))
-        (throw (ex-info "Expected exactly one EDN definition" {})))
-      value)))
-
 (defn- read-body-text [request]
   (with-open [reader (io/reader (or (:body request) (java.io.StringReader. "")) :encoding "UTF-8")]
     (let [buffer (char-array 4096) text (StringBuilder.)
@@ -82,20 +66,6 @@
             (recur))))
       (str text))))
 
-(defn normalize-json [value]
-  ;; Studio widgets emit textual enum choices. Keep typed extension values
-  ;; (particularly thi.ng.color records) intact while converting those choices.
-  (cond
-    (record? value) value
-    (map? value) (into {} (map (fn [[k v]] [k (cond
-                                                (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
-                                                (and (= k :params) (= v "all")) :all
-                                                (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :verified-axis-fixture-ids :categories} k))
-                                                (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
-                                                :else (normalize-json v))])) value)
-    (vector? value) (mapv normalize-json value)
-    :else value))
-
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -110,7 +80,7 @@
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
                      (not (str/starts-with? (:uri request) "/api/fixtures/")))]
-      (handler (assoc request :json-params (if form? (normalize-json data) data))))))
+      (handler (assoc request :json-params (if form? (data/normalize-json data) data))))))
 
 (defn wrap-errors [handler]
   (fn [request]
@@ -210,7 +180,7 @@
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
-                    (= operation :definition) (assoc :definition (read-edn (:source json-params))))
+                    (= operation :definition) (assoc :definition (data/read-edn (:source json-params))))
           receipt (deref (submit! operation payload) 5000 {:status :pending :message "Command remains queued"})]
       (acknowledgement receipt))))
 

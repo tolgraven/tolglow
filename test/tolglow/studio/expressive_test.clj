@@ -4,6 +4,7 @@
             [afterglow.control.devices.expressive :as mapping]
             [afterglow.control.devices.seaboard :as seaboard]
             [afterglow.control.devices.session :as session]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.expressive :as expressive]
@@ -49,7 +50,7 @@
         (is (= [0 10] (get-in p [:schemas :level :bounds])))))))
 
 (deftest ring-preview-normalizes-policy-and-rejects-unknown-inputs
-  (let [runtime (studio/create-runtime {:workspace-options nil})]
+  (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (let [app (studio/handler runtime)
             response (app (request "/api/expressive/preview"
@@ -66,25 +67,25 @@
                          {:device-id "p" :cue-id :ember :policy {:params {:level {:axis :pressure :curve :wrong}}}}]]
           (is (= 400 (:status (app (request "/api/expressive/preview" payload))))))
         (is (empty? @(:devices runtime)) "Preview never opens hardware"))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest json-settings-save-and-full-show-roundtrip-restore-policy-only
-  (let [runtime (studio/create-runtime {:workspace-options nil})]
+  (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (let [app (web/app {:heartbeat! (fn [_])
                           :submit! (fn [type payload]
-                                     (let [receipt (studio/submit! runtime type payload)]
-                                       (studio/tick! runtime 0) receipt))})
+                                     (let [receipt (show/submit! runtime type payload)]
+                                       (show/tick! runtime 0) receipt))})
             saved (app (request "/api/settings" {:scope :expressive :values config}))
             stored (get-in @(:state runtime) [:model :settings :expressive])]
         (is (= 200 (:status saved)))
         (is (= :slide (get-in stored [:devices :push-main :cues :ember :params :level :axis])))
         (is (= #{:glide} (get-in stored [:devices :push-main :disabled-axes])))
         (is (= :smoothstep (get-in stored [:devices :push-main :params :level :curve])))
-        (let [document (files/read-string (pr-str (studio/export-show runtime)))
+        (let [document (files/read-string (pr-str (show/export-show runtime)))
               restored (files/thaw (demo/model) document)
-              receipt (studio/submit! runtime :import {:source (pr-str document)})]
-          (studio/tick! runtime 1)
+              receipt (show/submit! runtime :import {:source (pr-str document)})]
+          (show/tick! runtime 1)
           (is (= :accepted (:status @receipt)))
           (is (= stored (get-in restored [:settings :expressive])))
           (is (= stored (get-in @(:state runtime) [:model :settings :expressive])))
@@ -94,7 +95,7 @@
         (is (= 422 (:status (app (request "/api/settings" {:scope :expressive
                                                            :values {:devices {:bad {:enabled? "false"}}}})))))
         (is (= stored (get-in @(:state runtime) [:model :settings :expressive]))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest invalid-imported-policy-is-rejected-before-restoring-state
   (let [valid (files/freeze (assoc-in (demo/model) [:settings :expressive] config))
@@ -122,11 +123,11 @@
       (is (empty? (:mappings draft))))))
 
 (deftest settings-and-connected-preview-drive-the-same-real-device-instance
-  (let [runtime (studio/create-runtime {:workspace-options nil})
+  (let [runtime (show/create-runtime {:workspace-options nil})
         receive (atom nil)
         dispatch! (fn [type payload]
-                    (let [receipt (studio/submit! runtime type payload)]
-                      (studio/tick! runtime 0) @receipt))
+                    (let [receipt (show/submit! runtime type payload)]
+                      (show/tick! runtime 0) @receipt))
         device (seaboard/connect!
                 {:session-id "roli-session" :mapping-id "roli-policy"
                  :zone {:manager-channel 0 :member-channels [1 2]} :cue-id :ember
@@ -157,4 +158,4 @@
           (is (empty? (:mappings (preview))))
           (@receive [0x81 60 0])
           (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))))
-      (finally (session/close! device) (reset! (:devices runtime) {}) (studio/stop! runtime)))))
+      (finally (session/close! device) (reset! (:devices runtime) {}) (show/stop! runtime)))))

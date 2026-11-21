@@ -11,7 +11,7 @@
     (throw (ex-info "Module needs a unique keyword ID and a setup function" {:module id})))
   (assoc registry id setup))
 
-(defn- settings [config id]
+(defn settings [config id]
   (let [v (get config id {})]
     (cond
       (boolean? v) {:enabled v}

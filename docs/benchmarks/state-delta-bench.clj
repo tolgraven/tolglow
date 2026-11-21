@@ -1,7 +1,8 @@
 ;; Run from the project root with the normal deps.edn classpath:
 ;; clojure -M docs/benchmarks/state-delta-bench.clj > /tmp/state-delta-report.edn
 (require '[clojure.data.json :as json]
-         '[tolglow.studio :as studio]
+         '[tolglow.show :as show]
+            [tolglow.studio :as studio]
          '[tolglow.studio.demo :as demo])
 
 (defn large-model []
@@ -38,20 +39,20 @@
     {:samples n :min (first values) :p50 (nth values (quot n 2))
      :p95 (nth values (min (dec n) (int (* n 0.95)))) :max (peek values)}))
 
-(let [runtime (studio/create-runtime {:model (large-model) :workers 2 :workspace-options nil})
+(let [runtime (show/create-runtime {:model (large-model) :workers 2 :workspace-options nil})
       app (studio/handler runtime)]
   (try
-    (let [launch (studio/submit! runtime {:op :cue/launch :cue-id :ember})
-          _ (studio/tick! runtime 0)
+    (let [launch (show/submit! runtime {:op :cue/launch :cue-id :ember})
+          _ (show/tick! runtime 0)
           id (:instance-id @launch)
           first (request app "projection=delta-v1")
           measurements
           (loop [index 0 token (get-in first [:body "token"]) previous (:body (request app "")) result []]
             (if (= index 40) result
               (let [editing? (odd? index)
-                    command (when editing? (studio/submit! runtime {:op :param/set :instance-id id :param :level
+                    command (when editing? (show/submit! runtime {:op :param/set :instance-id id :param :level
                                                                     :value (/ (mod index 10) 10.0)}))
-                    _ (studio/tick! runtime (* 25 (inc index)))
+                    _ (show/tick! runtime (* 25 (inc index)))
                     _ (when command (when-not (= :accepted (:status @command)) (throw (ex-info "Edit rejected" @command))))
                     full (request app "")
                     coarse (request app (str "runtime-id=" (get previous "runtime-id") "&epoch=" (get previous "epoch")
@@ -73,4 +74,4 @@
             :delta-request-ms (summary (map :delta-request-ms (drop 5 measurements)))
             :all-deltas? (every? #(= "patch" (:delta-kind %)) measurements)
             :measurements measurements}))
-    (finally (studio/stop! runtime) (shutdown-agents))))
+    (finally (show/stop! runtime) (shutdown-agents))))

@@ -1,6 +1,7 @@
 (ns tolglow.studio.waveforms-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.waveforms :as waveforms]
             [tolglow.studio.audio :as audio]
@@ -216,11 +217,11 @@
       (finally (.countDown release) ((:close! transport) handle)))))
 
 (deftest live-preview-through-ring-reflects-owner-edits-without-an-extra-frame
-  (let [runtime (studio/create-runtime {:workspace-options nil})
+  (let [runtime (show/create-runtime {:workspace-options nil})
         definition (get-in (fixture) [:model :instances "0:1" :definition])
         apply! (fn [type payload t]
-                 (let [receipt (studio/submit! runtime type payload)]
-                   (studio/tick! runtime t) @receipt))
+                 (let [receipt (show/submit! runtime type payload)]
+                   (show/tick! runtime t) @receipt))
         preview! (fn [id]
                    (let [result ((studio/handler runtime)
                                  {:request-method :post :uri "/api/waveforms/preview" :headers {"host" "localhost"}
@@ -238,4 +239,4 @@
         (is (identical? before @(:state runtime)))
         (is (= :accepted (:status (apply! :command {:op :param/set :instance-id id :param :width :value 0.8} 100))))
         (is (= [1.0 1.0 1.0 1.0 1.0] (:preview-samples (preview! id)))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))

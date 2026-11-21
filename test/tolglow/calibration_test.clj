@@ -1,5 +1,6 @@
 (ns tolglow.calibration-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [tolglow.data :as data]
+             [clojure.test :refer [deftest is testing]]
             [clojure.edn :as edn]
             [clojure.data.json :as json]
             [afterglow.render.frame :as render]
@@ -7,6 +8,7 @@
             [tolglow.calibration.session :as scan]
             [tolglow.studio.calibration :as host]
             [tolglow.studio.persistence :as files]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.output-scheduler :as scheduler]
@@ -110,10 +112,10 @@
       (finally (scheduler/close! owner)))))
 
 (deftest studio-calibration-lifecycle-preserves-human-instances-and-portable-evidence
-  (let [physical (atom 0) runtime (studio/create-runtime {:sink {:send! (fn [_ _])} :independent-output? true
+  (let [physical (atom 0) runtime (show/create-runtime {:sink {:send! (fn [_ _])} :independent-output? true
                                                         :physical-now-ms #(deref physical) :workspace-options nil})
         apply! (fn [type payload time]
-                 (let [reply (studio/submit! runtime type payload)] (swap! physical inc) (studio/tick! runtime time) @reply))]
+                 (let [reply (show/submit! runtime type payload)] (swap! physical inc) (show/tick! runtime time) @reply))]
     (try
       (is (= :accepted (:status (apply! :command {:op :cue/launch :cue-id :ember} 0))))
       (let [human (set (keys (get-in @(:state runtime) [:model :instances])))]
@@ -121,7 +123,7 @@
         (is (= :accepted (:status (apply! :calibration {:op :step :session-id "scan-1" :step-index 0} 0))))
         (is (nil? (get-in @(:state runtime) [:status :error])))
         (scheduler/publish! (:publisher runtime))
-        (studio/tick! runtime 25)
+        (show/tick! runtime 25)
         (let [scan (host/current (:model @(:state runtime)))]
           (is (= 1 (count (:receipts scan)))) (is (:eligible? (first (:receipts scan))))
           (is (= 2 (count (get-in @(:state runtime) [:model :instances])))))
@@ -132,42 +134,42 @@
         (is (not-any? #(= "rig-calibration/scan-1" %) (keys (get-in @(:state runtime) [:model :registry :effects]))))
         (is (= :accepted (:status (apply! :calibration (assoc options :op :start :session-id "scan-2") 1200))))
         (is (= :accepted (:status (apply! :calibration {:op :step :session-id "scan-2" :step-index 0} 1200))))
-        (reset! physical 15100) (studio/tick! runtime 1250)
+        (reset! physical 15100) (show/tick! runtime 1250)
         (is (= :expired (:status (host/current (:model @(:state runtime))))))
         (is (= human (set (keys (get-in @(:state runtime) [:model :instances]))))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest ring-calibration-clock-and-camera-json-contract
-  (let [runtime (studio/create-runtime {:workspace-options nil})]
+  (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (let [response ((studio/handler runtime) {:request-method :get :uri "/api/calibration"})
             body (json/read-str (:body response) :key-fn keyword)]
         (is (= 200 (:status response))) (is (false? (:output-capable? body))) (is (number? (:physical-now-ms body))))
-      (let [reply (studio/submit! runtime :calibration (assoc options :op :start))]
-        (studio/tick! runtime 0) (is (= :rejected (:status @reply))))
-      (is (= :lens (:kind (web/normalize-json {:kind "lens"}))))
-      (is (= [:head-1] (:verified-axis-fixture-ids (web/normalize-json {:verified-axis-fixture-ids ["head-1"]}))))
-      (finally (studio/stop! runtime)))))
+      (let [reply (show/submit! runtime :calibration (assoc options :op :start))]
+        (show/tick! runtime 0) (is (= :rejected (:status @reply))))
+      (is (= :lens (:kind (data/normalize-json {:kind "lens"}))))
+      (is (= [:head-1] (:verified-axis-fixture-ids (data/normalize-json {:verified-axis-fixture-ids ["head-1"]}))))
+      (finally (show/stop! runtime)))))
 
 (deftest evidence-survives-receipt-ring-rollover-and-restored-output-is-disarmed
   (let [captured (captured-session)
         older (assoc captured :receipts [])]
     (is (get-in (scan/solve older []) [:candidates 0 :reviewable?]))
     (is (seq (get-in older [:observations 0 :evidence :receipt-proof]))))
-  (let [runtime (studio/create-runtime {:sink {:send! (fn [_ _])} :independent-output? true
+  (let [runtime (show/create-runtime {:sink {:send! (fn [_ _])} :independent-output? true
                                        :physical-now-ms (constantly 0) :workspace-options nil})]
     (try
       (doseq [payload [(assoc options :op :start) {:op :step :session-id "scan-1" :step-index 0}]]
-        (let [reply (studio/submit! runtime :calibration payload)] (studio/tick! runtime 0) (is (= :accepted (:status @reply)))))
+        (let [reply (show/submit! runtime :calibration payload)] (show/tick! runtime 0) (is (= :accepted (:status @reply)))))
       (let [active (:model @(:state runtime)) restored (host/disarm-restored active)]
         (is (= :suspended (:status (host/current restored))))
         (is (empty? (:instances restored)))
         (is (= (:plan (host/current active)) (:plan (host/current restored))))
         (let [source (files/write-string active)
-              reply (studio/submit! runtime :import {:source source})]
-          (studio/tick! runtime 25)
+              reply (show/submit! runtime :import {:source source})]
+          (show/tick! runtime 25)
           (is (= :accepted (:status @reply)) (pr-str @reply))
           (is (empty? (get-in @(:state runtime) [:model :instances])))
           (is (= :suspended (:status (host/current (:model @(:state runtime))))))
           (is (= (:plan (host/current active)) (:plan (host/current (:model @(:state runtime))))))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))

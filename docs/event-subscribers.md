@@ -5,7 +5,7 @@ A subscriber matches a committed show event, captures an ordered list of actions
 A kick can launch a random one-shot from two cue IDs. Half a bar later, it can bring the running intensity effects to full opacity.
 
 ```clojure
-(studio/register-event-subscriber!
+(show/register-event-subscriber!
  runtime
  {:id :kick-accents
   :enabled? true
@@ -48,7 +48,7 @@ A named function can use `{:type :var :symbol "my.show/on-accent"}`. Host-provid
 
 ```clojure
 (let [intensity 0.8]
-  (studio/reg-event-subscriber!
+  (show/reg-event-subscriber!
    runtime
    {:id :stash-accent :match {:type :audio/kick}
     :bindings {"gain" intensity}
@@ -57,7 +57,7 @@ A named function can use `{:type :var :symbol "my.show/on-accent"}`. Host-provid
                             (* gain (get-in event [:data :confidence] 1))))}))
 ```
 
-Built-in actions and host-registered functions work by default. To execute source and Var definitions from the web editor or a saved show, launch Studio with `--trust-event-callbacks true` or pass `:event-callback-options {:trusted-source? true}` to `studio/start!`. This enables JVM code from those definitions for the running host. A host with an explicit `:reactive-options {:trusted-source? true}` shares that policy unless overridden in `:event-callback-options`. Two daemon workers run callbacks with a bounded queue. Expired, failed and stale callbacks leave the frame owner free to continue. The default deadline is one second. Interruptible user code can clean up on cancellation. A callback that ignores interruption can occupy its worker until it returns.
+Built-in actions and host-registered functions work by default. To execute source and Var definitions from the web editor or a saved show, launch Studio with `--trust-event-callbacks true` or pass `:event-callback-options {:trusted-source? true}` to `show/start!`. This enables JVM code from those definitions for the running host. A host with an explicit `:reactive-options {:trusted-source? true}` shares that policy unless overridden in `:event-callback-options`. Two daemon workers run callbacks with a bounded queue. Expired, failed and stale callbacks leave the frame owner free to continue. The default deadline is one second. Interruptible user code can clean up on cancellation. A callback that ignores interruption can occupy its worker until it returns.
 
 ## Studio API
 

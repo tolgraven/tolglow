@@ -1,6 +1,8 @@
 (ns tolglow.studio.event-subscribers-test
   (:require [clojure.test :refer [deftest is testing]]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.application :as app]
             [tolglow.clock :as clock]
             [tolglow.integrations.analysis-test :as audio-test]
             [tolglow.studio.demo :as demo]
@@ -64,28 +66,28 @@
     (is (thrown? Exception (sub/configure model {:op :save :subscriber (listener [(assoc launch :delay {:ms 200})])})))))
 
 (deftest ring-registration-and-real-host-capture-callback-launch-unplaced-effect
-  (let [runtime (studio/create-runtime) app (studio/handler runtime)
+  (let [runtime (show/create-runtime) app (studio/handler runtime)
         defn (listener [{:op :effect/launch :select {:ids [:ember] :pick :first}}])
         req {:uri "/api/event-subscribers" :headers {"content-type" "application/transit+json"
                                                      "accept" "application/transit+json"}}]
     (try
       (let [receipt (future (app (assoc req :request-method :post
                                         :body (java.io.StringReader. (wire/encode {:op :save :subscriber defn :expected-epoch 0})))))]
-        (loop [n 0] (when (and (not (realized? receipt)) (< n 200)) (studio/tick! runtime 0) (Thread/sleep 5) (recur (inc n))))
+        (loop [n 0] (when (and (not (realized? receipt)) (< n 200)) (show/tick! runtime 0) (Thread/sleep 5) (recur (inc n))))
         (is (= :accepted (:status (wire/decode (:body (deref receipt 1000 {})))))))
       (is (= [defn] (:subscribers (wire/decode (:body (app (assoc req :request-method :get)))))))
       (let [analyzed (audio-test/run-signal audio-test/kick-train 1300)]
         (is (= 1 (count (audio-test/events-of analyzed :audio/kick))))
-        (is (true? ((:events! (studio/audio-callbacks runtime)) (:events analyzed)))))
-      (studio/tick! runtime 1)
-      (is (empty? (:instances (studio/snapshot runtime))))
-      (studio/tick! runtime 25)
-      (let [inst (first (:instances (studio/snapshot runtime)))]
+        (is (true? ((:events! (show/audio-callbacks runtime)) (:events analyzed)))))
+      (show/tick! runtime 1)
+      (is (empty? (:instances (show/snapshot runtime))))
+      (show/tick! runtime 25)
+      (let [inst (first (:instances (show/snapshot runtime)))]
         (is (= :ember (:effect-id inst)))
         (is (nil? (:cue-id inst)))
         (is (= :event-subscriber (get-in inst [:source :adapter])))
-        (is (= 1 (count (:instances (:model (studio/export-show runtime)))))))
-      (finally (studio/stop! runtime)))))
+        (is (= 1 (count (:instances (:model (show/export-show runtime)))))))
+      (finally (show/stop! runtime)))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)
@@ -93,25 +95,25 @@
                      (deliver entered true) (deref release 3000 nil)
                      (-> context (assoc-in [:variables :melody] (:type event))
                          (assoc :actions [launch])))
-        runtime (studio/create-runtime {:event-callback-options {:callbacks {:performer middleware} :timeout-ms 4000}})]
+        runtime (show/create-runtime {:event-callback-options {:callbacks {:performer middleware} :timeout-ms 4000}})]
     (try
-      (let [receipt (studio/register-event-subscriber! runtime (listener [{:op :callback :implementation {:type :registered :id :performer}}]))]
-        (studio/tick! runtime 0)
+      (let [receipt (show/register-event-subscriber! runtime (listener [{:op :callback :implementation {:type :registered :id :performer}}]))]
+        (show/tick! runtime 0)
         (is (= :accepted (:status @receipt))))
-      ((:events! (studio/audio-callbacks runtime)) [{:type :audio/kick}])
-      (studio/tick! runtime 10)
-      (studio/tick! runtime 20)
+      ((:events! (show/audio-callbacks runtime)) [{:type :audio/kick}])
+      (show/tick! runtime 10)
+      (show/tick! runtime 20)
       (is (true? (deref entered 1000 false)))
-      (let [n (:frame-number (studio/snapshot runtime))]
-        (studio/tick! runtime 30)
-        (is (< n (:frame-number (studio/snapshot runtime)))))
+      (let [n (:frame-number (show/snapshot runtime))]
+        (show/tick! runtime 30)
+        (is (< n (:frame-number (show/snapshot runtime)))))
       (deliver release true)
       (loop [i 0]
-        (when (and (< i 100) (empty? (:instances (studio/snapshot runtime))))
-          (Thread/sleep 4) (studio/tick! runtime (+ 40 i)) (recur (inc i))))
+        (when (and (< i 100) (empty? (:instances (show/snapshot runtime))))
+          (Thread/sleep 4) (show/tick! runtime (+ 40 i)) (recur (inc i))))
       (is (= :audio/kick (get-in @(:state runtime) [:model :variables :melody])))
-      (is (= 1 (count (:instances (studio/snapshot runtime)))))
-      (finally (deliver release true) (studio/stop! runtime)))))
+      (is (= 1 (count (:instances (show/snapshot runtime)))))
+      (finally (deliver release true) (show/stop! runtime)))))
 
 (deftest all-selection-chunks-preserve-chosen-targets-and-save-cursor
   (let [model (-> (configured [{:op :cue/launch :select {:pick :all}}])
@@ -128,32 +130,32 @@
     (is (empty? (get-in finished [:event-subscribers :runs])))))
 
 (deftest callback-failure-is-local-and-registered-source-fn-can-be-restored
-  (let [author (studio/create-runtime)
+  (let [author (show/create-runtime)
         document (try
                    (let [level 7
-                         receipt (studio/reg-event-subscriber!
+                         receipt (show/reg-event-subscriber!
                                   author {:id :kicks :match {:type :audio/kick}
                                           :bindings {"n" level}
                                           :middleware (fn [context event]
                                                         (assoc-in context [:variables :count] n))})]
-                     (studio/tick! author 0)
+                     (show/tick! author 0)
                      (is (= :accepted (:status @receipt)))
                      (files/write-string (:model @(:state author))))
-                   (finally (studio/stop! author)))
+                   (finally (show/stop! author)))
         restored (files/thaw (demo/model) (files/read-string document))]
-    (is (= {:trusted-source? true} (:event-callback-options (studio/parse-options ["--trust-event-callbacks" "true"]))))
-    (is (thrown? Exception (studio/parse-options ["--trust-event-callbacks" "not-a-boolean"])))
+    (is (= {:trusted-source? true} (:event-callback-options (app/parse-options ["--trust-event-callbacks" "true"]))))
+    (is (thrown? Exception (app/parse-options ["--trust-event-callbacks" "not-a-boolean"])))
     (doseq [trusted? [false true]]
-      (let [runtime (studio/create-runtime (cond-> {:model restored} trusted? (assoc :event-callback-options {:trusted-source? true})))]
+      (let [runtime (show/create-runtime (cond-> {:model restored} trusted? (assoc :event-callback-options {:trusted-source? true})))]
         (try
-          ((:events! (studio/audio-callbacks runtime)) [{:type :audio/kick}])
-          (studio/tick! runtime 1)
-          (studio/tick! runtime 2)
+          ((:events! (show/audio-callbacks runtime)) [{:type :audio/kick}])
+          (show/tick! runtime 1)
+          (show/tick! runtime 2)
           (loop [n 0]
             (when (and (< n 150) (seq (get-in @(:state runtime) [:model :event-subscribers :runs])))
-              (Thread/sleep 5) (studio/tick! runtime (+ 3 n)) (recur (inc n))))
+              (Thread/sleep 5) (show/tick! runtime (+ 3 n)) (recur (inc n))))
           (if trusted?
             (is (= 7 (get-in @(:state runtime) [:model :variables :count])))
             (is (re-find #"disabled" (get-in @(:state runtime) [:model :event-subscribers :last-error :message] ""))))
-          (is (nil? (get-in (studio/snapshot runtime) [:status :error])))
-          (finally (studio/stop! runtime)))))))
+          (is (nil? (get-in (show/snapshot runtime) [:status :error])))
+          (finally (show/stop! runtime)))))))

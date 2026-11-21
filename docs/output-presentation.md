@@ -161,7 +161,7 @@ show state in launch/priority order; a separate output thread serializes packets
 so they cannot overtake each other on the wire. Neither thread owns the other
 thread's mutable buffers. The output thread never takes the show-owner lock.
 
-`studio/start!` starts both schedules. `create-runtime` remains inert for tests;
+`show/start!` starts both schedules. `create-runtime` remains inert for tests;
 `:independent-output? true` enables the same handover with manually driven ticks.
 The sender consumes at most three completions per deadline. Excess pending
 completions coalesce to the newest three. Epoch, fixture patch, policy or blackout
