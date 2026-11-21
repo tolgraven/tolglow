@@ -15,7 +15,7 @@
 
 (defn- with-packaged-worker [source f]
   (let [archive (File/createTempFile "tolglow-display-fixture-" ".jar")
-        resource-name "tolglow/integrations/display_bridge/worker.js"
+        resource-name "devices/push-display/worker.cjs"
         original-resource io/resource]
     (try
       (with-open [jar (JarOutputStream. (io/output-stream archive))]
@@ -89,7 +89,7 @@
     (is (= [:term :kill] @signals))))
 
 (deftest packaged-production-worker-captures-with-explicit-module-and-cleans-its-file
-  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+  (let [source (slurp (io/resource "devices/push-display/worker.cjs"))]
     (with-packaged-worker source
       #(with-playwright-peer :ready
          (fn [options]
@@ -106,7 +106,7 @@
              ((:close! capture) handle)))))))
 
 (deftest packaged-worker-startup-failures-clean-every-owned-resource
-  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+  (let [source (slurp (io/resource "devices/push-display/worker.cjs"))]
     (with-packaged-worker source
       #(do
          (let [before (temp-workers)
@@ -125,7 +125,7 @@
                (is (= before (temp-workers))))))))))
 
 (deftest cancelling-packaged-worker-startup-cleans-process-and-extraction
-  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+  (let [source (slurp (io/resource "devices/push-display/worker.cjs"))]
     (with-packaged-worker source
       #(with-playwright-peer :blocked
          (fn [{:keys [observed] :as options}]

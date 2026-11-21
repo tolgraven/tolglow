@@ -380,6 +380,33 @@
       (is (true? (get-in (sync/clock-at manager 100) [:clock :playing?])))
       (finally (.countDown gate) (sync/close! manager)))))
 
+(deftest late-live-inspection-cannot-rearm-a-clip-after-pushed-stop
+  (let [reading (promise) release (promise) inspections (atom 0)
+        status {:destination-id "clip:old" :beat 0 :track-armed? true :recording? true :writable? true}
+        transport {:open! (fn [_] :opened) :close! (fn [_])
+                   :request! (fn [_ id op _]
+                               (when (= op :inspect)
+                                 (swap! inspections inc)
+                                 (deliver reading true)
+                                 (deref release 4000 nil))
+                               {:id id :status :executed :result status})}
+        manager (sync/create-manager {:now-ms (constantly 0) :config {:live {:enabled? true}}
+                                      :live-factory (fn [_] transport)})]
+    (try
+      (sync/start! manager {:events! identity})
+      (is (true? (deref reading 2000 false)))
+      (let [stopped (assoc status :track-armed? false :recording? false)]
+        (is (sync/ingest! manager {:type :live/status :status stopped}))
+        (is (sync/flush! manager))
+        (deliver release true)
+        (is (loop [deadline (+ (System/nanoTime) 3000000000)]
+              (cond (pos? (get-in (sync/status manager) [:metrics :stale-live-statuses] 0)) true
+                    (>= (System/nanoTime) deadline) false
+                    :else (do (Thread/sleep 10) (recur deadline)))))
+        (is (= stopped (select-keys (:recording (sync/status manager)) (keys stopped))))
+        (is (= 1 @inspections)))
+      (finally (deliver release true) (sync/close! manager)))))
+
 (deftest live-parameter-source-preserves-native-units-and-typed-restore-data
   (let [spec {:path "live_set tracks 0 devices 1 chains 2 devices 3 parameters 4"
               :track-name "Keys" :device-name "Synth" :name "Cutoff" :range [20 20000] :quantized? false}

@@ -1,10 +1,8 @@
 # Tolglow / Afterglow architecture program
 
-Tolglow is a complete application project. JVM namespaces live under
-`src/tolglow/`; resources, tests, development support and commands live under
-`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` and `deps.edn`
-describe application/build entry points. Browser application source remains
-`src/studio/`, and specialized rendering engines remain `src/engines/`.
+Use the [repository map](../README.md#repository-map) to find the Clojure show
+runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
+and native companions.
 
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,
@@ -55,6 +53,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Docker terminal](terminal.md) | Actual PTY/container lifecycle and tested limits |
 | [Restart ownership](show-restart.md) | Execution reset and in-place input callback renewal |
 | [Scene contract](architecture/preview-scene-contract.md) | Shared fixture/rig optics and active visual acceptance |
+| [Live audio sends and returns](live-audio-returns.md) | Single-track and Drum Rack routing, processed return cues, patch sources and retained echo voices |
 | [3D rig editor](rig-editor.md) | Draft fixture/truss placement, direct musical aim paths, explicit cue creation and saved-path editing |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |

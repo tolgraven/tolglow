@@ -495,6 +495,7 @@
       (enqueue-io! manager run
                    (fn []
                      (let [start ((get-in manager [:options :now-ms]))
+                           status-version @(:status-version run)
                            response (try ((:request! transport) handle id op
                                           (cond-> payload (= op :inspect)
                                             (assoc :sync-session-id (:id run)
@@ -502,7 +503,8 @@
                                          (catch Exception error {:id id :status :indeterminate :error (error-data error)}))
                            end ((get-in manager [:options :now-ms]))]
                        (queue! manager run {:type :live/response :op op :response response :payload payload
-                                            :time-ms (/ (+ start end) 2.0) :received-at-ms end :round-trip-ms (- end start)})
+                                            :time-ms (/ (+ start end) 2.0) :received-at-ms end :round-trip-ms (- end start)
+                                            :status-version status-version})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
 (defn edit-observed-parameter! [manager op id]
@@ -683,7 +685,8 @@
             frozen? (and (false? (:playing? event)) (false? (:playing? previous)) (:connected? previous))]
         (apply-clock! manager run (cond-> (assoc event :type :clock :kind :ableton-link :confidence 1.0)
                                     frozen? (assoc :beat (:beat previous)))))
-      :live/status (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+      :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+                       (swap! (:status-version run) inc))
       :live/parameter
       (when-let [data (live-params/observation (:live config) (:event-id event) (:time-ms event) (:sample event))]
         (emit! manager run data))
@@ -722,7 +725,9 @@
                 (swap! (:state manager) assoc-in [:config :live :observed-parameters id] spec)
                 (update-parameter-watchers! manager run))))
           (when (#{:inspect :configure-destination} (:op event))
-            (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))))
+            (if (= (:status-version event) @(:status-version run))
+              (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))
+              (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0)))))
         (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} (:op event)) (swap! (:state manager) assoc :last-execution response))
         (when-not (= :inspect (:op event)) (emit! manager run (assoc response :type :live/execution :op (:op event))))
         (when (and (= :inspect (:op event)) (not= :executed (:status response)))
@@ -777,7 +782,7 @@
                 (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
               (let [run {:id (str (UUID/randomUUID)) :cancelled? (atom false) :resources (atom {})
                          :queue (ArrayBlockingQueue. (int (get-in manager [:options :queue-capacity])))
-                         :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
+                         :status-version (atom 0) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
                          :poll-pending? (atom false) :overflow-sources (atom #{}) :callback-ids (atom []) :event-sequence (atom 0)
                          :callbacks (atom callbacks) :binding-lock (Object.) :binding-generation (atom 0)
                          :thread (atom nil) :result (promise)
@@ -806,7 +811,7 @@
                                    (reset! (:poll-pending? run) false)))
                                (when (and (:live @(:resources run)) (get-in config [:live :pairing]))
                                  (live-request! manager run (str (UUID/randomUUID)) :configure-destination (get-in config [:live :pairing]))))
-                             (loop [next-poll 0.0]
+                             (loop [next-poll (+ ((:now-ms options)) (get-in config [:live :poll-ms]))]
                                (when-not @(:cancelled? run)
                                  (let [now ((:now-ms options))
                                        poll? (and (:live @(:resources run)) (>= now next-poll)

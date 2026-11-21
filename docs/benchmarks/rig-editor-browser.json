@@ -285,8 +285,8 @@
     "npm run studio:test",
     "npm run studio:build",
     "./bin/test pure",
-    "node --test --test-concurrency=1 src/engines/preview/*.test.js src/engines/preview/*.test.mjs",
-    "node src/engines/preview/editor-browser-qa.mjs http://127.0.0.1:8515 /tmp/studio-qa/rig-editor-transit"
+    "node --test --test-concurrency=1 test/js/preview/*.test.mjs",
+    "node dev/preview/editor-browser-qa.mjs http://127.0.0.1:8515 /tmp/studio-qa/rig-editor-transit"
   ],
   "checks": {
     "frontend": {
