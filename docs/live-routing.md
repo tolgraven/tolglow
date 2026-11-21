@@ -89,6 +89,8 @@ IDs. Live-playback origin remains visible so the recording bridge can suppress
 re-recording its own playback. Physical MIDI echoes cannot be identified solely
 from bytes; wiring both ends of a loop still requires an explicit routing policy.
 
+See [Live audio sends and returns](live-audio-returns.md) for the multichannel PCM carrier and post-FX return path.
+
 ## Sources available at the current boundary
 
 The sync manager emits one `:sync/observation` event for each captured note or CC,

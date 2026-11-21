@@ -28,6 +28,7 @@
             [tolglow.studio.output-scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.routing :as routing]
+            [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
            [com.fasterxml.jackson.core JsonFactory]))
@@ -247,6 +248,7 @@
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))
+  (when-let [config (get-in model [:settings :audio-returns])] (audio-return/validate-config nil config))
   (check-errors! (rig/errors (:rig model)) [:rig])
   (let [transport (:transport model)]
     (check! (and (registry/finite-number? (:bpm transport)) (<= 1 (:bpm transport) 1000)
@@ -393,7 +395,7 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (validate-model (:model document))
+  (let [saved (audio-return/disarm (validate-model (:model document)))
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))
