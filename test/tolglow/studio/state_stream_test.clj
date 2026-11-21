@@ -6,7 +6,7 @@
             [tolglow.studio :as studio]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.state-stream :as stream]
-            [tolglow.studio.transit :as transit])
+            [tolglow.transit :as transit])
   (:import [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))

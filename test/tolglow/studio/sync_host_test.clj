@@ -3,7 +3,7 @@
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
-            [tolglow.studio.connections :as connections]
+            [tolglow.connections :as connections]
             [tolglow.studio.sync :as sync]))
 
 (defn- fixture []

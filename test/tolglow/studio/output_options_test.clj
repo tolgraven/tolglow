@@ -1,7 +1,7 @@
 (ns tolglow.studio.output-options-test
   (:require [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
-            [tolglow.studio.output :as output]))
+            [tolglow.output :as output]))
 
 (deftest explicit-output-cli-options-and-preview-default
   (is (= {:host "127.0.0.1" :port 8500} (app/parse-options [])))

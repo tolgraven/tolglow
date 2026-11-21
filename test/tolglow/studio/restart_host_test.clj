@@ -1,10 +1,10 @@
 (ns tolglow.studio.restart-host-test
   (:require [clojure.test :refer [deftest is]]
             [tolglow.show :as show]
-            [tolglow.studio.audio :as audio]
-            [tolglow.studio.connections :as connections]
-            [tolglow.studio.repl-manager :as repl-manager]
-            [tolglow.studio.persistence :as persistence]
+            [tolglow.audio.capture :as audio]
+            [tolglow.connections :as connections]
+            [tolglow.repl.sessions :as repl-manager]
+            [tolglow.persistence :as persistence]
             [tolglow.studio.routing-host-test :as fixture]
             [tolglow.studio.sync :as sync])
   (:import [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))

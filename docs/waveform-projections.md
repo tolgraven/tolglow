@@ -1,6 +1,6 @@
 # Live signal and captured audio projections
 
-`tolglow.studio.waveforms` provides read-only data for the shared Studio/Push
+`tolglow.waveforms` provides read-only data for the shared Studio/Push
 widgets. Its two sources are deliberately explicit: a registered signal sampled
 from current effect parameters, and measured incoming PCM. Neither executes an
 effect, advances a controller, consumes randomness or reads a clock.

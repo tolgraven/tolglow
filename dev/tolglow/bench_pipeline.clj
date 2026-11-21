@@ -7,7 +7,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.composition.response :as response]
-            [tolglow.studio.output :as output]
+            [tolglow.output :as output]
             [clojure.pprint :as pprint]
             [clojure.string :as str])
   (:import [java.lang.management ManagementFactory]

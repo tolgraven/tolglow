@@ -4,7 +4,7 @@
             [tolglow.integrations.audio-duplex :as duplex]
             [tolglow.integrations.audio-return :as returns]
             [tolglow.show :as show]
-            [tolglow.studio.persistence :as persistence])
+            [tolglow.persistence :as persistence])
   (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (def fixture {:id :wash :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1}})

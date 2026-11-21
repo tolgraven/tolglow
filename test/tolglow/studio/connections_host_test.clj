@@ -1,12 +1,12 @@
 (ns tolglow.studio.connections-host-test
   (:require [afterglow.control.devices.repl :as devices]
             [afterglow.reactive :as reactive]
-            [tolglow.studio.persistence :as files]
+            [tolglow.persistence :as files]
             [clojure.test :refer :all]
             [tolglow.show :as show]
-            [tolglow.studio.agents :as agents]
-            [tolglow.studio.audio :as audio]
-            [tolglow.studio.connections :as connections])
+            [tolglow.agents :as agents]
+            [tolglow.audio.capture :as audio]
+            [tolglow.connections :as connections])
   (:import [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

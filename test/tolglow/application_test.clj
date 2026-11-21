@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [tolglow.application :as app]
-            [tolglow.studio.agents :as agents]
+            [tolglow.agents :as agents]
             [tolglow.modules :as modules]
             [tolglow.show :as show])
   (:import [java.nio.file Files]))
@@ -121,7 +121,7 @@
 (deftest failed-listener-releases-its-own-observer
   (let [runtime (app/start! {:init {:components [:show] :modules []}
                              :show {:workers 1 :workspace-options nil}})
-        listen! (requiring-resolve 'tolglow.studio/listen!)]
+        listen! (requiring-resolve 'tolglow.show/listen!)]
     (try
       (let [first-server (listen! runtime {:port 0})]
         (try

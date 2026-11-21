@@ -2,7 +2,7 @@
   "Portable calibration artifact and deterministic evidence admission. Session
   status never grants output authority after a host restart or file restore."
   (:require [tolglow.calibration.geometry :as g]
-            [tolglow.studio.rig :as rig]))
+            [tolglow.rig :as rig]))
 
 (def artifact-path [:extensions :tolglow.calibration/session])
 (def palette [[0.65 0.02 0.02] [0.02 0.65 0.02] [0.02 0.02 0.65]])

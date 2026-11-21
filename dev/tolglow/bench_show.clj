@@ -7,7 +7,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.show :as show]
-            [tolglow.studio.output :as output]
+            [tolglow.output :as output]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]

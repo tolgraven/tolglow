@@ -6,9 +6,9 @@
             [tolglow.studio :as studio]
             [tolglow.application :as app]
             [tolglow.data :as data]
-            [tolglow.studio.transit :as wire]
-            [tolglow.studio.agents :as agents]
-            [tolglow.studio.output :as output]))
+            [tolglow.transit :as wire]
+            [tolglow.agents :as agents]
+            [tolglow.output :as output]))
 
 (defmacro with-runtime [[name] & body]
   `(let [~name (show/create-runtime)]

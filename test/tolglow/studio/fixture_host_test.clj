@@ -5,7 +5,7 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
-            [tolglow.studio.fixtures-test :as catalog]
+            [tolglow.fixtures.definitions-test :as catalog]
             [tolglow.integrations.fixtures-test :as fixture-data])
   (:import [java.io ByteArrayInputStream]))
 

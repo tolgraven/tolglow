@@ -6,8 +6,8 @@
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
-            [tolglow.studio.agents :as agents]
-            [tolglow.studio.connections :as connections]))
+            [tolglow.agents :as agents]
+            [tolglow.connections :as connections]))
 
 (defn- configured-source [path]
   (if (.isFile (io/file path))

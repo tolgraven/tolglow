@@ -3,7 +3,7 @@
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
-            [tolglow.studio.sensors-test :as fixture])
+            [tolglow.sensors-test :as fixture])
   (:import [java.io ByteArrayInputStream]
            [java.util.concurrent LinkedBlockingQueue]))
 

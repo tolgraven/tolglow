@@ -8,7 +8,7 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
-            [tolglow.studio.output :as output]))
+            [tolglow.output :as output]))
 
 (def fixtures
   (mapv (fn [index id]

@@ -3,7 +3,7 @@
 (require '[clojure.data.json :as json]
          '[tolglow.show :as show]
             [tolglow.studio :as studio]
-         '[tolglow.studio.demo :as demo])
+         '[tolglow.demo :as demo])
 
 (defn large-model []
   (let [model (demo/model)

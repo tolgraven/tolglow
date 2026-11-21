@@ -4,12 +4,12 @@
             [clojure.string :as str]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
-            [tolglow.studio.app-agents :as agents]
-            [tolglow.studio.app-agents-test :as fixture-agent]
-            [tolglow.studio.credentials :as credentials]
-            [tolglow.studio.development :as development]
-            [tolglow.studio.workspace :as workspace]
-            [tolglow.studio.workspace-test :as fixtures]
+            [tolglow.development.agents :as agents]
+            [tolglow.development.agents-test :as fixture-agent]
+            [tolglow.agents.credentials :as credentials]
+            [tolglow.development :as development]
+            [tolglow.development.workspace :as workspace]
+            [tolglow.development.workspace-test :as fixtures]
             [tolglow.studio.web :as web])
   (:import [java.nio.file Files Path LinkOption]
            [java.io ByteArrayInputStream]))

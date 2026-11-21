@@ -46,7 +46,7 @@
   {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
-   :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"
+   :paths ["tolglow/src/tolglow/events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"
            "tolglow/test/tolglow/studio/debug_stream_test.clj" "afterglow/src/afterglow/runtime/events.clj"]
    :depends-on [:web/typed-state-push]
    :acceptance ["Headless code consumes the same committed event batch as the Studio inspector"
@@ -55,6 +55,14 @@
    :evidence ["Afterglow PR11 merged at 61cfbbf. Integrated JVM parity 552 tests / 4634 assertions before the final bounded-handoff test."
               "Actual Jetty and headless debug tests passed 6 tests / 33 assertions, including blocked encoding, loss accounting and committed fault delivery."
               "docs/studio-event-stream.md"]}
+  {:id :architecture/headless-show-services
+   :title "Expose show, sensor, audio, agent and persistence operations outside the web namespaces"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/waveforms.clj" "tolglow/docs/headless-modules.md"]
+   :evidence ["lein test ran 567 tests with 4729 assertions, including the sensor, audio, agent, save and return paths."]
+   :depends-on [:foundation/tests]
+   :acceptance ["The REPL, controllers and Ring call the same operations"
+                "Existing show files and bundled clients use the shared Transit codec"]}
   {:id :web/expressive-mapping-settings
    :title "Edit shared Push 3, Seaboard and generic MPE mappings with touch-friendly previews"
    :kind :implementation :status :done :owner nil
@@ -83,7 +91,7 @@
   {:id :web/typed-state-push
    :title "Deliver committed show state through Reitit, Transit and bounded WebSockets"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/shared/tolglow/studio/transit.cljc"
+   :paths ["tolglow/src/shared/tolglow/transit.cljc"
            "tolglow/src/shared/tolglow/studio/page_routes.cljc"
            "tolglow/src/tolglow/studio/state_stream.clj"]
    :depends-on [:web/state-delta-transport]
@@ -112,9 +120,9 @@
   {:id :native/lidar-rig-calibration-v1
    :title "Identify fixtures and propose rig calibration from committed patterns and AR depth"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/studio/calibration.clj"
+   :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/rig/calibration.clj"
            "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
-           "tolglow/src/tolglow/studio/output_scheduler.clj" "tolglow/docs/rig-calibration.md"]
+           "tolglow/src/tolglow/output/scheduler.clj" "tolglow/docs/rig-calibration.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Depth observations and temporal identity require physical output receipts"
                 "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
@@ -236,8 +244,8 @@
   {:id :rig/rdm-device-management
    :title "Discover and configure RDM fixtures through an owned OLA session"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/studio/rdm" "tolglow/src/tolglow/studio/rdm.clj"
-           "tolglow/test/tolglow/studio/rdm_test.clj" "tolglow/test/tolglow/studio/rdm_host_test.clj"
+   :paths ["tolglow/src/tolglow/studio/rdm" "tolglow/src/tolglow/rig/rdm.clj"
+           "tolglow/test/tolglow/rig/rdm_test.clj" "tolglow/test/tolglow/studio/rdm_host_test.clj"
            "tolglow/src/studio/tolglow/studio/rdm.cljs" "tolglow/src/studio/tolglow/studio/rdm_test.cljs"
            "tolglow/resources/studio/rdm.css" "tolglow/docs/rdm.md"
            "tolglow/test/studio/rdm_browser.mjs" "tolglow/dev/tolglow/rdm_qa.clj"]
@@ -269,7 +277,7 @@
            "afterglow/src/afterglow/runtime/faults.clj" "afterglow/test/afterglow/runtime/faults_test.clj"
            "afterglow/test/afterglow/runtime/engine_test.clj" "afterglow/src/afterglow/control/model.clj"
            "afterglow/test/afterglow/control/model_test.clj"
-           "tolglow/src/tolglow/studio/effect_faults.clj" "tolglow/test/tolglow/studio/effect_faults_test.clj"
+           "tolglow/src/tolglow/effects/faults.clj" "tolglow/test/tolglow/effects/faults_test.clj"
            "tolglow/src/tolglow/modulation.clj" "tolglow/test/tolglow/modulation_test.clj"
            "tolglow/docs/effect-fault-isolation.md"]
    :depends-on [:foundation/tests]
@@ -299,9 +307,9 @@
   {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/registry.clj" "tolglow/src/tolglow/studio/persistence.clj"
-           "tolglow/src/tolglow/studio/composition.clj" "tolglow/test/tolglow/registry_test.clj"
-           "tolglow/test/tolglow/studio/persistence_test.clj" "tolglow/test/tolglow/studio/composition_test.clj"]
+   :paths ["tolglow/src/tolglow/registry.clj" "tolglow/src/tolglow/persistence.clj"
+           "tolglow/src/tolglow/composition.clj" "tolglow/test/tolglow/registry_test.clj"
+           "tolglow/test/tolglow/persistence_test.clj" "tolglow/test/tolglow/composition_test.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Saved cue values validate against the referenced effect schema"
                 "Show round trips preserve saved values and reject malformed presets"
@@ -317,8 +325,8 @@
            "afterglow/src/afterglow/control/devices/mpe.clj"
            "afterglow/test/afterglow/control/devices/mpe_test.clj"
            "afterglow/doc/architecture/expressive-devices.md"
-           "tolglow/src/tolglow/studio/expressive.clj"
-           "tolglow/test/tolglow/studio/expressive_test.clj"
+           "tolglow/src/tolglow/expressive.clj"
+           "tolglow/test/tolglow/expressive_test.clj"
            "tolglow/docs/expressive-mapping.md"]
    :depends-on [:control/expressive-v1]
    :acceptance ["Automatic semantic mappings remain reviewable and manually overridable"
@@ -332,8 +340,8 @@
   {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/studio/workspace.clj"
-           "tolglow/test/tolglow/studio/workspace_test.clj" "tolglow/docs/dev-workspaces.md"]
+   :paths ["tolglow/src/tolglow/development/workspace.clj"
+           "tolglow/test/tolglow/development/workspace_test.clj" "tolglow/docs/dev-workspaces.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Distinct repository histories reproduce metadata redirection deterministically"
                 "Diffs, fingerprints and check admission use captured repository identity"
@@ -367,8 +375,8 @@
     "Connections + full-show persistence: 33 tests / 285 assertions passed"
     "docs/show-files.md"],
    :paths
-   ["tolglow/src/tolglow/studio/connections.clj"
-    "tolglow/test/tolglow/studio/connections_test.clj"],
+   ["tolglow/src/tolglow/connections.clj"
+    "tolglow/test/tolglow/connections_test.clj"],
    :acceptance
    ["Construct without network or device IO"
     "Stage validated resource bundles before replacement"
@@ -628,14 +636,14 @@
    :paths
    ["tolglow/src/tolglow/studio.clj"
     "tolglow/src/tolglow/studio/web.clj"
-    "tolglow/src/tolglow/studio/output.clj"
-    "tolglow/src/tolglow/studio/demo.clj"
+    "tolglow/src/tolglow/output.clj"
+    "tolglow/src/tolglow/demo.clj"
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
     "tolglow/bin/studio"
-    "tolglow/src/tolglow/studio/connections.clj"
-    "tolglow/src/tolglow/studio/output_scheduler.clj"
-    "tolglow/test/tolglow/studio/output_scheduler_test.clj"
+    "tolglow/src/tolglow/connections.clj"
+    "tolglow/src/tolglow/output/scheduler.clj"
+    "tolglow/test/tolglow/output/scheduler_test.clj"
     "tolglow/test/tolglow/studio/sensor_host_test.clj"],
    :acceptance
    ["Explicit start/stop with no load-time IO"
@@ -1109,8 +1117,8 @@
    ["Agent session manager: 9 tests / 71 assertions passed"
     "Configuration and secret redaction, bounded worker admission, queued snapshots, cancellation/active close and bounded conversation inputs"],
    :paths
-   ["tolglow/src/tolglow/studio/agents.clj"
-    "tolglow/test/tolglow/studio/agents_test.clj"],
+   ["tolglow/src/tolglow/agents.clj"
+    "tolglow/test/tolglow/agents_test.clj"],
    :acceptance
    ["Runtime-only provider secrets excluded from public snapshots"
     "Bounded worker/session lifecycle with cancel and shutdown"
@@ -1125,8 +1133,8 @@
    ["New host 9 tests / 59 assertions plus existing studio 11 / 50: combined 20 / 109 passed"
     "tolglow/src/tolglow/studio/composition/README.md"],
    :paths
-   ["tolglow/src/tolglow/studio/composition.clj"
-    "tolglow/test/tolglow/studio/composition_test.clj"
+   ["tolglow/src/tolglow/composition.clj"
+    "tolglow/test/tolglow/composition_test.clj"
     "tolglow/src/tolglow/studio/composition/README.md"],
    :acceptance
    ["Explicit beat clock and tempo/pause continuity"
@@ -1253,8 +1261,8 @@
   {:evidence
    ["Audio boundary14 tests / 93 assertions passed; combined analysis26 / 214"],
    :paths
-   ["tolglow/src/tolglow/studio/audio.clj"
-    "tolglow/test/tolglow/studio/audio_test.clj"],
+   ["tolglow/src/tolglow/audio/capture.clj"
+    "tolglow/test/tolglow/audio/capture_test.clj"],
    :acceptance
    ["Mono/stereo PCM decoding"
     "Single owned worker and cancel/close cleanup"
@@ -1273,8 +1281,8 @@
     "No extra effect sampling or callback/source evaluation; custom readers not invoked"
     "docs/show-files.md; root host integration remains a separate gate"],
    :paths
-   ["tolglow/src/tolglow/studio/persistence.clj"
-    "tolglow/test/tolglow/studio/persistence_test.clj"
+   ["tolglow/src/tolglow/persistence.clj"
+    "tolglow/test/tolglow/persistence_test.clj"
     "tolglow/docs/show-files.md"],
    :acceptance
    ["Active states/captured versions/timers/transport/composition/auto RNG/rig/integration links preserved"
@@ -1317,10 +1325,10 @@
     "Local credential store: 5 tests / 31 assertions passed"
     "tolglow/src/tolglow/integrations/README.md"],
    :paths
-   ["tolglow/src/tolglow/studio/agents.clj"
-    "tolglow/test/tolglow/studio/agents_test.clj"
-    "tolglow/src/tolglow/studio/credentials.clj"
-    "tolglow/test/tolglow/studio/credentials_test.clj"],
+   ["tolglow/src/tolglow/agents.clj"
+    "tolglow/test/tolglow/agents_test.clj"
+    "tolglow/src/tolglow/agents/credentials.clj"
+    "tolglow/test/tolglow/agents/credentials_test.clj"],
    :acceptance
    ["Pure normalized export validation"
     "Full bounded conversations with valid tool call/results"
@@ -1338,8 +1346,8 @@
     "Live OFL Robe catalog11 results, ledbeam query2, Robin LEDBeam150 four modes basic import with6 unmapped warnings"
     "No broad fixture-format or hardware parity claim"],
    :paths
-   ["tolglow/src/tolglow/studio/fixtures.clj"
-    "tolglow/test/tolglow/studio/fixtures_test.clj"
+   ["tolglow/src/tolglow/fixtures/definitions.clj"
+    "tolglow/test/tolglow/fixtures/definitions_test.clj"
     "tolglow/src/tolglow/integrations/gdtf.clj"
     "tolglow/test/tolglow/integrations/gdtf_test.clj"],
    :acceptance
@@ -1378,8 +1386,8 @@
    ["Combined fixture manager/backend20 tests / 191 assertions passed"
     "Actual default manager live fetch/import/export validation succeeded"],
    :paths
-   ["tolglow/src/tolglow/studio/fixture_service.clj"
-    "tolglow/test/tolglow/studio/fixture_service_test.clj"],
+   ["tolglow/src/tolglow/fixtures/library.clj"
+    "tolglow/test/tolglow/fixtures/library_test.clj"],
    :acceptance
    ["Explicit network/cache ownership"
     "Pure full-state checksum/identity/limit validation"
@@ -1428,8 +1436,8 @@
   {:evidence
    ["Connections including injected MIDI sync lifecycle: 16 tests / 158 assertions passed"],
    :paths
-   ["tolglow/src/tolglow/studio/connections.clj"
-    "tolglow/test/tolglow/studio/connections_test.clj"],
+   ["tolglow/src/tolglow/connections.clj"
+    "tolglow/test/tolglow/connections_test.clj"],
    :acceptance
    ["Preserve sync config/wanted intent without activation during prepare"
     "Invalidate old callbacks and close retired resources"
@@ -1497,9 +1505,9 @@
   {:evidence
    ["Rig 5 tests / 52 assertions; rig+persistence 24 / 217 passed"],
    :paths
-   ["tolglow/src/tolglow/studio/rig.clj"
-    "tolglow/test/tolglow/studio/rig_test.clj"
-    "tolglow/src/tolglow/studio/persistence.clj"],
+   ["tolglow/src/tolglow/rig.clj"
+    "tolglow/test/tolglow/rig_test.clj"
+    "tolglow/src/tolglow/persistence.clj"],
    :acceptance
    ["Finite physical dimensions/transforms and stable unique truss identities"
     "Validate actual footprint collisions and preserve imported metadata"],
@@ -1833,11 +1841,11 @@
    ["Backend focused34 tests /264 assertions passed; actual Ring host2 /19"
     "Actual browser REPL9 workflows passed including JVM stream/completion/interrupt/Neovim"],
    :paths
-   ["tolglow/src/tolglow/studio/repl.clj"
-    "tolglow/src/tolglow/studio/repl_manager.clj"
-    "tolglow/test/tolglow/studio/repl_test.clj"
-    "tolglow/test/tolglow/studio/repl_manager_test.clj"
-    "tolglow/src/tolglow/studio/connections.clj"
+   ["tolglow/src/tolglow/repl.clj"
+    "tolglow/src/tolglow/repl/sessions.clj"
+    "tolglow/test/tolglow/repl_test.clj"
+    "tolglow/test/tolglow/repl/sessions_test.clj"
+    "tolglow/src/tolglow/connections.clj"
     "tolglow/docs/web-repl.md"],
    :acceptance
    ["Actual isolated namespace eval, bounded serial jobs, stream events and cooperative cancel"
@@ -1853,8 +1861,8 @@
    ["Actual Git workspace10 tests /77 assertions; docs/dev-workspaces.md"
     "Candidate checks/staging do not imply automatic preview activation"],
    :paths
-   ["tolglow/src/tolglow/studio/workspace.clj"
-    "tolglow/test/tolglow/studio/workspace_test.clj"
+   ["tolglow/src/tolglow/development/workspace.clj"
+    "tolglow/test/tolglow/development/workspace_test.clj"
     "tolglow/docs/dev-workspaces.md"],
    :acceptance
    ["Actual branches/worktrees and confined expected-hash file operations"
@@ -1884,10 +1892,10 @@
    ["afterglow/src/afterglow/control/sensors.clj"
     "afterglow/test/afterglow/control/sensors_test.clj"
     "tolglow/docs/sensors.md"
-    "tolglow/src/tolglow/studio/sensors.clj"
-    "tolglow/src/tolglow/studio/sensor_osc.clj"
-    "tolglow/test/tolglow/studio/sensors_test.clj"
-    "tolglow/test/tolglow/studio/sensor_osc_test.clj"],
+    "tolglow/src/tolglow/sensors.clj"
+    "tolglow/src/tolglow/sensors/osc.clj"
+    "tolglow/test/tolglow/sensors_test.clj"
+    "tolglow/test/tolglow/sensors/osc_test.clj"],
    :acceptance
    ["Authoritative browser-library and Apple gesture capability research"
     "Explicit immutable calibration/filter/hysteresis/cooldown state and standard commands"
@@ -1917,8 +1925,8 @@
    ["Workspace10/77 +terminal pure3/17 +explicit real Docker6/45 =19tests139assertions passed"
     "Subsequent Docker pre-start cleanup regression remains active owner follow-up"],
    :paths
-   ["tolglow/src/tolglow/studio/terminal.clj"
-    "tolglow/test/tolglow/studio/terminal_test.clj"
+   ["tolglow/src/tolglow/development/terminal.clj"
+    "tolglow/test/tolglow/development/terminal_test.clj"
     "tolglow/test/tolglow/studio/terminal_docker_test.clj"
     "tolglow/dev/container"
     "tolglow/docs/terminal.md"],
@@ -2028,12 +2036,12 @@
               "Actual PCM manager, real Ring parameter edits and off-deadline Push projection; live audio reprojects without new model views"
               "Browser fixture host uses real production capture/decode/analyze/summary with explicit synthetic PCM; UI evidence tracked separately"],
    :paths
-   ["tolglow/src/tolglow/studio/waveforms.clj"
-    "tolglow/test/tolglow/studio/waveforms_test.clj"
+   ["tolglow/src/tolglow/waveforms.clj"
+    "tolglow/test/tolglow/waveforms_test.clj"
     "tolglow/docs/waveform-projections.md"
     "tolglow/docs/benchmarks/audio-waveform-bench.clj"
     "tolglow/docs/benchmarks/2026-11-21-audio-waveform.edn"
-    "tolglow/src/tolglow/studio/audio.clj"
+    "tolglow/src/tolglow/audio/capture.clj"
     "afterglow/src/afterglow/control/devices/push_2.clj"],
    :acceptance
    ["Actual captured effective params and version identity, no stateful effect re-evaluation"
@@ -2051,8 +2059,8 @@
               "Ten actual browser workflows passed, including streamed task events, cancellation, diffs and check results"
               "docs/application-agents.md"],
    :paths
-   ["tolglow/src/tolglow/studio/app_agents.clj"
-    "tolglow/test/tolglow/studio/app_agents_test.clj"
+   ["tolglow/src/tolglow/development/agents.clj"
+    "tolglow/test/tolglow/development/agents_test.clj"
     "tolglow/docs/application-agents.md"],
    :acceptance
    ["Fresh owned worktrees, bounded real CLI execution and reviewable exact diffs"
@@ -2068,8 +2076,8 @@
   {:id :automation/event-subscriber-actions :kind :implementation :status :done
    :title "Bind captured show events to filtered registry actions and musical sequences"
    :owner nil
-   :paths ["tolglow/src/tolglow/studio/event_subscribers.clj" "tolglow/src/tolglow/studio/event_callbacks.clj"
-           "tolglow/test/tolglow/studio/event_subscribers_test.clj" "tolglow/docs/event-subscribers.md"]
+   :paths ["tolglow/src/tolglow/event_subscribers.clj" "tolglow/src/tolglow/events/callbacks.clj"
+           "tolglow/test/tolglow/event_subscribers_test.clj" "tolglow/docs/event-subscribers.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Run filtered cue and unplaced effect launches from actual committed inputs without an inspector"
                 "Keep sequences, selection and timing deterministic and restore portable subscriber registrations"
@@ -2089,11 +2097,11 @@
   {:id :studio/transit-show-files
    :title "Save and restore complete show runs through the shared Transit codec"
    :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/studio/persistence.clj" "tolglow/docs/show-files.md"]
+   :paths ["tolglow/src/tolglow/persistence.clj" "tolglow/docs/show-files.md"]
    :depends-on [:web/typed-state-push]
    :acceptance ["Round-trip running shows, exact fractions, tagged colors, timestamps and binary DMX"
                 "Use one bounded encoding for file saves and Studio downloads, and open previous schema-2 files"]
-   :evidence ["test/tolglow/studio/persistence_test.clj and test/tolglow/studio_test.clj"
+   :evidence ["test/tolglow/persistence_test.clj and test/tolglow/studio_test.clj"
               "Unicode disk replacement and guarded restore in test/tolglow/studio/connections_host_test.clj"]}
   {:id :foundation/dependency-upgrades-2026
    :title "Update JVM, frontend and development dependencies to verified stable releases"
@@ -2117,10 +2125,10 @@
    :title "Repair Docker creation cancellation and recover owned development workspaces"
    :kind :implementation :status :done
    :owner nil
-   :paths ["tolglow/src/tolglow/studio/terminal.clj" "tolglow/test/tolglow/studio/terminal_test.clj"
+   :paths ["tolglow/src/tolglow/development/terminal.clj" "tolglow/test/tolglow/development/terminal_test.clj"
            "tolglow/test/tolglow/studio/terminal_docker_test.clj" "tolglow/resources/tolglow/terminal/pty_bridge.py"
-           "tolglow/docs/terminal.md" "tolglow/src/tolglow/studio/workspace.clj"
-           "tolglow/test/tolglow/studio/workspace_test.clj" "tolglow/docs/dev-workspaces.md"
+           "tolglow/docs/terminal.md" "tolglow/src/tolglow/development/workspace.clj"
+           "tolglow/test/tolglow/development/workspace_test.clj" "tolglow/docs/dev-workspaces.md"
            "tolglow/docs/control-parity-audit.md"]
    :depends-on [:development/workspace-service-v1 :development/terminal-v1]
    :acceptance ["Delayed daemon-side create cancellation cannot orphan containers"
