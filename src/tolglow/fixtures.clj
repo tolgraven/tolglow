@@ -95,7 +95,10 @@
 ;; DEPRECATED XXX
 (defn color-head "Create a head of subpixels"
  [offset color-layout x y z]
- {:channels (colors color-layout offset) :x x :y y :z z})
+ {:pre [(pos-int? offset) (seq (color-layouts color-layout))]}
+ ;; Head offsets are fixture-relative, so a strip can span physical universes.
+ {:channels (mapv #(update % :offset + (dec offset)) (colors color-layout 1))
+  :x x :y y :z z})
 
 (defn pos-for-head "Get position for head given bounds, size and index"
  [pixels index start end]
@@ -111,7 +114,7 @@
 (defn pixel-strip "one strip as one head per pixel, supports RGB or RGBW."
   [pixels & {:keys [x y z color-layout channels]
              :or {color-layout :rgbw, x [-1.0 1.0] y [2.0 2.0] z [0.0 0.0]}}]
-  (let [subpixels (if (= color-layout :rgbw) 4 3)
+  (let [subpixels (count (color-layouts color-layout))
         channels (make-channels channels)]
    {:name (str (string/upper-case (name color-layout)) " LED strip")
     :channels channels
@@ -132,8 +135,7 @@
    (for [i (range (:pixels strip))]
     (let [x (head-pos (:pixels strip) i length)
           offset (+ offset (* i subpixels))] ; offset for fn channels
-     {:channels (colors (:color-layout strip) offset)
-      :x x :y 0.0 :z 0.0})))))
+     (color-head offset (:color-layout strip) x 0.0 0.0))))))
 
 (defn create-heads "Some other heads presumably more advanced. Individual movement, dimmers or similar..."
  [heads]

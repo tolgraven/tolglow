@@ -1,7 +1,18 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :application/configured-startup
+ [{:id :fixtures/patch-groups
+   :title "Normalize named patch lists and fixture-builder heads before installation"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/fixtures/patch.clj" "tolglow/src/tolglow/fixtures/heads.clj"
+           "tolglow/src/tolglow/fixtures.clj" "tolglow/docs/fixture-patch-groups.md"]
+   :depends-on [:application/configured-startup]
+   :acceptance ["Preserve full fixture vectors and the original group names, starting addresses and list order"
+                "Expand keyword and function entries into positioned rig instances"
+                "Allocate coarse and fine channels across universe boundaries and preserve prior state on invalid replacements"]
+   :evidence ["Configured startup and normal submission tests exercise the shared rig model and Afterglow packer."
+              "Effects-branch builder parity exercises four moving heads, original PixTol channel records and a multi-universe RGBW strip."]}
+  {:id :application/configured-startup
    :kind :implementation :status :done :owner nil
    :title "Start a headless or web show from ordered Tolglow config modules"
    :paths ["tolglow/src/tolglow/modules.clj" "tolglow/src/tolglow/application.clj" "tolglow/src/tolglow/show.clj"
