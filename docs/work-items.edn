@@ -1,7 +1,17 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :native/lidar-rig-calibration-v1
+ [{:id :native/apple-calibration-build-gate
+   :title "Reconcile calibration with master and verify unsigned Apple targets on macOS CI"
+   :kind :implementation :status :in-progress :owner "ios_lidar_fixture_identification_and_pose_calibration"
+   :paths ["tolglow/.github/workflows/tests.yml" "tolglow/native/iOS/RigCalibration"
+           "tolglow/native/Tests/check_macos.sh" "tolglow/docs/rig-calibration.md"]
+   :depends-on [:native/lidar-rig-calibration-v1]
+   :acceptance ["Preserve both master integration and saved-model calibration disarming before thaw"
+                "Build shared Swift tests and unsigned iOS/watchOS targets on a compatible macOS host"
+                "Keep native build and physical hardware evidence distinct"]
+   :evidence []}
+  {:id :native/lidar-rig-calibration-v1
    :title "Identify fixtures and propose rig calibration from committed patterns and AR depth"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/studio/calibration.clj"
