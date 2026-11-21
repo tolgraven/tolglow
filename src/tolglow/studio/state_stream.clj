@@ -125,7 +125,7 @@
           (throw (ex-info "Unknown stream control" {}))))
       (catch Exception _ (retire! hub socket 1008 "Invalid stream control")))))
 
-(defn- same-origin? [{:keys [headers scheme]}]
+(defn same-origin? [{:keys [headers scheme]}]
   (if-let [origin (get headers "origin")]
     (try
       (let [uri (java.net.URI. origin)]
