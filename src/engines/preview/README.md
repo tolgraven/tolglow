@@ -1,6 +1,7 @@
 # Owned room renderer
 
-`npm run preview:build` produces the ESM engine at `/studio/preview.js` from this
+`npm run preview:build` produces the ESM entry at `/studio/preview.js` and worker
+at `/studio/preview-worker.js` from this
 folder. Three.js and esbuild are pinned in the root npm manifest/lock; renderer
 telemetry reports the actual Three revision. `studio:build` bundles the
 engine before the re-frame release; this is specialized graphics, not a second
@@ -10,10 +11,32 @@ bundled legal notice.
 
 `RoomPreview(canvas, statusElement)` preserves `update(snapshot)`, `resize()`,
 `setFog(value)`, `burst(options?)`, `resetCamera()`, and `dispose()`. Additional
-controls are `setWorkLight(0..1)`, `setQuality('auto'|'mobile'|'desktop'|'high')`,
+controls are `setWorkLight(0..1)`, `setQuality('auto'|'low'|'mobile'|'desktop'|'high')`,
 `setCamera('audience'|'overview')`, `focusFixture(id)`, `ready`, `whenReady`, and
 `getTelemetry()`. The owned canvas exposes `canvas.tolglowPreview` for inspection;
 disposal removes that reference. Re-frame owns UI controls and fullscreen state.
+`pause()`/`resume()` control scheduling; `await draw()` requests a current-show
+frame while paused. `SceneRenderer` is exported separately for graphics diagnostics
+which need field/mesh access; production uses `RoomPreview`.
+
+`scene-renderer.js` contains the only scene/render implementation. With worker
+capabilities, `worker.js` owns a new OffscreenCanvas and all WebGL/fog resources.
+`worker-proxy.js` keeps DOM OrbitControls and presents transferred ImageBitmaps.
+One state message can be in flight; the latest pending graphics projection
+replaces intermediate snapshots. Only emitted output, rig and show/frame identity
+cross that boundary. One bitmap can be outstanding; the worker waits for its
+presentation acknowledgement before scheduling another draw. Consumed, rejected
+and stale-show/epoch bitmaps are closed, and show changes clear the old image.
+`getTelemetry()` reports the execution thread, coalescing and discarded frames.
+
+The visible canvas is never transferred. A failed worker startup leaves its
+context untouched so the same SceneRenderer can acquire WebGL on it. After a
+bitmap presentation context exists, errors remain explicit and retain the last
+frame; the proxy does not attempt an invalid canvas context switch. Hidden or
+offscreen views stop render scheduling, controls remain on the UI thread, and
+disposal disconnects listeners/observers, closes pending state and terminates the
+worker. Main-thread fallback uses completion-paced backpressure. Actual Safari
+and physical-device support still require their own checks.
 
 The scene renders PBR concrete, stage, curtain, passive speaker context, instanced
 lattice trusses, and articulated fixture body/yoke/lens geometry. Structural rig
@@ -54,8 +77,12 @@ See [fog.md](fog.md) for field/shader contracts and verification.
 Auto detects software renderers and uses a low tier: DPR.75, 180k pixels, one
 256px shadow map, a 24-step phone fog budget and 10Hz. This prevents SwiftShader
 from inheriting the full desktop work budget. Explicit quality selection remains
-available. Slow driver/CPU frames stretch cadence up to 250ms and recover gradually;
-this is backpressure, not proof of real-device frame rate.
+available. The fallback starts its idle budget after each completed draw, with
+no fixed cap that could let long renders saturate the UI thread. The worker
+grows its cadence budget gradually and recovers quickly, so a one-time shader
+compile cannot leave later light changes waiting seconds. Neither policy is
+proof of real-device frame rate; worker isolation is the control-responsiveness
+boundary.
 
 Desktop caps DPR1.5, 1.5M pixels, 4×1024 shadow maps and 64 fixture meshes; mobile
 caps DPR1, .5M pixels, 2×512 shadow maps and 32 meshes; high caps DPR1.75, 2.8M

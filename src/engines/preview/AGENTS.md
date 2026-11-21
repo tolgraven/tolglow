@@ -4,7 +4,14 @@ Read docs/architecture/preview-scene-contract.md before changes. This is the one
 specialized Three.js scene owner, not an alternative application UI. Re-frame
 owns controls; committed JVM emitted output is authoritative.
 
-- `index.js` owns renderer, scene, lifecycle, targets and postprocessing.
+- `index.js` selects the lifecycle boundary. `scene-renderer.js` is the single
+  scene/target/postprocessing implementation for both execution environments.
+- `worker-proxy.js` owns DOM input/camera, visibility and bitmap presentation;
+  `worker.js` owns the OffscreenCanvas and all graphics work. Keep one state
+  message and one transferred bitmap in flight; replace pending snapshots.
+  Close rejected bitmaps, fence show/epoch changes and stop all worker resources
+  on disposal. Never transfer the visible canvas: startup failure must leave it
+  usable by the shared main-thread capability fallback.
 - `geometry.js`, `room.js`, `materials.js` own procedural geometry/materials.
 - `math.js` is the explicit rig/output projection. Match CPU elevation/calibration
   and fixture rotation. Never invent light output when emitted-color is absent.
@@ -16,7 +23,8 @@ owns controls; committed JVM emitted output is authoritative.
   calibration. Procedural venue decoration is not a controlled fixture.
 - Rebuild static geometry only for structural rig changes. Bound light/shadow,
   pixel, fog and texture budgets. Pause hidden/offscreen and dispose everything.
-- `npm run preview:build` bundles to resources/studio/preview.js. Never hand-edit
+- `npm run preview:build` bundles to resources/studio/preview.js and
+  preview-worker.js. Never hand-edit
   the generated bundle. Run Node projection tests and actual browser/canvas QA.
 - Software GPU screenshots prove rendered appearance and shader execution only;
   retain physical mobile/GPU and photometric limits in documentation.

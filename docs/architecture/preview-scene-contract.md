@@ -14,6 +14,17 @@ the engine is specialized graphics interop. The JVM remains authoritative for
 fixtures, positions, orientation/calibration and committed emitted output. No
 second browser lighting engine may independently advance effects.
 
+Where OffscreenCanvas workers are available, the one scene implementation runs
+in a worker. The main thread owns OrbitControls, visibility and bitmap display.
+Only one state message and one output bitmap may be in flight; intermediate
+snapshots coalesce to the latest projection. Bitmaps from an old show/epoch are
+closed without display. The DOM canvas is never transferred, allowing startup
+failure to use the same scene implementation on the main thread before its
+presentation context is acquired. An error after presentation retains the last
+image and reports failure. Worker disposal terminates its complete GPU lifetime.
+Capability fallback is not evidence of Safari support or smooth physical-device
+performance. Cold shader compilation must not poison later rendering cadence.
+
 The existing `RoomPreview(canvas, status)`, `update(snapshot)`, `setFog(value)`,
 `burst()`, `resetCamera()` and `dispose()` contract remains callable through the
 engine loader. Additional explicit camera/quality/preset methods may be exposed

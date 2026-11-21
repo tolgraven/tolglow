@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 
+const canvasFor = (width, height) => {
+  if (typeof document === 'undefined') return new OffscreenCanvas(width, height);
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; return canvas;
+};
+
 function noise(x, y) {
   const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
   return n - Math.floor(n);
 }
 function surfaceTexture(size, kind) {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
+  const canvas = canvasFor(size, size);
   const ctx = canvas.getContext('2d'), image = ctx.createImageData(size, size);
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const n = noise(x, y), broad = noise(Math.floor(x / 24), Math.floor(y / 24));
@@ -23,7 +28,7 @@ function surfaceTexture(size, kind) {
   return {map, bump};
 }
 function grille() {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
+  const canvas = canvasFor(64, 64);
   const c = canvas.getContext('2d'); c.fillStyle = '#353a3c'; c.fillRect(0, 0, 64, 64);
   c.fillStyle = '#080a0b';
   for (let y = 0; y < 64; y += 8) for (let x = 0; x < 64; x += 8) { c.beginPath(); c.arc(x + (y % 16 ? 4 : 0), y, 2.5, 0, Math.PI * 2); c.fill(); }
