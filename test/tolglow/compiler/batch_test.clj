@@ -8,7 +8,7 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
-            [tolglow.output :as output]))
+            [afterglow.output.artnet :as artnet]))
 
 (def fixtures
   (mapv (fn [index id]
@@ -114,7 +114,7 @@
         scalar (engine/advance show frame compiler/compile-effect)
         typed (engine/advance show frame compile)
         rendered #(render/resolve-contributions fixtures (:contributions %) {:include-values? false :compact-values? true})
-        captured (mapv (fn [[universe values]] (vec (output/artdmx-packet universe 1 values)))
+        captured (mapv (fn [[universe values]] (vec (artnet/artdmx-packet universe 1 values)))
                        (:universes (rendered typed)))]
     (is (nil? (:assignments typed)))
     (is (= [:batch :assignments] (mapv :kind (:contributions typed))))
