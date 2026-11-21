@@ -8,5 +8,5 @@ oracle="$(mktemp)"
 trap 'rm -f "$oracle"' EXIT
 afterglow_profile_root=$(cd "${AFTERGLOW_ROOT:-../afterglow}" && pwd)
 export AFTERGLOW_ROOT="$afterglow_profile_root"
-lein run -m tolglow.mover-oracle "$heads" "$frames" > "$oracle"
+lein with-profile +benchmark run -m tolglow.mover-oracle "$heads" "$frames" > "$oracle"
 node dev/gpu/profile-movers.cjs "$oracle"

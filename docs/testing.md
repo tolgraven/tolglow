@@ -1,16 +1,17 @@
 # Testing and compatibility gates
 
 Both project manifests now pin Clojure **1.12.7**. CI is configured for Java
-17/21/25 and Clojure CLI **1.12.7.1681**; local observed evidence below names the
+17/21/25 and Leiningen **2.13.1**; local observed evidence below names the
 JVM actually used. Keep the modified repositories as siblings: new Tolglow code
 uses the companion Afterglow control/runtime/render modules in both lanes.
-`AFTERGLOW_ROOT` overrides the parity dependency helper's path; the standard
-Tolglow `deps.edn` local dependency points to `../afterglow`.
+`AFTERGLOW_ROOT` overrides the paired source/dependency path, whose default is
+`../afterglow`. The canonical dependency and build manifest is `project.clj`.
 
 JVM source is under `src/tolglow/`, with `src` and `resources` on the application
 classpath. Focused test commands add `test` and `dev`, not the repository root.
-The full root `project.clj` is maintained alongside the CLI manifest. Frontend
-source remains under `src/studio/` and uses its separate build configuration.
+The `:cljs` Lein profile isolates frontend dependencies and source paths; the
+`:benchmark` profile also exposes the paired fork's developer references and
+fixes the heap at 768 MiB. Shadow-cljs consumes `:cljs` directly.
 
 The waveform/display gate after the source-layout migration passed **17 tests /
 118 assertions** on the local Java 21/Clojure 1.12.7 runtime. It covers real Ring
@@ -26,12 +27,13 @@ cd /path/to/afterglow
 cd /path/to/tolglow
 ./bin/test pure
 ./bin/test parity
-clojure -M:check-roadmap
+lein check-roadmap
 ```
 
 `bin/test` fails on invalid suite names, dependency/loading errors and test
-failures. It never silently downgrades parity to pure. `clojure -M:test` runs
-the pure lane; the script assembles the parity dependency classpath. The
+failures. It never silently downgrades parity to pure. `lein test-pure` runs the
+focused lane; plain `lein test` runs all discovered tests except the explicit
+Docker selector. `lein test-parity` runs the named parity runner. The
 runner source in each repository lists the namespaces actually selected.
 “Pure” names the lane: it includes bounded executor and loopback HTTP tests in
 addition to pure functions. It does not mean every test is free of local IO.

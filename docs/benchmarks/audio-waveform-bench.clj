@@ -1,4 +1,4 @@
-;; From repository root: clojure -M docs/benchmarks/audio-waveform-bench.clj
+;; From repository root: lein run -m clojure.main docs/benchmarks/audio-waveform-bench.clj
 ;; Synthetic input measures summary+immutable projection only, not audio capture,
 ;; existing analysis, scheduling, JSON, transport or browser rendering.
 (require '[tolglow.waveforms :as waveforms])
