@@ -111,8 +111,7 @@ start the explicit QA host. It has preview output and creates its own TCP OLA
 peer; there is no real olad or fixture connection:
 
 ```sh
-clojure -Sdeps '{:aliases {:rdm-qa {:extra-paths ["test" "dev"]}}}' \
-  -M:rdm-qa -m tolglow.rdm-qa
+lein run -m tolglow.rdm-qa
 ```
 
 Wait for `Owned RDM QA host ready`, then run `node test/studio/rdm_browser.mjs`.

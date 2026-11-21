@@ -191,10 +191,7 @@ lighting-show restart.
 Run:
 
 ```sh
-clojure -Sdeps '{:paths ["src" "resources" "test" "dev"]}' -M \
-  -e '(require (quote tolglow.development.agents-test))
-      (clojure.test/run-tests (quote tolglow.development.agents-test))
-      (shutdown-agents)'
+lein test tolglow.development.agents-test
 ```
 
 The explicit Docker fixture gate passed six assertions using image
@@ -206,8 +203,7 @@ source-derived Python fixture; it does not claim authenticated Codex generation.
 It is excluded from ordinary test discovery and can be selected explicitly:
 
 ```sh
-clojure -Sdeps '{:paths ["src" "resources" "test" "dev"]}' -M \
-  -e '(require (quote tolglow.development.agents-test))
+lein run -m clojure.main -e '(require (quote tolglow.development.agents-test))
       (let [r (tolglow.development.agents-test/docker-smoke!)]
         (prn r) (shutdown-agents)
         (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))'

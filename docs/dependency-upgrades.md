@@ -1,7 +1,7 @@
 # Dependency upgrades — 2026-11-21
 
 Both repositories now pin **Clojure 1.12.7**. The development image and CI use
-**Clojure CLI 1.12.7.1681**. Clojure 1.13 is an alpha release and was not selected.
+**Leiningen 2.13.1**. Clojure 1.13 is an alpha release and was not selected.
 Release versions were queried from Maven Central, Clojars, npm, upstream GitHub
 releases and Docker registry manifests; this is not a memory-based version list.
 

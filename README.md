@@ -1,6 +1,6 @@
 # tolglow
 
-[Start a configured show](docs/application-startup.md) with `clojure -M:run` or `lein run`. Use `--headless true` to run the same show without Studio.
+[Start a configured show](docs/application-startup.md) with `lein run`. Use `--headless true` to run the same show without Studio.
 
 Lighting-show authoring, performance controls and Studio built on the paired
 [Afterglow fork](https://github.com/tolgraven/afterglow). The Studio uses

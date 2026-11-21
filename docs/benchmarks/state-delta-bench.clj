@@ -1,5 +1,5 @@
-;; Run from the project root with the normal deps.edn classpath:
-;; clojure -M docs/benchmarks/state-delta-bench.clj > /tmp/state-delta-report.edn
+;; Run from the project root with the normal Leiningen classpath:
+;; lein run -m clojure.main docs/benchmarks/state-delta-bench.clj > /tmp/state-delta-report.edn
 (require '[clojure.data.json :as json]
          '[tolglow.show :as show]
             [tolglow.studio :as studio]

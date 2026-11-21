@@ -7,8 +7,9 @@
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"
            "tolglow/dev/tolglow/build_manifest.clj" "tolglow/dev/parity_deps.clj"
-           "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin"
-           "tolglow/.github/workflows/tests.yml" "tolglow/.github/workflows/performance.yml"
+           "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin/test"
+           "tolglow/bin/studio" "tolglow/bin/profile-mover-shader"
+           "tolglow/.github/workflows/tests.yml"
            "tolglow/.github/scripts/install-lein" "tolglow/dev/container/Dockerfile"
            "tolglow/test/tolglow/studio/terminal_docker_test.clj"]
    :depends-on [:foundation/tests]
@@ -671,7 +672,6 @@
     "tolglow/src/tolglow/demo.clj"
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
-    "tolglow/bin/studio"
     "tolglow/src/tolglow/connections.clj"
     "tolglow/src/tolglow/output/scheduler.clj"
     "tolglow/test/tolglow/output/scheduler_test.clj"

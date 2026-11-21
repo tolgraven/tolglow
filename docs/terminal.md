@@ -128,8 +128,7 @@ ownership/input and bounded byte cursor behavior without Docker. Run the real
 Docker gate explicitly after building the image:
 
 ```sh
-clojure -Sdeps '{:paths ["src" "test" "resources"]}' -M -e \
-  "(require 'tolglow.studio.terminal-docker-test) (let [r (clojure.test/run-tests 'tolglow.studio.terminal-docker-test)] (System/exit (+ (:fail r) (:error r))))"
+lein test :docker
 ```
 
 That gate creates disposable paired Git worktrees and actual containers, executes
