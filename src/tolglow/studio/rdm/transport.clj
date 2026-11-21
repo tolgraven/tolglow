@@ -50,16 +50,19 @@
   [request! request deadline current?]
   (let [request (codec/validate-command request)
         expected-class (if (= :set (:command request)) 1 0)]
-    (loop [response (request! "RDMCommand" request) attempts 0]
+    (loop [response (request! "RDMCommand" request) attempts 0 queued? false]
       (when-not (current?) (throw (ex-info "RDM job cancelled or session changed" {:rdm/error :cancelled})))
       (remaining-ms deadline)
       (when (>= attempts 32) (throw (ex-info "RDM queued reply limit exceeded" {:rdm/error :queue-limit})))
       (if (not= 0 (:response-code response))
         (assoc response :status :transport-error)
         (case (:response-type response)
-          0 (if (and (= (:pid request) (:pid response)) (= expected-class (:command-class response)))
+          0 (if (and (= (:pid request) (:pid response)) (= expected-class (:command-class response))
+                     (= (:sub-device request) (:sub-device response)))
               (assoc response :status :ack)
-              (recur (request! "RDMCommand" (assoc request :pid 0x20 :command :get :data [1] :sub-device 0)) (inc attempts)))
+              (if queued?
+                (recur (request! "RDMCommand" (assoc request :pid 0x20 :command :get :data [1] :sub-device 0)) (inc attempts) true)
+                (codec/fail! "RDM response does not match the command" {:response response})))
           2 (do (when-not (= 2 (count (:data response))) (codec/fail! "Malformed RDM NACK" {}))
                 (assoc response :status :nack :nack-code (codec/u16 (:data response) 0)
                        :reason (get nack-reasons (codec/u16 (:data response) 0) :unknown)))
@@ -70,5 +73,5 @@
                   (throw (SocketTimeoutException. "RDM ACK_TIMER exceeds job deadline")))
                 ;; This owned IO worker is interruptible; the lighting loop never waits.
                 (Thread/sleep (long delay)))
-              (recur (request! "RDMCommand" (assoc request :pid 0x20 :command :get :data [1] :sub-device 0)) (inc attempts)))
+              (recur (request! "RDMCommand" (assoc request :pid 0x20 :command :get :data [1] :sub-device 0)) (inc attempts) true))
           (codec/fail! "Unknown RDM response type" {:response response}))))))

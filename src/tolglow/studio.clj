@@ -239,7 +239,10 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
-    :rdm-update {:model (rdm/update-model model payload) :ack {:status :accepted}}
+    :rdm-update (do (when (and (:rdm-session-id payload)
+                              (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
+                      (throw (ex-info "RDM result belongs to a retired device session" {})))
+                    {:model (rdm/update-model model payload) :ack {:status :accepted}})
     :sensor-configure
     {:model (apply-sensor-result
              (sensors/configure model (:device-id payload)

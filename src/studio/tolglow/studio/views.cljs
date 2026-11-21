@@ -9,6 +9,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-library :as fixture-library]
+            [tolglow.studio.rdm :as rdm]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
@@ -554,7 +555,8 @@
         [:p.muted.small "Existing fixture channel maps are preserved when you edit positions."]
         [button "rig-to-perform" "Open live preview ↗" [:studio/set-view :perform]]]]]
      [truss-editor rig]
-     [fixture-library/panel db]]))
+     [fixture-library/panel db]
+     [rdm/panel]]))
 
 (defn- visual-builder [db]
   (let [builder (get-in db [:ui :builder])]

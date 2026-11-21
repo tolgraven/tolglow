@@ -123,14 +123,21 @@
           (when-not (integer? (:response-code response)) (fail! "Missing RDM response code" {}))
           (when (zero? (:response-code response))
             (when-not (and (#{0 1 2} (:response-type response)) (uint? 16 (:pid response))
-                           (#{0 1} (:command-class response)) (= (:sub-device request 0) (:sub-device response))
+                           (#{0 1} (:command-class response))
+                           (or (= 0x20 (:pid request)) (= (:sub-device request 0) (:sub-device response)))
                            (or (nil? (:source-uid response)) (= (uid (:uid request)) (:source-uid response)))
-                           (or (= 0x20 (:pid request)) (= (:pid request) (:pid response))))
+                           (or (= 0x20 (:pid request))
+                               (and (= (:pid request) (:pid response))
+                                    (= (if (= :set (:command request)) 1 0) (:command-class response)))))
               (fail! "RDM response identity or type mismatch" {:response response})))
           response)))))
 
 (defn decode-value [pid data]
-  (let [data (bytes-vector data) n (count data)
+  ;; OLA assembles ACK_OVERFLOW payloads; a completed response can exceed one
+  ;; physical RDM packet's 231-byte payload. Requests remain capped at 231.
+  (when-not (and (vector? data) (<= (count data) 65536) (every? #(uint? 8 %) data))
+    (fail! "Invalid or oversized assembled RDM payload" {}))
+  (let [n (count data)
         length! (fn [lo hi] (when-not (<= lo n hi) (fail! "Unexpected RDM parameter length" {:pid pid :length n})))
         text! (fn [] (length! 0 32) (bytes-text data))]
     (case pid
