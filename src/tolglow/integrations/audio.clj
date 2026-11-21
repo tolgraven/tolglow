@@ -62,7 +62,9 @@
                                                   (* 2.0 Math/PI))))))]
     {:samples out :state {:phase final-phase :frequency target :amplitude amplitude}}))
 
-(defn- pitch [^doubles values sample-rate f-min f-max threshold]
+(defn estimate-pitch
+  "YIN estimate for a bounded mono PCM window. Returns Hz and confidence or nil."
+  [^doubles values sample-rate f-min f-max threshold]
   ;; YIN cumulative mean normalized difference with parabolic lag refinement.
   (let [n (alength values)
         max-lag (min (quot n 2) (long (Math/ceil (/ sample-rate f-min))))
@@ -177,7 +179,7 @@
         peak (reduce max 0.0 (map #(Math/abs (double %)) values))
         _ (when-not (finite? rms) (throw (ex-info "Sample energy exceeds numeric range" {})))
         detected (when (> rms noise-floor)
-                   (pitch centered sample-rate (first frequency-range) (second frequency-range) pitch-threshold))
+                   (estimate-pitch centered sample-rate (first frequency-range) (second frequency-range) pitch-threshold))
         frequency (:frequency detected)
         reference (or (:reference-frequency opts) frequency)
         _ (when (and reference (not (and (finite? reference) (< 0 reference (/ sample-rate 2)))))

@@ -30,3 +30,6 @@ show files. Runtime path evaluation does not depend on an open browser.
 
 The 3D editor is a separately tracked integration. Tests of this API alone do
 not establish touch interaction, visual quality or physical aiming accuracy.
+
+The [3D editor guide](rig-editor.md) covers fixture placement, direct path drawing,
+explicit cue creation/launch and reopening paths from saved shows.
