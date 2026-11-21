@@ -43,6 +43,9 @@
             (.setSoTimeout socket 3000)
             (when follow? (is (= "enable-start-stop-sync" (.readLine reader))))
             (is (= "status" (.readLine reader)))
+            (studio/tick! r)
+            (is (= (not follow?) (get-in (studio/snapshot r) [:transport :playing?]))
+                "Tempo-only pairing retains local playback while waiting for the first peer.")
             (status! writer (assoc base :beat 8.25 :playing true))
             (is (eventually #(= :locked (:status (clock r)))))
             (studio/tick! r)
@@ -77,7 +80,9 @@
                 (is (some #(= :ember (:cue-id %)) (:instances (studio/snapshot r)))
                     "A local resume rebases timed cues over the Link phase gap.")))
             (status! writer (assoc base :peers 0))
-            (is (eventually #(= :disconnected (:status (clock r))))))
+            (is (eventually #(= :disconnected (:status (clock r)))))
+            (studio/tick! r)
+            (is (= (not follow?) (get-in (studio/snapshot r) [:transport :playing?]))))
           (finally (studio/stop! r)))))))
 
 (deftest manual-pause-output-is-configurable-and-serialized

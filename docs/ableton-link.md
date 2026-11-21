@@ -4,7 +4,7 @@ Enable **Link** and **Start Stop Sync** in Live’s Link settings. Run a local C
 
 In **Connections**, enable **Ableton Link**, keep **Follow Link play and stop** checked, and choose **Connect enabled adapters**. Select **Ableton Link** under **Clock source**. Starting and stopping shared playback in Live now controls Studio. While paused, repeated Link status messages preserve the frozen show beat. On resume, Studio reacquires Link phase and rebases active musical timers. The Link session beat expresses shared musical phase. To follow a particular song or clip playhead, select the Ableton Live bridge.
 
-Turn off **Follow Link play and stop** before connecting to keep local transport control while receiving tempo and phase. Link peers must share transport changes for following to work. Studio connects to Carabiner at 127.0.0.1. Configure, save and import only store the pairing. Connect opens the socket. Disconnect closes its reader. Zero peers suspends the selected clock. If the daemon exits, start it again and disconnect/reconnect in Studio.
+Turn off **Follow Link play and stop** before connecting to keep local transport control while receiving tempo and phase. Link peers must share transport changes for following to work. Studio connects to Carabiner at 127.0.0.1. Configure, save and import only store the pairing. Connect opens the socket. Disconnect closes its reader. With transport following enabled, zero peers suspends the selected clock. With tempo-only following, the local show keeps its playback state and uses its current tempo until the peer phase becomes available again. If the daemon exits, start it again and disconnect/reconnect in Studio.
 
 ## Paused lighting
 
