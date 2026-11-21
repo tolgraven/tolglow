@@ -2037,7 +2037,8 @@
    :depends-on [:control/sensors-v1 :web/reframe-views-v1],
    :owner "studio_push_touch_interface"}
   {:evidence
-   ["Afterglow PR 25 and the Chromium fixture-pose scene regression cover a hung moving head at its physical end stops and the yoke, lens, shadow and fog beam."
+   ["Late solos in 64/128-head rich and compact frames and across a 1024-pixel strip use bounded active rows. Chromium mobile-quality framebuffer readback verifies color changes and unchanged mesh, spotlight, shadow texture and shader allocations."
+    "Afterglow PR 25 and the Chromium fixture-pose scene regression cover a hung moving head at its physical end stops and the yoke, lens, shadow and fog beam."
     "Five math tests with JVM aim oracle; initial frame not visually accepted, correction active"],
    :paths
    ["tolglow/dev/tolglow/capture_preview_oracle.clj"

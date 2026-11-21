@@ -17,6 +17,7 @@ import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.j
 
 import {PreviewActivity} from './preview-activity.js';
 import {DisplayClock} from './display-clock.js';
+import {fixtureSlots} from './fixture-selection.js';
 import {LightingSamples} from './lighting-samples.js';
 
 const TIERS = {
@@ -59,7 +60,7 @@ export class SceneRenderer {
     }, {signal});
     if (!platform.worker) {
       this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
-        room: () => this.room, snapshot: () => this.snapshot,
+        room: () => this.room, snapshot: () => this.snapshot, visibleLights: () => this.lightIds,
         active: () => this.visible && !this.paused && !this.disposed,
         reducedMotion: () => this.reducedMotion.matches});
       this.reducedMotion.addEventListener('change', () => this.navigation.notify(), {signal});
@@ -136,10 +137,6 @@ export class SceneRenderer {
     nextFog.setAmount(this.fogAmount);
     this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.options.fps;
     this.fog = nextFog; previousFog?.dispose();
-    for (const entry of this.fixtures) if (entry.light) {
-      entry.light.shadow.map?.dispose(); entry.light.shadow.map = null;
-      entry.light.shadow.mapSize.set(this.options.shadowSize, this.options.shadowSize);
-    }
     if (this.snapshot) this.update(this.snapshot, true);
     this.resize();
   }
@@ -155,6 +152,7 @@ export class SceneRenderer {
     this.editorOverlay ||= new RigOverlay(); this.editorOverlay.update(snapshot);
     this.snapshot = snapshot; const rig = snapshot.rig || {};
     const key = rig === this.lastRig ? this.key : structuralKey(rig);
+    if (rig !== this.lastRig) this.fixtureById = new Map((rig.fixtures || []).map(f => [String(f.id), f]));
     this.lastRig = rig;
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
     for (const entry of this.trusses || []) {
@@ -162,25 +160,26 @@ export class SceneRenderer {
       if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
     }
     this.lighting.accept(snapshot, rig, receivedAt);
-    const currentFixtures = new Map((rig.fixtures || []).slice(0, this.options.fixtures).map(f => [String(f.id), f]));
-    for (const entry of this.fixtures) {
-      entry.fixture = currentFixtures.get(entry.id) || entry.fixture;
-      entry.root.position.fromArray(entry.fixture.position || [0, 0, 0]);
-      entry.root.rotation.set(...(entry.fixture['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');
-    }
-    if (!this.lighting.previous) this.applyLighting(this.lighting.values(this.fixtures, receivedAt));
+    const selection = snapshot.editor?.selection;
+    const selected = selection?.kind === 'fixtures' ? String(selection.id) : null;
+    const slots = fixtureSlots(this.fixtureById, snapshot.output?.values || {}, selected,
+      this.fixtures.map(entry => entry.id), this.lightIds, this.options.shadows);
+    this.lightIds = slots.lights;
+    const spotById = new Map(this.lightIds.map((id, index) => [id, this.spots[index]]));
+    this.fixtures.forEach((entry, index) => {
+      const id = slots.meshes[index], fixture = this.fixtureById.get(id);
+      if (entry.fixture !== fixture) {
+        entry.setAperture(fixture);
+        entry.fixture = fixture; entry.id = id; entry.root.name = 'fixture:' + id;
+      }
+      entry.root.position.fromArray(fixture.position || [0, 0, 0]);
+      entry.root.rotation.set(...(fixture['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');
+      entry.light = spotById.get(id);
+    });
+    this.applyLighting(this.lighting.values(this.fixtures, receivedAt));
   }
   applyLighting(output) {
     this.displayedValues = output;
-    const illuminated = entry => Math.max(...emittedColor(output[entry.id] || {})) > .00001;
-    // Keep shader light/shadow counts stable across blackout and cue launches.
-    // Zero-colour slots emit no light. Prefer active lights for the fixed shadow
-    // budget, filling unused slots with dark fixtures before the first frame.
-    // Otherwise the first lit cue compiles new PBR variants on the GPU process,
-    // which can stall browser compositing even when JS runs in a worker.
-    const shadowLights = new Set(this.fixtures.filter(entry => entry.light)
-      .sort((a, b) => Number(illuminated(b)) - Number(illuminated(a))).slice(0, this.options.shadows));
-    let shadowCount = 0;
     this.activeLights = 0;
     this.lightEntries = [];
     for (const entry of this.fixtures) {
@@ -191,7 +190,8 @@ export class SceneRenderer {
       entry.lensMaterial.emissive.setRGB(...rgb).multiplyScalar(8);
       if (!entry.light) continue;
       const light = entry.light;
-      if (Math.max(...rgb) > .00001) this.activeLights++;
+      const lit = Math.max(...rgb) > 0;
+      if (lit) this.activeLights++;
       light.color.setRGB(...rgb); light.intensity = 145; light.angle = Math.min(Math.PI * .45, beamAngle(entry.fixture, resolved) * 1.35);
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
       const optics = opticalFrustum(entry.fixture.position, direction, light.angle, apertureRadius(entry.fixture));
@@ -201,9 +201,7 @@ export class SceneRenderer {
       }
       light.shadow.camera.far = light.distance; light.userData.apexDistance = optics.apexDistance;
       light.target.position.copy(light.position).add(new THREE.Vector3(...direction)); light.target.updateMatrixWorld();
-      light.castShadow = shadowLights.has(entry);
-      if (light.castShadow) shadowCount++;
-      light.visible = true;
+      if (!lit) continue;
       this.lightEntries.push({position: optics.optical, virtualPosition: optics.virtual, apexDistance: optics.apexDistance, apertureRadius: optics.radius, direction: optics.axis, color: light.color,
         angle: light.angle, penumbra: light.penumbra, intensity: light.intensity, distance: light.distance, shadow: light.castShadow ? light.shadow : null});
     }
@@ -215,17 +213,16 @@ export class SceneRenderer {
       bounce.add(entry.color.clone().multiplyScalar(downward * .045));
     }
     this.bounceColor = bounce;
-    const visibleLights = this.fixtures.map(entry => entry.light).filter(light => light?.visible)
-      .sort((a, b) => Number(b.castShadow) - Number(a.castShadow));
+    // The permanent spot order matches Three's shadow-first uniform order.
     this.apertureUniform.value.fill(0);
-    visibleLights.forEach((light, index) => { this.apertureUniform.value[index] = light.userData.apexDistance || 0; });
-    this.shadowCount = shadowCount;
+    this.spots.forEach((light, i) => {this.apertureUniform.value[i] = light.userData.apexDistance || 0;});
     if (this.ready) this.updateStatus();
   }
   rebuild(rig) {
     if (this.content) {
       this.scene.remove(this.content); disposeGeometry(this.content);
-      for (const entry of this.fixtures) { entry.dispose(); entry.light?.dispose(); }
+      for (const entry of this.fixtures) entry.dispose();
+      for (const light of this.spots || []) light.dispose();
     }
     const r = rig.room || {}; this.room = [r.width || 12, r.height || 5, r.depth || 10].map(v => clamp(Number(v) || 1, 1, 100));
     this.fog?.setRoom(this.room);
@@ -235,6 +232,7 @@ export class SceneRenderer {
       if (Array.isArray(spec.position) && spec.position.every(Number.isFinite) && Number.isFinite(spec.length) && spec.length > 0)
         {const root = createTruss(spec, this.materials); this.content.add(root); this.trusses.push({id: String(spec.id), root});}
     }
+    this.spots = []; this.lightIds = [];
     this.fixtures = (rig.fixtures || []).slice(0, this.options.fixtures).map((fixture, index) => {
       const entry = createMovingHead(fixture, this.materials); finiteApertureMaterial(entry.lensMaterial, this.apertureUniform); entry.id = String(fixture.id); entry.fixture = fixture;
       const rotation = (fixture['rotation-deg'] || [0, 0, 0]).map(v => (Number(v) || 0) * Math.PI / 180);
@@ -244,6 +242,8 @@ export class SceneRenderer {
         light.position.copy(entry.root.position); light.shadow.mapSize.set(this.options.shadowSize, this.options.shadowSize);
         light.shadow.camera.near = .06; light.shadow.camera.far = light.distance;
         light.shadow.bias = -.00008; light.shadow.normalBias = .012;
+        light.castShadow = index < this.options.shadows;
+        this.spots.push(light); this.lightIds.push(entry.id);
         this.content.add(light, light.target); entry.light = light;
       }
       return entry;
@@ -295,9 +295,9 @@ export class SceneRenderer {
   getNavigationState() {return this.navigation?.state() || null;}
   onNavigationChange(callback) {return this.navigation?.subscribe(callback) || (() => {});}
   focusFixture(id) {
-    const entry = this.fixtures.find(f => f.id === String(id)); if (!entry) return false;
+    const fixture = this.fixtureById?.get(String(id)); if (!fixture) return false;
     this.navigation?.setMode('orbit');
-    this.controls.target.copy(entry.root.position); this.camera.position.copy(entry.root.position).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
+    this.controls.target.fromArray(fixture.position || [0, 0, 0]); this.camera.position.copy(this.controls.target).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
   }
   changeActivity(active) {
     this.visible = active; this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
@@ -367,7 +367,7 @@ export class SceneRenderer {
     this.updateStatus();
   }
   updateStatus() {
-      const capped = this.totalFixtureCount > MAX_LIGHTS ? ` · first ${MAX_LIGHTS}/${this.totalFixtureCount} lights` : '';
+      const capped = this.totalFixtureCount > MAX_LIGHTS ? ` · ${this.activeLights} lit · ${MAX_LIGHTS} light slots` : '';
       const automatic = this.qualityChoice === 'auto' && this.softwareRenderer ? 'low · software GPU' : this.quality;
       this.setStatus(`${automatic} · ${this.renderedShadows || 0} shadows · ${this.workLight ? 'work light' : 'dark show'}${capped}`);
   }
@@ -378,7 +378,7 @@ export class SceneRenderer {
       idleBudgetMs: Math.max(0, this.frameInterval - this.lastCPU), nextFrameAt: this.nextFrameAt, frames: this.draws,
       geometryCount: this.renderer?.info.memory.geometries || 0, textureCount: this.renderer?.info.memory.textures || 0,
       programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
-      fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: MAX_LIGHTS,
+      lightIds: this.lightIds, fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: MAX_LIGHTS,
       shadowCount: this.renderedShadows || 0, workLight: this.workLight, fogAmount: this.fogAmount,
       camera: this.camera?.position.toArray(), target: this.controls?.target.toArray(), fog: this.fog?.stats(),
       visible: this.visible, hidden: this.platform.worker ? this.platform.hidden : document.hidden, lost: this.lost,
@@ -394,7 +394,8 @@ export class SceneRenderer {
     this.pause(); this.abort.abort(); this.resizeObserver?.disconnect(); this.activity?.dispose();
     this.editorInput?.dispose(); this.editorOverlay?.dispose();
     this.navigation?.dispose(); this.controls?.dispose(); this.fog?.dispose();
-    for (const entry of this.fixtures) { entry.dispose(); entry.light?.dispose(); }
+    for (const entry of this.fixtures) entry.dispose();
+    for (const light of this.spots || []) light.dispose();
     if (this.content) disposeGeometry(this.content);
     this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
     this.sceneTarget?.dispose(); this.compositeTarget?.dispose(); this.environmentTarget?.dispose();

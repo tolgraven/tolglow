@@ -32,6 +32,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
+            [tolglow.show.preview :as preview]
             [tolglow.persistence :as persistence]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -69,21 +70,6 @@
 (defn repls [runtime] (connections/repls (:connections runtime)))
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
-(defn- preview-values [output fixtures]
-  (let [n (min 16 (count (:target-order output)))
-        selected (if-let [rich (:values output)]
-                   (select-keys rich (take n (:target-order output)))
-                   (when-let [compact (:compact output)]
-                     (into {} (map (juxt :id identity)) (render/project-compact compact (range n)))))]
-    ;; The renderer keeps rig order. Match by ID so a pending patch change
-    ;; never applies one head's calibration to another head's output.
-    (reduce (fn [values fixture]
-              (let [id (:id fixture)]
-                (if-let [pose (render/fixture-pose fixture (get values id))]
-                  (assoc-in values [id :pose] pose)
-                  values)))
-            selected (take n fixtures))))
-
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
@@ -115,7 +101,7 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (preview-values output (get-in model [:rig :fixtures]))
+            :output {:values (preview/values output (get-in model [:rig :fixtures]))
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)

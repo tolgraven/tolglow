@@ -65,7 +65,7 @@
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
     (aset frame "rig" js-rig)
-    (aset frame "output" #js {:values (clj->js (get-in show [:output :values]))})
+    (aset frame "output" #js {:values (clj->js (get-in show [:output :values]) :keyword-fn #(subs (str %) 1))})
     (aset frame "cut?" (boolean (or (:cut? show)
                                     (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
                                             (:type %)) intents))))

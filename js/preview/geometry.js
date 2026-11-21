@@ -64,7 +64,15 @@ export function createMovingHead(fixture, materials) {
   for (let n = 0; n < 6; n++) box(head, [.27, .012, .012], [0, .17 + n * .034, .156], materials.rubber);
   // Small manufacturer display is non-emissive: no invented output light.
   box(base, [.12, .035, .004], [0, -.015, .182], materials.rubber, .003);
-  return {root, head, yoke, lensMaterial, dispose() { lensMaterial.dispose(); }};
+  return {root, head, yoke, lensMaterial,
+    setAperture(fixture) {
+      const next = apertureRadius(fixture), scale = next / radius;
+      barrel.scale.set(scale, 1, scale); lens.scale.set(scale, scale, 1);
+      const ringScale = (next + .014) / (radius + .014);
+      ring.scale.set(ringScale, ringScale, 1);
+    },
+    dispose() {lensMaterial.dispose();}
+  };
 }
 export function disposeGeometry(root) {
   const geometries = new Set(); root.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
