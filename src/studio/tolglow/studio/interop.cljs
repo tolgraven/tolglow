@@ -18,6 +18,9 @@
         :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
         :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
         :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))
+        :navigation-mode (when (fn? (aget engine "setNavigationMode")) (js-invoke engine "setNavigationMode" value))
+        :navigation-speed (when (fn? (aget engine "setNavigationSpeed")) (js-invoke engine "setNavigationSpeed" value))
+        :navigation-move (when (fn? (aget engine "moveCamera")) (js-invoke engine "moveCamera" (first value) (second value)))
         nil))))
 (rf/reg-fx :studio/preview-fullscreen
   (fn [_]
@@ -69,6 +72,10 @@
                                                                (.querySelector root "#preview-status")])]
                           (aset this "engine" engine)
                           (swap! engines assoc :preview engine)
+                          (when (fn? (aget engine "onNavigationChange"))
+                            (aset this "navigation-unsubscribe"
+                                  (js-invoke engine "onNavigationChange"
+                                             #(rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)]))))
                           (when-let [show (second (r/argv this))] (js-invoke engine "update" (clj->js show)))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"])])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
@@ -79,6 +86,7 @@
      :component-will-unmount
      (fn [this]
        (aset this "alive" false)
+       (when-let [unsubscribe (aget this "navigation-unsubscribe")] (unsubscribe))
        (when-let [handler (aget this "fullscreen-handler")]
          (.removeEventListener js/document "fullscreenchange" handler)
          (.removeEventListener js/document "webkitfullscreenchange" handler))
@@ -89,7 +97,7 @@
      (fn [show]
        (let [this (r/current-component)]
        [:div.preview-stage {:ref #(aset this "root" %)}
-        [:canvas#preview {:tab-index 0 :aria-label "Three dimensional lighting preview. Drag to orbit; scroll or pinch to zoom."}]
+        [:canvas#preview {:tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
         [:div.preview-overlay
          [:span#preview-status "Preparing preview"]
          [:span#frame-time (str (.toFixed (or (get-in show [:status :frame-ms]) 0) 1) " ms")]]
