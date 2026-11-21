@@ -2,7 +2,7 @@
   (:require [cljs.test :refer-macros [deftest is]]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.page-routes :as pages]
-            [tolglow.studio.events-test :refer [base transition]]))
+            [tolglow.studio.events-test :refer [base transition full-frame]]))
 
 (deftest studio-links-preserve-view-and-popup-identity
   (doseq [view pages/views]
@@ -27,3 +27,15 @@
     (is (nil? (:studio/navigate restored)))
     (is (= [:replace :assistant] (:studio/navigate resume)))
     (is (= [:push :library] (:studio/navigate (transition rig [:studio/set-view :library]))))))
+
+(deftest fresh-show-without-settings-can-save-its-first-page-preference
+  (let [db (dissoc base :show :settings-loaded? :settings-supported?)
+        installed (full-frame db (dissoc (:show base) :settings))
+        preferences (some (fn [[op event]]
+                            (when (and (= op :dispatch) (= :studio/settings-received (first event))) event))
+                          (:fx installed))]
+    (is (= [:studio/settings-received {}] preferences))
+    (when preferences
+      (let [ready (:db (transition (:db installed) preferences))]
+        (is (true? (:settings-supported? ready)))
+        (is (= "/api/settings" (get-in (transition ready [:studio/persist-ui]) [:studio/http :path])))))))

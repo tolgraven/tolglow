@@ -173,8 +173,8 @@
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
            runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
-           (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
-           (conj [:dispatch [:studio/settings-received (:settings show)]]))}))
+           (or epoch-changed? (not (:settings-loaded? db)))
+           (conj [:dispatch [:studio/settings-received (or (:settings show) {})]]))}))
 
 (rf/reg-event-db :studio/stream-opening
   (fn [db [_ session id]]
