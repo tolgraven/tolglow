@@ -23,7 +23,10 @@ export function fixtureSlots(fixtures, values, selectedId, meshes, lights, shado
     || Number(b.moving) - Number(a.moving) || b.level - a.level
     || Number(residentLights.has(b.id)) - Number(residentLights.has(a.id))
     || (a.id < b.id ? -1 : 1));
-  const lit = active.map(entry => entry.id);
+  // Keep an emitting strip/static fixture visible among a wall of movers.
+  // Resolve mixed occupancy before assigning expensive shadow and mesh slots.
+  const lit = Array.from(new Set([active[0], active.find(entry => !entry.moving), ...active]
+    .filter(Boolean).map(entry => entry.id)));
   const preferred = new Set();
   if (fixtures.has(selectedId)) preferred.add(selectedId);
   for (const id of lit) preferred.add(id);

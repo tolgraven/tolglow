@@ -27,24 +27,31 @@
             (if (and (pos? level) pan tilt (aget pan i) (aget tilt i)) (+ 2.0 level) level))
           0.0)))))
 
+(defn- consider! [^PriorityQueue candidates limit level tie i]
+  ;; Only allocate a heap entry when it can survive the cutoff.
+  (let [full? (= limit (.size candidates))
+        weakest (when full? (.peek candidates))]
+    (when (or (not full?) (> level (double (first weakest)))
+              (and (== level (double (first weakest))) (> tie (long (nth weakest 1)))))
+      (when full? (.poll candidates))
+      (.add candidates [level tie i]))))
+
 (defn- preview-indices [order score]
   (if (<= (count order) idle-limit)
     (range (count order))
-    (let [active (PriorityQueue.)]
+    (let [active (PriorityQueue.) fixed (PriorityQueue.)]
       (dotimes [i (count order)]
         (let [id (nth order i)
               level (double (score i id))]
           (when (pos? level)
-            ;; Stable ID breaks brightness ties across universes. Comparing
-            ;; before insertion avoids a heap entry for every lit strip pixel.
-            (let [tie (hash id)
-                  full? (= active-limit (.size active))
-                  weakest (when full? (.peek active))]
-              (when (or (not full?) (> level (double (first weakest)))
-                        (and (== level (double (first weakest))) (> tie (long (nth weakest 1)))))
-                (when full? (.poll active))
-                (.add active [level tie i]))))))
-      (let [lit (into #{} (map peek) active)]
+            (let [tie (hash id)]
+              (consider! active active-limit level tie i)
+              ;; Preserve some strip/static emitters even in a wall of movers.
+              (when (<= level 1.0) (consider! fixed idle-limit level tie i))))))
+      (let [lit (if (= active-limit (.size active))
+                  (into #{} (comp (map peek) (distinct) (take active-limit))
+                        (concat fixed (sort #(compare %2 %1) active)))
+                  (into #{} (map peek) active))]
         (if (< (count lit) idle-limit)
           (into lit (take (- idle-limit (count lit)) (remove lit (range idle-limit))))
           lit)))))

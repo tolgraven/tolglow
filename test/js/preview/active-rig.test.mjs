@@ -23,6 +23,12 @@ test('mesh, light and shadow budgets follow emitted values and keep their slots 
     const dark = fixtureSlots(fixtures, {}, selected, initial.meshes, initial.lights, 2);
     assert.deepEqual(dark, initial);
   }
+  const manyMovers = new Map(Array.from({length:128}, (_, i) => [String(i), {channels:{pan:1,tilt:2}}]));
+  manyMovers.set('strip', {channels:{green:1}});
+  const rows = Object.fromEntries([...manyMovers.keys()].map(id => [id, {'emitted-color':[0,.5,0]}]));
+  const meshes = [...manyMovers.keys()].slice(0,32);
+  const slots = fixtureSlots(manyMovers, rows, null, meshes, meshes.slice(0,16), 2);
+  assert.ok(slots.lights.includes('strip'));
 });
 
 test('late solo illuminates the rendered stage and fog without reallocating light or shadow slots', {timeout:120000}, async t => {

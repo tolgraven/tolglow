@@ -101,7 +101,9 @@ Desktop caps DPR1.5, 1.5M pixels, 4×1024 shadow maps and 64 fixture meshes; mob
 caps DPR1, .5M pixels, 2×512 shadow maps and 32 meshes; high caps DPR1.75, 2.8M
 pixels, 4×2048 maps and 128 meshes. All tiers share up to 16 persistent spotlights. The host projects up to 128
 emitting targets across universes, ranked by moving-head channels, peak
-emitted RGB, then stable ID hash. Sparse frames include up to 16 rows total
+emitted RGB, then stable ID hash. Up to 16 fixed emitters retain coverage when moving
+heads saturate the projection. The scene likewise includes an emitting fixed
+fixture in its spotlight budget for a mixed rig. Sparse frames include up to 16 rows total
 with idle fixtures filled in patch order. Only selected compact rows expand
 into maps and receive calibrated poses. The scene assigns its mesh budget to
 the selected rig fixture, then emitting fixtures, retaining occupants on ties.

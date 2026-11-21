@@ -71,3 +71,11 @@
         (is (contains? expected id))
         (is (= expected (get-in view [:output :values]) (get-in (studio/browser-snapshot runtime query) [:output :values]))))
       (finally (show/stop! runtime)))))
+
+(deftest fixed-emitters-retain-coverage-in-a-saturated-moving-rig
+  (let [fixtures (into (movers 128) (pixels 50))
+        work (mapv (fn [{:keys [id channels]}]
+                     {:target-id id :attribute (if (:pan channels) :red :green) :value 1.0}) fixtures)]
+    (doseq [{:keys [values]} (project-both fixtures work)]
+      (is (= 128 (count values)))
+      (is (= 16 (count (filter #(pos? (second (:emitted-color %))) (vals values))))))))
