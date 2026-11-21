@@ -17,6 +17,17 @@
                 "Plane paths publish validated musical cues and run only on explicit request"
                 "Undo, cancel, stale identity and teardown are covered"]
    :evidence ["Shared renderer pose/overlay hunks coordinated with camera navigation owner; parent owns Ring aim-path publication"]}
+  {:id :authoring/aim-path-effects
+   :title "Publish drawn world-space aim paths as musical tween effects and cues"
+   :kind :implementation :status :in-progress :owner "root"
+   :paths ["tolglow/src/tolglow/aim_paths.clj" "tolglow/test/tolglow/aim_paths_test.clj"
+           "tolglow/test/tolglow/studio/aim_paths_host_test.clj" "tolglow/docs/aim-paths.md"
+           "tolglow/src/tolglow/composition/tween.clj" "tolglow/test/tolglow/composition/tween_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Finite bounded paths use existing pure musical tweens and captured clocks"
+                "Effect and cue publication is atomic and does not implicitly launch output"
+                "Path metadata survives ordinary show save/load and stale revisions reject"]
+   :evidence []}
   {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil

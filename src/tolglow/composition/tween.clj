@@ -47,7 +47,8 @@
         [{:path [:repeat-count] :message "Repeat count must be a positive integer"}])
       (when (seq frames)
         (concat
-         (when-not (= 0 (:at-ms (first frames)))
+         (when-not (and (registry/finite-number? (:at-ms (first frames)))
+                        (zero? (:at-ms (first frames))))
            [{:path [:keyframes 0 :at-ms] :message "First keyframe starts at zero"}])
          (mapcat
           (fn [[i frame]]
