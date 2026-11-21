@@ -17,7 +17,7 @@ docker build -t tolglow-dev:local -f dev/container/Dockerfile dev/container
 The Dockerfile pins the Node and Java base image digests and verifies the versioned
 Clojure tools archive with SHA256. Debian packages use the base distribution's
 current repositories, so repeat builds are not claimed bit-for-bit identical.
-The updated Dockerfile targets Node 26, Java 25, Clojure CLI 1.12.7.1681, Git,
+The updated Dockerfile targets Node 26, Java 25, Leiningen 2.13.1, Git,
 Python, zsh, zsh-autosuggestions and zsh-syntax-highlighting, plus Codex CLI
 `0.171.0`. The earlier image actually tested below contained Node 22, Java 21,
 Clojure CLI 1.11.1.1435 and Codex 0.172.0-alpha.2; the manifest update alone does
@@ -128,8 +128,7 @@ ownership/input and bounded byte cursor behavior without Docker. Run the real
 Docker gate explicitly after building the image:
 
 ```sh
-clojure -Sdeps '{:paths ["src" "test" "resources"]}' -M -e \
-  "(require 'tolglow.studio.terminal-docker-test) (let [r (clojure.test/run-tests 'tolglow.studio.terminal-docker-test)] (System/exit (+ (:fail r) (:error r))))"
+lein test :docker
 ```
 
 That gate creates disposable paired Git worktrees and actual containers, executes

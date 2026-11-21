@@ -1,7 +1,38 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :application/configured-startup
+ [{:id :build/leiningen-canonical-workflows
+   :title "Use one Leiningen project for backend, frontend, tests and profiling"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"
+           "tolglow/dev/tolglow/build_manifest.clj" "tolglow/dev/parity_deps.clj"
+           "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin/test"
+           "tolglow/bin/studio" "tolglow/bin/profile-mover-shader"
+           "tolglow/.github/workflows/tests.yml"
+           "tolglow/.github/scripts/install-lein" "tolglow/dev/container/Dockerfile"
+           "tolglow/test/tolglow/studio/terminal_docker_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Canonical project merges explicit dependency overrides with read-only fork manifest data"
+                "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
+                "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
+                "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
+   :evidence ["Lein :cljs final integrated185tests/994assertions and optimized185files/zero warnings passed locally"
+              "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
+              "Plain lein test after sync lifecycle integration:591/4896 passed on Java21; final sync/manifest23/272 and actual profile-master/subscriber capture-oracle smoke passed; final OSC pin integration rechecked in CI"
+              "Exact e77fce7 CI44898916324 passed all Java17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
+  {:id :fixtures/patch-groups
+   :title "Normalize named patch lists and fixture-builder heads before installation"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/fixtures/patch.clj" "tolglow/src/tolglow/fixtures/heads.clj"
+           "tolglow/src/tolglow/fixtures.clj" "tolglow/docs/fixture-patch-groups.md"]
+   :depends-on [:application/configured-startup]
+   :acceptance ["Preserve full fixture vectors and the original group names, starting addresses and list order"
+                "Expand keyword and function entries into positioned rig instances"
+                "Allocate coarse and fine channels across universe boundaries and preserve prior state on invalid replacements"]
+   :evidence ["Configured startup and normal submission tests exercise the shared rig model and Afterglow packer."
+              "Effects-branch builder parity exercises four moving heads, original PixTol channel records and a multi-universe RGBW strip."]}
+  {:id :application/configured-startup
    :kind :implementation :status :done :owner nil
    :title "Start a headless or web show from ordered Tolglow config modules"
    :paths ["tolglow/src/tolglow/modules.clj" "tolglow/src/tolglow/application.clj" "tolglow/src/tolglow/show.clj"
@@ -676,7 +707,6 @@
     "tolglow/src/tolglow/demo.clj"
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
-    "tolglow/bin/studio"
     "tolglow/src/tolglow/connections.clj"
     "afterglow/src/afterglow/output/scheduler.clj"
     "tolglow/test/tolglow/output/scheduler_test.clj"
@@ -1614,7 +1644,7 @@
     "tolglow/docs/effect-recipes.md"],
    :acceptance
    ["Musical sin/triangle/saw/pulse and spatial wave recipes"
-    "Preserve ordered targets/blends and geometry fallback"
+    "Preserve ordered targets/blends and actual pan/tilt output for geometric effects"
     "Schema axes/categories/modifiers survive publication and hot reload"],
    :title
    "Provide declarative effect and musical waveform construction helpers",

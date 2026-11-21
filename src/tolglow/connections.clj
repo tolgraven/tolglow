@@ -10,7 +10,8 @@
             [tolglow.fixtures.library :as fixture-manager]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensor-manager]
-            [tolglow.studio.sync :as sync-manager]))
+            [afterglow.sync :as sync]
+            [tolglow.integrations.live-sync :as live-sync]))
 
 (defn- fail! [code message]
   (throw (ex-info message {:connections/error code})))
@@ -45,7 +46,7 @@
         integrations (cond-> integrations
                        (contains? integrations :agents) (update :agents agent-manager/validate-state)
                        (contains? integrations :fixtures) (update :fixtures fixture-manager/validate-state)
-                       (contains? integrations :sync) (update :sync sync-manager/validate-state)
+                       (contains? integrations :sync) (update :sync live-sync/validate-state)
                        (contains? integrations :repl) (update :repl repl-manager/validate-state)
                        (contains? integrations :audio-capture) (update :audio-capture validate-audio-state))
         reactive (graph/validate-registry (or (:reactive model) {:registrations []}))]
@@ -77,7 +78,7 @@
                 (catch Exception _ (conj errors {:resource kind :code :cleanup-failed})))))
           [] [[:sensors sensor-manager/close! (:sensors bundle)]
               [:repls repl-manager/close! (:repls bundle)]
-              [:sync sync-manager/close! (:sync bundle)]
+              [:sync sync/close! (:sync bundle)]
               [:audio capture/close! (:audio bundle)]
               [:agents agent-manager/close! (:agents bundle)]
               [:fixtures fixture-manager/close! (:fixtures bundle)]
@@ -98,7 +99,7 @@
             sync-options (cond-> (:sync-options options)
                            (get-in data [:integrations :sync])
                            (assoc :config (get-in data [:integrations :sync :config])))
-            sync (sync-manager/create-manager sync-options)
+            sync (live-sync/create-manager sync-options)
             _ (vswap! resources assoc :sync sync)
             repl-options (cond-> (:repl-options options)
                            (get-in data [:integrations :repl])
@@ -163,11 +164,11 @@
           generation (inc (:generation before))]
       (when (:restoring? before) (fail! :restoring "Cannot restart during restoration"))
       (let [sync (get-in before [:bundle :sync])
-            sync-run-id (sync-manager/active-run-id sync)]
+            sync-run-id (sync/active-run-id sync)]
         (swap! (:state connections) assoc :generation generation :model model
                :restart-inputs {:audio-run-id (capture/active-run-id (get-in before [:bundle :audio]))
                                 :sync-run-id sync-run-id})
-        (sync-manager/invalidate-inputs! sync sync-run-id))
+        (sync/invalidate-inputs! sync sync-run-id))
       generation)))
 
 (defn export-state
@@ -180,7 +181,7 @@
          integrations (assoc (or (:integrations model) {})
                              :agents (agent-manager/export-state (:agents bundle))
                              :fixtures (fixture-manager/export-state (:fixtures bundle))
-                             :sync (assoc (sync-manager/export-state (:sync bundle)) :wanted? sync-wanted?)
+                             :sync (assoc (sync/export-state (:sync bundle)) :wanted? sync-wanted?)
                              :repl (repl-manager/export-state (:repls bundle))
                              :audio-capture audio-state)]
      (portable! (cond-> {:integrations integrations :reactive (graph/export-registry (:reactive bundle))}
@@ -276,12 +277,12 @@
   must additionally retain the captured show epoch in command envelopes."
   ([connections callbacks] (start-sync! connections nil callbacks))
   ([connections config callbacks]
-   (let [config (when config (sync-manager/validate-config config))]
+   (let [config (when config (live-sync/validate-config config))]
      (locking (:lock connections)
        (let [{:keys [bundle generation]} (live-state connections)
              callbacks (sync-callbacks connections generation callbacks)]
-         (when config (sync-manager/configure! (:sync bundle) config))
-         (let [handle (sync-manager/start! (:sync bundle) callbacks)]
+         (when config (sync/configure! (:sync bundle) config))
+         (let [handle (sync/start! (:sync bundle) callbacks)]
            (swap! (:state connections) assoc :sync-wanted? true)
            handle))))))
 
@@ -296,8 +297,8 @@
                             (fail! :stale-generation "Synchronization operation belongs to retired resources"))
                         manager (sync connections)]
                     (swap! (:state connections) assoc :sync-wanted? false)
-                    [manager (sync-manager/active-run-id manager)]))]
-    (sync-manager/stop! manager (get-in connections [:options :sync-stop-timeout-ms]) run-id))))
+                    [manager (sync/active-run-id manager)]))]
+    (sync/stop! manager (get-in connections [:options :sync-stop-timeout-ms]) run-id))))
 
 (defn resume-sync!
   "Explicit host hook after model/clock restore. A saved wanted? flag alone
@@ -326,8 +327,8 @@
                       {:rebound? false :reason :replaced-run})))
          :sync (when (:sync-wanted? state)
                  (let [manager (get-in state [:bundle :sync])]
-                   (if (= (get-in state [:restart-inputs :sync-run-id]) (sync-manager/active-run-id manager))
-                     (sync-manager/rebind! manager (sync-callbacks connections generation sync-handlers))
+                   (if (= (get-in state [:restart-inputs :sync-run-id]) (sync/active-run-id manager))
+                     (sync/rebind! manager (sync-callbacks connections generation sync-handlers))
                      {:rebound? false :reason :replaced-run})))}))))
 
 (defn prepare-restore

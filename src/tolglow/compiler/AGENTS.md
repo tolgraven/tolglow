@@ -12,8 +12,8 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
 - Keep response and envelope semantics identical to the scalar compiler. State
   and canonical model parameters remain caller-owned; only the per-frame copy
   changes. Do not evaluate the effect on both backends to hide disagreements.
-- Scalar numeric semantics are the reference. Preserve explicit exact-number,
-  geometry and tween fallbacks and explain them through function metadata.
+- Scalar numeric semantics are the reference. Keep world coordinates signed and finite. Preserve explicit
+  exact-number and tween fallbacks and explain them through function metadata.
   Unsupported query/IR nodes must fail shared validation, never arbitrary eval.
 - New arrays are privately owned until step return and read-only thereafter.
   Use runtime/append-contributions to flush ordinary assignment tails before

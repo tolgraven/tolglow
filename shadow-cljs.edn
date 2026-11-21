@@ -1,4 +1,4 @@
-{:deps {:aliases [:cljs]}
+{:lein {:profile "+cljs"}
  :builds
  {:studio-test {:target :node-test
                 :output-to "target/studio-tests.js"

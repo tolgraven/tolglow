@@ -1,8 +1,8 @@
 # Build explicitly: docker build -t tolglow-dev:local -f dev/container/Dockerfile dev/container
 FROM eclipse-temurin:25-jdk-jammy@sha256:43d6f1775a0660b561c1c42edfdf8538a89672a040961acb3730c3ccc53c53de AS java
 FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
-ARG CLOJURE_VERSION=1.12.7.1681
-ARG CLOJURE_SHA256=791c12b5f5a0986ae7456cc50f8db7715992ecc330273305846034ed1bacd6da
+ARG LEIN_VERSION=2.13.1
+ARG LEIN_SHA256=2e4c36cbaef717d0fa589a1f95e4c526a1cb6c35b48dc92e6dbb30d6f8595b5c
 ARG CODEX_VERSION=0.171.0
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH=/opt/java/openjdk/bin:$PATH
@@ -13,16 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Optional corporate build CA is a transient BuildKit secret, never in the image.
 RUN --mount=type=secret,id=build_ca \
     if [ -r /run/secrets/build_ca ]; then export CURL_CA_BUNDLE=/run/secrets/build_ca; fi; \
-    curl -fsSL "https://github.com/clojure/brew-install/releases/download/${CLOJURE_VERSION}/clojure-tools-${CLOJURE_VERSION}.tar.gz" -o /tmp/clojure.tar.gz \
-    && echo "${CLOJURE_SHA256}  /tmp/clojure.tar.gz" | sha256sum --check - \
-    && mkdir /tmp/clojure && tar xzf /tmp/clojure.tar.gz -C /tmp/clojure \
-    && mkdir -p /usr/local/lib/clojure/libexec /usr/local/share/man/man1 \
-    && cp /tmp/clojure/clojure-tools/deps.edn /tmp/clojure/clojure-tools/example-deps.edn /tmp/clojure/clojure-tools/tools.edn /usr/local/lib/clojure/ \
-    && cp /tmp/clojure/clojure-tools/*.jar /usr/local/lib/clojure/libexec/ \
-    && sed 's@PREFIX@/usr/local/lib/clojure@g' /tmp/clojure/clojure-tools/clojure > /usr/local/bin/clojure \
-    && sed 's@BINDIR@/usr/local/bin@g' /tmp/clojure/clojure-tools/clj > /usr/local/bin/clj \
-    && chmod +x /usr/local/bin/clojure /usr/local/bin/clj \
-    && rm -rf /tmp/clojure /tmp/clojure.tar.gz
+    mkdir -p /usr/local/lib/leiningen \
+    && curl -fsSL "https://github.com/technomancy/leiningen/releases/download/${LEIN_VERSION}/leiningen-${LEIN_VERSION}-standalone.jar" -o /usr/local/lib/leiningen/lein.jar \
+    && echo "${LEIN_SHA256}  /usr/local/lib/leiningen/lein.jar" | sha256sum --check - \
+    && printf '%s\n' '#!/bin/sh' 'exec java -cp /usr/local/lib/leiningen/lein.jar clojure.main -m leiningen.core.main "$@"' > /usr/local/bin/lein \
+    && chmod +x /usr/local/bin/lein
 RUN --mount=type=secret,id=build_ca \
     if [ -r /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
     npm install --global --no-audit --no-fund "@openai/codex@${CODEX_VERSION}" \

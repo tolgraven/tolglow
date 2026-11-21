@@ -1,19 +1,19 @@
 # Starting a Tolglow show
 
-Run `clojure -M:run` or `lein run` from the project root. Both read the ordered
+Run `lein run` from the project root. It reads the ordered
 configuration in [resources/tolglow.edn](../resources/tolglow.edn). The supplied
 configuration starts a 40 Hz preview show and serves Studio on loopback port
 8500. Physical output and device acquisition use explicit settings.
 
 ```sh
-clojure -M:run --headless true
-clojure -M:run --config ./club.edn
-clojure -M:run --config my.venue/friday --port 8600
+lein run --headless true
+lein run --config ./club.edn
+lein run --config my.venue/friday --port 8600
 ```
 
 `--config` accepts one EDN map or a qualified Clojure Var containing a map.
 Set `TOLGLOW_CONFIG` to the same path or Var to select the venue whenever
-`lein run`, `clojure -M:run` or zero-argument `app/start!` launches. An
+`lein run` or zero-argument `app/start!` launches. An
 explicit `--config` takes precedence. The installed project can therefore use its own fixtures, registry, functions
 and setup modules from code. CLI overrides apply only to flags supplied. The
 same entry point accepts `--output ola`, the OLA and Art-Net address options,
@@ -54,7 +54,9 @@ checks the entire plan for duplicate IDs and missing enabled setup functions.
 A module receives the context and its settings without `:enabled`. Its return
 map can contain `:value` for later modules and `:stop!`, a zero-argument
 cleanup. `app/stop!` runs cleanups once in reverse order. A startup failure
-unwinds completed modules before propagating the error. For functions in your
+unwinds completed modules before propagating the error. Supply a zero-argument
+`:abort!` when rollback differs from normal shutdown. For example, the show-state
+module only replaces its save file after startup has finished successfully. For functions in your
 own code, add `:init {:search-in-namespaces [my.venue.setup] ...}` to resolve
 public functions whose names match module IDs; explicitly registered functions
 take precedence.
@@ -64,7 +66,7 @@ take precedence.
 | ID | Startup action |
 | --- | --- |
 | `:show` | Creates the runtime and starts its render and output schedules. Top-level `:hz` sets the frame rate. `:show` accepts runtime options including `:model`, `:workers`, `:ola` and `:artnet`. |
-| `:fixtures` | Publishes fixture type `:definitions` and installs the ordered full fixture `:patches` vector using the rig validator. |
+| `:fixtures` | Publishes fixture type `:definitions` and expands named `:patches` groups or installs a full fixture vector using the rig validator. See [fixture patch groups](fixture-patch-groups.md). |
 | `:cue-pages` | Installs `:definitions` in order. Each page has an ID and a map from grid coordinates to registered cue IDs. |
 | `:show-state` | Loads `:load-file` as a full Transit backup, runs `:actions` (command maps or zero-argument Clojure functions) in order and saves to `:save-file` during shutdown if configured. |
 | `:sensors` | Installs `:sources` keyed by device ID. Each entry has the source's portable `:config` and `:pairing`. |
@@ -88,8 +90,7 @@ logging, then passes the three `:init` lists to `tolglow.setup/init-by-ks`. Its
 built-in setup functions include fixture patches, cue pages, controllers and
 clock sync. Some depend on the original mutable Afterglow show. Calling that
 entry point explicitly continues to run those functions. The functional host
-accepts a prepared model in `:show {:model ...}`. Porting every original
-fixture-builder and page-builder into that model is a separate parity task.
+accepts a prepared model in `:show {:model ...}`. The configured fixture module accepts group lists, channel records and pixel heads. Original page builders that draw directly on the mutable grid still need functional equivalents.
 
 A smoke run used the original `tolglow.core/-main` with `:set-ns` required
 and the OSC and terminal modules disabled. It confirmed the original order

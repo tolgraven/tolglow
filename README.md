@@ -1,6 +1,6 @@
 # tolglow
 
-[Start a configured show](docs/application-startup.md) with `clojure -M:run` or `lein run`. Use `--headless true` to run the same show without Studio.
+[Start a configured show](docs/application-startup.md) with `lein run`. Use `--headless true` to run the same show without Studio.
 
 Lighting-show authoring, performance controls and Studio built on the paired
 [Afterglow fork](https://github.com/tolgraven/afterglow). The Studio uses
@@ -21,8 +21,8 @@ ClojureScript, re-frame and Reagent; the JVM backend uses Ring.
 | JVM tests, JavaScript tests and browser workflows | [test](test/) |
 | Profilers, development tools and command entry points | [dev](dev/) and [bin](bin/) |
 
-The project manifests are [deps.edn](deps.edn), [project.clj](project.clj)
-and [package.json](package.json). Run `npm run preview:build` after editing
+The canonical JVM/build manifest is [project.clj](project.clj); JavaScript
+dependencies and commands live in [package.json](package.json). Run `npm run preview:build` after editing
 the graphics engine. It produces the two files the Studio loads at
 `/studio/preview.js` and `/studio/preview-worker.js`.
 
@@ -34,7 +34,7 @@ are explicit operations; starting the Studio does not activate a rig by itself.
 
 ## Run the studio
 
-With the Clojure CLI and Node versions listed in
+With Leiningen 2.13.1 and the Java/Node versions listed in
 [dependency upgrades](docs/dependency-upgrades.md):
 
 ```sh
@@ -47,8 +47,8 @@ npm run studio:build
 ```
 
 Open `http://127.0.0.1:8500`. The local `../afterglow` dependency uses the fork's
-source directly. The Leiningen project derives its dependencies from the same
-manifests and checkout, rather than requiring an outdated published fork jar.
+source directly; `AFTERGLOW_ROOT` selects another paired checkout. The Leiningen
+project merges explicit application versions with the fork's project data.
 
 ```sh
 ./bin/test pure
@@ -56,7 +56,7 @@ manifests and checkout, rather than requiring an outdated published fork jar.
 npm run studio:test
 npm run preview:test
 npm run studio:build
-clojure -M:check-roadmap
+lein check-roadmap
 ```
 
 The parity lane includes pure tests. Browser workflows, Docker jobs, physical

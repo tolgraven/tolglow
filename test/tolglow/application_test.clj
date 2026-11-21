@@ -154,3 +154,24 @@
           (is (true? (deref receipt 3000 false)))
           (finally (remove-watch (:state runtime) ::osc) (close! peer))))
       (finally (app/stop! runtime)))))
+
+(deftest aborted-startup-preserves-the-last-saved-show
+  (let [backup (java.io.File/createTempFile "tolglow-previous-run-" ".transit")
+        runtime (promise)
+        registry (modules/register app/registry :failed-post
+                   (fn [context _]
+                     (deliver runtime (get-in context [:modules :show]))
+                     (throw (ex-info "Post-start failed" {}))))
+        config {:init {:components [:show] :modules [:show-state] :post [:failed-post]}
+                :show {:workers 1 :workspace-options nil}
+                :show-state {:save-file (.getPath backup)}}]
+    (try
+      (let [previous (app/start! (assoc-in config [:init :post] []))]
+        (try (is (= :accepted (:status @(show/submit! previous {:op :master/set :value 0.65}))))
+             (finally (app/stop! previous))))
+      (let [saved (slurp backup)]
+        (is (pos? (count saved)))
+        (is (thrown-with-msg? Exception #"Post-start failed" (app/start! config registry)))
+        (is (= saved (slurp backup))))
+      (is (false? @(:running @runtime)))
+      (finally (io/delete-file backup true)))))

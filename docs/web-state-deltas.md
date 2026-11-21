@@ -79,7 +79,7 @@ to verify that `npm run studio:test` exits 1; the probe is not retained. This
 avoids shadow-cljs compilation returning success after autorun prints failures.
 
 Reproduce wire measurements with
-`clojure -M docs/benchmarks/state-delta-bench.clj`. Its actual Studio runtime uses
+`lein run -m clojure.main docs/benchmarks/state-delta-bench.clj`. Its actual Studio runtime uses
 1000 patched RGBW pixels, 1012 cues and one active effect, alternates parameter
 edits and ordinary ticks, and compares full, conditional and delta Ring bodies.
 The measurements exclude physical output, network transport and browser work.
