@@ -1,7 +1,28 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :authoring/aim-path-effects
+ [{:id :foundation/behavior-inventory
+   :title "Inventory performance and authoring behavior from the three reference revisions"
+   :kind :documentation :status :done :owner nil
+   :paths ["tolglow/docs/feature-parity-inventory.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Pin the Afterglow main, Tolglow effects and tolglow-web source revisions"
+                "Tie individual operator behaviors to existing tests or concrete open acceptance checks"]
+   :evidence ["docs/feature-parity-inventory.md contains three source-linked tables with observable checks"]}
+  {:id :web/typed-state-push
+   :title "Deliver committed show state through Reitit, Transit and bounded WebSockets"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/shared/tolglow/studio/transit.cljc"
+           "tolglow/src/shared/tolglow/studio/page_routes.cljc"
+           "tolglow/src/tolglow/studio/state_stream.clj"]
+   :depends-on [:web/state-delta-transport]
+   :acceptance ["Preserve color types, musical fractions and map keys across JVM and ClojureScript"
+                "Recover missing delta bases and reconnect in an optimized browser without HTTP show-state polls"
+                "Resolve direct links and browser history against the same named page routes as Ring"]
+   :evidence ["docs/state-stream.md and docs/studio-transit.md"
+              "Optimized Chromium received 136 patches, recovered a wrong base and forced disconnect, and sent 2 Transit commands. Passive Push opened zero show sockets."
+              "Reitit direct links, browser history and saved selection exercised in test/studio/navigation_browser.cjs"]}
+  {:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/aim_paths.clj" "tolglow/test/tolglow/aim_paths_test.clj"
