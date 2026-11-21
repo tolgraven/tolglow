@@ -54,6 +54,7 @@
             (fail! [:id] "That effect ID belongs to a different effect; choose a new ID"))
         points (reduce (fn [result point]
                          (if (and (seq result) (< (distance (peek result) point) 1.0e-6)) result (conj result point))) [] points)
+        editor-points points
         points (if (and closed? (> (distance (first points) (peek points)) 1.0e-6))
                  (conj points (first points)) points)
         lengths (vec (reductions + 0.0 (map distance points (rest points))))
@@ -68,5 +69,5 @@
     (cond-> {:id id :version version :name (or name (wire-id id)) :params {}
              :targets targets :categories [:movement]
              :outputs {:aim {:op :tween :spec {:mode mode :keyframes frames}}}
-             :editor {:type :aim-path :points points :duration duration :mode mode :curve curve :closed? closed?}}
+             :editor {:type :aim-path :points editor-points :duration duration :mode mode :curve curve :closed? closed?}}
       (= mode :once) (assoc :duration duration))))

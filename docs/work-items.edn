@@ -3,7 +3,7 @@
  :items
  [{:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
-   :kind :implementation :status :in-progress :owner "root"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/aim_paths.clj" "tolglow/test/tolglow/aim_paths_test.clj"
            "tolglow/test/tolglow/studio/aim_paths_host_test.clj" "tolglow/docs/aim-paths.md"
            "tolglow/src/tolglow/composition/tween.clj" "tolglow/test/tolglow/composition/tween_test.clj"]
@@ -11,7 +11,10 @@
    :acceptance ["Finite bounded paths use existing pure musical tweens and captured clocks"
                 "Effect and cue publication is atomic and does not implicitly launch output"
                 "Path metadata survives ordinary show save/load and stale revisions reject"]
-   :evidence []}
+   :evidence ["Final focused Ring/host/tween gate: 12 tests / 84 assertions passed"
+              "Aggregate parity before final closed-path metadata guard: 502 tests / 4225 assertions passed"
+              "Real output changes only selected mover; full show round trip and stale admission covered"
+              "docs/aim-paths.md; 3D interaction and hardware accuracy are separate gates"]}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
   {:id :web/push-preset-global-widgets
    :title "Show cue preset feedback and touched global controls on Push"

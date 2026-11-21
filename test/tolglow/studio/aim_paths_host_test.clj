@@ -41,11 +41,15 @@
         (is (empty? (:instances model)))
         (is (some #{:drawn-path} (vals (get-in model [:pages :paths :cells]))))
         (let [launch (submit-at! runtime :command {:op :cue/launch :cue-id :drawn-path :launch {:mode :one-shot}} 0)
-              id (:instance-id launch)]
+              id (:instance-id launch)
+              first-values (get-in (studio/snapshot runtime) [:output :values])]
           (is (= :accepted (:status launch)))
           (studio/tick! runtime 500)
           (is (nil? (get-in (studio/snapshot runtime) [:status :error])))
           (is (contains? (get-in @(:state runtime) [:model :instances]) id))
+          (is (not= (get-in first-values [:head-1 :pan])
+                    (get-in (studio/snapshot runtime) [:output :values :head-1 :pan])))
+          (is (= (:head-2 first-values) (get-in (studio/snapshot runtime) [:output :values :head-2])))
           (let [saved (studio/export-show runtime)]
             (is (= definition (get-in saved [:model :registry :effects :drawn-path])))
             (is (= :accepted (:status (submit-at! runtime :import {:source (pr-str saved)} 500))))
