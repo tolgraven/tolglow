@@ -2007,7 +2007,8 @@
    :depends-on [:control/sensors-v1 :web/reframe-views-v1],
    :owner "studio_push_touch_interface"}
   {:evidence
-   ["Five math tests with JVM aim oracle; initial frame not visually accepted, correction active"],
+   ["Afterglow PR 25 and the Chromium fixture-pose scene regression cover a hung moving head at its physical end stops and the yoke, lens, shadow and fog beam."
+    "Five math tests with JVM aim oracle; initial frame not visually accepted, correction active"],
    :paths
    ["tolglow/dev/tolglow/capture_preview_oracle.clj"
     "tolglow/js/preview/materials.js"
@@ -2034,7 +2035,9 @@
   {:evidence
    ["Eight CPU tests and one SwiftShader GPU suite passed before latest visual corrections; rerun pending"],
    :paths
-   ["tolglow/js/preview/fog.js"
+   ["afterglow/src/afterglow/render/frame.clj"
+    "tolglow/test/js/preview/fixture-pose-browser.test.mjs"
+    "tolglow/js/preview/fog.js"
     "tolglow/js/preview/fog-field.js"
     "tolglow/test/js/preview/fog.test.mjs"
     "tolglow/test/js/preview/fog-gpu.test.mjs"

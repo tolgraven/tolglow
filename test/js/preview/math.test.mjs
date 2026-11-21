@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {apertureRadius, opticalFrustum} from '../../../js/preview/optics.js';
 import {fixtureDirection, emittedColor, axisDegrees, beamAngle, structuralKey} from '../../../js/preview/math.js';
 const near = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-10, `${a} != ${b}`));
-test('resolved direction/aim use exact world coordinates before servo angles', () => {
+test('incomplete servo samples fall back to world direction and aim', () => {
   near(fixtureDirection({position: [2, 4, 1]}, {direction: [0, -3, 4], pan: 0}), [0, -.6, .8]);
   near(fixtureDirection({position: [2, 4, 1]}, {aim: [2, 0, 1]}), [0, -1, 0]);
 });
@@ -31,7 +31,9 @@ test('captured actual JVM renderer oracle round-trips both geometric and servo p
   const oracle = JSON.parse(fs.readFileSync(new URL('./fixtures/aim-oracle.json', import.meta.url)));
   assert.equal(oracle.source, 'afterglow.render.frame/resolve-frame');
   for (const sample of oracle.cases) {
+    near(fixtureDirection(sample.fixture, {...sample.output, pose: sample.pose}), sample.expected);
     near(fixtureDirection(sample.fixture, sample.output), sample.expected);
+    assert.ok(Math.abs(axisDegrees(sample.fixture, sample.output, 'pan') - sample.pose['pan-deg']) < 1e-9);
     near(fixtureDirection(sample.fixture, sample['servo-output']), sample.expected);
   }
 });

@@ -1,5 +1,6 @@
 (ns tolglow.studio.projection-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [afterglow.render.frame :as render]
+            [clojure.test :refer [deftest is testing]]
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -136,3 +137,25 @@
             (is (= 1 (get-in reset ["view" "epoch"]))))))
       (finally (show/stop! runtime)))
     (is (= {:entries 0 :bytes 0 :closed? true} (projection/status projections)))))
+
+(deftest snapshot-projects-committed-poses-for-the-selected-heads
+  (let [runtime (show/create-runtime)
+        state @(:state runtime)
+        head {:id :hung :universe 1 :address 1 :rotation-deg [0 0 180]
+              :channels {:pan 1 :tilt 2}
+              :calibration {:pan {:min-deg -30 :max-deg 30} :tilt {:min-deg -20 :max-deg 20}}}
+        pixels (mapv (fn [i] {:id i :universe 2 :address (inc i) :channels {:red 1}}) (range 17))
+        fixtures (into [head] pixels)
+        move [{:target-id :hung :attribute :direction :value [-1 -1 0]}]]
+    (try
+      (doseq [options [{} {:include-values? false :compact-values? true}]]
+        (let [frame (render/resolve-frame fixtures move options)
+              projected (show/project-snapshot runtime (-> state (assoc :output frame)
+                                                           (assoc-in [:model :rig :fixtures] fixtures)))
+              values (get-in projected [:output :values])
+              pose (get-in values [:hung :pose])]
+          (is (= 16 (count values)))
+          (is (not (contains? (values 0) :pose)))
+          (is (= {:pan-deg 30.0 :tilt-deg 20.0} (select-keys pose [:pan-deg :tilt-deg])))
+          (is (not= (:direction pose) (get-in values [:hung :direction])))))
+      (finally (show/stop! runtime)))))
