@@ -1,7 +1,22 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :development/git-metadata-isolation
+ ;; Follow-up owns only passive Push presentation; device commands stay shared.
+ [{:id :web/push-preset-global-widgets
+   :title "Show cue preset feedback and touched global controls on Push"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/push_display.cljs"
+           "tolglow/src/studio/tolglow/studio/push_display_test.cljs"
+           "tolglow/resources/studio/push-display.css" "tolglow/docs/push-global-control-widgets.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Preset state and action reflect shared device projections without local commands"
+                "Master and tempo touches show actual values, bounds, units and external sync lock"
+                "Eight parameters, waveform/audio previews and exact 960x160 layout remain available"]
+   :evidence ["Frontend 139 tests / 738 assertions passed; direct Node runner exited zero"
+              "Optimized release: 147 files, zero warnings"
+              "13 optimized browser checks from 11 actual shared Push projections; exact 960x160, no API polling"
+              "docs/push-global-control-widgets.md; fresh screenshots and no physical hardware claim"]}
+  {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/workspace.clj"
