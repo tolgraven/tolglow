@@ -1,6 +1,7 @@
 (ns tolglow.build-manifest-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
+            [afterglow.render.gpu :as gpu]
             [tolglow.build-manifest :as manifest]))
 
 (deftest lein-uses-the-paired-sources-and-merges-direct-overrides
@@ -15,6 +16,13 @@
     (is (= (count deps) (count versions)))
     (is (.isFile (io/file (manifest/fork-source "src/afterglow/show.clj"))))
     (is (.isDirectory (io/file (manifest/fork-source "resources"))))))
+
+(deftest lighting-shaders-load-from-the-paired-renderer
+  (doseq [[asset path] gpu/resources]
+    (let [paired (io/file (manifest/fork-source "resources") path)]
+      (is (.isFile paired) path)
+      (is (not (.exists (io/file "resources" path))) (str "Tolglow shadows the fork's " path))
+      (is (= (slurp paired :encoding "UTF-8") (gpu/source asset)) path))))
 
 (deftest source-tree-contains-clojure-and-local-documentation
   (let [files (filter #(.isFile %) (file-seq (io/file "src")))
