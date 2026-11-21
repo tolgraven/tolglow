@@ -18,10 +18,12 @@
   complete saved policy only for the preview. :instance-id uses that activation's
   captured schema; otherwise resolve the cue's pinned/current effect version.
   Generic :mpe requires explicit :axes. This does not verify physical hardware."
-  [model {:keys [device-id cue-id device-kind policy axes instance-id] :as request}]
+  ([model request] (preview model request nil))
+  ([model {:keys [device-id cue-id device-kind policy axes instance-id] :as request} connected-profile]
   (let [device-id (identifier device-id) cue-id (identifier cue-id)
-        device-kind (identifier (or device-kind :push-3))
-        available (if (= :mpe device-kind) (set (map identifier axes)) (device-axes device-kind))
+        device-kind (identifier (or (:id connected-profile) device-kind :push-3))
+        available (if connected-profile (set (:axes connected-profile))
+                      (if (= :mpe device-kind) (set (map identifier axes)) (device-axes device-kind)))
         _ (when-not (and (seq available) (every? #(contains? mpe/axes %) available))
             (throw (ex-info "Choose Push 3, Seaboard M, or generic MPE with explicit documented axes" {})))
         cue (get-in model [:registry :cues cue-id])
@@ -33,7 +35,8 @@
         model (if (contains? request :policy)
                 (update-in model [:settings :expressive :devices]
                            #(assoc (dissoc % (subs (str device-id) 1)) device-id (mapping/normalize-policy policy))) model)
-        effective (mapping/policy model device-id cue-id {})
+        effective (mapping/policy model device-id cue-id
+                                  (mapping/profile-defaults (:defaults connected-profile) cue-id))
         schemas (:params effect {})
         plan (mapping/plan schemas available (:params effective) (dissoc effective :params))
         values (or (:params instance)
@@ -49,4 +52,5 @@
                  :effect-id (:id effect) :effect-version (:version effect)
                  :policy effective :schemas schemas :axes (select-keys mpe/axes available)
                  :curves (vec (sort mapping/curves)) :samples samples
-                 :hardware-verified? false :note-lifecycle :unchanged})))
+                 :profile-source (if connected-profile :connected :declared)
+                 :hardware-verified? false :note-lifecycle :unchanged}))))

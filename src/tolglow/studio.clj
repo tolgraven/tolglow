@@ -1096,7 +1096,18 @@
             :fixture! #(fixture-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
-            :expressive! #(expressive/preview (:model @(:state runtime)) %)
+            :expressive! (fn [payload]
+                           (let [wire-id #(if (keyword? %) (subs (str %) 1) %)
+                                 options (some (fn [[id device]]
+                                                 (let [options (:options device)]
+                                                   (when (= (wire-id (:device-id payload))
+                                                            (wire-id (or (:mapping-id options) id))) options)))
+                                               @(:devices runtime))
+                                 profile (when options
+                                           {:id (get-in options [:profile :id])
+                                            :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                                            :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+                             (expressive/preview (:model @(:state runtime)) payload profile)))
             :patch! #(:patch (snapshot runtime))
             :repl! #(repl-action! runtime %1 %2)
             :repl-eval! #(repl-eval! runtime %1 %2 %3)
