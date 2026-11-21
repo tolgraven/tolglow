@@ -1,0 +1,51 @@
+* MIDNIGHT BRAINSTORMING SESH:
+   target of osc (dimmer, hue, sat, strobe rate, advancing step-param, ) as selectable dynamic parameter
+   toggle on push to make selected effect (by tapping cue, or holding knob) take over screen, showing all its parameters at once
+   shift on push for grouping related effects (like active aims) into just one effect, listed.
+   shift to show 16 effects at once with button above/below ending them, or (shifted) bring one upp to full screen
+   use ratio buttons on right side to set initial beat/ratio for osc (or change current, so dont have to scroll knob but touch it and 1/4 1/8 etc light up for direct jumps)
+   generally use push more fully, for like mute/solo like I want to implement later, but modifiers like which param of effect to velocitise (like prio maybe), or as above, osc target
+   shift on push to only show certain effect type, like oscs or colors etc
+   write out vals of all cue variables, on every page of effect (can make knob ring on screen much smaller)
+   multi-stage effect selection (same concept color picker works now) where tapping cue brings up another page for such selections, before actually activating cue. could store several saved values, presets(!!!) etc
+   also cop color picker style for beat params? so like x-wise beats (1, 2, 4, 8, 16, 32, 64, 128), y-wise cycle (1/4, 1/2, 1, 2, 3, 4, 6, 8?)
+   same but for beats + width (square)/slope(?) others. also slope for square, already possible for step params so should be easy?
+   allow osc vals below 0 so can have strip that has fully faded out after half (or whatever) its freq. could approximate by just stacking oscs (saw + (higher prio) square for same group (or they don't modulate tho right so might not work anyways)) but not the same since that'd cutoff the curve midway, not fade to 0 twice as fast
+   same for bloom etc so can go past edges of show space (even better as ratio, just scale fraction by other var)
+   ADSR for lfos (just slope on steroids)
+   shift to enter "performance mode" for cue, with all vars exposed as individual buttons, for tactile control of multiple params, without specifically preparing/hardcoding per effect. doesn't need to fully take over a la colorpicker, could change just bottom row of pads keeping rest as before
+   and/or auto-populated pages of active cues, one per column, with all vars pressure sensitive
+   also auto-populated page of 64 most recently used cues lol
+  
+
+   related: shift to delay actually activating tapped cue until button released, so hold->press cue->bring up cue vars for tweaking->let go->activated
+   UNDO!!!! (+ redo for easy stepping back and forth per effect) (even better also undo per cue, or maybe better allow saving multiple states per cue and stepping between them)
+   dynamic chases: slots where target is dynamic var, so expose 4 vars = 4 step chase. hold knob for var, then tap cue you want to activate for this step. or extend further and number of slots is dynamic, selected at chase creation by holding 1/4, 8 etc buttons on right
+      same with fades
+  
+
+
+
+* OLD TODO:
+  -. Make color filters - never shitty colors
+  -. Blackout group held cue?
+  -. Bloom off but not fully, just dampen. Or desat. Or hue-shift, or...
+  -. Sparkle but off - NOT POSSIBLE WITH CURRENT IMPLEMENTATION - working on own
+  -. Priority as variable for everything, so can change order of layers, including like automatically on osc.
+     - doesnt seem to work - mod afterglow and make it!! Or hack where changing prio var simply relaunches effect
+     - maybe a variable used like 'prio of next effect' would still work? so cant change after-the-fact but still get control "
+
+* OTHER (sync with omnifocus stuff)
+  - strobe sync thinking applied to other params.
+    - motor speed, for synced (can-can etc, as opposed to all) movement
+      effects, throttle to slowest fixture using motor speed control.  Could extend with knowledge of distance needed to travel for aim type effects, make all arrive at same time accountinhg for both slowest fixtures and len
+    - per-fixture color correction
+    - approx max output luminance so can have a cue to make all fixtures same brightness
+
+  - explore ways of grouping/retrieving fixtures, so that not just by
+    keyword or ch type (tho something like chan/extract-heads-with-some-matching-channel equiv could get eg all moving heads through :pan) but anything. Whether has active effects, whether is (currently for moving heads, or statically for others) pointing left or right in show space, whatever
+    ex apply one effect to everything pointing one direction, other to everything pointing other, moving heads would auto swap their active effect automatically when sweeping
+
+  - spatial
+    - fixture/head size/bounds in addition to pos
+      - sync ledstrip heads so can eg match other fixtures x-wise and light up same section of strip 
