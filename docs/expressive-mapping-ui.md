@@ -1,6 +1,6 @@
 # Expressive mapping in Studio
 
-Connections → **Make every touch count** edits portable Push 3, Seaboard M and
+Connections → **Make every touch count** edits the [shared expressive policies](expressive-mapping.md) for Push 3, Seaboard M and
 explicit generic MPE policies. The panel is Reagent/re-frame; it does not discover
 or connect MIDI devices. Use the same stable device ID as the controller connection.
 Saving or restoring a profile never opens hardware.
@@ -46,11 +46,11 @@ screens, two on iPad-sized widths, and a single column for phone selection contr
 parameter cards retain compact side-by-side range endpoints. Browser viewport
 checks do not certify physical MIDI devices, touch sensors, or Safari.
 
-Validated against an optimized Studio build on 2026-11-21:
+Validated against an optimized Studio build integrated with master `9a70836` on 2026-11-21:
 
-- Frontend: 147 tests / 780 assertions, zero failures; the generated Node runner
+- Frontend: 159 tests / 861 assertions, zero failures; the generated Node runner
   was executed explicitly and returned exit 0.
-- Optimized build: 148 files, zero warnings.
+- Optimized build: 150 files, zero warnings.
 - Fourteen actual Chromium workflows against the Ring host passed: connected
   Push 3 capability preview, note/pressure parameter writes, manual slide with
   smoothstep/inversion/range, reload restoration, independent RGB components,
@@ -67,5 +67,5 @@ across runtime, epoch, cue, device and instance changes, separate device drafts,
 namespace-safe JSON, incomplete numeric edits, and component preservation.
 
 Local evidence and the reproducible Ring/session/browser harness are preserved in
-`/tmp/tolglow-expressive-qa/`. PR publication and the final roadmap validator remain
-pending because the coordinator requested an immediate pause.
+`/tmp/tolglow-expressive-qa/`. The roadmap validator also passed with 107 items.
+Newer master changes are handled separately by the integration coordinator.
