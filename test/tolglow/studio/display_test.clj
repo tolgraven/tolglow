@@ -5,11 +5,121 @@
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream File]
+           [java.net URL]
            [java.util Base64]
+           [java.util.jar JarEntry JarOutputStream]
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn image [] (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB))
 (defn await-latch [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
+
+(defn- with-packaged-worker [source f]
+  (let [archive (File/createTempFile "tolglow-display-fixture-" ".jar")
+        resource-name "tolglow/integrations/display_bridge/worker.js"
+        original-resource io/resource]
+    (try
+      (with-open [jar (JarOutputStream. (io/output-stream archive))]
+        (.putNextEntry jar (JarEntry. resource-name))
+        (.write jar (.getBytes source "UTF-8"))
+        (.closeEntry jar))
+      (let [resource (URL. (str "jar:" (.toURL (.toURI archive)) "!/" resource-name))]
+        (with-redefs [io/resource (fn [name] (if (= resource-name name) resource (original-resource name)))]
+          (f)))
+      (finally (io/delete-file archive true)))))
+
+(defn- eventually [predicate]
+  (let [end (+ (System/nanoTime) 5000000000)]
+    (loop [] (if (predicate) true
+                 (if (> (System/nanoTime) end) false
+                     (do (Thread/sleep 10) (recur)))))))
+
+(defn- temp-workers []
+  (set (filter #(re-matches #"tolglow-display-.*\.cjs" (.getName ^File %))
+               (.listFiles (io/file (System/getProperty "java.io.tmpdir"))))))
+
+(defn- with-playwright-peer [mode f]
+  ;; Only the external browser is replaced. The real packaged Node worker,
+  ;; configuration/protocol and JVM process owner execute unchanged.
+  (let [module (File/createTempFile "tolglow-playwright-peer-" ".cjs")
+        observed (File/createTempFile "tolglow-display-observed-" ".edn")
+        bytes (ByteArrayOutputStream.)
+        _ (javax.imageio.ImageIO/write (image) "png" bytes)
+        png (.encodeToString (Base64/getEncoder) (.toByteArray bytes))]
+    (try
+      (spit module
+            (str "const fs=require('node:fs');\n"
+                 "const page={setDefaultTimeout(){},goto:async()=>{},waitForFunction:async()=>{},evaluate:async()=>{},"
+                 "screenshot:async()=>Buffer.from('" png "','base64')};\n"
+                 "exports.chromium={launchServer:async()=>{fs.writeFileSync(" (pr-str (str observed))
+                 ",JSON.stringify({pid:process.pid,script:process.argv[1]}));"
+                 (case mode
+                   :failed "throw new Error('fixture browser startup failed');"
+                   :blocked "setInterval(()=>{},1000); await new Promise(()=>{});"
+                   "")
+                 "return {wsEndpoint:()=> 'fixture',close:async()=>{},kill:async()=>{}};},"
+                 "connect:async()=>({newContext:async()=>({newPage:async()=>page})})};\n"))
+      (f {:playwright-module (str module) :observed observed})
+      (finally (io/delete-file module true) (io/delete-file observed true)))))
+
+(deftest constructing-capture-does-not-resolve-or-extract-its-worker
+  (with-redefs [io/resource (fn [& _] (throw (ex-info "No resource access before open" {})))]
+    (is (map? (display/process-capture {:browser-executable "/configured/chromium"})))
+    (is (map? (display/process-capture {:browser-executable "/configured/chromium"
+                                      :worker-script "/missing/custom-worker.cjs"})))))
+
+(deftest packaged-production-worker-captures-with-explicit-module-and-cleans-its-file
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(with-playwright-peer :ready
+         (fn [options]
+           (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
+                 handle ((:open! capture))
+                 file (:script-file handle)]
+             (try
+               (is (:temporary-script? handle))
+               (is (= source (slurp file)))
+               (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Packaged display"}))))
+               (finally ((:close! capture) handle)))
+             (is (not (.exists ^File file)))
+             (is (false? (.isAlive ^Process (:process handle))))
+             ((:close! capture) handle)))))))
+
+(deftest packaged-worker-startup-failures-clean-every-owned-resource
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(do
+         (let [before (temp-workers)
+               capture (display/process-capture {:browser-executable "/browser-peer"
+                                                 :node-executable "/missing/tolglow-node"})]
+           (is (thrown? java.io.IOException ((:open! capture))))
+           (is (= before (temp-workers))))
+         (with-playwright-peer :failed
+           (fn [options]
+             (let [before (temp-workers)
+                   capture (display/process-capture (assoc options :browser-executable "/browser-peer"))]
+               (is (thrown-with-msg? clojure.lang.ExceptionInfo #"did not become ready" ((:open! capture))))
+               (is (= before (temp-workers))))))))))
+
+(deftest cancelling-packaged-worker-startup-cleans-process-and-extraction
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(with-playwright-peer :blocked
+         (fn [{:keys [observed] :as options}]
+           (let [before (temp-workers)
+                 capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
+                 result (promise)
+                 worker (Thread. (fn [] (try ((:open! capture)) (deliver result :unexpected-ready)
+                                             (catch Throwable error (deliver result error)))))]
+             (.start worker)
+             (try
+               (is (eventually (fn [] (pos? (.length ^File observed)))))
+               (.interrupt worker)
+               (is (instance? InterruptedException (deref result 5000 :timeout)))
+               (is (= before (temp-workers)))
+               (let [observation (clojure.data.json/read-str (slurp observed) :key-fn keyword)
+                     process (java.lang.ProcessHandle/of (long (:pid observation)))]
+                 (is (or (not (.isPresent process)) (not (.isAlive ^java.lang.ProcessHandle (.get process))))))
+               (finally (.interrupt worker) (.join worker 5000)))))))))
 
 (deftest latest-view-mailbox-never-runs-capture-or-sink-on-calling-thread
   (let [entered (CountDownLatch. 1) release (CountDownLatch. 1) complete (CountDownLatch. 2)

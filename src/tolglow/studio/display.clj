@@ -6,8 +6,9 @@
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.lang ProcessHandle]
-           [java.io BufferedReader BufferedWriter ByteArrayInputStream InputStreamReader OutputStreamWriter]
+           [java.io BufferedReader BufferedWriter ByteArrayInputStream File InputStreamReader OutputStreamWriter]
            [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
            [java.util Base64]
            [java.util.concurrent ArrayBlockingQueue Callable ExecutionException Executors ExecutorService Future ThreadFactory TimeUnit TimeoutException]
            [javax.imageio ImageIO]))
@@ -25,13 +26,38 @@
   value)
 
 (defn- destroy-process! [^Process process timeout-ms]
-  (let [descendants (with-open [stream (.descendants (.toHandle process))] (vec (.toArray stream)))]
-    (doseq [^ProcessHandle child descendants] (.destroy child))
-    (.destroy process)
-    (when-not (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
-      (doseq [^ProcessHandle child descendants] (when (.isAlive child) (.destroyForcibly child)))
-      (.destroyForcibly process)
-      (.waitFor process timeout-ms TimeUnit/MILLISECONDS))))
+  (let [descendants (with-open [stream (.descendants (.toHandle process))] (vec (.toArray stream)))
+        interrupted? (atom (Thread/interrupted))
+        wait! #(try (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+                    (catch InterruptedException _ (reset! interrupted? true) false))]
+    (try
+      (doseq [^ProcessHandle child descendants] (.destroy child))
+      (.destroy process)
+      (when-not (wait!)
+        (doseq [^ProcessHandle child descendants] (when (.isAlive child) (.destroyForcibly child)))
+        (.destroyForcibly process)
+        (wait!))
+      (finally (when @interrupted? (.interrupt (Thread/currentThread)))))))
+
+(defn- remove-script! [{:keys [^File script-file temporary-script?]}]
+  (when temporary-script? (Files/deleteIfExists (.toPath script-file))))
+
+(defn- worker-file! [worker-script]
+  (let [resource (when-not worker-script (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (if (or worker-script (= "file" (some-> resource .getProtocol)))
+      (let [file (io/file (or worker-script resource))]
+        (when-not (.isFile file)
+          (throw (ex-info "Display worker script is not available as a local file" {})))
+        {:script-file (.getAbsoluteFile file) :temporary-script? false})
+      (do
+        (when-not resource (throw (ex-info "Packaged display worker script is unavailable" {})))
+        (let [file (.toFile (Files/createTempFile "tolglow-display-" ".cjs"
+                                                (make-array java.nio.file.attribute.FileAttribute 0)))]
+          (try
+            (with-open [input (io/input-stream resource) output (io/output-stream file)]
+              (io/copy input output))
+            {:script-file file :temporary-script? true}
+            (catch Throwable error (Files/deleteIfExists (.toPath file)) (throw error))))))))
 
 (defn- read-response! [^BufferedReader reader]
   (let [line (.readLine reader)]
@@ -47,18 +73,22 @@
            (.cancel task true)
            (throw (ex-info "Offscreen display deadline exceeded" {:type ::deadline :timeout-ms timeout-ms} cause))))))
 
-(defn- close-process! [{:keys [lock closed? process executor shutdown-timeout-ms]}]
+(defn- close-process! [{:keys [lock closed? process executor shutdown-timeout-ms] :as handle}]
   (locking lock
     (when-not @closed?
       (reset! closed? true)
-      (try (destroy-process! process shutdown-timeout-ms)
-           (finally (.shutdownNow ^ExecutorService executor))))))
+      (try (when process (destroy-process! process shutdown-timeout-ms))
+           (finally
+             (when executor (.shutdownNow ^ExecutorService executor))
+             (remove-script! handle))))))
 
 (defn process-capture
   "Construct an inert Node/Chromium capture backend. :browser-executable is
-  required. :url defaults to the studio's loopback /push-display page. Override
-  :worker-script/:node-executable explicitly when packaging outside a checkout.
-  No browser download or process occurs before :open!."
+  required. :url defaults to the studio's loopback /push-display page. The bundled
+  worker is extracted lazily when inside a JAR and removed with its process.
+  :worker-script overrides the resource without transferring file ownership.
+  Configure :node-executable and optionally an installed :playwright-module.
+  No resource lookup, extraction, browser download or process occurs before :open!."
   [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox?
            startup-timeout-ms capture-timeout-ms shutdown-timeout-ms]
     :or {url "http://127.0.0.1:8500/push-display" node-executable "node"
@@ -68,30 +98,30 @@
     (positive-ms! value field))
   (when-not (and (string? browser-executable) (seq browser-executable))
     (throw (ex-info "Configure an installed Chromium executable explicitly" {})))
-  (let [script (or worker-script
-                   (some-> (io/resource "tolglow/integrations/display_bridge/worker.js") .toURI io/file .getAbsolutePath))
-        _ (when-not (and script (.isFile (io/file script)))
-            (throw (ex-info "Display worker script is not available as a local file" {})))
-        config (cond-> {:url url :executablePath browser-executable
+  (let [config (cond-> {:url url :executablePath browser-executable
                         :startupTimeoutMs startup-timeout-ms :captureTimeoutMs capture-timeout-ms
                         :noSandbox (boolean no-sandbox?)}
                  playwright-module (assoc :playwrightModule playwright-module))]
     {:open!
      (fn []
-       (let [process (.start (doto (ProcessBuilder. ^java.util.List [node-executable script (json/write-str config)])
-                               (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
-             executor (Executors/newSingleThreadExecutor (thread-factory "tolglow-display-ipc"))
-             reader (BufferedReader. (InputStreamReader. (.getInputStream process) StandardCharsets/UTF_8))
-             writer (BufferedWriter. (OutputStreamWriter. (.getOutputStream process) StandardCharsets/UTF_8))
-             handle {:process process :executor executor :reader reader :writer writer :counter (atom 0)
-                     :lock (Object.) :request-lock (Object.) :closed? (atom false)
-                     :shutdown-timeout-ms shutdown-timeout-ms}]
+       (let [owned (atom (merge (worker-file! worker-script)
+                               {:lock (Object.) :request-lock (Object.) :closed? (atom false)
+                                :shutdown-timeout-ms shutdown-timeout-ms}))]
          (try
-           (let [ready (await! executor #(read-response! reader) startup-timeout-ms)]
+           (let [process (.start (doto (ProcessBuilder. ^java.util.List
+                                         [node-executable (str (:script-file @owned)) (json/write-str config)])
+                                  (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
+                 _ (swap! owned assoc :process process)
+                 executor (Executors/newSingleThreadExecutor (thread-factory "tolglow-display-ipc"))
+                 _ (swap! owned assoc :executor executor)
+                 reader (BufferedReader. (InputStreamReader. (.getInputStream process) StandardCharsets/UTF_8))
+                 writer (BufferedWriter. (OutputStreamWriter. (.getOutputStream process) StandardCharsets/UTF_8))
+                 _ (swap! owned assoc :reader reader :writer writer :counter (atom 0))
+                 ready (await! executor #(read-response! reader) startup-timeout-ms)]
              (when-not (and (= "ready" (:status ready)) (= width (:width ready)) (= height (:height ready)))
                (throw (ex-info "Display worker did not become ready" {:response ready})))
-             handle)
-           (catch Throwable error (close-process! handle) (throw error)))))
+             @owned)
+           (catch Throwable error (close-process! @owned) (throw error)))))
      :capture!
      (fn [{:keys [request-lock closed? reader writer executor counter] :as handle} view]
        (locking request-lock
