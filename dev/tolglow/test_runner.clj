@@ -15,7 +15,7 @@
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
     tolglow.studio-test tolglow.studio.web-test tolglow.studio.composition-test tolglow.studio.agents-test
-    tolglow.studio.persistence-test tolglow.studio.audio-test tolglow.studio.credentials-test
+    tolglow.studio.persistence-test tolglow.studio.expressive-test tolglow.studio.audio-test tolglow.studio.credentials-test
     tolglow.studio.fixtures-test tolglow.studio.fixture-service-test
     tolglow.studio.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-test tolglow.studio.output-options-test

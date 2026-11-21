@@ -4,6 +4,7 @@
   (:gen-class)
   (:require [afterglow.control.model :as control]
             [afterglow.control.categories :as categories]
+            [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
@@ -20,6 +21,7 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.studio.waveforms :as waveforms]
+            [tolglow.studio.expressive :as expressive]
             [tolglow.automation.policy :as policy]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.composition :as composition]
@@ -376,8 +378,10 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      {:model (-> model (update-in [:settings scope] merge values) (update :revision inc))
-       :ack {:status :accepted}})
+      (let [settings (merge (get-in model [:settings scope]) values)
+            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
+        {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
+         :ack {:status :accepted}}))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state
@@ -1092,6 +1096,18 @@
             :fixture! #(fixture-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
+            :expressive! (fn [payload]
+                           (let [wire-id #(if (keyword? %) (subs (str %) 1) %)
+                                 options (some (fn [[id device]]
+                                                 (let [options (:options device)]
+                                                   (when (= (wire-id (:device-id payload))
+                                                            (wire-id (or (:mapping-id options) id))) options)))
+                                               @(:devices runtime))
+                                 profile (when options
+                                           {:id (get-in options [:profile :id])
+                                            :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                                            :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+                             (expressive/preview (:model @(:state runtime)) payload profile)))
             :patch! #(:patch (snapshot runtime))
             :repl! #(repl-action! runtime %1 %2)
             :repl-eval! #(repl-eval! runtime %1 %2 %3)
