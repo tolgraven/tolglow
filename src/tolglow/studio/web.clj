@@ -319,6 +319,8 @@
         stream (:state-stream! services)
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
+                                   ["/api/debug/events" {:name :api/debug-events
+                                                         :get (available (:debug-stream! services) "Debug stream unavailable" (:debug-stream! services))}]
                                    ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
                                   (merge-with merge gets posts)))]
     (ring/ring-handler
