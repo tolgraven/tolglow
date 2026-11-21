@@ -64,7 +64,7 @@ take precedence.
 | ID | Startup action |
 | --- | --- |
 | `:show` | Creates the runtime and starts its render and output schedules. Top-level `:hz` sets the frame rate. `:show` accepts runtime options including `:model`, `:workers`, `:ola` and `:artnet`. |
-| `:fixtures` | Publishes fixture type `:definitions` and installs the ordered full fixture `:patches` vector using the rig validator. |
+| `:fixtures` | Publishes fixture type `:definitions` and expands named `:patches` groups or installs a full fixture vector using the rig validator. See [fixture patch groups](fixture-patch-groups.md). |
 | `:cue-pages` | Installs `:definitions` in order. Each page has an ID and a map from grid coordinates to registered cue IDs. |
 | `:show-state` | Loads `:load-file` as a full Transit backup, runs `:actions` (command maps or zero-argument Clojure functions) in order and saves to `:save-file` during shutdown if configured. |
 | `:sensors` | Installs `:sources` keyed by device ID. Each entry has the source's portable `:config` and `:pairing`. |
@@ -87,8 +87,7 @@ logging, then passes the three `:init` lists to `tolglow.setup/init-by-ks`. Its
 built-in setup functions include fixture patches, cue pages, controllers and
 clock sync. Some depend on the original mutable Afterglow show. Calling that
 entry point explicitly continues to run those functions. The functional host
-accepts a prepared model in `:show {:model ...}`. Porting every original
-fixture-builder and page-builder into that model is a separate parity task.
+accepts a prepared model in `:show {:model ...}`. The configured fixture module accepts group lists, channel records and pixel heads. Original page builders that draw directly on the mutable grid still need functional equivalents.
 
 A smoke run used the original `tolglow.core/-main` with `:set-ns` required
 and the OSC and terminal modules disabled. It confirmed the original order

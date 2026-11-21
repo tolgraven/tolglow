@@ -6,6 +6,7 @@
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
+            [tolglow.fixtures.patch :as patch]
             [tolglow.agents :as agents]
             [tolglow.connections :as connections]))
 
@@ -71,15 +72,14 @@
     {:value (show/sync-action! runtime :start {})
      :stop! #(show/sync-action! runtime :stop {})}))
 
-(defn- install-fixtures [context {:keys [definitions patches]}]
+(defn- install-fixtures [context {:keys [definitions patches factories fixture-types groups]}]
   (let [runtime (need-show context)]
     (doseq [definition definitions]
       (accepted! (show/submit! runtime :definition {:kind :fixtures :definition definition})))
     (when (some? patches)
-      (when-not (vector? patches)
-        (throw (ex-info "Fixture patches must be an ordered vector of rig fixtures" {})))
-      (let [rig (get-in @(:state runtime) [:model :rig])]
-        (accepted! (show/submit! runtime :rig (assoc rig :fixtures patches)))))
+      (let [model (:model @(:state runtime))
+            fixtures (patch/expand (merge fixture-types (get-in model [:registry :fixtures])) factories patches groups)]
+        (accepted! (show/submit! runtime :rig (assoc (:rig model) :fixtures fixtures)))))
     {:value (get-in @(:state runtime) [:model :rig :fixtures])}))
 
 (defn- install-cue-pages [context {:keys [definitions]}]
