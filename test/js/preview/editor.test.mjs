@@ -31,7 +31,7 @@ test('fixture and truss pose changes preserve actual geometry instances and cali
   assert.notEqual(structuralKey(rig), structuralKey({...rig, trusses: [{...rig.trusses[0], length: 6}]}));
   const root = new THREE.Group(), truss = new THREE.Group();
   const engine = {renderer: {}, visible: true, lighting: new LightingSamples(), applyLighting: SceneRenderer.prototype.applyLighting, platform: {worker: true}, key: structuralKey(rig), editorOverlay: {update(){}}, options: {fixtures: 16, shadows: 0},
-    fixtures: [{id: 'a', fixture: rig.fixtures[0], root, head: new THREE.Group(), yoke: new THREE.Group(), lensMaterial: {emissive: new THREE.Color()}}],
+    spots: [], lightIds: [], fixtures: [{id: 'a', fixture: rig.fixtures[0], setAperture() {}, root, head: new THREE.Group(), yoke: new THREE.Group(), lensMaterial: {emissive: new THREE.Color()}}],
     trusses: [{id: 't', root: truss}], apertureUniform: {value: new Float32Array(16)}, rebuild(){throw new Error('Pose edit rebuilt scene');}};
   SceneRenderer.prototype.update.call(engine, {rig: changed});
   assert.equal(engine.fixtures[0].root, root); assert.deepEqual(root.position.toArray(), [1, 3, 2]);
