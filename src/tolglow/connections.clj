@@ -3,7 +3,8 @@
   this boundary owns managers, credentials, reactive caches and capture workers.
   Constructing it opens no devices and sends no provider requests."
   (:refer-clojure :exclude [sync])
-  (:require [afterglow.reactive :as graph]
+  (:require [afterglow.control.clock :as clock]
+            [afterglow.reactive :as graph]
             [tolglow.agents :as agent-manager]
             [tolglow.audio.capture :as capture]
             [tolglow.agents.credentials :as credentials]
@@ -65,6 +66,51 @@
 (defn sync [connections] (get-in (live-state connections) [:bundle :sync]))
 (defn repls [connections] (get-in (live-state connections) [:bundle :repls]))
 (defn sensors [connections] (get-in (live-state connections) [:bundle :sensors]))
+
+(defn observe-status!
+  "Notify a reader when audio or sync state changes. Rebind on resource
+  replacement. The callback only signals invalidation on the producer thread."
+  [connections invalidate!]
+  (let [owner (:state connections)
+        key (Object.)
+        changed (fn [_ _ before after] (when-not (identical? before after) (invalidate!)))
+        watch-bundle! (fn [old new]
+                        (doseq [resource [:sync :audio]]
+                          (when-let [state (get-in old [resource :state])] (remove-watch state key))
+                          (when-let [state (get-in new [resource :state])] (add-watch state key changed))))]
+    (locking (:lock connections)
+      (watch-bundle! nil (:bundle @owner))
+      (add-watch owner key
+        (fn [_ _ before after]
+          (when-not (identical? (:bundle before) (:bundle after))
+            (watch-bundle! (:bundle before) (:bundle after)))
+          (when (not= (:generation before) (:generation after)) (invalidate!)))))
+    (fn []
+      (locking (:lock connections)
+        (remove-watch owner key)
+        (watch-bundle! (:bundle @owner) nil)))))
+
+(defn status-at-commit
+  "Capture public connection data once after invalidation. The returned pure
+  projection ages the selected clock and counts admitted events at show time."
+  [connections]
+  (let [{:keys [bundle model]} (live-state connections)
+        epoch (:epoch model)
+        sync-manager (:sync bundle)
+        [sync-status clock-state] (locking (:lock sync-manager)
+                                    [(sync/status sync-manager) (:clock @(:state sync-manager))])
+        audio-status (capture/status (:audio bundle))]
+    (fn [committed]
+      (let [model (:model committed)]
+        (when (= epoch (:epoch model))
+          (let [clock (clock/snapshot clock-state (:time-ms model))
+                source (:selected-source clock)
+                clock (cond-> clock
+                        (= source :manual) (assoc :clock nil)
+                        (= source (get-in sync-status [:config :link :source-id]))
+                        (assoc :follow-transport? (get-in sync-status [:config :link :follow-transport?])))]
+            {:sync (assoc sync-status :clock clock)
+             :audio (assoc audio-status :received-event-count (get-in model [:variables :audio :event-count] 0))}))))))
 
 (defn- close-bundle! [bundle]
   ;; All resources are attempted even when an injected transport fails to close.

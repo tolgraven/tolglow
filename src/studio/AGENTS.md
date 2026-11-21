@@ -10,7 +10,9 @@ engines only; they do not own lighting commands or application UI state.
 Studio owns one same-origin Transit WebSocket for show state. Apply a patch to
 the exact acknowledged token of the same runtime, show and epoch. Keep the
 decoded data in `:server-projection`. Adapt values for widgets above that
-baseline and acknowledge a frame only after installation. Request a fresh
+baseline and acknowledge a frame only after installation. Request Connections
+status on this socket while the page is visible and release that interest on
+hide or navigation. The waveform shares this subscription. Request a fresh
 snapshot through the socket when the baseline is missing. Preserve drafts until
 their acknowledged revision arrives. Every asynchronous authoring/chat result
 must remain tied to the request/session that produced it; imported shows and

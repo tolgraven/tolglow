@@ -5,6 +5,7 @@
             [tolglow.transit :as transit]))
 
 (defonce ^:private owner (atom nil))
+(defonce ^:private connections-open? (atom false))
 (defn- current? [id] (and id (= id (:id @owner))))
 
 (defn- close-socket! [reason]
@@ -18,7 +19,8 @@
       (.close socket 1000 reason))))
 
 (defn stop! []
-  (when-let [{:keys [hide show]} @owner]
+  (when-let [{:keys [hide show visibility]} @owner]
+    (.removeEventListener js/document "visibilitychange" visibility)
     (.removeEventListener js/window "pagehide" hide)
     (.removeEventListener js/window "pageshow" show)
     (close-socket! "Studio closed")
@@ -40,6 +42,16 @@
               nil)))
         (catch :default _ (.close socket 4000 "State send failed"))))))
 
+(defn- update-interest! []
+  (let [{:keys [id socket subscribed?]} @owner
+        enabled? (and @connections-open? (not (.-hidden js/document)))]
+    (when (and id socket (= 1 (.-readyState socket)) (not= (boolean subscribed?) enabled?))
+      (reply! [id {:op :connections :enabled? enabled?}])
+      (swap! owner assoc :subscribed? enabled?))))
+
+(rf/reg-fx :studio/connections-interest
+  (fn [enabled?] (reset! connections-open? enabled?) (update-interest!)))
+
 (declare connect!)
 (defn- disconnected! [id reason]
   (when (current? id)
@@ -56,7 +68,7 @@
           url (js/URL. "/api/state/stream" (.-href js/location))]
       (set! (.-protocol url) (if (= "https:" (.-protocol url)) "wss:" "ws:"))
       (.set (.-searchParams url) "session" session)
-      (swap! owner assoc :id id :retry nil :last-sent (.now js/performance))
+      (swap! owner assoc :id id :retry nil :subscribed? false :last-sent (.now js/performance))
       (rf/dispatch [:studio/stream-opening session id])
       (try
         (let [socket (js/WebSocket. (.-href url))]
@@ -64,6 +76,7 @@
           (set! (.-onopen socket)
                 (fn []
                   (when (current? id)
+                    (update-interest!)
                     (swap! owner assoc :heartbeat
                            (js/setInterval
                              (fn []
@@ -82,8 +95,10 @@
 (defn start! [session]
   (stop!)
   (let [hide (fn [_] (close-socket! "Page hidden"))
+        visibility (fn [_] (update-interest!))
         show (fn [event] (when (and (.-persisted event) (nil? (:id @owner))) (connect!)))]
-    (reset! owner {:session session :attempt 0 :hide hide :show show})
+    (reset! owner {:session session :attempt 0 :hide hide :show show :visibility visibility})
+    (.addEventListener js/document "visibilitychange" visibility)
     (.addEventListener js/window "pagehide" hide)
     (.addEventListener js/window "pageshow" show)
     (connect!)))

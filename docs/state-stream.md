@@ -39,8 +39,8 @@ holds one acknowledged view and at most one unacknowledged message. When a
 client falls behind, its next delta uses the most recent committed state. Up to
 32 clients can subscribe per runtime.
 
-The worker waits at least 25 ms after each delivery batch, limiting updates to
-40 Hz. Render and network delays can lower the observed rate. Show time and
+The worker caps delivery at the configured show frame rate or 40 Hz, whichever
+is lower. Render and network delays can lower the observed rate. Show time and
 frame number describe the captured fixture state. A client can animate its
 preview independently between deliveries. A client ACK alone generates no
 new publication. Delivery stops when the host closes its stream.
@@ -50,3 +50,25 @@ route. They cover the initial snapshot, cue launch, typed deltas, single-message
 backpressure, coalescing across missed frames, reconnect, epoch changes and the
 cadence bound. A blocked projection test checks that a frame publisher can
 continue while the delivery worker is busy.
+
+## Connections status
+
+The visible Connections page sends `{:op :connections :enabled? true}` on the
+show socket. The full view then includes `:connection-status` containing
+`:sync` and `:audio`, including the bounded waveform. The next patches use that
+client’s acknowledged token. A hidden document or navigation away sends
+`{:op :connections :enabled? false}` and starts a fresh, ordinary baseline.
+On reconnect the browser requests its current interest again.
+
+The first interested socket attaches watches to the show’s sync and capture
+managers. Changes signal the delivery worker even while show frames stand
+still. Committed show time advances the displayed clock age, and the committed
+audio event count describes events admitted by the show. Restore replaces the
+watches with the new managers. Closing the last interested connection drops
+the watches and their shared projection cache. Other sockets continue receiving
+their own show projection.
+
+MIDI port and audio input enumeration run once on entering the page and on
+explicit refresh. Capture, synchronization and routing changes use the existing
+commands. Browser verification with a touch viewport is available at
+`test/studio/connections_stream_browser.cjs`.

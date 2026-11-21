@@ -4,6 +4,7 @@
   (:require [clojure.data.json :as json]
             [ring.adapter.jetty :as jetty]
             [tolglow.show :as show]
+            [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
             [tolglow.studio.debug-stream :as debug-stream]
@@ -19,7 +20,10 @@
   (show/attach-observer! runtime id
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
-            stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %))
+            stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %)
+                     {:frame-rate (:frame-rate runtime)
+                      :observe-status! #(connections/observe-status! (:connections runtime) %)
+                      :capture-status #(connections/status-at-commit (:connections runtime))})
             projections (projection/create)]
         (state-stream/publish! stream @(:state runtime))
         {:debug-stream debug :state-stream stream :browser-projections projections
