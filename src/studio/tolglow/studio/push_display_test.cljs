@@ -54,6 +54,41 @@
     (is (= 1 (count (:parameters view))))
     (is (nil? (:audio-waveform (display/normalize-view {}))))))
 
+(deftest preset-projection-distinguishes-edits-saved-values-and-record-actions
+  (let [view {:cue {:id "ember"} :instance-id "0:ember"}
+        project #(display/preset-model (display/normalize-view (assoc view :preset %)))]
+    (is (= :default (:state (project {:saved? false :changed? false}))))
+    (is (= :saved (:state (project {:saved? true :changed? false}))))
+    (is (= :changed (:state (project {:saved? true :changed? true}))))
+    (is (= :save (:action (project {:record? true :action "save"}))))
+    (is (= "Clear preset · top button" (:hint (project {:record? true :action :clear}))))
+    (is (nil? (:action (project {:record? false :action :clear}))))
+    (is (nil? (display/preset-model {:preset {:saved? true}})))
+    (is (nil? (:hint (display/preset-model {:cue {:id :idle} :preset {:record? true :action :save}}))))
+    (is (= {:saved? true} (:preset (display/normalize-view {:preset {:saved? true :extra :discarded}}))))))
+
+(deftest touched-global-controls-use-real-units-bounds-and-sync-availability
+  (let [master (display/global-control-model {:master 0.73 :touched-control {:target :master :editable? true}})
+        tempo (display/global-control-model {:bpm 128.5 :touched-control {:target "tempo" :editable? false}})]
+    (is (= 73 (:value master)))
+    (is (= {:type :number :bounds [0 100] :unit "%"} (:schema master)))
+    (is (false? (:locked? master)))
+    (is (= 128.5 (:value tempo)))
+    (is (= {:type :number :bounds [20 200] :unit "BPM"} (:schema tempo)))
+    (is (:locked? tempo))
+    (is (= 240 (:value (display/global-control-model {:bpm 240 :touched-control {:target :tempo :editable? false}}))))
+    (is (nil? (display/global-control-model {:touched-control {:target :unknown}})))
+    (is (nil? (display/global-control-model (display/normalize-view {}))))))
+
+(deftest passive-updates-clear-prior-global-touch-and-preset-feedback
+  (reset! db/app-db {:push-display {:preset {:record? true :action :clear}
+                                  :touched-control {:target :tempo :editable? false}}})
+  (let [result (:effects (interceptor/execute [:push-display/update {:title "Replacement"}]
+                         (remove #(= :do-fx (:id %)) (registrar/get-handler :event :push-display/update))))]
+    (is (= #{:db} (set (keys result))))
+    (is (nil? (get-in result [:db :push-display :preset])))
+    (is (nil? (get-in result [:db :push-display :touched-control])))))
+
 (deftest traces-require-real-finite-samples
   (is (nil? (widgets/sample-points nil)))
   (is (nil? (widgets/sample-points [0 js/NaN 1])))

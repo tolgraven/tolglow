@@ -1,0 +1,76 @@
+name: Master show performance evidence
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches: [master]
+    paths:
+      - 'src/tolglow/compiler.clj'
+      - 'src/tolglow/compiler/**'
+      - 'src/tolglow/studio.clj'
+      - 'src/tolglow/studio/**'
+      - 'dev/tolglow/bench_show.clj'
+      - 'bin/profile-master'
+      - 'deps.edn'
+      - 'project.clj'
+      - '.github/workflows/tests.yml'
+      - '.github/workflows/performance.yml'
+permissions:
+  contents: read
+concurrency:
+  group: master-show-performance
+  cancel-in-progress: false
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # Reusable calls originate on the default branch (currently effects).
+          # Measure master for those calls, never the caller's older source tree.
+          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || 'master' }}
+          path: tolglow
+      - name: Resolve paired Afterglow master once
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: master
+          path: afterglow
+      - name: Record immutable measured commits
+        run: |
+          mkdir -p performance-artifact
+          git -C tolglow rev-parse HEAD > performance-artifact/tolglow-commit.txt
+          git -C afterglow rev-parse HEAD > performance-artifact/afterglow-commit.txt
+          date -u +%FT%TZ > performance-artifact/resolved-at.txt
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.7.1681
+      - name: Cache Maven dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/**/*.lastUpdated
+          key: performance-maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'afterglow/deps.edn') }}
+          restore-keys: performance-maven-${{ runner.os }}-
+      - name: Profile complete mixed shows with scalar oracle
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          set -o pipefail
+          ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
+            --warmup 40 --samples 120 --output ../performance-artifact/report.edn \
+            2>&1 | tee ../performance-artifact/run.log
+      - name: Retain evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: master-show-performance-${{ github.run_id }}
+          path: performance-artifact/
+          retention-days: 90

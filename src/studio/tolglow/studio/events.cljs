@@ -2,6 +2,7 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
@@ -128,11 +129,9 @@
       (merge current (dissoc incoming :partial?)))
     (dissoc incoming :partial?)))
 (defn state-url [db]
-  (str "/api/state?session=" (js/encodeURIComponent (:session db))
-       (when (and (:show db) (not (:force-full? db)))
-         (apply str (for [key [:runtime-id :epoch :revision]
-                          :let [value (get-in db [:show key])] :when (some? value)]
-                      (str "&" (name key) "=" (js/encodeURIComponent (str value))))))))
+  (str "/api/state?projection=delta-v1&session=" (js/encodeURIComponent (:session db))
+       (when-let [token (and (not (:force-full? db)) (get-in db [:server-projection :token]))]
+         (str "&base=" (js/encodeURIComponent token)))))
 (defn outstanding-drafts [drafts show]
   (into {} (filter (fn [[_ draft]]
                     (and (= (:epoch draft) (:epoch show))
@@ -158,14 +157,17 @@
     (when-not (:polling? db)
       {:db (assoc db :polling? true)
        :studio/http {:path (state-url db)
-                     :on-success [:studio/state] :on-failure [:studio/poll-failed]}})))
+                     :on-success [:studio/state-response (get-in db [:server-projection :token])]
+                     :on-failure [:studio/poll-response-failed (get-in db [:server-projection :token])]}})))
 (rf/reg-cofx :studio/visibility
   (fn [cofx _] (assoc cofx :hidden? (and (exists? js/document) (.-hidden js/document)))))
-(rf/reg-event-fx :studio/state [(rf/inject-cofx :studio/visibility)]
-  (fn [{:keys [db hidden?]} [_ incoming]]
-    (if-let [projection (merge-projection (:show db) incoming)]
-    (let [show projection
-          runtime-changed? (and (:show db) (not= (:runtime-id show) (get-in db [:show :runtime-id])))
+(defn receive-state [{:keys [db hidden?]} incoming]
+  (let [delta? (contains? incoming :protocol)
+        received (when delta? (projection/receive (:server-projection db) incoming))
+        server (when (#{:accepted :duplicate} (:status received)) (:state received))
+        accepted (if delta? (:view server) (merge-projection (:show db) incoming))]
+    (if-let [show accepted]
+    (let [runtime-changed? (and (:show db) (not= (:runtime-id show) (get-in db [:show :runtime-id])))
           old? (and (not runtime-changed?) (:snapshot-order db) (neg? (compare (snapshot-order show) (:snapshot-order db))))
           show (if old? (:show db) show)
           drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) show))
@@ -174,7 +176,8 @@
           page-id (get-in db [:ui :page-id])
           selected (get-in db [:ui :selected-instance])
           epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
-          updated (-> db (assoc :show show :snapshot-order order :drafts drafts :polling? false :force-full? false :connection {:connected? true})
+          updated (-> db (assoc :show show :snapshot-order order :drafts drafts :polling? false :force-full? false :connection {:connected? true}
+                               :server-projection (if old? (:server-projection db) server))
                       (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
           updated (if (some #(= selected (:id %)) (:instances show)) updated
                     (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
@@ -189,9 +192,21 @@
        :dispatch-later [{:ms (if hidden? 1500 100) :dispatch [:studio/poll]}]})
       {:db (assoc db :polling? false :force-full? true)
        :dispatch-later [{:ms 20 :dispatch [:studio/poll]}]})))
+(rf/reg-event-fx :studio/state [(rf/inject-cofx :studio/visibility)]
+  (fn [cofx [_ incoming]] (receive-state cofx incoming)))
+(rf/reg-event-fx :studio/state-response [(rf/inject-cofx :studio/visibility)]
+  (fn [{:keys [db] :as cofx} [_ requested-token incoming]]
+    (if (= requested-token (get-in db [:server-projection :token]))
+      (receive-state cofx incoming)
+      {:db (assoc db :polling? false)
+       :dispatch-later [{:ms 100 :dispatch [:studio/poll]}]})))
+(rf/reg-event-fx :studio/poll-response-failed
+  (fn [{:keys [db]} [_ requested-token error]]
+    (when (= requested-token (get-in db [:server-projection :token]))
+      {:dispatch [:studio/poll-failed error]})))
 (rf/reg-event-fx :studio/poll-failed
   (fn [{:keys [db]} [_ error]]
-    {:db (assoc db :polling? false :snapshot-order nil :drafts {} :pending-params {}
+    {:db (assoc db :polling? false :snapshot-order nil :drafts {} :pending-params {} :force-full? true
                 :connection {:connected? false :error (str "Reconnecting: " error)})
      :dispatch [:studio/release-pointers]
      :dispatch-later [{:ms 1000 :dispatch [:studio/poll]}]}))

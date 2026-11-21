@@ -17,6 +17,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
+            [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
@@ -28,6 +29,7 @@
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -139,6 +141,7 @@
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
+      :browser-projections (projection/create)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
@@ -356,6 +359,27 @@
     {:model (-> model (update :modulation #(modulation/release-hold (or % (modulation/new-state))
                                                                   (:instance-id payload) (:params payload)))
                 (update :revision inc)) :ack {:status :accepted}}
+    :aim-path
+    (let [definition (aim-paths/definition model payload)
+          id (:id definition)
+          requested-cue-id (:cue-id payload id)
+          wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
+          previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
+                         (vals (get-in model [:registry :cues])))
+          cue-id (:id previous requested-cue-id)
+          _ (when (and previous (not= id (:effect-id previous)))
+              (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
+          _ (compiler/compile-effect definition)
+          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
+          _ (when (= :rejected (get-in published [:ack :status]))
+              (throw (ex-info "Cannot publish aim path" (:ack published))))
+          cue (merge previous {:id cue-id :effect-id id :name (:name definition)
+                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+          result (apply-message (:model published)
+                                {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
+      (when (= :rejected (get-in result [:ack :status]))
+        (throw (ex-info "Cannot publish aim path cue" (:ack result))))
+      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
@@ -752,7 +776,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(output-scheduler/close! (:publisher runtime))
+                             [#(projection/clear! (:browser-projections runtime))
+                              #(output-scheduler/close! (:publisher runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -888,7 +913,8 @@
       (submit! runtime :import {:source (str source)}))))
 
 (defn browser-snapshot
-  "Bound preview values; omit unchanged authoring data on conditional polls."
+  "Bound preview values. Delta clients receive versioned, exact-base envelopes;
+  inspection requests can retrieve a complete or authoring-conditional view."
   [runtime query]
   (let [view (snapshot runtime)
         preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
@@ -897,10 +923,13 @@
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]
-    (if partial?
+    (cond
+      (= "delta-v1" (get query "projection"))
+      (projection/project! (:browser-projections runtime) view (get query "base"))
+      partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
-      view)))
+      :else view)))
 
 (defn fixture-action!
   "Fixture library operations; publication and patching join the owner queue."
@@ -1125,12 +1154,16 @@
                                             :emit! emit! :done! done!})))}))
 
 (defn start!
-  "Start the studio. Physical Art-Net output is enabled only by :artnet options."
+  "Start the studio in preview, or explicitly select :ola or :artnet output."
   ([] (start! {}))
-  ([{:keys [port host artnet frame-rate] :or {port 8500 host "127.0.0.1" frame-rate 40} :as options}]
+  ([{:keys [port host frame-rate] :or {port 8500 host "127.0.0.1" frame-rate 40} :as options}]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (when artnet (output/open-artnet! artnet))
-         runtime (create-runtime (assoc options :sink sink :independent-output? true))
+   (let [sink (output/open-sink! options)
+         runtime (try (create-runtime (assoc options :sink sink :independent-output? true))
+                      (catch Throwable error
+                        (when sink
+                          (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
+                        (throw error)))
          scheduler (Executors/newSingleThreadScheduledExecutor)]
      (try
        (reset! (:scheduler runtime) scheduler)
@@ -1142,11 +1175,43 @@
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))
 
+(defn parse-options
+  "Parse Studio CLI options without opening output or starting the web server."
+  [args]
+  (when (odd? (count args))
+    (throw (ex-info "Studio options require flag/value pairs" {})))
+  (let [allowed #{"--host" "--port" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
+        options (reduce (fn [result [flag value]]
+                          (when-not (allowed flag)
+                            (throw (ex-info "Unknown Studio option" {:option flag})))
+                          (when (contains? result flag)
+                            (throw (ex-info "Duplicate Studio option" {:option flag})))
+                          (assoc result flag value)) {} (partition 2 args))
+        ola? (or (contains? options "--ola-host") (contains? options "--ola-port"))
+        artnet? (or (contains? options "--artnet-host") (contains? options "--artnet-port"))
+        output (get options "--output" (cond ola? "ola" artnet? "artnet" :else "preview"))
+        port-number (fn [flag default minimum]
+                      (let [value (try (Long/parseLong (get options flag default))
+                                       (catch NumberFormatException _
+                                         (throw (ex-info "Port must be an integer" {:option flag}))))]
+                        (when-not (<= minimum value 65535)
+                          (throw (ex-info "Port is out of range" {:option flag :value value})))
+                        value))]
+    (when-not (#{"preview" "ola" "artnet"} output)
+      (throw (ex-info "--output must be preview, ola or artnet" {})))
+    (when (or (and ola? (not= output "ola")) (and artnet? (not= output "artnet")))
+      (throw (ex-info "Choose either OLA or direct Art-Net output" {})))
+    (when (and (= output "artnet") (not (seq (get options "--artnet-host"))))
+      (throw (ex-info "Direct Art-Net requires --artnet-host" {})))
+    (cond-> {:host (get options "--host" "127.0.0.1") :port (port-number "--port" "8500" 0)}
+      (= output "ola") (assoc :ola {:host (get options "--ola-host" "127.0.0.1")
+                                     :port (port-number "--ola-port" "9010" 1)})
+      (= output "artnet") (assoc :artnet {:host (get options "--artnet-host")
+                                           :port (port-number "--artnet-port" "6454" 1)}))))
+
 (defn -main [& args]
-  (let [options (apply hash-map args)
-        runtime (start! (cond-> {:port (Long/parseLong (get options "--port" "8500"))
-                                :host (get options "--host" "127.0.0.1")}
-                          (get options "--artnet-host") (assoc :artnet {:host (get options "--artnet-host")})))]
+  (let [options (parse-options args)
+        runtime (start! options)]
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable #(stop! runtime)))
-    (println "Tolglow Studio listening on" (str "http://" (get options "--host" "127.0.0.1") ":" (get options "--port" "8500")))
+    (println "Tolglow Studio listening on" (str "http://" (:host options) ":" (:port options)))
     @(promise)))
