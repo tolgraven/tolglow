@@ -54,7 +54,9 @@ checks the entire plan for duplicate IDs and missing enabled setup functions.
 A module receives the context and its settings without `:enabled`. Its return
 map can contain `:value` for later modules and `:stop!`, a zero-argument
 cleanup. `app/stop!` runs cleanups once in reverse order. A startup failure
-unwinds completed modules before propagating the error. For functions in your
+unwinds completed modules before propagating the error. Supply a zero-argument
+`:abort!` when rollback differs from normal shutdown. For example, the show-state
+module only replaces its save file after startup has finished successfully. For functions in your
 own code, add `:init {:search-in-namespaces [my.venue.setup] ...}` to resolve
 public functions whose names match module IDs; explicitly registered functions
 take precedence.

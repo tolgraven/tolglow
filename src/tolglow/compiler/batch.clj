@@ -48,12 +48,15 @@
   [outputs envelope-result envelope-attributes]
   (doseq [[attribute {:keys [values]}] outputs]
     (let [^doubles values values
+          geometric? (contains? compiler/geometry-attributes attribute)
           scale (double (if (and envelope-result (contains? envelope-attributes attribute))
                           (:value envelope-result) 1.0))]
       (dotimes [index (alength values)]
         (let [value (* scale (aget values index))]
-          (when-not (and (Double/isFinite value) (<= 0.0 value) (<= value 1.0))
-            (fail! [:outputs attribute :value] "Computed fixture output must be finite and within [0,1]"))
+          (when-not (and (Double/isFinite value) (or geometric? (<= 0.0 value 1.0)))
+            (fail! [:outputs attribute :value]
+                   (if geometric? "World coordinates must be finite"
+                       "Computed fixture output must be finite and within [0,1]")))
           (when (not= 1.0 scale) (aset-double values index value))))))
   outputs)
 
@@ -99,8 +102,8 @@
   "Compile definition against a captured rig to the ordinary pure step contract.
 
   Numeric IR outputs, envelopes, stable-ID selectors and duplicate output layers
-  use typed fields. Tween/aim/direction definitions deliberately use the existing
-  scalar compiler. Exact-number literals/positions in arithmetic also fall back;
+  use typed fields. World aim points and directions remain signed vec3 fields.
+  Tweens use the scalar compiler. Exact-number literals/positions in arithmetic also fall back;
   exact parameters or integer clocks select the scalar step for that frame.
   This conservative policy preserves scalar numeric semantics at byte boundaries.
   Unsupported expressions still fail normal validation; they
@@ -117,8 +120,7 @@
          numeric (numeric-contract outputs fixtures)
          reasons (cond-> (:reasons numeric)
                    (not enabled?) (conj :disabled)
-                   (some :frame-only? outputs) (conj :tween)
-                   (some #(#{:aim :direction} (:attribute %)) outputs) (conj :geometry))]
+                   (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
        (with-meta (compiler/compile-effect definition) {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups fixtures selected outputs)

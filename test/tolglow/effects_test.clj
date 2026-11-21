@@ -92,13 +92,14 @@
   (let [definition (fx/aim-sweep :sweep {:center [1 0 2] :width 4 :zoom 0.3 :wave {:period {:bars 1}}})
         step (batch/compile-effect definition fixtures)
         input (context 1.0)
-        result (step input) scalar ((compiler/compile-effect definition) input)
-        aims (filter #(= :aim (:attribute %)) (:assignments result))]
-    (is (= :ordinary (:backend (meta step))) "Current typed compiler deliberately falls back for geometry")
-    (is (= [:geometry] (:fallback-reasons (meta step))))
-    (is (= scalar result))
-    (is (every? #(= [5.0 0.0 2.0] (:value %)) aims))
-    (is (= 3 (count aims)))
+        actual (frame step input)
+        reference (frame (compiler/compile-effect definition) input)]
+    (is (= :batch (:backend (meta step))))
+    (is (empty? (:fallback-reasons (meta step))))
+    (is (= (frame-bytes reference) (frame-bytes actual)))
+    (is (= (:values reference) (:values actual)))
+    (is (= [[5.0 0.0 2.0] [5.0 0.0 2.0] [5.0 0.0 2.0]]
+           (mapv #(get-in actual [:values (:id %) :aim]) fixtures)))
     (is (= [:emission] (:requires definition)))
     (is (= [:movement :beam-shape] (:capabilities definition)))
     (is (close? 0.3 (get-in (frame step input) [:values :left :zoom])))
