@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
@@ -229,13 +230,14 @@
   (let [prefs (:ui settings) raw-view (:view prefs)
         view (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view))]
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
-      (contains? #{:perform :compose :rig :library :assistant :connections :develop} view) (assoc-in [:ui :view] view)
+      (and (contains? #{nil :home} (:route-name db)) (pages/views view)) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
       (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs)))))
 (rf/reg-event-fx :studio/settings-received
   (fn [{:keys [db]} [_ settings]]
     (let [updated (apply-ui-preferences db settings)]
-      {:db updated :fx (when (= :assistant (get-in updated [:ui :view])) [[:dispatch [:chat/load]]])})))
+      (cond-> {:db updated}
+        (= :home (:route-name updated)) (assoc :studio/navigate [:replace (get-in updated [:ui :view])])))))
 (rf/reg-event-fx :studio/persist-ui
   (fn [{:keys [db]} _]
     (when (:settings-supported? db)
@@ -244,10 +246,24 @@
                                                 :page-id (get-in db [:ui :page-id])
                                                 :launch-mode (get-in db [:ui :launch-mode])}}}})))
 (rf/reg-event-fx :studio/set-view
-  (fn [{:keys [db]} [_ view]] {:db (-> db (assoc-in [:ui :view] view) (assoc-in [:ui :rig-drag] nil))
-                              :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true] [:dispatch [:studio/persist-ui]]]
-                                    (and (= view :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
-                              :dispatch-later (when (= view :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])}))
+  (fn [_ [_ view]]
+    (when (pages/views view) {:studio/navigate [:push view]})))
+
+(rf/reg-event-fx :studio/route-matched
+  (fn [{:keys [db]} [_ page]]
+    (cond
+      (= page :home)
+      (cond-> {:db (assoc db :route-name :home)}
+        (:settings-loaded? db) (assoc :studio/navigate [:replace (get-in db [:ui :view])]))
+
+      (and (pages/views page) (not= page (:route-name db)))
+      {:db (-> db (assoc :route-name page) (assoc-in [:ui :view] page) (assoc-in [:ui :rig-drag] nil))
+       :fx (cond-> [[:dispatch [:studio/release-pointers]] [:studio/scroll-top true]]
+             ;; Initial deep links and the home preference restore are read-only.
+             (pages/views (:route-name db)) (conj [:dispatch [:studio/persist-ui]])
+             (and (= page :assistant) (not (get-in db [:chat :provider]))) (conj [:dispatch [:chat/load]]))
+       :dispatch-later (when (= page :perform) [{:ms 30 :dispatch [:studio/preview-resize]}])})))
+
 (rf/reg-event-fx :studio/set-page
   (fn [{:keys [db]} [_ id]] {:db (assoc-in db [:ui :page-id] id) :fx [[:dispatch [:studio/release-pointers]] [:dispatch [:studio/persist-ui]]]}))
 (rf/reg-event-fx :studio/set-launch
@@ -415,7 +431,7 @@
                  {:db closed :fx [(command db "cue/put" {:cue copied} [:studio/cue-copied cell (:id copied)])]})
         :assign {:db closed :fx [(put-cell db cell (get-in db [:ui :assign-cue])) (notice "Cue placed on the page.")]}
         :compose {:db closed :dispatch [:studio/composition-add (:id cue)]}
-        :edit {:db (assoc-in closed [:ui :view] :library) :dispatch [:studio/definition-load "effects" (:effect-id cue)]}
+        :edit {:db closed :studio/navigate [:push :library] :dispatch [:studio/definition-load "effects" (:effect-id cue)]}
         :remove {:db closed :fx [(put-cell db cell nil) (notice "Cell cleared; its definition remains in the library.")]}
         {:db closed}))))
 (rf/reg-event-fx :studio/cue-copied
@@ -682,8 +698,8 @@
                           :on-success [:studio/page-generated]}}))
 (rf/reg-event-fx :studio/page-generated
   (fn [{:keys [db]} [_ result]]
-    {:db (-> db (assoc-in [:ui :page-id] (:page-id result)) (assoc-in [:ui :view] :perform))
-     :fx [[:dispatch [:studio/persist-ui]] [:studio/scroll-top true]
+    {:db (assoc-in db [:ui :page-id] (:page-id result))
+     :fx [[:studio/navigate [:push :perform]] [:dispatch [:studio/persist-ui]]
           (notice (str "Registry page ready: " (count (:placements result)) " new cues, "
                        (count (:collisions result)) " conflicts, " (count (:overflow result)) " without room."))]}))
 (rf/reg-event-fx :studio/export (fn [_ _] {:studio/download true}))
