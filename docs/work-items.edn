@@ -149,6 +149,15 @@
               "Aggregate parity before final closed-path metadata guard: 502 tests / 4225 assertions passed"
               "Real output changes only selected mover; full show round trip and stale admission covered"
               "docs/aim-paths.md; 3D interaction and hardware accuracy are separate gates"]}
+  {:id :sync/link-playback-and-pause-lighting
+   :title "Follow Ableton Link playback and choose the paused light output"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/ableton_link.clj" "tolglow/src/tolglow/output/pause_look.clj" "tolglow/docs/ableton-link.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Link playback edges reach the show clock through a loopback daemon" "Manual and Link pauses can select a faint ambient color or blackout" "Save and restore pairing and output settings"]
+   :evidence ["Real Carabiner-protocol TCP socket, host clock transitions, retained musical lifetimes, RGBW sink capture, master/blackout precedence and Transit restore: 3 tests / 48 assertions"
+              "Optimized Chromium at touch-tablet dimensions saved/reloaded Link pairing and ambient RGB/level, switched to blackout; test/studio/link_pause_browser.cjs"
+              "Physical Live, cross-machine phase and real fixtures remain hardware gates in docs/ableton-link.md"]}
   {:id :performance/master-mixed-rig-profiling
    :title "Profile complete mixed rigs on master and optimize measured hot paths"
    :kind :implementation :status :in-progress
