@@ -2,7 +2,8 @@
   "Causal audio feature extraction with explicit stream state and timestamps.
   Kick/energy/breakdown heuristics are calibrated signal descriptors, not a
   general music, downbeat or emotion classifier. No IO or mutable state is held
-  by the analyzer; subscriptions are an independently invoked host boundary.")
+  by the analyzer; subscriptions are an independently invoked host boundary."
+  (:require [tolglow.integrations.bands :as bands]))
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
 (defn- clamp [x lo hi] (max lo (min hi x)))
@@ -64,6 +65,7 @@
     (merge (new-analyzer (:options state))
            {:sequence (:sequence state) :sample-rate sample-rate :origin-ms start-ms
             :hop-samples (long (Math/round (* sample-rate (/ (get-in state [:options :hop-ms]) 1000.0))))
+            :bands (bands/start sample-rate)
             :filter-coefficients [(biquad :high low sample-rate) (biquad :low high sample-rate)]
             :filter-delay [0.0 0.0 0.0 0.0]
             :hop {:n 0 :energy 0.0 :kick-energy 0.0 :peak 0.0}})))
@@ -135,7 +137,8 @@
                             (if (:breakdown? state) (:breakdown-exit-ms opts) (:breakdown-enter-ms opts))))
         breakdown-before? (:breakdown? state)
         breakdown? (if confirmed? (not breakdown-before?) breakdown-before?)
-        features {:time-ms time-ms :rms rms :peak (:peak hop) :kick-rms kick
+        [bands band-features] (bands/finish-hop (:bands state) (:noise-floor opts))
+        features (merge band-features {:time-ms time-ms :rms rms :peak (:peak hop) :kick-rms kick
                   :kick-threshold threshold :kick-rise rise :energy-envelope energy
                   :energy-dbfs (* 20.0 (Math/log10 (max 1.0e-12 rms)))
                   :energy-baseline reference :relative-energy relative
@@ -144,8 +147,8 @@
                   :breakdown? breakdown? :calibrated? calibrated? :confidence confidence
                   :interpretation :relative-signal-energy-not-emotion
                   :sample-rate rate :window-samples n :window-latency-ms duration
-                  :input-age-ms (- received-at-ms end-ms)}
-        state (assoc state :features features :previous-kick-rms kick
+                  :input-age-ms (- received-at-ms end-ms)})
+        state (assoc state :bands bands :features features :previous-kick-rms kick
                      :kick-mean (approach mean kick duration (:kick-baseline-ms opts))
                      :kick-deviation (approach deviation (Math/abs (- kick mean)) duration (:kick-baseline-ms opts))
                      :kick-armed? (and armed? (not kick?))
@@ -251,7 +254,8 @@
           (if (= offset n) [state events]
               (let [hop (:hop state) end (min n (+ offset (- (:hop-samples state) (:n hop))))
                     hop (segment values offset end (:filter-coefficients state) delay hop)
-                    state (update state :sample-index + (- end offset))]
+                    state (-> state (update :sample-index + (- end offset))
+                              (update :bands bands/accumulate values offset end))]
                 (if (= (:n hop) (:hop-samples state))
                   (let [[state events] (feature-step state events hop received-at-ms clock)]
                     (recur end (assoc state :hop {:n 0 :energy 0.0 :kick-energy 0.0 :peak 0.0}) events))

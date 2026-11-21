@@ -181,3 +181,30 @@
     (is (= [:b-broken :b-broken] (mapv :subscription-id (:errors result))))
     (is (= 1 (:delivered (analysis/publish! (analysis/unsubscribe subscribed :c-all) events))))
     (is (thrown? clojure.lang.ExceptionInfo (analysis/subscribe empty-bus :invalid [] identity)))))
+
+(defn- measured-tone [hz block-size]
+  (let [rate 8000 n 3200]
+    (loop [position 0 state (analysis/new-analyzer)]
+      (if (= position n) (:features state)
+        (let [end (min n (+ position block-size))
+              samples (mapv #(if (zero? hz) 0.0 (* 0.5 (Math/sin (/ (* 2.0 Math/PI hz %) rate))))
+                            (range position end))
+              result (analysis/analyze state {:samples samples :sample-rate rate
+                                               :started-at-ms (/ position 8.0) :received-at-ms (/ end 8.0)})]
+          (recur end (:state result)))))))
+
+(deftest band-levels-and-sub-bass-pitch-survive-arbitrary-block-partitions
+  (let [sub (measured-tone 41.2 64)
+        irregular (measured-tone 41.2 193)
+        mid (measured-tone 700 80)
+        high (measured-tone 3300 80)
+        silent (measured-tone 0 51)]
+    (is (> (:low-rms sub) (:mid-rms sub) (:high-rms sub)))
+    (is (> (:mid-rms mid) (:low-rms mid)))
+    (is (> (:high-rms high) (:low-rms high)))
+    (is (< (Math/abs (- 41.2 (:bass-pitch-hz sub))) 0.6))
+    (is (> (:bass-pitch-confidence sub) 0.95))
+    (is (= (select-keys sub [:low-rms :mid-rms :high-rms :bass-pitch-hz])
+           (select-keys irregular [:low-rms :mid-rms :high-rms :bass-pitch-hz])))
+    (is (nil? (:bass-pitch-hz silent)))
+    (is (zero? (:bass-pitch-confidence silent)))))
