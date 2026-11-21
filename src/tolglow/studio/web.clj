@@ -176,7 +176,7 @@
       (catch Exception error (.close input) (.close output) (throw error))))))
 
 (def operations
-  {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+  {"/api/event-subscribers" :event-subscriber "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -224,9 +224,10 @@
 
 (defn- get-routes
   [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! audio! sync! waveform! workspace! terminal! sensor! repl! calibration!]}]
+           app-agent! fixture! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! event-subscribers!]}]
   (merge
-   {"/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
+   {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
+    "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
     "/api/state" (fn [{:keys [query-params]}]
                    (heartbeat! (get query-params "session"))
                    (ok (snapshot! query-params)))

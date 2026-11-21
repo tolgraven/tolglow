@@ -9,6 +9,8 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.events :as staging]
             [tolglow.studio.show-events :as show-events]
+            [tolglow.studio.event-subscribers :as subscribers]
+            [tolglow.studio.event-callbacks :as event-callbacks]
             [tolglow.studio.debug-stream :as debug-stream]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
@@ -70,6 +72,7 @@
 (defn- project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
@@ -147,6 +150,10 @@
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
+      :event-admit (get options :event-admit subscribers/admit)
+       :event-callbacks (event-callbacks/create
+                        (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] true)}
+                               (:event-callback-options options)))
       :debug-stream (debug-stream/create runtime-id #(deref (:state @runtime-ref)))
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
@@ -177,6 +184,7 @@
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
+                subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (update :variables dissoc :audio :sync)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
@@ -244,6 +252,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
     :calibration (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
                                               (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :sensor-configure
@@ -714,7 +723,9 @@
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                     :status {:restored? true :frame-ms 0}}
                    (try
-                     (let [model (-> (advance-sensors! runtime model time-ms) (composition/advance time-ms) (advance-auto time-ms)
+                     (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
+                                     (composition/advance time-ms) (advance-auto time-ms)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
@@ -747,6 +758,7 @@
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (:state committed)]
              (reset! (:state runtime) next-state)
+             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
                (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts)
@@ -812,6 +824,22 @@
          (deliver reply (merge {:status :rejected} (error-data error)))))
      reply)))
 
+(defn register-event-subscriber!
+  "Register show data from the REPL. An inline :middleware function is bound in
+  this process; a qualified Var or portable :implementation can be restored."
+  [runtime {:keys [id middleware] :as registration}]
+  (let [registration (if middleware
+                       (let [implementation (if (var? middleware)
+                                              {:type :var :symbol (str (symbol middleware))}
+                                              {:type :registered :id id})
+                             definition (-> registration (dissoc :middleware)
+                                            (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
+                         (subscribers/validate-definition definition)
+                         (when (fn? middleware) (event-callbacks/register! (:event-callbacks runtime) id middleware))
+                         definition)
+                       registration)]
+    (submit! runtime :event-subscriber {:op :save :subscriber registration})))
+
 (defn stop! [runtime]
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
@@ -827,7 +855,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(debug-stream/close! (:debug-stream runtime))
+                             [#(event-callbacks/close! (:event-callbacks runtime))
+                              #(debug-stream/close! (:debug-stream runtime))
                               #(state-stream/close! (:state-stream runtime))
                               #(projection/clear! (:browser-projections runtime))
                               #(output-scheduler/close! (:publisher runtime))
@@ -1164,6 +1193,7 @@
   "Create the portable Ring application for this explicitly owned runtime."
   [runtime]
   (web/app {:snapshot! #(browser-snapshot runtime %)
+            :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream runtime) %)
             :state-stream! #(state-stream/response (:state-stream runtime) %)
             :definition! (fn [kind id]
