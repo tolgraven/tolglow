@@ -44,23 +44,23 @@
         config (assoc (app/default-config)
                       :show {:workers 1 :workspace-options nil}
                       :web-server true :hz 24
-                      :osc {:enabled true :address "127.0.0.1" :port-in 0}
+                      :sensor-osc {:enabled true :address "127.0.0.1" :port-in 0}
                       :expressive {:enabled true :devices {"test-pad" {:enabled? false}}}
                       :show-state {:enabled true :save-file (.getPath saved)})]
     (try
       (spit config-file (pr-str config))
       (let [runtime (app/launch! ["--config" (.getPath config-file) "--headless" "true"])]
         (try
-          (is (= [:show :show-state :osc :expressive] (get-in runtime [:application :loaded-components])))
+          (is (= [:show :show-state :sensor-osc :expressive] (get-in runtime [:application :loaded-components])))
           (is (empty? @(:observers runtime)))
-          (is (pos? (get-in runtime [:application :modules :osc :port])))
+          (is (pos? (get-in runtime [:application :modules :sensor-osc :port])))
           (is (false? (get-in @(:state runtime) [:model :settings :expressive :devices "test-pad" :enabled?])))
           (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value 0.42}) 4000 {}))))
           (is (pos? (get-in @(:state runtime) [:model :frame-number])))
           (finally (app/stop! runtime) (app/stop! runtime))))
       (is (pos? (.length saved)))
       (let [runtime (app/start! (-> config
-                                    (assoc :osc false :expressive false :web-server {:port 0})
+                                    (assoc :sensor-osc false :expressive false :web-server {:port 0})
                                     (assoc :show-state {:load-file (.getPath saved)})))]
         (try
           (is (= 0.42 (get-in @(:state runtime) [:model :master])))
@@ -131,4 +131,26 @@
           (finally ((:stop! first-server))))
         (is (empty? @(:observers runtime)))
         (is @(:running runtime)))
+      (finally (app/stop! runtime)))))
+
+(deftest generic-osc-remains-separate-from-paired-motion-sensors
+  (let [runtime (app/start! {:init {:components [:show] :modules [:osc :sensor-osc]}
+                             :show {:workers 1 :workspace-options nil}
+                             :osc {:port-in 0 :bind-host "127.0.0.1" :mappings {"/master" {:op :master/set}}}
+                             :sensor-osc {:port-in 0 :address "127.0.0.1"}})]
+    (try
+      (let [control-port (get-in runtime [:application :modules :osc :port])
+            sensor-port (get-in runtime [:application :modules :sensor-osc :port])
+            osc-client (requiring-resolve 'overtone.osc/osc-client)
+            send! (requiring-resolve 'overtone.osc/osc-send)
+            close! (requiring-resolve 'overtone.osc/osc-close)
+            peer (osc-client "127.0.0.1" control-port)
+            receipt (promise)]
+        (try
+          (add-watch (:state runtime) ::osc
+                     (fn [_ _ _ state] (when (= 0.25 (get-in state [:model :master])) (deliver receipt true))))
+          (send! peer "/master" (float 0.25))
+          (is (and (pos? sensor-port) (pos? control-port) (not= sensor-port control-port)))
+          (is (true? (deref receipt 3000 false)))
+          (finally (remove-watch (:state runtime) ::osc) (close! peer))))
       (finally (app/stop! runtime)))))
