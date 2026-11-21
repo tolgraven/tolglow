@@ -1,7 +1,21 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :control/cue-preset-integration
+ [{:id :web/expressive-mapping-settings
+   :title "Edit shared Push 3, Seaboard and generic MPE mappings with touch-friendly previews"
+   :kind :implementation :status :in-progress :owner "expressive_mapping_settings_and_touch_ui"
+   :paths ["tolglow/src/studio/tolglow/studio/expressive_mapping.cljs"
+           "tolglow/src/studio/tolglow/studio/expressive_mapping_test.cljs"
+           "tolglow/resources/studio/expressive-mapping.css"
+           "tolglow/docs/expressive-mapping-ui.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Backend mapping plans drive automatic, manual and disabled parameter presentation"
+                "Device and cue overrides survive settings and show round trips"
+                "Late previews cannot replace another device, cue or runtime draft"
+                "Touch layouts and real mapped parameter changes pass browser checks"]
+   :notes "Only views.cljs Connections panel mount and index.html CSS link are delegated integration edits. Backend mapping, Ring and persistence belong to push3_mpe_cue_automapping_overrides_disable."
+   :evidence []}
+  {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/registry.clj" "tolglow/src/tolglow/studio/persistence.clj"
