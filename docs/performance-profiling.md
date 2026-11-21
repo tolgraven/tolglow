@@ -41,8 +41,17 @@ is direct `mapv` without dispatch.
 
 ## Keeping master under observation
 
-The `Master show performance evidence` workflow runs manually, weekly, and on
-master pushes affecting runtime/compiler/dependencies. It resolves both checkouts
+The `Master show performance evidence` workflow runs on master pushes affecting
+runtime/compiler/dependencies and accepts reusable/manual calls. GitHub schedules
+only execute from the repository's default branch, currently `effects`. A minimal
+`performance-schedule.yml` on that branch supplies the weekly/manual trigger and
+calls the implementation on master; it contains no benchmark or application copy.
+There is only one scheduled trigger. If the default branch moves to master, move
+that trigger there too and remove the old copy.
+
+Push runs check out the exact pushed master SHA. Scheduled/reusable/manual runs
+check out master, even though the caller's event SHA may belong to effects. Each
+run resolves both checkouts
 once and records their immutable SHAs before running the matrix on Java 21. Raw
 EDN and logs are retained for 90 days, including failed runs. Oracle failures fail
 the job; timings have no pass/fail threshold. Weekly runs also catch independent
