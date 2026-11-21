@@ -8,7 +8,8 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.fixture-service :as fixtures]
             [tolglow.studio.persistence :as persistence]
-            [tolglow.studio.sync :as synchronization]
+            [afterglow.sync :as sync]
+            [afterglow.sync.session :as session]
             [tolglow.studio.sensors :as sensors])
   (:import [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
@@ -333,7 +334,7 @@
       (is (false? (get-in (connections/export-state conn) [:integrations :sync :wanted?])))
       (let [first-manager (connections/sync conn)
             first-run (connections/start-sync! conn sync-config {:events! #(swap! events conj %)})]
-        (is (synchronization/flush! first-manager))
+        (is (session/flush! first-manager))
         (is (= 1 @factories @opens))
         (let [saved (merge (assoc (show) :epoch 4) (connections/export-state conn))
               candidate (connections/prepare-restore conn saved)
@@ -342,9 +343,9 @@
           (is (= {:cue-id :ember :mode :held} (get-in saved [:integrations :sync :config :live :mappings 36])))
           (is (= 1 @factories @opens) "preparation and commit open no sync resources")
           (is (zero? @closes) "commit does not close the old ports")
-          (is (= :stopped (:state (synchronization/status (connections/sync conn)))))
-          (is (synchronization/ingest! first-manager {:type :peer/found :peer {:device-number 2 :address "127.0.0.2"}}))
-          (is (synchronization/flush! first-manager))
+          (is (= :stopped (:state (sync/status (connections/sync conn)))))
+          (is (session/ingest! first-manager {:type :peer/found :peer {:device-number 2 :address "127.0.0.2"}}))
+          (is (session/flush! first-manager))
           (is (= [] @events) "old active manager cannot call the new host after resource commit")
           (connections/retire! retired)
           (is (= :stopped (:status (deref (:result first-run) 1000 ::timeout))))
@@ -352,11 +353,11 @@
           (reset! now 5000.0)
           (let [second-run (connections/resume-sync! conn {:events! #(swap! events conj %)})
                 second-manager (connections/sync conn)]
-            (is (synchronization/flush! second-manager))
+            (is (session/flush! second-manager))
             (is (= 2 @factories @opens))
             (is (not= (:run-id first-run) (:run-id second-run)))
-            (is (synchronization/ingest! second-manager {:type :midi/message :source-id :midi-clock :time-ms 5000.0 :bytes [0xfa]}))
-            (is (synchronization/flush! second-manager))
+            (is (session/ingest! second-manager {:type :midi/message :source-id :midi-clock :time-ms 5000.0 :bytes [0xfa]}))
+            (is (session/flush! second-manager))
             (is (some #(= :sync/clock (:type %)) @events))
             (is (:stopped? (connections/stop-sync! conn)))
             (is (= 2 @closes))

@@ -6,7 +6,9 @@
             [tolglow.studio.repl-manager :as repl-manager]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.routing-host-test :as fixture]
-            [tolglow.studio.sync :as sync])
+            [afterglow.sync :as sync]
+            [afterglow.sync.session :as session]
+            [tolglow.integrations.live-sync :as live-sync])
   (:import [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
 
 (defn await! [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
@@ -94,7 +96,7 @@
           (receive! {:type :midi/message :source-id :midi-clock :time-ms 1 :bytes [0x90 60 127]})
           (is (= :accepted (:status (fixture/apply-at! runtime :command {:op :show/restart} 10))))
           (.countDown release)
-          (is (sync/flush! manager))
+          (is (session/flush! manager))
           (studio/tick! runtime 20)
           (is (empty? (:instances (studio/snapshot runtime))))
           (is (= run-id (sync/active-run-id manager)))
@@ -102,7 +104,7 @@
           (is (empty? @closes))
           (is (false? ((:commands! callbacks) [{:op :cue/launch :cue-id :wash}])))
           (receive! {:type :midi/message :source-id :midi-clock :time-ms 30 :bytes [0x90 60 127]})
-          (is (sync/flush! manager))
+          (is (session/flush! manager))
           (studio/tick! runtime 40)
           (is (= ["1:1"] (mapv :id (:instances (studio/snapshot runtime)))))
           (is (= 40 (get-in @(:state runtime) [:model :routing :ports fixture/source-id :clock :time-ms])))
@@ -116,7 +118,7 @@
                                                        (let [done (promise)]
                                                          {:read! (fn [& _] @done -1)
                                                           :close! #(do (swap! closed inc) (deliver done true))}))})
-        sync-manager (sync/create-manager)]
+        sync-manager (live-sync/create-manager)]
     (try
       (let [config {:default? true}
             first-run (audio/start! capture config {:events! identity})]
@@ -148,8 +150,8 @@
           (is (= {:rebound? false :reason :replaced-run}
                  (:sync (connections/rebind-restart! conn generation (studio/audio-callbacks runtime)
                                                      (studio/sync-callbacks runtime)))))
-          (sync/ingest! (connections/sync conn) {:type :midi/message :source-id :midi-clock :time-ms 0 :bytes [0xfa]})
-          (is (sync/flush! (connections/sync conn)))
+          (session/ingest! (connections/sync conn) {:type :midi/message :source-id :midi-clock :time-ms 0 :bytes [0xfa]})
+          (is (session/flush! (connections/sync conn)))
           (is (some #(= :sync/clock (:type %)) @seen)))
         (studio/stop! runtime)
         (is (= {:rebound? false :reason :retired-generation}

@@ -7,7 +7,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.routing :as routing]
-            [tolglow.studio.sync :as sync]))
+            [afterglow.sync.session :as session]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
 (def effect {:id :wash :version 1 :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}}
@@ -54,7 +54,7 @@
     (try
       (let [id (prepare! runtime (spec))]
         (receive! {:type :midi/message :source-id :midi-clock :time-ms 20.0 :bytes [0x90 60 127]})
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (studio/tick! runtime 100.0)
         (let [model (:model @(:state runtime))
               observed (get-in model [:routing :state :sources source-id])
@@ -68,7 +68,7 @@
           (is (some #(= :patch (get-in % [:source :type])) commands))
           (is (= [0 127] (get-in (studio/snapshot runtime) [:patch :sources 0 :range]))))
         (receive! {:type :midi/message :source-id :midi-clock :time-ms 120.0 :bytes [0x80 60 0]})
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (studio/tick! runtime 200.0)
         (is (= 0.0 (get-in @(:state runtime) [:model :instances id :params :level])))
         (is (empty? (get-in @(:state runtime) [:model :routing :pending]))))
@@ -210,7 +210,7 @@
               value (get-in before [:instances id :params :level])]
           (is (= 0.5 value))
           (receive! {:type :midi/message :source-id :midi-clock :time-ms 600.0 :bytes [0xf2 0 0]})
-          (is (sync/flush! manager))
+          (is (session/flush! manager))
           (studio/sync-action! runtime :source {:source-id :midi-clock})
           (studio/tick! runtime 600.0)
           (let [shifted (:model @(:state runtime))]
@@ -219,7 +219,7 @@
             (is (= value (get-in shifted [:instances id :params :level])))
             (is (nil? (get-in @(:state runtime) [:status :error]))))
           (receive! {:type :midi/message :source-id :midi-clock :time-ms 650.0 :bytes [0xf2 16 0]})
-          (is (sync/flush! manager))
+          (is (session/flush! manager))
           (studio/tick! runtime 650.0)
           (let [forward (:model @(:state runtime))]
             (is (= 4.0 (get-in forward [:transport :beat])))

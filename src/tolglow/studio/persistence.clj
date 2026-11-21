@@ -22,7 +22,7 @@
             [tolglow.studio.fixture-service :as fixture-service]
             [tolglow.studio.rig :as rig]
             [tolglow.studio.event-subscribers :as event-subscribers]
-            [tolglow.studio.sync :as sync]
+            [tolglow.integrations.live-sync :as live-sync]
             [tolglow.studio.repl-manager :as repl-manager]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.output-scheduler :as output-scheduler]
@@ -288,7 +288,7 @@
   (cond-> model
     (get-in model [:integrations :agents]) (update-in [:integrations :agents] agents/validate-state)
     (get-in model [:integrations :fixtures]) (update-in [:integrations :fixtures] fixture-service/validate-state)
-    (get-in model [:integrations :sync]) (update-in [:integrations :sync] sync/validate-state)
+    (get-in model [:integrations :sync]) (update-in [:integrations :sync] live-sync/validate-state)
     (get-in model [:integrations :repl]) (update-in [:integrations :repl] repl-manager/validate-state)
     (contains? model :event-subscribers) (update :event-subscribers event-subscribers/validate-state)
     (contains? model :reactive) (update :reactive reactive-registry/validate-registry)))
