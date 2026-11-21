@@ -55,7 +55,7 @@ export class RigEditorInput {
     this.canvas.addEventListener('pointerup', event => this.finish(event, false), options);
     this.canvas.addEventListener('pointercancel', event => this.finish(event, true), options);
     this.canvas.addEventListener('lostpointercapture', event => this.finish(event, true), options);
-    this.canvas.addEventListener('keydown', event => {if (event.key === 'Escape') this.cancel();}, options);
+    this.canvas.addEventListener('keydown', event => {if (event.key === 'Escape' && this.snapshot?.editor) {this.cancel(); this.emit('navigate');}}, options);
     globalThis.addEventListener?.('blur', () => this.cancel(), {signal: this.abort.signal});
     globalThis.document?.addEventListener('visibilitychange', () => {if (document.hidden) this.cancel();}, {signal: this.abort.signal});
   }

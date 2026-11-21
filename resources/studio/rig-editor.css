@@ -31,3 +31,6 @@
 .rig-plan-alternative summary {cursor:pointer;min-height:44px;padding:12px}
 @media(max-width:900px){.rig-editor-layout{grid-template-columns:1fr}.rig-editor-scene{border-right:0;border-bottom:1px solid var(--line)}.rig-path-form{padding-top:10px}.rig-targets{display:flex;flex-wrap:wrap;column-gap:20px}.rig-editor .preview-stage{height:400px}}
 @media(max-width:480px){.rig-editor-scene,.rig-path-form{padding:10px}.rig-editor-toolbar{padding:10px}.rig-editor-tools{display:grid;grid-template-columns:repeat(4,1fr);width:100%;gap:5px}.rig-editor-tools button{padding:8px;font-size:.72rem}.rig-editor .preview-stage{height:350px}.rig-plane-controls{gap:6px}.rig-plane-controls >label{min-width:85px}.rig-editor-actions{width:100%}.rig-path-point{grid-template-columns:20px repeat(3,minmax(0,1fr)) 28px}}
+
+.rig-view-controls {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.rig-view-controls input[type="range"] {padding:0}

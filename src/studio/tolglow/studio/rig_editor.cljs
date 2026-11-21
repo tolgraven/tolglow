@@ -44,6 +44,7 @@
     (if (not= identity (identity-key db)) db
       (case type
         "select" (put-editor db (assoc state :selection (select-keys selection [:kind :id])))
+        "navigate" (put-editor db (assoc state :tool "navigate"))
         "unreachable" (put-editor db (assoc state :message "This plane is edge-on. Change the camera or drawing plane."))
         "begin" (if (or gesture (not (finite-point? point)) (and (= tool "draw") (nil? selection) (>= (count (:points state)) 256))) db
                   (let [before (checkpoint db state) state (remember db state)
@@ -105,6 +106,16 @@
 (rf/reg-event-db :rig-editor/target
   (fn [db [_ id active?]]
     (put-editor db (update (editor db) :targets #(if active? (vec (distinct (conj % id))) (filterv (fn [target] (not= id target)) %))))))
+(rf/reg-event-db :rig-editor/load-path
+  (fn [db [_ id]]
+    (if-let [effect (first (filter #(and (= id (:id %)) (= "aim-path" (get-in % [:editor :type]))) (get-in db [:show :effects])))]
+      (let [source (:editor effect) [unit amount] (first (:duration source))
+            cue (first (filter #(= id (:effect-id %)) (get-in db [:show :cues])))]
+        (put-editor db (-> (remember db (editor db))
+                          (assoc :points (:points source) :targets (:targets effect) :tool "draw" :selected-point nil
+                                 :published {:effect-id id :cue-id (:id cue) :version (:version effect)}
+                                 :path (merge (select-keys source [:mode :curve :closed?])
+                                              {:id id :name (:name effect) :duration-unit (name unit) :duration-value amount}))))) db)))
 (defn publish-request [db run? request]
   (let [state (editor db) path (:path state)]
     {:path "/api/aim-path"
@@ -113,7 +124,7 @@
                    :duration {(keyword (:duration-unit path)) (:duration-value path)}
                    :page-id (get-in db [:ui :page-id])
                    :expected-epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}
-                  (when (= (:id path) (get-in state [:published :effect-id])) {:expected-version (get-in state [:published :version])}))
+                  (when (= (:id path) (get-in state [:published :effect-id])) {:expected-version (get-in state [:published :version]) :cue-id (get-in state [:published :cue-id])}))
      :on-success [:rig-editor/published (identity-key db) request (when run? (if (= "once" (:mode path)) "one-shot" "persistent"))]
      :on-failure [:rig-editor/failed (identity-key db) request]}))
 (rf/reg-event-fx :rig-editor/publish
@@ -171,6 +182,11 @@
   (let [path (:path state) fixtures (filter #(and (get-in % [:channels :pan]) (get-in % [:channels :tilt])) (get-in db [:ui :rig-draft :fixtures]))]
     [:section.rig-path-form
      [:div.panel-top [:span.section-label "MOVEMENT PATH"] [:span (str (count (:points state)) " / 256 points")]]
+     [:label "Saved paths"
+      [:select {:aria-label "Saved aim paths" :value "" :on-change #(dispatch! [:rig-editor/load-path (value %)])}
+       [:option {:value ""} "Open a saved path…"]
+       (for [effect (filter #(= "aim-path" (get-in % [:editor :type])) (get-in db [:show :effects]))]
+         ^{:key (:id effect)} [:option {:value (:id effect)} (or (:name effect) (:id effect))])]]
      [:div.rig-form-grid
       [:label "Path ID" [:input {:aria-label "Path ID" :value (:id path) :on-change #(dispatch! [:rig-editor/set [:path :id] (value %)])}]]
       [:label "Name" [:input {:aria-label "Path name" :value (:name path) :on-change #(dispatch! [:rig-editor/set [:path :name] (value %)])}]]
@@ -214,6 +230,13 @@
       [:div.rig-editor-scene
        [interop/preview show]
        [camera/controls]
+       [:div.rig-view-controls
+        [:label "Camera view" [:select {:aria-label "Rig camera view" :value (get-in db [:ui :preview-settings :camera] "audience")
+                                         :on-change #(rf/dispatch [:studio/preview-setting :camera (value %)])}
+                                [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]]
+        [:label "Work light · preview only" [:input {:type "range" :aria-label "Rig preview work light" :min 0 :max 1 :step 0.01
+                                                       :value (get-in db [:ui :preview-settings :worklight] 0.12)
+                                                       :on-change #(rf/dispatch [:studio/preview-setting :worklight (js/Number (value %))])}]]]
        [:div.rig-plane-controls
         [choice "Editing plane" (:plane state) [["xz" "Floor · XZ"] ["xy" "Front · XY"] ["yz" "Side · YZ"]] [:plane]]
         [number-field "Plane offset · m" (:plane-value state) [:rig-editor/set [:plane-value]]]

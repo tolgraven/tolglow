@@ -58,3 +58,10 @@
         (rf/dispatch-sync [:rig-editor/published "old" "stale" true {:cue-id "bad"}])
         (is (= before @rf-db/app-db)))
       (finally (restore)))))
+
+(deftest show-replacement-drops-old-rig-drafts-before-rendering
+  (let [old (-> (tool base "move") (assoc-in [:ui :rig-draft :fixtures 0 :position] [9 9 9]) (assoc-in [:ui :rig-dirty?] true))
+        next (editor/rebase-editor (assoc-in old [:show :epoch] 3))]
+    (is (= rig (get-in next [:ui :rig-draft])))
+    (is (false? (get-in next [:ui :rig-dirty?])))
+    (is (= (editor/identity-key next) (:identity (editor/editor next))))))
