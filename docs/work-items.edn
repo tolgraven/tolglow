@@ -14,7 +14,10 @@
                 "Late previews cannot replace another device, cue or runtime draft"
                 "Touch layouts and real mapped parameter changes pass browser checks"]
    :notes "Only views.cljs Connections panel mount and index.html CSS link are delegated integration edits. Backend mapping, Ring and persistence belong to push3_mpe_cue_automapping_overrides_disable."
-   :evidence []}
+   :evidence ["Frontend 147 tests / 780 assertions; explicit Node runner exit 0"
+              "Optimized build 148 files / zero warnings"
+              "14 real Ring/session/browser workflows; desktop, iPad and phone layouts; no browser errors"
+              "docs/expressive-mapping-ui.md; PR publication and roadmap validator pending coordinator pause"]}
   {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil
