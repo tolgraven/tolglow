@@ -76,7 +76,7 @@ export class RigEditorInput {
     event.preventDefault(); event.stopImmediatePropagation(); this.canvas.focus();
     const bounds = this.canvas.getBoundingClientRect(), hit = pickEditor(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
     if (e.tool !== 'draw' && !hit) {this.emit('select', {selection: null}); return;}
-    const value = hit && e.tool !== 'draw' ? hit.position[planeAxis(e.plane)] : e['plane-value'];
+    const value = hit ? hit.position[planeAxis(e.plane)] : e['plane-value'];
     const point = planePoint(this.engine.camera, bounds, event.clientX, event.clientY, e.plane, value, e.snap);
     if (!point) {this.emit('unreachable'); return;}
     this.gesture = {token: ++this.sequence, pointer: event.pointerId, hit, point, x: event.clientX, value, tool: e.tool,
@@ -88,7 +88,7 @@ export class RigEditorInput {
     const g = this.gesture; if (!g || event.pointerId !== g.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const e = this.snapshot.editor, point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, e.plane, g.value, e.snap);
-    if (point) this.emit('move', {point: g.tool === 'move' ? point.map((n, i) => n + g.offset[i]) : point, angle: (event.clientX - g.x) * .5});
+    if (point) this.emit('move', {point: g.hit && (g.tool === 'move' || g.tool === 'draw') ? point.map((n, i) => n + g.offset[i]) : point, angle: (event.clientX - g.x) * .5});
   }
   finish(event, cancelled) {
     if (!this.gesture || event.pointerId !== this.gesture.pointer) return;

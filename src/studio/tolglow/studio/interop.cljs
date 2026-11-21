@@ -95,9 +95,9 @@
          (.removeEventListener js/document "webkitfullscreenchange" handler))
        (when-let [engine (aget this "engine")]
          (js-invoke engine "dispose")
-         (when-let [handler (aget this "rig-editor-handler")]
-           (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler))
-         (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview))))
+         (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview)))
+       (when-let [handler (aget this "rig-editor-handler")]
+         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler)))
      :reagent-render
      (fn [show]
        (let [this (r/current-component)]

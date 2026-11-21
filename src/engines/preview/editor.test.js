@@ -53,3 +53,14 @@ test('pointer gestures retain offsets, reject unrelated fingers, cancel on show 
   input.update({...snapshot, epoch: 2}); assert.equal(messages.at(-1).type, 'cancel'); assert.equal(input.gesture, null);
   input.dispose(); assert.equal(active.at(-1), false); assert.equal(canvas.style.cursor, '');
 });
+
+test('moving an existing path handle retains its height and grab offset', () => {
+  const messages = [], canvas = new EventTarget(); Object.assign(canvas, {style: {}, focus(){}, getBoundingClientRect: () => bounds, setPointerCapture(){}, hasPointerCapture: () => false});
+  canvas.addEventListener('tolglow-editor', e => messages.push(e.detail));
+  const input = new RigEditorInput({canvas, camera, setInteractionActive(){}});
+  input.update({rig, 'show-id': 'show', epoch: 1, editor: {tool: 'draw', plane: 'xz', 'plane-value': 0, snap: 0, points: [[0, 2, 0]]}});
+  const p = projectPoint(camera, bounds, [0, 2, 0]), event = {pointerId: 1, clientX: p.x + 10, clientY: p.y, button: 0, preventDefault(){}, stopImmediatePropagation(){}};
+  input.down(event); input.move(event);
+  assert.ok(Math.hypot(...messages.at(-1).point.map((n, i) => n - [0, 2, 0][i])) < 1e-10);
+  input.move({...event, clientX: p.x + 50}); assert.equal(messages.at(-1).point[1], 2); input.dispose();
+});

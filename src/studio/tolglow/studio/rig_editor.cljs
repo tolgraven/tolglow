@@ -123,7 +123,8 @@
                   {:points (:points state) :targets (:targets state)
                    :duration {(keyword (:duration-unit path)) (:duration-value path)}
                    :page-id (get-in db [:ui :page-id])
-                   :expected-epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}
+                   :expected-epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])
+                   :expected-version nil}
                   (when (= (:id path) (get-in state [:published :effect-id])) {:expected-version (get-in state [:published :version]) :cue-id (get-in state [:published :cue-id])}))
      :on-success [:rig-editor/published (identity-key db) request (when run? (if (= "once" (:mode path)) "one-shot" "persistent"))]
      :on-failure [:rig-editor/failed (identity-key db) request]}))

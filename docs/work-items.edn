@@ -10,6 +10,7 @@
            "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
            "tolglow/src/engines/preview/editor.js"
            "tolglow/src/engines/preview/editor.test.js"
+           "tolglow/src/engines/preview/editor-browser-qa.mjs"
            "tolglow/src/engines/preview/overlay.js"
            "tolglow/resources/studio/rig-editor.css"]
    :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"

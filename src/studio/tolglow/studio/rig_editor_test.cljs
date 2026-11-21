@@ -2,6 +2,8 @@
   (:require [cljs.test :refer-macros [deftest is testing]]
             [re-frame.core :as rf]
             [re-frame.db :as rf-db]
+            [re-frame.interceptor :as interceptor]
+            [re-frame.registrar :as registrar]
             [tolglow.studio.events]
             [tolglow.studio.rig-editor :as editor]))
 (def rig {:fixtures [{:id "head" :position [0 3 0] :rotation-deg [0 0 0] :address 17 :channels {:pan [1 2] :tilt [3 4]} :calibration {:pan [128 255]}}]
@@ -65,3 +67,38 @@
     (is (= rig (get-in next [:ui :rig-draft])))
     (is (false? (get-in next [:ui :rig-dirty?])))
     (is (= (editor/identity-key next) (:identity (editor/editor next))))))
+
+(defn transition [db event]
+  (reset! rf-db/app-db db)
+  (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
+(deftest publication-is-an-explicit-versioned-choice
+  (let [restore (rf/make-restore-fn)]
+    (try
+      (let [state (assoc (editor/editor base) :publishing "request" :targets ["head"] :points [[0 0 0] [1 0 0]])
+            db (editor/put-editor base state) identity (editor/identity-key db)
+            request (editor/publish-request db false "request")
+            ack {:effect-id "drawn-path" :cue-id "drawn-path" :version 1}
+            created (transition db [:rig-editor/published identity "request" nil ack])
+            run (transition db [:rig-editor/published identity "request" "one-shot" ack])]
+        (is (contains? (:body request) :expected-version))
+        (is (nil? (get-in request [:body :expected-version])) "New IDs cannot overwrite an existing path")
+        (is (nil? (:studio/send-command created)))
+        (is (= "one-shot" (get-in run [:studio/send-command :fields :launch :mode])))
+        (is (= "drawn-path" (get-in run [:studio/send-command :fields :cue-id])))
+        (is (nil? (:studio/send-command (transition db [:rig-editor/published identity "other-request" "one-shot" ack]))))
+        (is (nil? (:studio/send-command (transition (assoc-in db [:show :epoch] 3) [:rig-editor/published identity "request" "one-shot" ack])))))
+      (finally (restore)))))
+(deftest reopen-saved-path-preserves-its-version-and-cue-identity
+  (let [restore (rf/make-restore-fn)]
+    (try
+      (let [effect {:id "saved" :version 7 :name "Saved path" :targets ["head"]
+                    :editor {:type "aim-path" :points [[1 0 0] [2 1 0]] :duration {:beats 3.5} :mode "ping-pong" :curve "sine" :closed? false}}
+            db (-> base (assoc-in [:show :effects] [effect]) (assoc-in [:show :cues] [{:id "saved-cue" :effect-id "saved"}]))
+            loaded (:db (transition db [:rig-editor/load-path "saved"]))
+            state (editor/editor loaded) request (editor/publish-request loaded false "next")]
+        (is (= (:points (:editor effect)) (:points state)))
+        (is (= {:beats 3.5} (get-in request [:body :duration])))
+        (is (= 7 (get-in request [:body :expected-version])))
+        (is (= "saved-cue" (get-in request [:body :cue-id])))
+        (is (= "draw" (:tool state))))
+      (finally (restore)))))
