@@ -17,9 +17,9 @@
                 "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
                 "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
                 "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
-   :evidence ["Lein :cljs actual frontend tests: 179 tests / 959 assertions passed; optimized release compiled 181 files with zero warnings"
+   :evidence ["Lein :cljs frontend checks passed179/959 then180/965 after master merge; initial optimized release181files/zero warnings; final integrated build checked in CI"
               "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
-              "Initial plain lein test: 574 tests / 4770 assertions, 3 failures and 1 error; sync stop race being fixed by its owner, app-agent failure under disk pressure being investigated"
+              "Plain lein test after paired sync lifecycle integration: 591 tests / 4896 assertions passed on Java21; earlier 574-test attempt recorded three failures/one error, then focused rerun passed27/299"
               "Local Docker build ran out of shared disk; dedicated CI image/build execution gate added, no local image success claimed"]}
  {:id :application/configured-startup
    :kind :implementation :status :done :owner nil
