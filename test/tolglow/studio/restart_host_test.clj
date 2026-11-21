@@ -1,6 +1,6 @@
 (ns tolglow.studio.restart-host-test
   (:require [clojure.test :refer [deftest is]]
-            [tolglow.studio :as studio]
+            [tolglow.show :as show]
             [tolglow.audio.capture :as audio]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -15,7 +15,7 @@
 (defn result [receipt] (deref (:completion receipt) 3000 ::timeout))
 
 (deftest restart-clears-performance-ownership-and-retains-definitions-and-repl-locals
-  (let [runtime (studio/create-runtime {:model (fixture/model)})]
+  (let [runtime (show/create-runtime {:model (fixture/model)})]
     (try
       (let [id (fixture/prepare! runtime (fixture/spec))
             conn (:connections runtime) repls (connections/repls conn) agents (connections/agents conn)
@@ -31,12 +31,12 @@
         (fixture/apply-at! runtime :response {:id :response :params [:level] :envelope {:attack {:beats 2}}} 0)
         (swap! (:leases runtime) assoc "human" 0)
         (let [before (:model @(:state runtime))
-              old-audio (studio/audio-callbacks runtime) old-sync (studio/sync-callbacks runtime)
-              restart (studio/submit! runtime {:op :show/restart})
-              stale (studio/submit! runtime {:op :cue/launch :cue-id :wash})]
+              old-audio (show/audio-callbacks runtime) old-sync (show/sync-callbacks runtime)
+              restart (show/submit! runtime {:op :show/restart})
+              stale (show/submit! runtime {:op :cue/launch :cue-id :wash})]
           (is (seq (:composition-runs before)))
           (is (true? (get-in before [:auto :enabled?])))
-          (studio/tick! runtime 100)
+          (show/tick! runtime 100)
           (is (= :accepted (:status @restart)))
           (is (= :rejected (:status @stale)))
           (let [after (:model @(:state runtime))]
@@ -64,28 +64,28 @@
             (is (identical? agents (connections/agents conn)))
             (is (identical? graph (connections/reactive conn)))
             (is (= "42" (:result (result (repl-manager/submit! repls "main" "retained-local")))))
-            (let [saved (studio/export-show runtime)
+            (let [saved (show/export-show runtime)
                   restored (persistence/thaw after saved)]
               (is (= 2 (:schema-version saved)))
               (is (nil? (get-in restored [:auto :state])))
               (is (= 2 (:schema-version (persistence/freeze restored))))))
-          (studio/tick! runtime 4000)
-          (is (empty? (:instances (studio/snapshot runtime))))
-          (is (every? zero? (get-in (studio/snapshot runtime) [:output :values :head :emitted-color])))))
-      (finally (studio/stop! runtime)))))
+          (show/tick! runtime 4000)
+          (is (empty? (:instances (show/snapshot runtime))))
+          (is (every? zero? (get-in (show/snapshot runtime) [:output :values :head :emitted-color])))))
+      (finally (show/stop! runtime)))))
 
 (deftest restart-rebinds-active-midi-without-reopening-and-discards-old-queued-input
   (let [opened (promise) entered (CountDownLatch. 1) release (CountDownLatch. 1)
         opens (atom 0) closes (atom []) reference (atom nil)
-        runtime (studio/create-runtime {:model (fixture/model)
+        runtime (show/create-runtime {:model (fixture/model)
                                         :sync-options {:midi-factory
                                                        (fn [_ _] {:open! (fn [receive!] (swap! opens inc) (deliver opened receive!) :midi)
                                                                   :close! (fn [_] (swap! closes conj (Thread/holdsLock (:lock @reference))))})}})]
     (reset! reference runtime)
     (try
-      (studio/sync-action! runtime :configure {:midi {:enabled? true :input-index 0 :control? true}
+      (show/sync-action! runtime :configure {:midi {:enabled? true :input-index 0 :control? true}
                                                :live {:mappings {60 {:cue-id :wash :mode :held}}}})
-      (let [callbacks (studio/sync-callbacks runtime) conn (:connections runtime) manager (connections/sync conn)]
+      (let [callbacks (show/sync-callbacks runtime) conn (:connections runtime) manager (connections/sync conn)]
         (connections/start-sync! conn (assoc callbacks :events!
                                               (fn [event] ((:events! callbacks) event)
                                                 (when (= :sync/observation (:type event))
@@ -97,19 +97,19 @@
           (is (= :accepted (:status (fixture/apply-at! runtime :command {:op :show/restart} 10))))
           (.countDown release)
           (is (session/flush! manager))
-          (studio/tick! runtime 20)
-          (is (empty? (:instances (studio/snapshot runtime))))
+          (show/tick! runtime 20)
+          (is (empty? (:instances (show/snapshot runtime))))
           (is (= run-id (sync/active-run-id manager)))
           (is (= 1 @opens))
           (is (empty? @closes))
           (is (false? ((:commands! callbacks) [{:op :cue/launch :cue-id :wash}])))
           (receive! {:type :midi/message :source-id :midi-clock :time-ms 30 :bytes [0x90 60 127]})
           (is (session/flush! manager))
-          (studio/tick! runtime 40)
-          (is (= ["1:1"] (mapv :id (:instances (studio/snapshot runtime)))))
+          (show/tick! runtime 40)
+          (is (= ["1:1"] (mapv :id (:instances (show/snapshot runtime)))))
           (is (= 40 (get-in @(:state runtime) [:model :routing :ports fixture/source-id :clock :time-ms])))
           (is (true? (get-in (connections/export-state conn) [:integrations :sync :wanted?])))))
-      (finally (.countDown release) (studio/stop! runtime)))
+      (finally (.countDown release) (show/stop! runtime)))
     (is (= [false] @closes))))
 
 (deftest delayed-stop-and-rebind-cannot-target-new-resource-ownership
@@ -134,11 +134,11 @@
           (is (= (:run-id new-run) (sync/active-run-id sync-manager)))
           (is (not (realized? (:result new-run))))))
       (finally (audio/close! capture) (sync/close! sync-manager))))
-  (let [runtime (studio/create-runtime {:model (fixture/model)}) conn (:connections runtime)]
+  (let [runtime (show/create-runtime {:model (fixture/model)}) conn (:connections runtime)]
     (try
       (fixture/apply-at! runtime :command {:op :show/restart} 0)
       (let [generation (:generation (connections/status conn))
-            old-audio (studio/audio-callbacks runtime) old-sync (studio/sync-callbacks runtime)]
+            old-audio (show/audio-callbacks runtime) old-sync (show/sync-callbacks runtime)]
         (fixture/apply-at! runtime :command {:op :show/restart} 0)
         (is (= {:rebound? false :reason :retired-generation}
                (connections/rebind-restart! conn generation old-audio old-sync)))
@@ -148,20 +148,20 @@
           ;; callbacks. Delayed completion of restart must not replace them.
           (connections/start-sync! conn {:events! #(swap! seen conj %)})
           (is (= {:rebound? false :reason :replaced-run}
-                 (:sync (connections/rebind-restart! conn generation (studio/audio-callbacks runtime)
-                                                     (studio/sync-callbacks runtime)))))
+                 (:sync (connections/rebind-restart! conn generation (show/audio-callbacks runtime)
+                                                     (show/sync-callbacks runtime)))))
           (session/ingest! (connections/sync conn) {:type :midi/message :source-id :midi-clock :time-ms 0 :bytes [0xfa]})
           (is (session/flush! (connections/sync conn)))
           (is (some #(= :sync/clock (:type %)) @seen)))
-        (studio/stop! runtime)
+        (show/stop! runtime)
         (is (= {:rebound? false :reason :retired-generation}
                (connections/rebind-restart! conn (:generation (connections/status conn)) old-audio old-sync))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest restart-rebinds-audio-at-block-boundary-without-waiting-for-blocked-read
   (let [input (LinkedBlockingQueue.) reads (mapv (fn [_] (CountDownLatch. 1)) (range 3))
         read-index (atom -1) opens (atom 0) closes (atom []) reference (atom nil)
-        runtime (studio/create-runtime
+        runtime (show/create-runtime
                   {:model (fixture/model)
                    :audio-options {:open-source!
                                    (fn [_] (swap! opens inc)
@@ -179,7 +179,7 @@
                                       :close! #(do (swap! closes conj (Thread/holdsLock (:lock @reference))) (.offer input :eof))})}})]
     (reset! reference runtime)
     (try
-      (studio/audio-action! runtime :start {:default? true :sample-rate 48000.0 :channels 1 :block-frames 480})
+      (show/audio-action! runtime :start {:default? true :sample-rate 48000.0 :channels 1 :block-frames 480})
       (is (await! (reads 0)))
       (let [manager (connections/audio (:connections runtime)) run-id (audio/active-run-id manager)
             restarted (future (fixture/apply-at! runtime :command {:op :show/restart} 100))]
@@ -192,11 +192,11 @@
         (is (nil? (:features @(:audio-input runtime))) "In-flight block still carries the old epoch")
         (.offer input :block)
         (is (await! (reads 2)))
-        (studio/tick! runtime 200)
+        (show/tick! runtime 200)
         (is (= 0.25 (get-in @(:state runtime) [:model :variables :audio :features :rms])))
         (is (= 0.25 (get-in @(:state runtime) [:model :routing :ports "audio/rms" :value])))
         (is (= 1 (:epoch @(:audio-input runtime))))
         (is (= 1 @opens))
         (is (true? (get-in (connections/export-state (:connections runtime)) [:integrations :audio-capture :capture-wanted?]))))
-      (finally (studio/stop! runtime)))
+      (finally (show/stop! runtime)))
     (is (= [false] @closes))))

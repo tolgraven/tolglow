@@ -2,6 +2,7 @@
   (:require [clojure.test :refer :all]
             [clojure.data.json :as json]
             [clojure.string :as str]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.development.agents :as agents]
             [tolglow.development.agents-test :as fixture-agent]
@@ -124,7 +125,7 @@
     (fn [{:keys [manager root]}]
       (let [entered (promise) release (promise)
             execute! (fn [request] (deliver entered true) @release (fixture-agent/completed! request))
-            runtime (studio/create-runtime
+            runtime (show/create-runtime
                      {:credential-store (credentials/file-store (.resolve ^Path root "runtime-credentials.edn"))
                       :workspace-options {:repositories (into {} (map (fn [[k v]] [k (str v)])) (:repositories manager))
                                           :workspace-parent (str (:parent manager))
@@ -144,12 +145,12 @@
                 epoch (get-in @(:state runtime) [:model :epoch])]
             (is (= 200 (:status started)))
             (is (true? (deref entered 5000 false)))
-            (let [receipt (studio/submit! runtime {:op :show/restart})]
-              (studio/tick! runtime 0)
+            (let [receipt (show/submit! runtime {:op :show/restart})]
+              (show/tick! runtime 0)
               (is (= :accepted (:status (deref receipt 1000 {})))))
             (is (> (get-in @(:state runtime) [:model :epoch]) epoch))
             (is (= :running (:status (agents/status owner id))))
             (deliver release true)
             (is (= :completed (:status (fixture-agent/finish owner id))))
             (is (= "completed" (get-in (request app :get "/api/application-agents/status" nil (str "id=" id)) [:data :status]))))
-          (finally (deliver release true) (studio/stop! runtime)))))))
+          (finally (deliver release true) (show/stop! runtime)))))))

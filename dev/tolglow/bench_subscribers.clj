@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [ring.adapter.jetty :as jetty]
             [tolglow.bench-show :as bench]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.transit :as transit])
   (:import [java.lang.management ManagementFactory]
@@ -150,9 +151,9 @@
 
 (defn- run-oracle [{:keys [model preview-indices]} opts]
   (let [sink (bench/capture-sink)
-        runtime (studio/create-runtime {:model model :workers 1 :batch? false :sink sink :workspace-options nil})]
+        runtime (show/create-runtime {:model model :workers 1 :batch? false :sink sink :workspace-options nil})]
     (try (mapv #(bench/host-step! runtime sink preview-indices %) (range (+ (:warmup opts) (:samples opts))))
-         (finally (studio/stop! runtime)))))
+         (finally (show/stop! runtime)))))
 
 (defn- preview-fields [frame]
   (update frame :preview #(mapv (fn [v] (select-keys v [:id :pan :tilt :focus :zoom :strobe
@@ -161,7 +162,7 @@
 (defn- profile-case [{:keys [model preview-indices]} expected client-count opts]
   (let [{:keys [workers warmup samples period-ms]} opts
         sink (bench/capture-sink)
-        runtime (studio/create-runtime {:model model :workers workers :sink sink :workspace-options nil})
+        runtime (show/create-runtime {:model model :workers workers :sink sink :workspace-options nil})
         commits (ConcurrentHashMap.) clients (atom []) server (atom nil) http-client (atom nil)
         sequence-number (AtomicLong.)
         executor (when (pos? client-count)
@@ -215,7 +216,7 @@
                               (.get (acknowledge! (:socket slow) (:token @(:state slow))) 5 TimeUnit/SECONDS)
                               (await-frame! slow final-frame)
                               (/ (- (System/nanoTime) start) 1e6)))
-              final-view (dissoc (studio/snapshot runtime) :status)]
+              final-view (dissoc (show/snapshot runtime) :status)]
           (doseq [client @clients]
             (when-not (= final-view (dissoc (:view @(:state client)) :status))
               (throw (ex-info "Applied subscriber view differs from current production snapshot" {:client (:name client)}))))
@@ -235,7 +236,7 @@
       (finally
         (remove-watch (:state runtime) ::commit-time)
         (doseq [client @clients] (.abort ^WebSocket (:socket client)))
-        (studio/stop! runtime)
+        (show/stop! runtime)
         (when @server (.stop @server))
         ;; Java21's client owns a selector as well as the supplied executor.
         ;; Bound teardown even if a failed connection still owns a handshake.
