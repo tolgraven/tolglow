@@ -1,7 +1,7 @@
 (ns tolglow.studio.debug-socket
   "The Debug page owns one same-origin socket, its replay cursor and reconnect timer."
   (:require [re-frame.core :as rf]
-            [tolglow.studio.transit :as transit]))
+            [tolglow.transit :as transit]))
 
 (defonce ^:private owner (atom nil))
 

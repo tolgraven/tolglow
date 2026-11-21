@@ -3,7 +3,7 @@
             [tolglow.studio.debug :as debug]
             [tolglow.studio.subscriber-editor :as editor]
             [tolglow.studio.events-test :refer [transition]]
-            [tolglow.studio.transit :as wire]))
+            [tolglow.transit :as wire]))
 
 (defn row [id] {:id id :type :audio/kick :category :audio :emitter {:id :audio/in} :subscribers [:fx/hit]})
 (defn event-batch [runtime n rows] {:runtime-id runtime :protocol "tolglow-debug/1" :kind :events :cursor n :skipped 0 :events rows})

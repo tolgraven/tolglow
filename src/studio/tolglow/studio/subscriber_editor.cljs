@@ -1,7 +1,7 @@
 (ns tolglow.studio.subscriber-editor
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [tolglow.studio.transit :as wire]))
+            [tolglow.transit :as wire]))
 
 (def endpoint "/api/event-subscribers")
 (defn- title [v] (if (keyword? v) (subs (str v) 1) (str v)))
