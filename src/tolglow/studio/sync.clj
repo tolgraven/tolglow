@@ -9,6 +9,7 @@
             [afterglow.control.codecs.midi :as midi-codec]
             [afterglow.control.devices.transports :as device-transports]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.ableton-link :as link]
             [tolglow.integrations.providers :as providers])
   (:import [javax.sound.midi MidiSystem MidiDevice MidiMessage Receiver ShortMessage]
            [java.lang.reflect Proxy InvocationHandler]
@@ -59,9 +60,10 @@
   is explicit; selecting an unconnected source waits rather than choosing a peer.
   Live object IDs/held instances are runtime state, never durable mappings."
   [input]
-  (when-not (and (map? input) (every? #{:selected-source :clock :midi :beat-link :live} (keys input)))
+  (when-not (and (map? input) (every? #{:selected-source :clock :midi :beat-link :link :live} (keys input)))
     (fail! :invalid-config "Unknown synchronization configuration field"))
   (doseq [[section allowed] [[:clock #{:bpm :beat :playing? :meter :timeout-ms :on-stale}]
+                             [:link #{:enabled? :source-id :port :follow-transport?}]
                              [:midi #{:enabled? :source-id :input-index :output-index :control? :expected-input-name :expected-output-name}]
                              [:beat-link #{:enabled? :source-id :status? :align-bars? :peer}]
                              [:live #{:enabled? :source-id :bridge-id :endpoint :poll-ms :timeout-ms :record-route :mode :channel :mappings :parameters :pairing}]]]
@@ -70,28 +72,30 @@
         (fail! :invalid-config "Unknown synchronization section field"))))
   (let [base {:selected-source :manual :clock {:bpm 120.0 :beat 0.0 :playing? false :meter {:beats-per-bar 4 :bars-per-phrase 4}
                                              :timeout-ms 1500.0 :on-stale :hold}
+              :link {:enabled? false :source-id :ableton-link :port 17000 :follow-transport? true}
               :midi {:enabled? false :source-id :midi-clock :input-index nil :output-index nil :control? false}
               :beat-link {:enabled? false :source-id :beat-link :status? false :align-bars? false :peer nil}
               :live {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
                      :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
                      :mappings {} :parameters {} :pairing nil}}
         config (reduce (fn [out key] (assoc out key (merge (get base key) (get input key))))
-                       (assoc base :selected-source (source-id (get input :selected-source :manual))) [:clock :midi :beat-link :live])
-        config (reduce #(update-in %1 [%2 :source-id] source-id) config [:midi :beat-link :live])
+                       (assoc base :selected-source (source-id (get input :selected-source :manual))) [:clock :midi :beat-link :link :live])
+        config (reduce #(update-in %1 [%2 :source-id] source-id) config [:midi :beat-link :link :live])
         config (-> config (update-in [:clock :on-stale] #(if (string? %) (keyword %) %))
                    (update-in [:live :mode] #(if (string? %) (keyword %) %))
                    (update-in [:live :record-route] #(if (string? %) (keyword %) %))
                    (update-in [:live :mappings] #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
                    (update-in [:live :parameters] #(mappings % :parameters)))
         midi (:midi config) dj (:beat-link config) live (:live config)
-        ids (mapv #(get-in config [% :source-id]) [:midi :beat-link :live])
+        ids (mapv #(get-in config [% :source-id]) [:midi :beat-link :link :live])
         peer (:peer dj)]
     (when-not (and (every? boolean? [(:enabled? midi) (:control? midi) (:enabled? dj) (:status? dj)
-                                    (:align-bars? dj) (:enabled? live)])
+                                    (:align-bars? dj) (:enabled? live) (get-in config [:link :enabled?]) (get-in config [:link :follow-transport?])])
+                   (integer? (get-in config [:link :port])) (<= 1 (get-in config [:link :port]) 65535)
                    (every? port? ((juxt :input-index :output-index) midi))
                    (or (not (:enabled? midi)) (some some? ((juxt :input-index :output-index) midi)))
                    (every? #(or (nil? %) (and (string? %) (<= (count %) 512))) ((juxt :expected-input-name :expected-output-name) midi))
-                   (= 3 (count (set ids))) (not (some #{:manual} ids))
+                   (= 4 (count (set ids))) (not (some #{:manual} ids))
                    (some #{(:selected-source config)} (conj ids :manual))
                    (#{:lighting :live} (:mode live)) (#{:bridge :midi} (:record-route live))
                    (string? (:bridge-id live)) (<= 1 (count (:bridge-id live)) 128)
@@ -294,9 +298,9 @@
   ([] (create-manager {}))
   ([options]
    (let [options (merge {:now-ms now-ms :midi-factory midi-transport :beat-link-factory beat-link-transport
-                        :live-factory live-http-transport :queue-capacity 256} options)
+                        :link-factory link/transport :live-factory live-http-transport :queue-capacity 256} options)
          config (validate-config (get options :config {}))]
-     (when-not (and (every? ifn? ((juxt :now-ms :midi-factory :beat-link-factory :live-factory) options))
+     (when-not (and (every? ifn? ((juxt :now-ms :midi-factory :beat-link-factory :link-factory :live-factory) options))
                     (integer? (:queue-capacity options)) (<= 8 (:queue-capacity options) 4096))
        (fail! :invalid-options "Invalid synchronization boundary options"))
      {:lock (Object.) :options options
@@ -322,8 +326,12 @@
   "Selected external clock projection for the next owner frame. Manual selection
   returns clock nil so this boundary cannot overwrite the host's manual transport."
   [manager at-ms]
-  (let [result (clock/snapshot (:clock @(:state manager)) at-ms)]
-    (if (= :manual (:selected-source result)) (assoc result :clock nil) result)))
+  (let [{:keys [config clock]} @(:state manager)
+        result (clock/snapshot clock at-ms)]
+    (cond-> result
+      (= :manual (:selected-source result)) (assoc :clock nil)
+      (= (get-in config [:link :source-id]) (:selected-source result))
+      (assoc :follow-transport? (get-in config [:link :follow-transport?])))))
 
 (defn configure! [manager config]
   (let [config (validate-config config)]
@@ -618,6 +626,12 @@
       (when (paired-peer? config peers (:peer event))
         (when (or (not= :beat-link/beat (:type event)) (:bpm event))
           (apply-clock! manager run (assoc event :align-bars? (get-in config [:beat-link :align-bars?])))))
+      :link/lost (apply-clock! manager run (assoc event :type :source/lost :kind :ableton-link))
+      :link/status
+      (let [previous (get-in @(:state manager) [:clock :sources (:source-id event)])
+            frozen? (and (false? (:playing? event)) (false? (:playing? previous)) (:connected? previous))]
+        (apply-clock! manager run (cond-> (assoc event :type :clock :kind :ableton-link :confidence 1.0)
+                                    frozen? (assoc :beat (:beat previous)))))
       :live/status (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
       :live/midi (do (observe-midi! manager run (:event event) :live (get event :time-ms at))
                     (midi-control! manager run (:event event)))
@@ -713,7 +727,7 @@
                    (let [outcome
                          (try
                            (let [config (:config @(:state manager)) options (:options manager)]
-                             (doseq [kind [:beat-link :midi :live] :when (and (get-in config [kind :enabled?]) (not @(:cancelled? run)))]
+                             (doseq [kind [:beat-link :link :midi :live] :when (and (get-in config [kind :enabled?]) (not @(:cancelled? run)))]
                                (let [factory (get options (keyword (str (name kind) "-factory")))
                                      transport (if (= kind :live) (factory (assoc (get config kind) :sync-session-id (:id run)))
                                                    (factory (get config kind) (:now-ms options)))

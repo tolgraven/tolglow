@@ -571,10 +571,14 @@
                                   accepted?))) true commands)))}))
 
 (defn- source-clock-model [runtime model time-ms]
-  (let [{:keys [selected-source clock]} (sync/clock-at (connections/sync (:connections runtime)) time-ms)]
+  (let [{:keys [selected-source clock follow-transport?]} (sync/clock-at (connections/sync (:connections runtime)) time-ms)]
     (if-let [captured (if (= :manual selected-source)
                        (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
-                       (when clock (assoc clock :source selected-source)))]
+                       (when clock
+                         (cond-> (assoc clock :source selected-source)
+                           (false? follow-transport?) (assoc :playing? (get-in model [:transport :playing?]))
+                           (and (false? follow-transport?) (false? (get-in model [:transport :playing?])))
+                           (assoc :beat (get-in model [:transport :beat])))))]
       (let [before (:transport model)
             discontinuity? (or (not= (:source before :manual) (:source captured))
                                (not= (:source-epoch before 0) (:source-epoch captured))
