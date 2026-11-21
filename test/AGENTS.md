@@ -1,30 +1,42 @@
 # Tests
 
-Keep the fast baseline separate from integration and hardware checks. The
-baseline must require production namespaces normally and execute their public
-functions; do not copy source definitions, skip failing assertions, or install
-fake dependencies to manufacture a green result.
+Run real production namespaces/functions and dependencies. Do not copy source,
+skip failed assertions or replace whole dependency namespaces to manufacture a
+green lane. Capture only the IO boundary being excluded from the test.
 
-- `tolglow.utils.iters-test` requires only Clojure and the repository root on the
-  classpath. It protects iterator consumption, row ordering, truncation,
-  transient-vector accumulation, and empty inputs.
-- `tolglow.fixtures-test` requires the real Afterglow fork and its dependencies.
-  It protects declarative channel expansion, pixel positions and offsets,
-  calibration, and strobe ranges. A failed namespace load is an integration
-  failure, not a passing test or a reason to stub the channel constructors.
-- Do not require `tolglow.core`, `tolglow.live`, graphics sketches, or full show
-  startup in unit tests. Some existing namespaces contain top-level actions.
-- Test bugs with behavioral examples before fixing them. Keep regression tests
-  after the fix. Document any untested boundary and the exact command used.
-- Use explicit snapshots and seeded randomness for new effect tests. Avoid
-  sleeps, timing assertions on shared CI workers, and real network or MIDI
-  devices. Future concurrent tests must compare observable outputs across
-  worker counts, not assume a particular execution order.
-- Integration fixtures should use in-memory show state and captured output.
-  Any hardware test must be separately selected and disabled by default.
+- `utils.iters-test` preserves iterator consumption, row ordering, truncation,
+  transient accumulation and empty inputs. Zero-input `multi-iter` remains a
+  separately tracked legacy contract concern; do not call it without a bound.
+- Fixture and compatibility tests use the actual fork and exercise fine/sparse
+  offsets, calibration, colors, parameters, cue metadata and explicit context.
+  `compatibility-test` intentionally requires/reloads core/live and traps
+  unexpected activation. Normal arithmetic tests should require narrow modules.
+- Registry/compiler/composition/automation tests use explicit time, beat and RNG
+  data. Test semantic expectations and boundaries, not a copy of implementation.
+  Include ownership, release, duplicate input, invalid revisions and pause cases.
+- Studio and integration tests cover the shared model, host lifecycle, Ring
+  behavior and bounded local HTTP/provider boundaries. Loopback server tests are
+  allowed when owned and closed; external provider accounts and production
+  endpoints are not part of the default suites.
+- Concurrent tests compare observable results across completion orders and
+  prove owned resource cleanup. Do not rely on a particular scheduler ordering
+  or use noisy performance assertions as correctness gates. Bound waits and
+  release workers even on failure.
+- Tests never activate a physical rig, discover MIDI ports, start OLA/Art-Net
+  output or create a Processing sketch. Hardware checks must be separately
+  selected and reported. Browser checks distinguish viewport emulation from
+  actual iPad/phone hardware.
 
-Existing cases deliberately avoid zero-input `multi-iter`: all three variants
-currently report `hasNext` forever with no source iterators. Track that as a bug
-before defining a supported zero-input contract. The tests also do not yet cover
-sparse/fine-channel prefix footprints in declarative strips, cross-universe
-strips, effect lifecycle, or live cue reload.
+Runners explicitly list selected namespaces. Add new tests to the appropriate
+runner through its owner and report the command actually executed. Parity lanes
+include pure tests; focused and aggregate counts overlap. See
+[testing](../docs/testing.md) for evidence and remaining compatibility gates.
+
+Expanded performance tests must cover type-aware bounded modulation, seeded
+replay, normalized derivative behavior across frame rates, per-note/channel
+expressive ownership and category overlap/override semantics. Controller bytes
+need cited reference/capture provenance and separate physical-device evidence.
+Test staged restore failure/cleanup and stale callbacks using actual resource
+owners with injected transports. Link/AbleSet/Live dual-host claims require
+explicit selected-source, disconnect and single-output-authority checks; a
+loopback protocol test alone does not prove the external host.

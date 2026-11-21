@@ -1,16 +1,31 @@
 # Shared controls, device adapters, and web workspace
 
-Status: proposed architecture, grounded in the repositories inspected on 2026-11-21. This document specifies migration work; it does not claim that Push 3, the replacement UI, or the command API is implemented. Runtime contracts are described in [functional-runtime.md](functional-runtime.md), rendering in [rendering.md](rendering.md), authoring semantics in [show-authoring.md](../product/show-authoring.md), and external integrations in [integrations.md](../product/integrations.md).
+This document combines the original source audit with the target architecture.
+The shared command model, pure bindings/views/codecs, Push 2/generic sessions and
+re-frame/Reagent/Ring studio are now implemented v1 modules; their observed scope
+is in [studio UI](../studio-ui.md), [show files](../show-files.md) and
+[testing](../testing.md). Native Push 3 display/standalone and the broader
+performance workflows remain open. Expanded MPE/Seaboard M, X-Touch/extenders,
+automapping, category widgets, offscreen CSS/webview rendering and Live patchbay
+requirements are specified in [expressive performance](../product/expressive-performance.md).
 
-## What exists today
+Runtime contracts are in [functional-runtime](functional-runtime.md), rendering
+in [rendering](rendering.md), authoring in [show authoring](../product/show-authoring.md),
+and external integrations in [integrations](../product/integrations.md). New code
+uses the shared pure model and owned IO boundaries; there is no old-effect
+execution compatibility layer.
 
-The inspected Afterglow revision is `16b0b4cac70433e4118038dfbfd304e22d1d9018`; Tolglow is `01146ece7731ec06aa1ee6409342373096c8e0dc`.
+## Original source audit
+
+The following table describes the inspected historical Afterglow revision
+`16b0b4cac70433e4118038dfbfd304e22d1d9018` and Tolglow
+`01146ece7731ec06aa1ee6409342373096c8e0dc`, not the current implementation status.
 
 | Source | Current behavior | Consequence for migration |
 | --- | --- | --- |
-| `afterglow/src/afterglow/controllers.clj` | Shared `IGridController` and `IOverlay` protocols, cue-grid helpers, velocity mappings, recognizers, controller lifecycle and scheduling | Preserve useful behavior and public compatibility while separating domain actions from transport and presentation. There are existing abstractions to build on. |
-| `afterglow/src/afterglow/controllers/ableton_push_2.clj` | 3,029 lines combine MIDI/SysEx palette handling, Wayang/native display frames, mutable UI buffers, cue launching, parameter editing, overlays and device lifecycle | Replace incrementally with an adapter over common controls; do not reproduce this structure for Push 3. |
-| `afterglow/src/afterglow/web/routes/show_control.clj` | 974 lines include direct show mutation, per-page client state in an atom, cue views, macro creation and update diffs | Add a translation adapter to the common command path before replacing HTTP routes and UI. |
+| `afterglow/src/afterglow/controllers.clj` | Shared `IGridController` and `IOverlay` protocols, cue-grid helpers, velocity mappings, recognizers, controller lifecycle and scheduling | Use preserved behavior as a parity oracle while separating domain actions from transport and presentation. There are existing abstractions to build on. |
+| `afterglow/src/afterglow/controllers/ableton_push_2.clj` | 3,029 lines combine MIDI/SysEx palette handling, Wayang/native display frames, mutable UI buffers, cue launching, parameter editing, overlays and device lifecycle | Replace with a new adapter over common controls; do not reproduce this structure for Push 3. |
+| `afterglow/src/afterglow/web/routes/show_control.clj` | 974 lines include direct show mutation, per-page client state in an atom, cue views, macro creation and update diffs | Use as a feature oracle for new Ring routes and the shared command path; do not add a runtime compatibility layer. |
 | `afterglow/resources/public/js/show_updates.js` | jQuery/Bootstrap, polling 50 ms after successful responses, mouse-down/up cue interaction, context menu with delete | Mobile input, local editing state, reconnect behavior and rendering cadence need explicit redesign. |
 | `afterglow/src/afterglow/web/routes/visualizer.clj` | Four-light cap, movement-history-derived color/aim, comments noting omitted dimmer behavior | A new simulator must consume actual resolved output and a shared rig model; the current view is not a photometric reference. |
 | `afterglow/src/afterglow/web/routes/web_repl.clj` | Session-bound Clojure evaluation via `do-eval` | Existing REPL functionality is an administrative execution surface, not a declarative command schema. Keep the distinction explicit. |
@@ -22,7 +37,7 @@ The inspected Afterglow revision is `16b0b4cac70433e4118038dfbfd304e22d1d9018`; 
 
 Afterglow owns device-independent show commands, authoritative show state, effect instances, transport time and output. Tolglow owns authored show content, effect/cue registries and higher-level workflows. The web application and every device adapter consume the same semantic controls.
 
-Proposed namespace boundaries, to introduce after characterization tests exist:
+Boundary responsibilities below are architectural. The implemented names and exact callable contracts are recorded in the [v1 contract](../implementation-contract-v1.md); future namespaces in this table are not availability claims:
 
 | Boundary | Inputs and outputs | Must not own |
 | --- | --- | --- |
@@ -53,7 +68,13 @@ The following EDN is a contract sketch. Final names must be reconciled with the 
  :gesture-id "pad-42-press-16"}
 ```
 
-The experimental `afterglow.runtime/render-frame` kernel added with this foundation has a smaller implemented contract: `{:frame ... :effects [{:id ... :priority ... :order ... :state ... :step ...}]}`. It evaluates independent middleware functions and orders their assignment/intent contributions. It has no command admission, command deduplication, epoch enforcement, registry or device integration yet. Everything in the envelope and transport design here remains a target contract.
+The initial `afterglow.runtime/render-frame` kernel remains a smaller pure API.
+The implemented `afterglow.control.model/apply-command` and
+`afterglow.runtime.engine/advance` now provide command admission, bounded
+receipts, epochs, captured definitions and instance lifecycle. The studio owns
+ordered ingress, frame publication, staged resource restoration and output.
+Consult the executable v1 contract rather than treating the initial kernel as
+the full current runtime.
 
 The shell authenticates the source, validates bounds, deduplicates the command ID and assigns the authoritative sequence. Device clocks and arrival timestamps may be retained as metadata, but cannot determine total command order. Reduction produces a new immutable model and domain events; the runtime commits a frame from one captured model. Publishing events, MIDI feedback and persistence occur outside the reducer.
 

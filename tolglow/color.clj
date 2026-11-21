@@ -22,20 +22,21 @@
  (ensure-colorable [this] "Returns color dynamic Params unresolved, since they are still colorable.")
  )
 
+(declare create)
+
 (extend-protocol Color
- thi.ng.color.core.HSLA
- (creator [this] this)
- String
- (creator [this] (convert this))
- clojure.lang.PersistentVector
- (creator [this] (apply clr/hsla this))
- afterglow.effects.params.Param
- (creator [this] this)
- clojure.lang.Keyword
- (creator [this]
-  (try (convert this)
-       (catch IllegalArgumentException _
-        (params/bind-keyword-param this used-type default (str (name this)))))))
+ nil
+ (colorable? [_] false)
+ (colorize [_] nil)
+ (ensure-colorable [_] nil)
+ Object
+ (colorable? [this]
+   (boolean (or (color? this) (params/param? this)
+                (string? this) (keyword? this)
+                (and (vector? this) (#{3 4} (count this))
+                     (every? number? this)))))
+ (colorize [this] (create this))
+ (ensure-colorable [this] (create this)))
 
 (declare cap)
 
@@ -59,10 +60,8 @@
    #_color))
  ([h s l & {:keys [mode] :or {mode :full}}]
   (case mode
-   :full ;360, 100, 100
-   (clr/hsla h s l)
-   :fraction
-   #_(colors/create-color (mapv colors/clamp-unit-float [h s l]))))) ;should get from cfg but argh cross reqs
+   ;; Numeric thi.ng colors use unit fractions. Keep :full as the legacy alias.
+   (:full :fraction) (clr/hsla h s l))))
 ;; (convert "fafaa")
 
 ; ev make proper so can + - directly? not possible tho i guess
@@ -97,10 +96,9 @@
 
 (defn cap "Ensure color aspect within bounds"
  [color & {:keys [s l fraction] :or {s 0.75 l 1.00 #_fraction #_like-ratio-highest-rgb-to-lowest...}}] ;90 as in cfg sat cap
- (let [sat (cmath/clamp (:s color) 0.0 s)]
-  (if (color? color)
-   (assoc color :s sat)
-   color))) ;pass through. but fix same for params tho...
+ (if (color? color)
+   (assoc color :s (cmath/clamp (:s color) 0.0 s))
+   color)) ; Dynamic parameters must remain unresolved at construction time.
 ; (defn cap "Ensure color aspect within bounds"
 ;  [color & {:keys [s l fraction] :or {s 0.80 l 1.00 #_fraction #_like-ratio-highest-rgb-to-lowest...}}] ;90 as in cfg sat cap
 ;  (let [color (create color)

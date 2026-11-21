@@ -1,0 +1,173 @@
+[0.327s][info][jfr,startup] Started recording 1. No limit specified, using maxsize=250MB as default.
+[0.327s][info][jfr,startup]
+[0.327s][info][jfr,startup] Use jcmd 10037 JFR.dump name=1 to copy recording data to file.
+{:benchmark :functional-render-backend,
+ :version 1,
+ :measured-at "2026-11-21T04:05:06.420454729Z",
+ :source-revision "working-tree",
+ :environment
+ {:java-version "21.0.13",
+  :clojure-version "1.11.4",
+  :os "Linux",
+  :architecture "amd64",
+  :processors 4,
+  :heap-bytes 805306368,
+  :jvm-arguments
+  ["-XX:-OmitStackTraceInFastThrow"
+   "-Duser.home=/workspace/.tools/java-home"
+   "-Xmx768m"
+   "-XX:StartFlightRecording=filename=/tmp/afterglow-backend.jfr,settings=profile,dumponexit=true"
+   "-Dclojure.basis=.cpcache/47323007.basis"]},
+ :notes
+ ["Only the two channel-packing stages are directly comparable."
+  "Full frame stage also validates/reduces assignments, resolves RGBW/dimmer values and allocates fresh output."
+  "Packing stages reuse preallocated arrays and clear them each iteration."
+  "Every measured output is byte-compared outside its timed interval."
+  "No GPU, transport, effect generation, GC allocation profiling, or end-to-end latency is measured."],
+ :results
+ [{:heads 10000,
+   :channels 40000,
+   :universes 79,
+   :results
+   [{:stage :new-frame-resolution-and-packing,
+     :warmup 20,
+     :samples 60,
+     :checksum 5093856,
+     :milliseconds
+     {:p50 76.225943,
+      :p95 181.780541,
+      :p99 205.844798,
+      :min 70.90312,
+      :max 205.844798},
+     :samples-ms
+     [75.51732
+      76.225943
+      77.339672
+      72.6702
+      72.395437
+      74.32505
+      71.64959
+      75.728655
+      71.908057
+      71.239084
+      74.610408
+      72.117261
+      71.882749
+      76.315965
+      71.621387
+      74.220143
+      73.589237
+      73.697489
+      75.590978
+      70.90312
+      85.061306
+      100.816242
+      89.757537
+      75.016567
+      71.946619
+      74.313964
+      81.294229
+      74.830358
+      77.597005
+      72.537901
+      73.176218
+      80.18807
+      71.748027
+      73.987064
+      95.093046
+      99.230339
+      108.521875
+      108.384875
+      109.053725
+      165.134515
+      185.242014
+      181.780541
+      186.030938
+      205.844798
+      157.138752
+      109.106145
+      102.480442
+      115.42233
+      80.914415
+      73.857904
+      117.989862
+      76.561738
+      83.426902
+      77.180457
+      90.232855
+      91.257012
+      87.953038
+      75.985755
+      73.146507
+      74.713518]}
+    {:stage :new-precompiled-channel-packing,
+     :warmup 20,
+     :samples 60,
+     :checksum 5093856,
+     :milliseconds
+     {:p50 3.950934,
+      :p95 4.414549,
+      :p99 5.107327,
+      :min 3.675901,
+      :max 5.107327},
+     :samples-ms
+     [4.272816
+      4.219016
+      3.932196
+      3.838305
+      4.116933
+      4.123964
+      4.072296
+      4.012736
+      3.990363
+      3.979086
+      3.99541
+      4.030303
+      3.951675
+      3.773428
+      3.823512
+      4.091985
+      4.26185
+      3.787679
+      4.157113
+      3.950934
+      3.964694
+      3.933687
+      3.739447
+      3.877454
+      3.93521
+      3.927148
+      4.050163
+      3.864264
+      4.050533
+      3.866768
+      3.819126
+      3.882942
+      3.811444
+      3.816502
+      3.792376
+      4.444413
+      4.403752
+      4.414549
+      5.107327
+      4.357192
+      3.899526
+      4.299005
+      4.45515
+      3.905886
+      3.760749
+      3.812666
+      3.849652
+      4.006457
+      4.220638
+      4.136822
+      3.892616
+      3.675901
+      3.850423
+      3.830193
+      4.020768
+      3.98879
+      3.771856
+      3.74153
+      3.884184
+      4.272115]}]}]}

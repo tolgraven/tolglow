@@ -38,8 +38,8 @@
  (let [hue (if hue [:hue hue]
             (if-let [hue (color-key color-hues)]
              [:hue hue])) ;tho, yeah just add to afterglow lol...
-       fine (when fine [:fine-channel fine])]
-  (apply chan/color offset color-key (into hue fine))))
+       fine (when fine [:fine-offset fine])]
+  (apply chan/color offset color-key (concat hue fine))))
 
 (defn colors
  [color-layout & offsets]
@@ -75,14 +75,21 @@
  [channels & global-offset] ;bit weird maybe why'd we need a global global-offset like this?
  (let [global-offset (or (first global-offset) 0)]
   (when channels
-  ((comp vec flatten vector)
-   (for [[ch args] channels]
-   (#_tolglow.debug/det
-    let [args (if (coll? args) args [args]) ;ensure vec
-           ;; [i & args] args]
-         i (+ global-offset (first args))
-         args (rest args)]
-    (apply resolve-channel ch i args))))))) ;needed apply here since resolve got rest arg
+    (into []
+          (mapcat (fn [[ch args]]
+                    (let [args (if (coll? args) args [args])
+                          resolved (apply resolve-channel ch args)]
+                      (map (fn [channel]
+                             (let [shifted (cond-> (update channel :offset + global-offset)
+                                             (:fine-offset channel)
+                                             (update :fine-offset + global-offset))]
+                               (when-not (every? #(and (integer? %) (<= 1 % 512))
+                                                 (keep shifted [:offset :fine-offset]))
+                                 (throw (ex-info "Channel offset is outside one DMX universe"
+                                                 {:channel shifted :global-offset global-offset})))
+                               shifted))
+                           (if (sequential? resolved) resolved [resolved])))))
+          channels))))
 
 
 ;; DEPRECATED XXX
@@ -92,7 +99,14 @@
 
 (defn pos-for-head "Get position for head given bounds, size and index"
  [pixels index start end]
- (+ start (* index (/ (- end start) (dec pixels)))))
+ (if (= pixels 1)
+   (/ (+ start end) 2.0)
+   (+ start (* index (/ (- end start) (dec pixels))))))
+
+(defn channel-footprint
+  "Highest occupied coarse or fine offset; zero for a fixture without channels."
+  [channels]
+  (reduce max 0 (keep identity (mapcat (juxt :offset :fine-offset) channels))))
 
 (defn pixel-strip "one strip as one head per pixel, supports RGB or RGBW."
   [pixels & {:keys [x y z color-layout channels]
@@ -103,7 +117,7 @@
     :channels channels
     :heads (for [i (range pixels)]
             (let [[x y z] (map #(apply pos-for-head pixels i %) [x y z])
-                  c (+ (* i subpixels) (+ (count channels) 1))]  ;; offset for fn channels
+                  c (+ (* i subpixels) (inc (channel-footprint channels)))]
              (color-head c color-layout x y z)))}))
 ;;_______________________________________
 
@@ -139,7 +153,7 @@
 (defn create "Generic fixture map creator"
  [data]
  (let [channels (make-channels (:channels data))
-       heads (or (create-pixel-heads (:strip data) (inc (count channels)))
+       heads (or (create-pixel-heads (:strip data) (inc (channel-footprint channels)))
                  (create-heads data))]
   (merge
    {:name (:name data "Unnamed fixture")}

@@ -1,62 +1,76 @@
-# Tolglow source
+# Tolglow JVM source
 
-This tree is the application and user authoring layer on top of the Afterglow
-fork. The classpath source root is the repository root, not a `src` directory.
-Read the root architecture and work tracking documents before taking a task.
+The repository root is the JVM classpath source root. This tree contains both
+legacy show authoring and the new functional application. Read the root guidance
+and shared [v1 contract](../docs/implementation-contract-v1.md).
 
-## Current responsibilities
+## Module boundaries
 
-- `fixtures.clj` expands the declarative maps in `config.clj` into Afterglow
-  channels and pixel heads. Keep fixture mode, channel address, physical unit,
-  and calibration semantics explicit. Do not infer channel footprint from the
-  number of channel descriptions when fine or sparse offsets are possible.
-- `fx.clj`, `param.clj`, `color.clj`, and `vars.clj` contain effect factories,
-  dynamic parameter helpers, and cue variable metadata. Many depend on dynamic
-  `*show*`, atoms, and eager namespace initialization. New pure code must receive
-  state, time, parameters, fixture data, and randomness explicitly.
-- `cue.clj` and `page.clj` construct and place cues. Preserve stable definition
-  and instance identities during the registry/hot reload migration. A restart
-  must invalidate old instances and callbacks instead of leaving stale cues.
-- `setup.clj`, `core.clj`, `osc.clj`, and `util.clj` own current application and
-  I/O integration. Put new external actions behind adapters; callbacks emit
-  commands instead of changing shared effect state themselves.
-- `random.clj` has an incomplete automatic show controller. `macro.clj`,
-  `sequencer.clj`, `show_control.clj`, and `audio.clj` are mostly proposals or
-  stubs. File existence is not evidence that these features work.
-- `viz.cljc` and `graphics/` contain Quil/Processing experiments. The future
-  browser simulator and rig editor share scene data and fixture output with the
-  control application, but must not own the authoritative lighting clock.
+- `fixtures.clj` expands legacy declarative maps into actual Afterglow channels
+  and pixel heads. Preserve physical units, sparse/fine offsets, calibration and
+  channel footprints. `config.clj` is user setup, not a fixture schema library.
+- `fx.clj`, `param.clj`, `color.clj`, `vars.clj`, `cue.clj` and `page.clj` retain
+  legacy dynamic-show/parameter workflows. Compatibility tests now load these
+  against the merged fork. Do not silently replace their contracts with the new
+  model. Old source is reference material for feature/functional parity only;
+  do not add a runtime compatibility layer.
+- `registry.clj` and `compiler.clj` validate portable definitions and compile
+  supported expression data into pure steps. A definition revision is different
+  from a running instance. Invalid edits retain the last valid running definition.
+- `composition/` and `automation/` own reusable pure tween/envelope/sequence,
+  macro/response and seeded policy logic. Use explicit logical time and RNG.
+  Beat/bar/phrase authoring is primary; milliseconds are a boundary representation.
+- `studio.clj` and `studio/` host the model, frame publication, Ring API,
+  composition sessions, output and provider sessions. Keep handler/middleware
+  independent from the server adapter; starting/stopping the host is explicit.
+- `studio/connections.clj` owns provider/fixture/audio/sync/reactive resources.
+  Prepare replacements outside the model lock, commit ownership with model/output,
+  and retire or abort resources outside it. Capture/sync resumption follows
+  clock rebase; stale callbacks retain their original epoch.
+- `integrations/` contains tested fixture import, Live/audio mappings and agent
+  primitives. Live-side software, actual audio routing and external providers
+  need separate verification from mocked or loopback protocol tests.
+- Legacy `random.clj`, `macro.clj`, `sequencer.clj`, `show_control.clj`, `audio.clj`
+  and graphics experiments are not evidence that their new counterpart features
+  are complete. `viz.cljc` and `graphics/` remain separate Quil experiments.
 
-## Migration constraints
+## Functional and control contracts
 
-Keep a pure function contract for new effects: an explicit immutable context
-enters, updated local state and output data leave. Atom use is allowed at the
-runtime/I/O boundary, not hidden inside new effect algorithms. Keep hot numeric
-buffers privately owned by workers; do not allocate a nested map per pixel just
-to satisfy an immutable interface. Worker results are merged in deterministic
-priority/order before committing a frame.
+New effects receive explicit immutable context and return local state plus
+attribute/intent data. IO, clocks and mutable resources belong to the host.
+Do not allocate a nested map per pixel merely to appear functional: privately
+owned primitive buffers are allowed at controlled backend boundaries. Merge
+worker results by stable priority/order before committing a complete frame.
 
-Route Push, web, MIDI, OSC, automation, and agent actions through the shared
-control contract. Controller implementations translate input and render shared
-state; they do not define their own cue launch or parameter semantics. Keep
-transport IDs distinct from cue/effect IDs. Future robot telemetry uses this
-same boundary.
+Push, web, MIDI, OSC, automation, agents and future sensor/robot inputs all use
+the shared control model. No adapter invents its own launch/end semantics or
+mutates legacy atoms behind the coordinator. Keep transport identity, source,
+definition/cue/instance IDs and show epochs distinct.
 
-Keep declarative definitions as validated data. Imported fixture definitions,
-effect maps, and parameter maps are not trusted executable Clojure. Authoring
-code is a separate deliberate capability with validation and revision tracking.
-Do not place provider secrets in definitions, scene snapshots, or browser state.
+Imported fixture maps and effect DSL documents are data, not executable reader
+forms. Use safe EDN parsing and validate before publication. Code authoring is a
+separate deliberate capability. Provider secrets stay in runtime configuration,
+never show definitions, scene snapshots or browser state.
 
 ## Loading and verification
 
-Require narrow namespaces during tests. `live.clj` contains a top-level
-`add-effect!`; other application namespaces bind global configuration or depend
-on graphics, controllers, and web startup. Do not use full show startup merely
-to test arithmetic. Remove top-level experiments only in a scoped migration
-with tests, since users may currently rely on REPL workflows.
+`core` and `live` have intentional headless compatibility tests. `live` no longer
+installs its demo on require; call `start-demo!` explicitly in a show context.
+This does not authorize normal unit tests to activate the user's rig, create
+Processing sketches or open devices. Capture output and inject transport shells.
 
-Run the applicable baseline and integration tests before marking a task done.
-Distinguish code inspection from successful namespace loading and from a real
-device test. Do not call a feature implemented based on a scaffold or stub.
-Record exact commands, dependencies, known failures, and remaining acceptance
-criteria in the work tracker.
+Run focused behavioral tests, then applicable integration lanes. Record exact
+scope and counts; distinguish a pure module from a complete UI/workflow and a
+source-derived protocol from physical hardware evidence. Use the work ledger
+for exclusive ownership rather than conflicting implementations of shared APIs.
+
+## Expanded performance work
+
+Follow [expressive performance](../docs/product/expressive-performance.md) for
+typed beat modulation, categories, registered waveforms/derivative/jagginess and
+audio-derived signals, controller automapping, musical Live patchbay and sharing.
+Keep waveform/modulation state and RNG explicit, schema-valid and persistable.
+Category operations must respect overlapping membership and human ownership.
+Live/Link/AbleSet and afterglow-max need verified APIs and host tests; MIDI delivery
+is not proof of a clip write. Sharing manifests/provenance and deliberate privacy
+selection must not weaken complete local backups.

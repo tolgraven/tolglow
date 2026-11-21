@@ -13,14 +13,13 @@
             [thi.ng.color.core :as clr]
             [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
-            [taoensso.timbre.profiling :refer [pspy]]
+            [taoensso.tufte :refer [p] :rename {p pspy}]
             [tolglow.utils.iters :refer [mapv-fast mapcatv]]
             [tolglow
              [color :as color :refer []]
              [config :as config :refer [at cfg]]
              [util :as util :refer [clamp get-map-with key-str value]]
              [graph :as graph]
-             [viz :as viz]
              [vars :as vars]]
             [afterglow.effects.cues :as cues])
   (:import afterglow.rhythm.Metronome
@@ -79,7 +78,7 @@
  []
  {:metronome {:type Metronome :default (:metronome *show*)}
   :measure {:type ::tf/distance-measure, :default (tf/build-distance-measure 0 0 0)}
-  :color {:type (color/used-type), :default (color/create :white)}
+  :color {:type color/used-type, :default (color/create :white)}
   :bool {:type Boolean :default false}
   :number {:type Number :default 0}
   :step {:type Number :default (build-step-param :interval :bar :fade-fraction 0.25 :fade-curve :sine)}
@@ -94,7 +93,7 @@
 
 (defn bind-default "Bind param by default kind and value"
  [type-key show-key] ;only for quickies
- (let [data (-> param-specs type-key)]
+ (let [data (get (param-specs) type-key)]
   (bind-keyword-param show-key (:type data) (:default data))))
 
 
@@ -104,7 +103,8 @@
  (let [f (fn [pm [id _]]
           (assoc pm id
                  (let [default (util/default m id)
-                       param (or (util/arg m id) default) ;bind-keyword-param dumb and nil as first arg resolves to nil, not default, so...
+                       arg (util/arg m id)
+                       param (if (nil? arg) default arg)
                        kind  (cond (number? default) Number
                                    (or (seq? default) (vector? default)) java.util.List
                                    :else (type default))]

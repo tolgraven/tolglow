@@ -1,40 +1,64 @@
 # Tolglow / Afterglow architecture program
 
-This program starts by characterizing the existing system, then replaces its
-mutable internals in stages. It preserves live coding, concurrent rendering and
-human performance while opening the same operations to controllers, a mobile
-web application, automation and agents.
+The working tree now contains executable v1 modules: an explicit-state runtime,
+shared commands and device sessions, declarative authoring and composition,
+CPU fixture rendering, integration primitives, and a web studio. The existing
+Afterglow `tolmaster` work has been merged and Tolglow's headless application
+compatibility repaired. Old source is retained only as a feature/functional parity reference. The new
+runtime has no compatibility layer or legacy effect execution bridge; complete
+production workflows remain in progress.
 
-**Current delivery:** a source survey, runnable test lanes in both repositories,
-an additive pure runtime prototype, detailed specifications, folder guidance,
-CI definitions and an implementation ledger. The live renderer, Push drivers
-and web application have not been replaced. Most features below are planned.
+The working studio frontend uses **ClojureScript, re-frame and Reagent**; the
+backend uses **Ring with Jetty**. Its optimized build and actual browser flows
+now cover cue/parameter performance, multitouch holds, macro/sequence authoring,
+fixture search/import/patching, rig editing, agent chat/history and full-show
+save/load. Neovim WASM and WebGL remain specialized engines behind explicit
+interop. Physical iPad Safari, real controller/Live/audio hardware and sustained
+production-show behavior remain separate acceptance gates.
+
+Schema2 files include running effect state, captured versions, musical timers,
+composition/automation ownership, committed output, settings, agent history and
+credential references, fixture cache, and durable reactive state. Resource
+restoration stages validation before committing model/ownership together;
+cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
-| [Codebase survey](codebase-survey.md) | Existing behavior, entry points, coupling and gaps |
-| [Branch compatibility](branch-compatibility.md) | Fork feature branches and the unresolved active application pair |
-| [Testing](testing.md) | Exact commands, evidence, scope and remaining coverage |
-| [Functional runtime](architecture/functional-runtime.md) | Explicit state, composition, concurrency, lifecycle and hot reload |
-| [Rendering](architecture/rendering.md) | CPU baseline, packed data, SIMD/GPU feasibility and preview |
-| [Benchmark baseline](benchmark-baseline.md) | Measured legacy assignment/packing stage with explicit limits |
-| [Controls and web](architecture/control-and-web.md) | Shared operations, Push 2/3, touch UI and editor boundaries |
-| [Show authoring](product/show-authoring.md) | Declarative definitions, sequences, envelopes, randomization and auto show |
-| [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and future robotics |
-| [Roadmap](roadmap.md) | Dependency order, milestones and independent work lanes |
-| [Work ledger](work-items.edn) | Machine-readable implementation state and acceptance criteria |
+| [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
+| [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |
+| [Compatibility repairs](compatibility-progress.md) | Actual namespace and legacy API repairs |
+| [V1 implementation contract](implementation-contract-v1.md) | Shared model/command/runtime boundaries |
+| [Testing](testing.md) | Commands, observed checkpoints and verification limits |
+| [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
+| [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
+| [Rendering](architecture/rendering.md) | CPU backend, typed expressions and remaining acceleration work |
+| [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
+| [Original stage baseline](benchmark-baseline.md) | Legacy assignment/packing measurement and exclusions |
+| [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |
+| [Controls and web](architecture/control-and-web.md) | Shared semantics, devices, touch UI and editors |
+| [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
+| [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
+| [Reactive REPL](reactive.md) | Durable subscriptions, ratoms, watchers and queued actions |
+| [Fixture library](fixture-library.md) | Verified format coverage, search, validation and rig workflow |
+| [Studio UI](studio-ui.md) | Frontend implementation and browser verification |
+| [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |
+| [Show authoring](product/show-authoring.md) | Definitions, sequences, envelopes, randomization and auto show |
+| [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
+| [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
+| [Work ledger](work-items.edn) | Authoritative state, exclusive paths and acceptance criteria |
 | [Work log](work-log.md) | Dated evidence and decisions |
 
-The functional runtime and control documents define proposed shared contracts.
-Freeze a small contract with tests before parallel feature implementation; do
-not let every adapter invent its own cue lifecycle or parameter interpretation.
-The prototype is intentionally smaller than the proposed production schema.
+Tests run actual production functions and dependencies, using capture sinks and
+injected transports at external boundaries. A passed narrow milestone does not
+complete its broader roadmap item. Source-derived Push 2 tests are not physical
+device verification. Push 3 currently has only explicitly configured generic
+MIDI bindings; native display and standalone support are unverified. A Live-side bridge asset package and sync resource boundary are implemented,
+while execution inside Max/Live, real provider accounts, physical audio routing
+and AAA simulator fidelity remain separate work. The trainable robot duck is retained as later research;
+its exact product and SDK are still unconfirmed.
 
-All user requirements are mapped to ledger items, including later research.
-Performance and visual fidelity targets are hypotheses to measure, not delivery
-claims. The robot duck's identity/SDK and Push 3 standalone integration remain
-unverified. The Neovim reference was inspected in `tolgraven/tolgrAVen`.
-
-Contributors start with repository and folder `AGENTS.md` files, claim a ledger
-item, work within its paths, and update evidence when releasing the claim.
-Specifications can be complete while the corresponding feature remains planned.
+Contributors read repository and folder `AGENTS.md`, claim disjoint paths in the
+ledger, and coordinate changes to shared contracts before editing consumers.
+Record evidence before releasing a claim; keep implemented, proposed and
+research behavior distinct. [Testing](testing.md) separates focused agent results
+from integrated runs so overlapping suites are never added twice.

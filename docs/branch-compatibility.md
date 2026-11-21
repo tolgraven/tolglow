@@ -1,16 +1,37 @@
 # Branch compatibility and existing fork work
 
-Verified on 2026-11-21 using `git ls-remote --heads`, GitHub commit comparisons,
-and source files fetched at the full commit IDs below. This investigation did
-not change either checkout or run any remote branch's code.
+## Current integration baseline
 
-The current tested baseline remains Tolglow `effects` at
+The existing fork's `tolmaster` changes were merged into the integration
+checkout in Afterglow commit **`f235148aeca0eed12a2f25c611382351d8b7e38b`**
+(“Integrate existing tolmaster extensions before functional migration”). Its
+source parent is `tolmaster` at `4f7a82eab41862f80e43d91a8c2530b00aa51925`.
+The earlier default-master branch mismatch is therefore no longer an active
+blocker. The source audit below is retained to explain the fork work that was
+preserved; it is not a statement that branch selection is still pending.
+
+The application manifest now declares Beat Link **8.0.0**, thi.ng color
+**1.5.1** and thi.ng math **0.3.2**. Tolglow's build also includes the companion
+fork as a local dependency and the studio's Ring stack. Headless core/live
+namespace compatibility is tested after scoped fixes; the recorded compatibility
+checkpoint was **32 tests / 184 assertions**, including 12 compatibility tests
+with 81 assertions. See [compatibility repairs](compatibility-progress.md) and
+[testing](testing.md) for later integrated checkpoints.
+
+This establishes a reproducible source/dependency direction for continued
+migration. It does not identify unshared user-local edits, validate a physical
+rig, prove DJ Link compatibility or replace whole-show replay. New modules and
+repairs after the merge are recorded as working-tree changes until their final
+integration commits are made.
+
+## Historical source audit
+
+Verified on 2026-11-21 using `git ls-remote --heads`, GitHub comparisons and source
+files fetched at the full commit IDs below. The original read-only audit did
+not run those remote branches. Its default baseline was Tolglow `effects` at
 `01146ece7731ec06aa1ee6409342373096c8e0dc` and Afterglow `master` at
-`16b0b4cac70433e4118038dfbfd304e22d1d9018`. The user's active Afterglow branch is
-pending confirmation. `tolmaster` is a strong compatibility candidate because
-it contains extensions that Tolglow explicitly imports; this is source evidence,
-not confirmation that it is the user's current working branch or that it starts
-successfully with a clean dependency installation.
+`16b0b4cac70433e4118038dfbfd304e22d1d9018`; the merge and tests above happened
+later in this task.
 
 ## Verified refs and relationships
 
@@ -19,7 +40,7 @@ not a measure of feature completeness. Branch names can move after this survey.
 
 | Ref | Verified commit | Relationship to master | Relevant source changes |
 | --- | --- | --- | --- |
-| `master`, `main` | `16b0b4cac70433e4118038dfbfd304e22d1d9018` | Same commit | Current default baseline; legacy protocol-based parameters and evocomputing colors |
+| `master`, `main` | `16b0b4cac70433e4118038dfbfd304e22d1d9018` | Same commit | Original default baseline; legacy protocol-based parameters and evocomputing colors |
 | `tolmaster` | `4f7a82eab41862f80e43d91a8c2530b00aa51925` | 21 ahead, 0 behind | Parameter records, thi.ng color migration across effects/Push/web, typed byte access, scheduling and movement changes |
 | `param-as-record` | `6960bde5c9afcd6d4ac34974fdce32e449f25cc9` | 6 ahead, 0 behind | `Param` record, instance checks, parameter constructors, oscillator parameter rewrite |
 | `color-lib-swap-thing` | `bce37e4132f2cb1ba219913cbd82d489759b8d53` | 9 ahead, 0 behind | thi.ng color type and conversions; changes in effects, cue helpers, Push 2, web control, and utility code |
@@ -128,47 +149,46 @@ semantic control layer, or Push 3 support. Existing parallel rendering in master
 also remains relevant: none of these branches means threading should be added
 from scratch.
 
-## Dependency and baseline limitations
+## Historical dependency gap and current verification limits
 
-The pinned `tolmaster` `project.clj` is byte-identical to the pinned master's
-manifest (blob `bfd6233b9c3b8e5024a508ad693cd8e0c7fb3083`). It does not declare
-thi.ng color/math dependencies even though `tolmaster` requires those namespaces.
-It retains the historical Beat Link `8.0.0-SNAPSHOT` dependency. Tolglow's new
-`deps.edn` establishes a test lane, not a complete application manifest. Tolglow
-also references Quil and `taoensso.timbre.profiling`; their compatible versions
-and the former local development profile have not been reconstructed here.
-See [the pinned manifest][tolmaster-project] and [testing.md](testing.md).
+The pinned `tolmaster` `project.clj` was byte-identical to the pinned master's
+manifest (blob `bfd6233b9c3b8e5024a508ad693cd8e0c7fb3083`). It omitted required
+thi.ng color/math dependencies and retained Beat Link `8.0.0-SNAPSHOT`. The
+current manifest repairs these gaps; it must not be confused with the historical
+[pinned manifest][tolmaster-project]. Unused eager Quil imports were removed
+from core startup paths, and profiling sites now use the declared Tufte API.
+Explicit legacy graphics experiments remain separately unverified.
 
-The verified Tolglow legacy test run used **master** plus the documented test
-dependency override, and passed 20 tests / 103 assertions. It exercises real
-iterator helpers, declarative fixture construction, channels, geometry helper
-inputs, calibration, and strobe definitions. It never requires Tolglow's full
-parameter/effect/color application tree. Consequently it can pass while the
-actual Tolglow show cannot load against master.
+The original Tolglow legacy test run used **master** plus the documented test
+override and passed 20 tests / 103 assertions. It exercised iterators, fixture
+construction, channels, positions, calibration and strobe definitions, but did
+not load the full parameter/effect/color application tree. That run could pass
+while the actual application failed to load. It remains a useful historical
+baseline, not the behavioral oracle of the complete modified show.
 
-Those tests are a useful stable fixture/API baseline, but they are **not the
-behavioral baseline of the user's modified renderer or complete show**. They do
-not protect `tolmaster`'s one-step parameter resolution, thi.ng output, changed
-clock scheduling, altered rotations, or Push/Web color behavior. The additional
-Afterglow characterization tests are likewise evidence for their selected
-checkout and dependency set, not automatic coverage of unexecuted branches.
+The compatibility and later integrated suites now exercise the merged fork,
+real dependencies and application namespaces. An earlier bridge experiment
+was removed by explicit architectural direction. Old source now serves only
+as a feature/functional parity oracle; the new runtime has no compatibility
+layer. The newer parity tests are broader than the original fixture lane, but
+they do not
+exhaust `tolmaster` color/rotation/timing semantics or all device behavior.
 
-Once the active branch is known:
+Remaining migration gates:
 
-1. Record both repository SHAs and reconstruct a reproducible application
-   dependency manifest, including actual color/graphics/profiling dependencies.
-2. Run the existing narrow tests on that branch in an isolated checkout. Keep
-   any failures visible and classify genuine intended changes before changing
-   assertions. Preserve the default-baseline evidence for comparison.
-3. Add branch-specific characterization for nested parameters, record and
-   protocol parameters, static/dynamic oscillator resolution, color units and
-   RGBW buffers, calibration/rotation, and frame snapshot timing.
-4. Capture representative cue/effect traces and rendered DMX buffers from the
-   active fork, with output captured rather than sent to hardware. Use these
-   traces as the oracle for the functional-runtime migration.
-5. Benchmark the active fork with these existing CPU changes before proposing
-   new SIMD/GPU speedups. Include allocations, latency distributions and output
-   equivalence, not only the inner arithmetic loop.
+1. Keep final paired integration commits and dependency pins recorded; run both
+   repositories against that pair, not only the historical CI pin.
+2. Preserve fork-specific parameter/color contracts with independent examples.
+   Decide nested-parameter semantics explicitly rather than following a stale
+   docstring or silently reintroducing upstream behavior.
+3. Capture representative whole-frame histories and DMX output from the merged
+   fork: RGBW, movement calibration/history, coarse/fine channels, timing and
+   controller/web color behavior.
+4. Compare output and allocations before changing dispatch/packing. The retained
+   [benchmark evidence](benchmarks/README.md) includes the new CPU backend and
+   explicitly distinguishes packing comparisons from full-frame measurements.
+5. Validate physical fixture calibration, Push traffic and DJ Link separately;
+   no headless suite substitutes for those checks.
 
 [compare-tolmaster]: https://github.com/tolgraven/afterglow/compare/16b0b4cac70433e4118038dfbfd304e22d1d9018...4f7a82eab41862f80e43d91a8c2530b00aa51925
 [compare-param]: https://github.com/tolgraven/afterglow/compare/16b0b4cac70433e4118038dfbfd304e22d1d9018...6960bde5c9afcd6d4ac34974fdce32e449f25cc9

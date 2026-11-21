@@ -6,17 +6,16 @@ jobs:
     strategy:
       matrix:
         java: ['17', '21']
-        suite: [pure, legacy]
+        suite: [pure, parity]
     steps:
       - uses: actions/checkout@v4
         with:
           path: tolglow
-      - name: Check out the characterized Afterglow fork
-        if: matrix.suite == 'legacy'
+      - name: Check out the paired Afterglow implementation
         uses: actions/checkout@v4
         with:
           repository: tolgraven/afterglow
-          ref: 16b0b4cac70433e4118038dfbfd304e22d1d9018
+          ref: 8ebee7fd2fb00c115a2c4c575c04e427801f544a
           path: afterglow
       - uses: actions/setup-java@v4
         with:
@@ -32,3 +31,37 @@ jobs:
         if: matrix.suite == 'pure'
         working-directory: tolglow
         run: clojure -M:check-roadmap
+  studio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tolglow
+      - uses: actions/checkout@v4
+        with:
+          repository: tolgraven/afterglow
+          ref: 8ebee7fd2fb00c115a2c4c575c04e427801f544a
+          path: afterglow
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tolglow/package-lock.json
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: 1.11.1.1435
+      - name: Install pinned browser dependencies
+        working-directory: tolglow
+        run: npm ci
+      - name: Run re-frame tests and production build
+        working-directory: tolglow
+        run: |
+          npm run studio:test
+          npm run studio:build
+      - name: Test the Live bridge boundaries
+        working-directory: tolglow
+        run: node --test tolglow/integrations/live_bridge/test/*.test.js

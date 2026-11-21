@@ -1,0 +1,144 @@
+(ns tolglow.parity-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [afterglow.core :as application]
+            [afterglow.channels :as channels]
+            [afterglow.effects :as effects]
+            [afterglow.effects.params :as params]
+            [afterglow.rhythm :as rhythm]
+            [afterglow.show :as show]
+            [afterglow.show-context :refer [*show* with-show]]
+            [thi.ng.color.core :as clr]
+            [tolglow.color :as color]
+            [tolglow.config :as config]
+            [tolglow.cue :as cue]
+            [tolglow.fixtures :as fixtures]
+            [tolglow.fx :as fx]
+            [tolglow.param :as param]
+            [tolglow.util :as util]
+            [tolglow.vars :as vars]))
+
+(deftest application-namespaces-load-without-starting-a-show
+  (let [state {:web @application/web-server :osc @application/osc-server
+               :repl @application/nrepl-server}
+        unexpected (fn [& _] (throw (ex-info "Namespace load started output" {})))]
+    (with-redefs [show/start! unexpected
+                  show/add-effect! unexpected
+                  application/start-web-server unexpected]
+      (binding [*show* (show/show :universes [1])]
+        (require 'tolglow.core :reload)
+        (require 'tolglow.live :reload)))
+    (is (= state {:web @application/web-server :osc @application/osc-server
+                  :repl @application/nrepl-server}))
+    (is (nil? (find-ns 'tolglow.viz)))
+    (is (map? config/fixture-types))
+    (is (seq config/fixture-types))))
+
+(deftest color-protocol-implements-its-declared-methods
+  (doseq [input ["red" :red [0.0 0.5 0.5] (clr/hsla 0.0 0.5 0.5)]]
+    (is (color/colorable? input))
+    (is (color/color? (color/colorize input)))
+    (is (color/color? (color/ensure-colorable input))))
+  (is (false? (color/colorable? 42)))
+  (is (false? (color/colorable? nil))))
+
+(deftest color-conversion-preserves-dynamic-parameters
+  (let [p (params/->Param "Color" true color/used-type
+                         (fn [_ _ _] (clr/hsla 0.5 0.5 0.5))
+                         (fn [_ _ _] nil))]
+    (is (identical? p (color/create p)))
+    (is (identical? p (color/ensure-colorable p))))
+  (is (= 0.75 (:s (color/create [0.2 1.0 0.5]))))
+  (is (= [0.2 0.5 0.6 1.0] @(color/create 0.2 0.5 0.6 :mode :fraction))))
+
+(deftest parameter-binding-keeps-explicit-false
+  (is (= {:enabled false :gain 0}
+         (param/bind-vars {:enabled {:arg false :default true}
+                           :gain {:arg 0 :default 1}}))))
+
+(deftest default-parameter-specs-work-with-the-fork-record-types
+  (with-show (show/show :universes [1])
+    (is (= color/used-type (get-in (param/param-specs) [:color :type])))
+    (is (false? (params/resolve-param (param/bind-default :bool :enabled)
+                                    *show* (rhythm/metro-snapshot (:metronome *show*)))))))
+
+(deftest cue-variable-metadata-keeps-false-and-omits-nil
+  (let [spec (vars/cue-map ["enabled" false])]
+    (is (= false (:start spec)))
+    (is (= :boolean (:type spec)))
+    (is (not-any? nil? (vals spec))))
+  (is (= [] (vars/auto nil)))
+  (let [spec (zipmap (range 12) (range 12))]
+    (is (= [spec] (vars/auto spec)))))
+
+(deftest spatial-helpers-use-the-explicit-show
+  (let [a {:dimensions (atom {:min-x 0 :max-x 10})}
+        b {:dimensions (atom {:min-x 0 :max-x 100})}]
+    (with-show b
+      (is (= 1/2 (util/space-phase {:x 5} a)))
+      (is (= 1/2 (util/x-phase {:x 5} a))))))
+
+(deftest declarative-fixture-footprints-include-sparse-and-fine-offsets
+  (is (= 9 (:fine-offset (fixtures/color :red 2 :fine 9))))
+  (is (= {:offset 11 :fine-offset 23}
+         (select-keys (first (fixtures/make-channels {:pan [1 13]} 10))
+                      [:offset :fine-offset])))
+  (is (thrown? clojure.lang.ExceptionInfo
+               (fixtures/make-channels {:dimmer 500} 20)))
+  (let [fixture (fixtures/create
+                 {:channels {:pan [1 12] :dimmer 5}
+                  :strip {:color-layout :rgb :pixels 2 :density 2}})]
+    (is (= [[13 14 15] [16 17 18]]
+           (mapv #(mapv :offset (:channels %)) (:heads fixture)))))
+  (is (= 0.0 (:x (first (:heads (fixtures/pixel-strip 1)))))))
+
+(deftest configured-fixture-definitions-have-unique-dmx-offsets
+  (doseq [[id fixture] config/fixture-types]
+    (testing (name id)
+      (let [offsets (vec (keep identity
+                              (mapcat (juxt :offset :fine-offset)
+                                      (mapcat :channels (channels/expand-heads [fixture])))))]
+        (is (every? #(<= 1 % 512) offsets))
+        (is (= (count offsets) (count (set offsets))))))))
+
+(deftest variable-watchers-register-the-supplied-function
+  (let [s (show/show :universes [1])
+        seen (atom [])
+        callback (fn [k value] (swap! seen conj [k value]))]
+    (with-show s
+      (let [registration (util/watch-var :gain callback)]
+        (is (= [:gain callback] registration))
+        (show/set-variable! :gain 0.25)
+        (is (= [[:gain 0.25]] @seen))
+        (apply util/unhook-var registration)
+        (show/set-variable! :gain 0.75)
+        (is (= [[:gain 0.25]] @seen))))))
+
+(defn- resolve-effect-to-buffer [effect s snapshot]
+  (let [buffers {1 (byte-array 512)}
+        groups (vals (group-by (juxt :kind :target-id)
+                               (effects/generate effect s snapshot)))]
+    (doseq [assigners groups]
+      (effects/resolve-assignment (effects/run-assigners s snapshot assigners nil)
+                                  s snapshot buffers))
+    (mapv #(bit-and 255 %) (get buffers 1))))
+
+(deftest existing-dimmer-cue-launches-renders-and-stops-without-output
+  (with-show (show/show :universes [1])
+    (show/patch-fixture! :wash-1 (fixtures/create {:channels {:dimmer 1 :rgbw 2}}) 1 1)
+    (cue/dimmer nil 0 0 "white")
+    (let [id (cue/launch! 0 0 :var-overrides {:level 127})
+          effect (:effect (show/find-effect :dimmers))
+          snapshot (rhythm/metro-snapshot (:metronome *show*))]
+      (is (integer? id))
+      (is (= 127 (first (resolve-effect-to-buffer effect *show* snapshot))))
+      (is (false? (show/running?)))
+      (show/end-effect! :dimmers :when-id id)
+      (is (nil? (show/find-effect :dimmers))))))
+
+(deftest thi-ng-colors-render-through-the-active-fork
+  (with-show (show/show :universes [1])
+    (show/patch-fixture! :wash-1 (fixtures/create {:channels {:rgbw 1}}) 1 1)
+    (let [effect (fx/color (clr/hsla 0.0 1.0 0.5))
+          snapshot (rhythm/metro-snapshot (:metronome *show*))]
+      (is (= [255 0 0 0]
+             (subvec (resolve-effect-to-buffer effect *show* snapshot) 0 4))))))

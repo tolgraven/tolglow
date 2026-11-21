@@ -19,7 +19,6 @@
     [osc :as osc]
     [page :as page]
     [util :as util :refer []]
-    [viz :as viz]
     [vars :as vars]]))
 
 (defn init
