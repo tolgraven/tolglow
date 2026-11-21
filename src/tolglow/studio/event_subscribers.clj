@@ -10,6 +10,7 @@
 (def actions [:cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
   {:audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
+   :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
    :control [:instance/launched :instance/removed :instance/released :instance/system-changed
              :effect/retry-requested :cue/deleted :cue/params-saved :cue/saved-params-cleared
@@ -19,7 +20,7 @@
             :sensor/sample-rejected :sensor/threshold]
    :sync [:sync/clock :sync/observation :sync/error :sync/input-overflow :live/execution]
    :command [:command/accepted :command/rejected]
-   :effect [:instance/finished :effect/failed :effect/recovered :effect/reload-failed :effect/reloaded]})
+   :effect [:effect/intent :instance/finished :effect/failed :effect/recovered :effect/reload-failed :effect/reloaded]})
 
 (def ^:private empty-state {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0})
 (defn- state [model] (:event-subscribers model empty-state))

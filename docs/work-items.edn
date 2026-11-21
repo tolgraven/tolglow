@@ -1982,16 +1982,16 @@
    :depends-on
    [:development/workspace-service-v1 :development/terminal-v1],
    :owner nil}
-  {:id :automation/event-subscriber-actions :kind :implementation :status :in-progress
+  {:id :automation/event-subscriber-actions :kind :implementation :status :done
    :title "Bind captured show events to filtered registry actions and musical sequences"
-   :owner "declarative_event_subscriber_actions_random_cues_and_musical_sequences"
+   :owner nil
    :paths ["tolglow/src/tolglow/studio/event_subscribers.clj" "tolglow/src/tolglow/studio/event_callbacks.clj"
            "tolglow/test/tolglow/studio/event_subscribers_test.clj" "tolglow/docs/event-subscribers.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Run filtered cue and unplaced effect launches from actual committed inputs without an inspector"
                 "Keep sequences, selection and timing deterministic and restore portable subscriber registrations"
                 "Execute user callbacks away from the frame owner and reject stale results"]
-   :evidence ["JVM event subscribers 7 tests / 45 assertions, including Ring/audio-capture callback to direct registry launch"
+   :evidence ["Ring registration, analyzed 65 Hz PCM onset, headless subscriber delivery, unplaced effect launch; REPL fn Transit save/restore and execution"
               "Optimized browser exercised random Ember one-shots, delayed opacity, cross-tab pushes and observed clock-beat subscriber ids"
               "Afterglow PR12 merged 36abc94, docs/event-subscribers.md"]}
   {:id :audio/band-and-bass-patch-sources

@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.studio :as studio]
             [tolglow.clock :as clock]
+            [tolglow.integrations.analysis-test :as audio-test]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.event-subscribers :as sub]
             [tolglow.studio.persistence :as files]
@@ -73,7 +74,9 @@
         (loop [n 0] (when (and (not (realized? receipt)) (< n 200)) (studio/tick! runtime 0) (Thread/sleep 5) (recur (inc n))))
         (is (= :accepted (:status (wire/decode (:body (deref receipt 1000 {})))))))
       (is (= [defn] (:subscribers (wire/decode (:body (app (assoc req :request-method :get)))))))
-      (is (true? ((:events! (studio/audio-callbacks runtime)) [(assoc (:data kick) :type :audio/kick)])))
+      (let [analyzed (audio-test/run-signal audio-test/kick-train 1300)]
+        (is (= 1 (count (audio-test/events-of analyzed :audio/kick))))
+        (is (true? ((:events! (studio/audio-callbacks runtime)) (:events analyzed)))))
       (studio/tick! runtime 1)
       (is (empty? (:instances (studio/snapshot runtime))))
       (studio/tick! runtime 25)
@@ -125,13 +128,23 @@
     (is (empty? (get-in finished [:event-subscribers :runs])))))
 
 (deftest callback-failure-is-local-and-registered-source-fn-can-be-restored
-  (let [definition (listener [{:op :callback :implementation
-                               {:type :source :namespace "user" :bindings {"n" 7}
-                                :form "(fn [context event] (assoc-in context [:variables :count] n))"}}])
-        model (sub/configure (demo/model) {:op :save :subscriber definition})
-        restored (files/thaw (demo/model) (files/read-string (files/write-string model)))]
+  (let [author (studio/create-runtime)
+        document (try
+                   (let [level 7
+                         receipt (studio/reg-event-subscriber!
+                                  author {:id :kicks :match {:type :audio/kick}
+                                          :bindings {"n" level}
+                                          :middleware (fn [context event]
+                                                        (assoc-in context [:variables :count] n))})]
+                     (studio/tick! author 0)
+                     (is (= :accepted (:status @receipt)))
+                     (files/write-string (:model @(:state author))))
+                   (finally (studio/stop! author)))
+        restored (files/thaw (demo/model) (files/read-string document))]
+    (is (= {:trusted-source? true} (:event-callback-options (studio/parse-options ["--trust-event-callbacks" "true"]))))
+    (is (thrown? Exception (studio/parse-options ["--trust-event-callbacks" "not-a-boolean"])))
     (doseq [trusted? [false true]]
-      (let [runtime (studio/create-runtime {:model restored :event-callback-options {:trusted-source? trusted?}})]
+      (let [runtime (studio/create-runtime (cond-> {:model restored} trusted? (assoc :event-callback-options {:trusted-source? true})))]
         (try
           ((:events! (studio/audio-callbacks runtime)) [{:type :audio/kick}])
           (studio/tick! runtime 1)

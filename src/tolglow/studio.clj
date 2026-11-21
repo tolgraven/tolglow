@@ -158,8 +158,8 @@
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
       :event-admit (get options :event-admit subscribers/admit)
-       :event-callbacks (event-callbacks/create
-                        (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] true)}
+      :event-callbacks (event-callbacks/create
+                        (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
                                (:event-callback-options options)))
       :debug-stream (debug-stream/create runtime-id #(deref (:state @runtime-ref)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
@@ -863,6 +863,21 @@
                        registration)]
     (submit! runtime :event-subscriber {:op :save :subscriber registration})))
 
+(defmacro reg-event-subscriber!
+  "Register a literal middleware fn as restorable REPL source. Supply lexical
+  values through :bindings, e.g. {\"gain\" gain}. Other maps use the ordinary
+  register-event-subscriber! API."
+  [runtime registration]
+  (let [middleware (when (map? registration) (:middleware registration))]
+    (if (and (seq? middleware) (#{'fn 'fn* 'clojure.core/fn} (first middleware)))
+      `(register-event-subscriber!
+        ~runtime
+        (update ~(dissoc registration :middleware :bindings) :actions (fnil conj [])
+                {:op :callback
+                 :implementation {:type :source :namespace ~(str *ns*)
+                                  :form ~(pr-str middleware) :bindings ~(:bindings registration {})}}))
+      `(register-event-subscriber! ~runtime ~registration))))
+
 (defn stop! [runtime]
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
@@ -1305,7 +1320,7 @@
   [args]
   (when (odd? (count args))
     (throw (ex-info "Studio options require flag/value pairs" {})))
-  (let [allowed #{"--host" "--port" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
+  (let [allowed #{"--host" "--port" "--trust-event-callbacks" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
         options (reduce (fn [result [flag value]]
                           (when-not (allowed flag)
                             (throw (ex-info "Unknown Studio option" {:option flag})))
@@ -1322,6 +1337,8 @@
                         (when-not (<= minimum value 65535)
                           (throw (ex-info "Port is out of range" {:option flag :value value})))
                         value))]
+    (when-not (#{"true" "false"} (get options "--trust-event-callbacks" "false"))
+      (throw (ex-info "--trust-event-callbacks must be true or false" {})))
     (when-not (#{"preview" "ola" "artnet"} output)
       (throw (ex-info "--output must be preview, ola or artnet" {})))
     (when (or (and ola? (not= output "ola")) (and artnet? (not= output "artnet")))
@@ -1329,6 +1346,8 @@
     (when (and (= output "artnet") (not (seq (get options "--artnet-host"))))
       (throw (ex-info "Direct Art-Net requires --artnet-host" {})))
     (cond-> {:host (get options "--host" "127.0.0.1") :port (port-number "--port" "8500" 0)}
+      (contains? options "--trust-event-callbacks")
+      (assoc :event-callback-options {:trusted-source? (= "true" (get options "--trust-event-callbacks"))})
       (= output "ola") (assoc :ola {:host (get options "--ola-host" "127.0.0.1")
                                      :port (port-number "--ola-port" "9010" 1)})
       (= output "artnet") (assoc :artnet {:host (get options "--artnet-host")

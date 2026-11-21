@@ -11,7 +11,7 @@
                   (newThread [_ runnable]
                     (doto (Thread. runnable "tolglow-event-callback") (.setDaemon true))))]
     {:pool (ThreadPoolExecutor. 2 2 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. 32) factory)
-     :jobs (atom {}) :handlers (atom (or callbacks {}))
+     :jobs (atom {}) :sources (atom {}) :handlers (atom (or callbacks {}))
      :trusted-source? trusted-source? :timeout-ms timeout-ms}))
 
 (defn register! [service id handler]
@@ -19,15 +19,32 @@
   (swap! (:handlers service) assoc id handler)
   id)
 
+(defn- resolve-handler [service implementation]
+  (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
+                                             {:trusted-source? true})]
+    (cond
+      (= :registered (:type implementation))
+      (or (get @(:handlers service) (:id implementation))
+          (throw (ex-info "Register this callback in the current runtime" {})))
+
+      (not (:trusted-source? service))
+      (throw (ex-info "Trusted callback source or Var execution is disabled on this host" {}))
+
+      (= :source (:type implementation))
+      (or (get @(:sources service) implementation)
+          (let [handler (resolve-fn)]
+            (swap! (:sources service)
+                   (fn [cache]
+                     (assoc (cond-> cache (>= (count cache) 128) (dissoc (ffirst cache)))
+                            implementation handler)))
+            handler))
+
+      :else (resolve-fn))))
+
 (defn- invoke [service model run]
   (try
     (let [implementation (get-in run [:steps (:index run) :implementation])
-          handler (if (= :registered (:type implementation))
-                    (or (get @(:handlers service) (:id implementation))
-                        (throw (ex-info "Register this callback in the current runtime" {})))
-                    (if (:trusted-source? service)
-                      (reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation} {:trusted-source? true})
-                      (throw (ex-info "Trusted callback source or Var execution is disabled on this host" {}))))
+          handler (resolve-handler service implementation)
           context {:show model :event (:event run) :variables (:variables model {}) :actions []}
           output (handler context (:event run))
           variables (:variables output)
