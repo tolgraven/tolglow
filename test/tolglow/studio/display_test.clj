@@ -5,11 +5,145 @@
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayOutputStream File]
+           [java.net URL]
            [java.util Base64]
+           [java.util.jar JarEntry JarOutputStream]
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn image [] (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB))
 (defn await-latch [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
+
+(defn- with-packaged-worker [source f]
+  (let [archive (File/createTempFile "tolglow-display-fixture-" ".jar")
+        resource-name "tolglow/integrations/display_bridge/worker.js"
+        original-resource io/resource]
+    (try
+      (with-open [jar (JarOutputStream. (io/output-stream archive))]
+        (.putNextEntry jar (JarEntry. resource-name))
+        (.write jar (.getBytes source "UTF-8"))
+        (.closeEntry jar))
+      (let [resource (URL. (str "jar:" (.toURL (.toURI archive)) "!/" resource-name))]
+        (with-redefs [io/resource (fn [name] (if (= resource-name name) resource (original-resource name)))]
+          (f)))
+      (finally (io/delete-file archive true)))))
+
+(defn- eventually [predicate]
+  (let [end (+ (System/nanoTime) 5000000000)]
+    (loop [] (if (predicate) true
+                 (if (> (System/nanoTime) end) false
+                     (do (Thread/sleep 10) (recur)))))))
+
+(defn- temp-workers []
+  (set (filter #(re-matches #"tolglow-display-.*\.cjs" (.getName ^File %))
+               (.listFiles (io/file (System/getProperty "java.io.tmpdir"))))))
+
+(defn- with-playwright-peer [mode f]
+  ;; Only the external browser is replaced. The real packaged Node worker,
+  ;; configuration/protocol and JVM process owner execute unchanged.
+  (let [module (File/createTempFile "tolglow-playwright-peer-" ".cjs")
+        observed (File/createTempFile "tolglow-display-observed-" ".edn")
+        bytes (ByteArrayOutputStream.)
+        _ (javax.imageio.ImageIO/write (image) "png" bytes)
+        png (.encodeToString (Base64/getEncoder) (.toByteArray bytes))]
+    (try
+      (spit module
+            (str "const fs=require('node:fs');\n"
+                 "const page={setDefaultTimeout(){},goto:async()=>{},waitForFunction:async()=>{},evaluate:async()=>{},"
+                 "screenshot:async()=>Buffer.from('" png "','base64')};\n"
+                 "exports.chromium={launchServer:async()=>{fs.writeFileSync(" (pr-str (str observed))
+                 ",JSON.stringify({pid:process.pid,script:process.argv[1]}));"
+                 (case mode
+                   :failed "throw new Error('fixture browser startup failed');"
+                   :blocked "setInterval(()=>{},1000); await new Promise(()=>{});"
+                   "")
+                 "return {wsEndpoint:()=> 'fixture',close:async()=>{},kill:async()=>{}};},"
+                 "connect:async()=>({newContext:async()=>({newPage:async()=>page})})};\n"))
+      (f {:playwright-module (str module) :observed observed})
+      (finally (io/delete-file module true) (io/delete-file observed true)))))
+
+(deftest constructing-capture-does-not-resolve-or-extract-its-worker
+  (with-redefs [io/resource (fn [& _] (throw (ex-info "No resource access before open" {})))]
+    (is (map? (display/process-capture {:browser-executable "/configured/chromium"})))
+    (is (map? (display/process-capture {:browser-executable "/configured/chromium"
+                                      :worker-script "/missing/custom-worker.cjs"})))))
+
+(deftest closing-a-parent-that-exits-does-not-abandon-its-stubborn-child
+  ;; Inject only the OS process boundary to make parent/child exit order
+  ;; deterministic without deliberately leaving orphan processes in a test.
+  (let [child-alive? (atom true) parent-alive? (atom true) signals (atom [])
+        child (reify java.lang.ProcessHandle
+                (isAlive [_] @child-alive?)
+                (destroy [_] (swap! signals conj :term) true)
+                (destroyForcibly [_] (swap! signals conj :kill) (reset! child-alive? false) true))
+        parent-handle (reify java.lang.ProcessHandle
+                        (descendants [_] (.stream (java.util.Collections/singletonList child))))
+        parent (proxy [Process] []
+                 (toHandle [] parent-handle)
+                 (destroy [] (reset! parent-alive? false))
+                 (waitFor
+                   ([] 0)
+                   ([_ _] true)))]
+    (#'display/destroy-process! parent 100)
+    (is (false? @parent-alive?))
+    (is (false? @child-alive?))
+    (is (= [:term :kill] @signals))))
+
+(deftest packaged-production-worker-captures-with-explicit-module-and-cleans-its-file
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(with-playwright-peer :ready
+         (fn [options]
+           (let [capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
+                 handle ((:open! capture))
+                 file (:script-file handle)]
+             (try
+               (is (:temporary-script? handle))
+               (is (= source (slurp file)))
+               (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Packaged display"}))))
+               (finally ((:close! capture) handle)))
+             (is (not (.exists ^File file)))
+             (is (false? (.isAlive ^Process (:process handle))))
+             ((:close! capture) handle)))))))
+
+(deftest packaged-worker-startup-failures-clean-every-owned-resource
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(do
+         (let [before (temp-workers)
+               capture (display/process-capture {:browser-executable "/browser-peer"
+                                                 :node-executable "/missing/tolglow-node"})]
+           (is (thrown? java.io.IOException ((:open! capture))))
+           (is (= before (temp-workers))))
+         (with-playwright-peer :failed
+           (fn [options]
+             (let [before (temp-workers)
+                   capture (display/process-capture (assoc options :browser-executable "/browser-peer"))]
+               (let [error (try ((:open! capture)) nil (catch clojure.lang.ExceptionInfo error error))]
+                 (is (re-find #"did not become ready" (.getMessage ^Throwable error)))
+                 (is (= :startup (:stage (ex-data error))))
+                 (is (pos? (:process-id (ex-data error)))))
+               (is (= before (temp-workers))))))))))
+
+(deftest cancelling-packaged-worker-startup-cleans-process-and-extraction
+  (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+    (with-packaged-worker source
+      #(with-playwright-peer :blocked
+         (fn [{:keys [observed] :as options}]
+           (let [before (temp-workers)
+                 capture (display/process-capture (assoc options :browser-executable "/browser-peer"))
+                 result (promise)
+                 worker (Thread. (fn [] (try ((:open! capture)) (deliver result :unexpected-ready)
+                                             (catch Throwable error (deliver result error)))))]
+             (.start worker)
+             (try
+               (is (eventually (fn [] (pos? (.length ^File observed)))))
+               (.interrupt worker)
+               (is (instance? InterruptedException (deref result 5000 :timeout)))
+               (is (= before (temp-workers)))
+               (let [observation (clojure.data.json/read-str (slurp observed) :key-fn keyword)
+                     process (java.lang.ProcessHandle/of (long (:pid observation)))]
+                 (is (or (not (.isPresent process)) (not (.isAlive ^java.lang.ProcessHandle (.get process))))))
+               (finally (.interrupt worker) (.join worker 5000)))))))))
 
 (deftest latest-view-mailbox-never-runs-capture-or-sink-on-calling-thread
   (let [entered (CountDownLatch. 1) release (CountDownLatch. 1) complete (CountDownLatch. 2)
@@ -97,24 +231,33 @@
 
 (deftest actual-owned-node-process-validates-png-and-closes-on-deadline
   (let [script (File/createTempFile "tolglow-display-protocol-" ".js")
+        startup (File/createTempFile "tolglow-display-startup-" ".json")
         bytes (ByteArrayOutputStream.)
         _ (javax.imageio.ImageIO/write (image) "png" bytes)
         png (.encodeToString (Base64/getEncoder) (.toByteArray bytes))]
     (try
       ;; The transport's external browser process is represented here by an
       ;; owned protocol peer. Actual re-frame/Chromium capture is a separate QA.
-      (spit script (str "const readline=require('node:readline');\n"
-                        "process.stdout.write(JSON.stringify({status:'ready',width:960,height:160})+'\\n');\n"
+      (spit script (str "const readline=require('node:readline'),fs=require('node:fs');\n"
+                        "const mark=phase=>fs.writeFileSync(" (pr-str (str startup))
+                        ",JSON.stringify({phase,pid:process.pid,node:process.version}));\n"
+                        "mark('started');\n"
+                        "process.stdout.write(JSON.stringify({status:'ready',width:960,height:160})+'\\n',()=>mark('ready-written'));\n"
                         "readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);"
                         "if(!r.view.stall)process.stdout.write(JSON.stringify({id:r.id,status:'captured',width:960,height:160,png:'" png "'})+'\\n');});\n"))
       (let [capture (display/process-capture {:browser-executable "/not-used-by-protocol-peer"
                                               :worker-script (.getAbsolutePath script)
                                               :capture-timeout-ms 100 :shutdown-timeout-ms 100})
-            handle ((:open! capture))]
+            handle (try ((:open! capture))
+                        (catch Exception error
+                          (throw (ex-info "Node protocol peer did not become ready"
+                                          {:peer-startup (when (pos? (.length startup)) (slurp startup))}
+                                          error))))]
         (try
           (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Test"}))))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"deadline" ((:capture! capture) handle {:stall true})))
           (is (false? (.isAlive ^Process (:process handle))))
+          (is (.isFile script) "An explicit worker remains caller-owned after capture failure")
           (is (thrown? clojure.lang.ExceptionInfo ((:capture! capture) handle {:title "After close"})))
           (finally ((:close! capture) handle))))
-      (finally (io/delete-file script true)))))
+      (finally (io/delete-file script true) (io/delete-file startup true)))))

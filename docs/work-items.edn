@@ -1739,7 +1739,6 @@
     "tolglow/docs/benchmarks/audio-waveform-bench.clj"
     "tolglow/docs/benchmarks/2026-11-21-audio-waveform.edn"
     "tolglow/src/tolglow/studio/audio.clj"
-    "tolglow/src/tolglow/studio/display.clj"
     "afterglow/src/afterglow/control/devices/push_2.clj"],
    :acceptance
    ["Actual captured effective params and version identity, no stateful effect re-evaluation"
@@ -1805,4 +1804,20 @@
    :evidence ["Delayed-create ownership and cancellation cleanup fixed and verified with actual Docker"
               "Workspace/terminal combined gate: 22 tests / 139 assertions; updated-image Docker gate 7 / 59"
               "Packaged PTY resource and terminal gate 7 tests / 43 assertions"
-              "docs/terminal.md" "docs/dev-workspaces.md" "docs/control-parity-audit.md"]}]}
+              "docs/terminal.md" "docs/dev-workspaces.md" "docs/control-parity-audit.md"]}
+  {:id :devices/push-packaged-webview-v1
+   :title "Own packaged Push webview worker extraction and process cleanup"
+   :kind :implementation :status :done
+   :owner nil
+   :paths ["tolglow/src/tolglow/studio/display.clj"
+           "tolglow/test/tolglow/studio/display_test.clj"
+           "tolglow/src/tolglow/integrations/display_bridge/worker.js"
+           "tolglow/src/tolglow/integrations/display_bridge/worker.test.js"
+           "tolglow/docs/push-display-packaging.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Checkout and executable-JAR workers open only at explicit connection"
+                "Owned extraction and process cleanup on success, failed startup and cancellation"
+                "External Playwright module resolution remains explicit and works after extraction"]
+   :evidence ["JVM display 10 tests / 50 assertions and Node worker 6 tests pass; final combined pure JVM462/3631 passed on Java17 with pinned Node26 after the workspace metadata fix"
+              "Actual Node26/Chromium capture of built re-frame page through jar resource; PNG dimensions, process exit and temporary-file cleanup checked"
+              "See docs/push-display-packaging.md; no physical USB or throughput claim"]}]}
