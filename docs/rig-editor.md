@@ -91,8 +91,8 @@ hide an absent 3D path overlay.
 
 The [retained browser evidence](benchmarks/rig-editor-browser.json) records the
 validated revision, workflows, pixel check and renderer telemetry. Final gates
-passed 156 frontend tests / 838 assertions, 506 JVM pure tests / 3,985 assertions,
-38 preview tests, and an optimized 150-file release with zero warnings.
+passed 164 frontend tests / 882 assertions, 516 JVM pure tests / 4,080 assertions,
+38 preview tests, and an optimized 179-file release with zero warnings.
 Observed results and scope are also recorded in the work ledger. Chromium touch and
 viewport emulation do not verify physical iPad Safari, moving-head mechanics,
 room calibration, or high-refresh performance on a hardware GPU.

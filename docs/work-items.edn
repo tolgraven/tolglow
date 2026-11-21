@@ -1,29 +1,7 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/interactive-3d-rig-editor
-   :title "Place fixtures in 3D and author musical moving-head aim paths"
-   :kind :implementation :status :done :owner nil
-   :depends-on [:foundation/tests :authoring/aim-path-effects]
-   :paths ["tolglow/src/studio/tolglow/studio/rig_editor.cljs"
-           "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
-           "tolglow/src/engines/preview/editor.js"
-           "tolglow/src/engines/preview/editor.test.js"
-           "tolglow/src/engines/preview/editor-browser-qa.mjs"
-           "tolglow/src/engines/preview/overlay.js"
-           "tolglow/resources/studio/rig-editor.css"
-           "tolglow/docs/rig-editor.md"
-           "tolglow/docs/benchmarks/rig-editor-browser.json"]
-   :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"
-                "Pose changes reuse meshes and worker updates remain bounded"
-                "Plane paths publish validated musical cues and run only on explicit request"
-                "Undo, cancel, stale identity and teardown are covered"]
-   :evidence ["Frontend 156 tests / 838 assertions; optimized release 150 files, zero warnings"
-              "Integrated JVM pure 506 tests / 3985 assertions; preview regression 38 tests passed"
-              "Actual compiled desktop/iPad-touch/phone-fallback: placement, rotation, precision, undo/cancel, saves, paths, explicit launch, downloaded-file restore and teardown passed"
-              "Presented-canvas pixel assertion caught and guards compositor target ownership; other camera locks survive editor startup fallback"
-              "docs/rig-editor.md; docs/benchmarks/rig-editor-browser.json; Chromium SwiftShader/touch emulation, no physical hardware/Safari claim"]}
-  {:id :foundation/behavior-inventory
+ [{:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
    :paths ["tolglow/docs/feature-parity-inventory.md"]
@@ -75,6 +53,28 @@
               "Integrated pure: 465 tests / 3690 assertions passed; subsequent parity: 487 tests / 3817 assertions passed"
               "Initial native static contracts: 6 existing plus 2 calibration checks passed; Apple build evidence follows in native/apple-calibration-build-gate; physical LiDAR/output unrun"
               "docs/rig-calibration.md; tap-assisted capture and fitting foundation, automatic photometric detection remains planned"]}
+  {:id :web/interactive-3d-rig-editor
+   :title "Place fixtures in 3D and author musical moving-head aim paths"
+   :kind :implementation :status :done :owner nil
+   :depends-on [:foundation/tests :authoring/aim-path-effects]
+   :paths ["tolglow/src/studio/tolglow/studio/rig_editor.cljs"
+           "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
+           "tolglow/src/engines/preview/editor.js"
+           "tolglow/src/engines/preview/editor.test.js"
+           "tolglow/src/engines/preview/editor-browser-qa.mjs"
+           "tolglow/src/engines/preview/overlay.js"
+           "tolglow/resources/studio/rig-editor.css"
+           "tolglow/docs/rig-editor.md"
+           "tolglow/docs/benchmarks/rig-editor-browser.json"]
+   :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"
+                "Pose changes reuse meshes and worker updates remain bounded"
+                "Plane paths publish validated musical cues and run only on explicit request"
+                "Undo, cancel, stale identity and teardown are covered"]
+   :evidence ["Frontend 164 tests / 882 assertions; optimized release 179 files, zero warnings"
+              "Integrated JVM pure 516 tests / 4080 assertions; preview regression 38 tests passed"
+              "Actual compiled desktop/iPad-touch/phone-fallback: placement, rotation, precision, undo/cancel, saves, paths, explicit launch, downloaded-file restore and teardown passed"
+              "Presented-canvas pixel assertion caught and guards compositor target ownership; other camera locks survive editor startup fallback"
+              "docs/rig-editor.md; docs/benchmarks/rig-editor-browser.json; Chromium SwiftShader/touch emulation, no physical hardware/Safari claim"]}
   {:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
    :kind :implementation :status :done :owner nil

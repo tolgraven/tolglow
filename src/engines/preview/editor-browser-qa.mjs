@@ -5,12 +5,14 @@ import assert from 'node:assert/strict';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 const origin = process.argv[2] || 'http://127.0.0.1:8515';
 const directory = process.argv[3] || '/tmp/studio-qa/rig-editor';
-const state = async () => (await fetch(`${origin}/api/state`)).json();
+const state = async () => (await fetch(`${origin}/api/state`, {headers: {Accept: 'application/json'}})).json();
 assert.equal((await state()).status.output.type, 'preview', 'Use an isolated captured-output Studio');
 await mkdir(directory, {recursive: true});
 const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true,
   args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
 const reports = [];
+// Capabilities are sets. Transit and JSON may enumerate that set differently.
+const fixtureData = fixture => ({...fixture, capabilities: fixture.capabilities?.toSorted()});
 async function open({width = 1440, height = 1100, touch = false, fallback = false} = {}) {
   const context = await browser.newContext({viewport: {width, height}, hasTouch: touch, deviceScaleFactor: 1});
   if (fallback) await context.addInitScript(() => {window.Worker = undefined;});
@@ -55,12 +57,12 @@ try {
   await drag(page, fixture.position, 45, 20);
   await page.waitForFunction(() => document.querySelector('[aria-label="Selected rig object"]').value === 'fixtures:3');
   const moved = (await draft(page)).fixtures[index]; assert.notDeepEqual(moved.position, fixture.position);
-  assert.deepEqual({...moved, position: fixture.position}, fixture, 'Only position changes while dragging');
+  assert.deepEqual(fixtureData({...moved, position: fixture.position}), fixtureData(fixture), 'Only position changes while dragging');
   assert.deepEqual((await state()).rig.fixtures[index], fixture, 'The committed rig does not follow a draft');
   await panel.getByRole('button', {name: 'Undo', exact: true}).click();
-  assert.deepEqual((await draft(page)).fixtures[index], fixture);
+  assert.deepEqual(fixtureData((await draft(page)).fixtures[index]), fixtureData(fixture));
   await drag(page, fixture.position, 30, 12, true);
-  assert.deepEqual((await draft(page)).fixtures[index], fixture);
+  assert.deepEqual(fixtureData((await draft(page)).fixtures[index]), fixtureData(fixture));
   assert.equal((await editor(page)).tool, 'navigate');
   assert.equal(await page.evaluate(() => document.querySelector('.rig-editor canvas').tolglowPreview.getNavigationState().interacting), false);
   await number(page, 'X · m', -0.4321);
@@ -70,7 +72,7 @@ try {
   await posted(page, '/api/rig', () => page.getByRole('button', {name: 'Save rig', exact: true}).click());
   const saved = (await state()).rig;
   assert.equal(saved.fixtures[index].position[0], -0.4321);
-  assert.deepEqual({...saved.fixtures[index], position: fixture.position, 'rotation-deg': fixture['rotation-deg']}, {...fixture, 'rotation-deg': fixture['rotation-deg']});
+  assert.deepEqual(fixtureData({...saved.fixtures[index], position: fixture.position, 'rotation-deg': fixture['rotation-deg']}), fixtureData({...fixture, 'rotation-deg': fixture['rotation-deg']}));
   await panel.getByLabel('Selected rig object').selectOption('trusses:0');
   await number(page, 'Y · m', 4.25); await number(page, 'Rotate Z · °', 7.5);
   await posted(page, '/api/rig', () => page.getByRole('button', {name: 'Save rig', exact: true}).click());
