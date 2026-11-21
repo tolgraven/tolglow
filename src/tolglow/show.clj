@@ -122,6 +122,7 @@
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :compute (compute/status (:compute runtime))
+                                   :movement (compute/movement-status (:compute runtime) output)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
@@ -850,10 +851,10 @@
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
                            pause-layer (pause-layer! runtime model)
-                           evaluate-fields (compute/frame-evaluator (:compute runtime) frame-start-ns)
+                           resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
-                                     #(render/resolve-contributions
-                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> (evaluate-fields %) pause-layer (conj pause-layer))
+                                     #(resolve-frame
+                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % pause-layer (conj pause-layer))
                                      {:master (:master model) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})

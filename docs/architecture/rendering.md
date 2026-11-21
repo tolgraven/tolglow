@@ -7,8 +7,10 @@ layouts, GPU dispatch and readback. A headless JVM host can run the same GLSL
 as WebGL2. Both implementations accept world-space aim points and direction
 vectors, preserve the pan from the last accepted frame and report targets
 outside a fixture’s limits. Tolglow supplies authored effects and rig maps.
-Its integration workload compares Afterglow’s answers against the packed DMX
-universes. Studio owns the shaders that draw the room, surfaces and fog.
+A show can enable the fork’s calibrated post-blend solver through
+`:movement-backend :native-gpu`. It can use either CPU or native effect
+expressions and shares their frame deadline. Tolglow's integration workload
+compares Afterglow’s answers against the packed DMX universes. Studio owns the shaders that draw the room, surfaces and fog.
 [Afterglow solver and JVM example](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/moving-head-shaders.md)
 · [Whole-show measurement](../moving-head-shader.md)
 

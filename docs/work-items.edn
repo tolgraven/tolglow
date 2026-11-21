@@ -122,6 +122,18 @@
               "Lein native show tests on Mesa llvmpipe with eight fixtures, two concurrent shader programs and a capture sink"
               "A blocked real native draw spans show restart without an extra publication"]}
 
+  {:id :render/show-native-movement
+   :title "Select the post-blend Afterglow movement shader in show configuration"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/compute.clj" "tolglow/src/tolglow/show.clj"
+           "tolglow/test-native/tolglow/native_show_test.clj" "tolglow/docs/native-shader-show.md"]
+   :depends-on [:render/show-native-fields :render/afterglow-shader-execution]
+   :acceptance ["Select the calibrated solver independently of expression evaluation"
+                "Expression and movement processing share one absolute deadline for the tick"
+                "Show status exposes Afterglow's per-frame solver, head counts and fallback reason"]
+   :evidence ["Afterglow PR 28 owns calibrated post-blend sparse selection and frame packing"
+              "Tolglow native capture with an opacity sweep, both backend combinations and a blocked expression draw"]}
+
   {:id :render/physical-output-in-afterglow
    :title "Own physical DMX publication and fixture protocol handling in Afterglow"
    :kind :implementation :status :done :owner nil

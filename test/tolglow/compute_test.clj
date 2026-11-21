@@ -23,6 +23,7 @@
   (with-redefs [gpu/open! (fn [_] (throw (AssertionError. "Unexpected GPU acquisition")))]
     (is (= {:requested :cpu :active :cpu} (compute/status (compute/open! {}))))
     (doseq [options [{:compute-backend :unknown}
+                     {:movement-backend :unknown}
                      {:compute-backend :native-gpu :batch? false}
                      {:compute-backend :native-gpu :gpu-budget-ms 0}
                      {:compute-backend :native-gpu :gpu-options {:queue-capacity -2}}]]
