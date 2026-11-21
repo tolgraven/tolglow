@@ -187,7 +187,7 @@
            "afterglow/dev/afterglow/bench_movement_reference.clj" "afterglow/dev/AGENTS.md"
            "tolglow/bin/profile-movers" "tolglow/.github/workflows/performance.yml"
            "tolglow/docs/performance-profiling.md"]
-   :depends-on [:performance/master-mixed-rig-profiling]
+   :depends-on [:foundation/tests]
    :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
                 "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
                 "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
