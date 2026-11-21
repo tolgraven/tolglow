@@ -19,6 +19,37 @@
                 "Plane paths publish validated musical cues and run only on explicit request"
                 "Undo, cancel, stale identity and teardown are covered"]
    :evidence ["Shared renderer pose/overlay hunks coordinated with camera navigation owner; parent owns Ring aim-path publication"]}
+  {:id :native/apple-calibration-build-gate
+   :title "Reconcile calibration with master and verify unsigned Apple targets on macOS CI"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/.github/workflows/tests.yml" "tolglow/native/iOS/RigCalibration"
+           "tolglow/native/Tests/check_macos.sh" "tolglow/native/watchOS/TolglowWatchApp.swift"
+           "tolglow/native/README.md"
+           "tolglow/docs/rig-calibration.md"]
+   :depends-on [:native/lidar-rig-calibration-v1]
+   :acceptance ["Preserve both master integration and saved-model calibration disarming before thaw"
+                "Build shared Swift tests and unsigned iOS/watchOS targets on a compatible macOS host"
+                "Keep native build and physical hardware evidence distinct"]
+   :evidence ["Merged real master ff24662; restore-disarming remains before persistence/thaw rekeys instance sources"
+              "CI run44891609591: Java17/21/25 pure+parity, Studio and native all passed; parity529/4448"
+              "macos-15/Xcode16.4/Swift6.1.2: seven Swift tests passed; unsigned iOS and watchOS simulator builds passed"
+              "Actual SDK build caught and fixed watchOS-unavailable DisclosureGroup; no physical-device or LiDAR accuracy claim"
+              "https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227"]}
+  {:id :native/lidar-rig-calibration-v1
+   :title "Identify fixtures and propose rig calibration from committed patterns and AR depth"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/studio/calibration.clj"
+           "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
+           "tolglow/src/tolglow/studio/output_scheduler.clj" "tolglow/docs/rig-calibration.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Depth observations and temporal identity require physical output receipts"
+                "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
+                "Owned calibration overrides release on cancel or timeout without ending human effects"
+                "ARKit capture checks camera permission and LiDAR capability; native hardware evidence remains explicit"]
+   :evidence ["Focused calibration: 8 tests / 84 assertions passed, including actual full-show import disarming"
+              "Integrated pure: 465 tests / 3690 assertions passed; subsequent parity: 487 tests / 3817 assertions passed"
+              "Initial native static contracts: 6 existing plus 2 calibration checks passed; Apple build evidence follows in native/apple-calibration-build-gate; physical LiDAR/output unrun"
+              "docs/rig-calibration.md; tap-assisted capture and fitting foundation, automatic photometric detection remains planned"]}
   {:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
    :kind :implementation :status :done :owner nil

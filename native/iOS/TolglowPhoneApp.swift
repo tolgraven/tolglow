@@ -6,6 +6,7 @@ import TolglowSensorCore
     let osc = OSCConnection()
     let relay = WatchRelay()
     let studio = StudioClient()
+    let rigCalibration = RigCalibrationClient()
     private var phoneToken: String?
     private var watchToken: String?
     @Published var relayArmed = false
@@ -52,6 +53,7 @@ import TolglowSensorCore
     func disarmPhone() { motion.disarm(); phoneToken = nil; osc.discardPending() }
     func disarmRelay() { relayArmed = false; watchToken = nil; osc.discardPending() }
     func suspend() {
+        rigCalibration.suspend()
         disarmPhone(); disarmRelay(); motion.stop(); relay.cancelPending(); osc.close(); studio.disconnect()
         status = "Backgrounded: disarmed and disconnected"
     }
@@ -74,6 +76,8 @@ struct PhoneRoot: View {
     var body: some View {
         TabView {
             PerformView(studio: model.studio).tabItem { Label("Perform", systemImage: "square.grid.3x3.fill") }
+            RigCalibrationView(client: model.rigCalibration, scanner: model.rigCalibration.scanner)
+                .tabItem { Label("Scan rig", systemImage: "viewfinder") }
             WebStudioView().tabItem { Label("Studio", systemImage: "globe") }
             PhoneMotionView(model: model, motion: model.motion, osc: model.osc, relay: model.relay)
                 .tabItem { Label("Conduct", systemImage: "hand.wave.fill") }

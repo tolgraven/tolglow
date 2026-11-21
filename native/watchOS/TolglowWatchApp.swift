@@ -45,9 +45,15 @@ struct WatchRoot: View {
                     Button("Connect iPhone") { relay.activate() }
                     Button("Pair / announce ID") { relay.announce(deviceID: motion.deviceID) }
                     Text(relay.status).font(.caption2)
-                    DisclosureGroup("Device / arm session") {
-                        Text(motion.deviceID).font(.system(size: 9, design: .monospaced))
-                        Text(motion.sessionID).font(.system(size: 9, design: .monospaced))
+                    NavigationLink("Device / arm session") {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Device ID").font(.caption)
+                                Text(motion.deviceID).font(.system(size: 11, design: .monospaced))
+                                Text("Arm session").font(.caption)
+                                Text(motion.sessionID).font(.system(size: 11, design: .monospaced))
+                            }.padding(.horizontal, 6)
+                        }.navigationTitle("Device")
                     }
                     Text("Double Tap activates Primary action on supported hardware/settings. No raw finger gesture stream.").font(.caption2).foregroundStyle(.secondary)
                 }.padding(.horizontal, 6)

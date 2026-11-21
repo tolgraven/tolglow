@@ -246,8 +246,7 @@
                         "readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);"
                         "if(!r.view.stall)process.stdout.write(JSON.stringify({id:r.id,status:'captured',width:960,height:160,png:'" png "'})+'\\n');});\n"))
       (let [capture (display/process-capture {:browser-executable "/not-used-by-protocol-peer"
-                                              :worker-script (.getAbsolutePath script)
-                                              :capture-timeout-ms 100 :shutdown-timeout-ms 100})
+                                              :worker-script (.getAbsolutePath script)})
             handle (try ((:open! capture))
                         (catch Exception error
                           (throw (ex-info "Node protocol peer did not become ready"

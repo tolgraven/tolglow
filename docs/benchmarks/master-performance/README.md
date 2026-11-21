@@ -61,3 +61,25 @@ partition, and independent input/output ownership.
 These raw EDN files were only pretty-printed at a wider line width after capture;
 no observations were removed or altered. The profiler gained dirty-source status
 metadata afterward; the measured source paths in these three captures were clean.
+
+## First automatic master run
+
+[GitHub run 44890920256](https://github.com/tolgraven/tolglow/actions/runs/44890920256)
+completed successfully on a real master push after PR #17 merged. Its artifact
+`master-show-performance-44890920256` (ID `14702006713`) was downloaded and its
+SHA-256 digest verified:
+`dd42cebb3fe2d4c44482815db541e186a397a959deef9e67c73a87839f33186e`.
+It contains the full report, run log, both resolved commit files and timestamp;
+GitHub retains it until 2027-02-19.
+
+Measured clean source: Tolglow `8b65ae9c681f4abdcdcb7488c72d6748fee58bd9`,
+Afterglow `6e82fcfbaf7863215255cb322ac311e428a815be`. The complete matrix used
+Java 21.0.13, Clojure 1.12.7, four available processors on an AMD EPYC 9V45 host,
+and the same 768 MiB heap / 40 warmup / 120 samples. All scalar oracles passed.
+
+For 10,000 pixels + eight movers with two workers, complete host
+p50/p95/p99/maximum were **12.72/17.75/22.59/24.07 ms**, with **14.25 MB/frame**
+median allocation and **0/120** samples above 25 ms. Pipeline p99 was **22.54 ms**,
+maximum **26.77 ms**. This independently demonstrates the whole CPU workload on
+that runner; it is not a hardware-matched speedup comparison to the local reports
+or a guarantee including physical output, scheduling, browser or simulator costs.
