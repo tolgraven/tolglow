@@ -31,7 +31,7 @@ export class WorkerRoomPreview {
     this.reducedMotion.addEventListener('change', () => {this.navigation?.notify(); this.sendState();}, {signal});
     this.coarsePointer.addEventListener('change', () => this.sendState(), {signal});
     this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
-      room: () => this.room, snapshot: () => this.snapshot,
+      room: () => this.room, snapshot: () => this.snapshot, visibleLights: () => this.telemetry.lightIds,
       active: () => this.visible && !this.paused && !this.disposed,
       reducedMotion: () => this.reducedMotion.matches, changed: () => this.sendState()});
     this.navigation.subscribe(state => this.notifyNavigation(state));

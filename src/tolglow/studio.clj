@@ -39,9 +39,6 @@
   ([runtime query] (browser-snapshot runtime query #(bind! runtime :studio)))
   ([runtime query bindings!]
   (let [view (show/snapshot runtime)
-        preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
-        view (-> view (update-in [:output :values] select-keys preview-ids)
-                 (assoc-in [:output :preview-only?] true))
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]

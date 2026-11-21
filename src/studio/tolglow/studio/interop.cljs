@@ -54,18 +54,22 @@
       (js-invoke engine "send" keys)
       (when-let [input (aget engine "input")] (.focus input)))))
 
+(defn preview-data [data]
+  ;; Maps of fixture IDs and the IDs in the rig must use the same full name.
+  (clj->js data :keyword-fn #(subs (str %) 1)))
+
 (defn- update-preview! [this engine show]
   ;; Preserve the shared rig across frame updates, including worker transfers.
   (let [rig (:rig show)
         previous-rig (aget this "rig")
-        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (clj->js rig))
-        frame (clj->js (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
+        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (preview-data rig))
+        frame (preview-data (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
                                          :blackout? :master :editor]))
         intents (get-in show [:status :last-intents])]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
     (aset frame "rig" js-rig)
-    (aset frame "output" #js {:values (clj->js (get-in show [:output :values]))})
+    (aset frame "output" #js {:values (preview-data (get-in show [:output :values]))})
     (aset frame "cut?" (boolean (or (:cut? show)
                                     (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
                                             (:type %)) intents))))

@@ -10,13 +10,18 @@ const typing = target => target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$
 const cellKey = (x, y, z) => `${x},${y},${z}`;
 
 /** Only real emitted light makes a fixture a tour subject. No browser effects. */
-export function tourSubjects(snapshot) {
-  const values = snapshot?.output?.values || {};
-  return (snapshot?.rig?.fixtures || []).filter(fixture => vector(fixture.position)).map(fixture => {
-    const rgb = emittedColor(values[String(fixture.id)]), energy = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
-    return {id: String(fixture.id), position: fixture.position.slice(), energy};
-  }).filter(subject => subject.energy > .0001)
-    .sort((a, b) => b.energy - a.energy || a.id.localeCompare(b.id)).slice(0, 16);
+function fixtureIndex(fixtures) {
+  return new Map(fixtures.map(fixture => [String(fixture.id), fixture]));
+}
+export function tourSubjects(snapshot, index = fixtureIndex(snapshot?.rig?.fixtures || []), visible) {
+  const values = snapshot?.output?.values || {}, subjects = [];
+  for (const id of visible || Object.keys(values)) {
+    const position = index.get(id)?.position;
+    if (!vector(position)) continue;
+    const rgb = emittedColor(values[id]), energy = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+    if (energy > .0001) subjects.push({id, position: position.slice(), energy});
+  }
+  return subjects.sort((a, b) => b.energy - a.energy || a.id.localeCompare(b.id)).slice(0, 16);
 }
 
 /** Camera-only clearance. Outside cutaway presets approach the room gradually. */
@@ -46,8 +51,8 @@ export function tourPose(subject, room, phase = 0) {
 
 /** One DOM camera owner, shared by worker presentation and main-thread fallback. */
 export class CameraNavigator {
-  constructor({camera, controls, canvas, room, snapshot, active, reducedMotion, changed = () => {}}) {
-    Object.assign(this, {camera, controls, canvas, room, snapshot, active, reducedMotion, changed});
+  constructor({camera, controls, canvas, room, snapshot, visibleLights, active, reducedMotion, changed = () => {}}) {
+    Object.assign(this, {camera, controls, canvas, room, snapshot, visibleLights, active, reducedMotion, changed});
     this.mode = 'orbit'; this.speed = 2; this.keys = new Set(); this.buttons = new Set(); this.listeners = new Set();
     this.interacting = false; this.disposed = false; this.clock = 0; this.subjectId = null; this.visitStarted = 0;
     this.abort = new AbortController(); const signal = this.abort.signal;
@@ -174,7 +179,14 @@ export class CameraNavigator {
     }
     if (this.reducedMotion()) return;
     this.clock += dt;
-    if (snapshot !== this.subjectSnapshot) {this.subjectSnapshot = snapshot; this.subjects = tourSubjects(snapshot);}
+    const visible = this.visibleLights?.();
+    if (snapshot !== this.subjectSnapshot || visible !== this.subjectLights) {
+      if (fixtures !== this.subjectFixtures) {
+        this.subjectFixtures = fixtures; this.fixtureIndex = fixtureIndex(fixtures);
+      }
+      this.subjectLights = visible; this.subjectSnapshot = snapshot;
+      this.subjects = tourSubjects(snapshot, this.fixtureIndex, visible);
+    }
     const subjects = this.subjects || [];
     let subject = subjects.find(entry => entry.id === this.subjectId);
     if (!subject || this.clock - this.visitStarted >= 8) {
