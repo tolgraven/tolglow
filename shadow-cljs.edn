@@ -2,7 +2,7 @@
  :builds
  {:studio-test {:target :node-test
                 :output-to "target/studio-tests.js"
-                :ns-regexp "tolglow.studio.events-test$"
+                :ns-regexp "tolglow.studio.*-test$"
                 :autorun true}
   :studio {:target :browser
            :output-dir "resources/studio/js"

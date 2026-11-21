@@ -226,6 +226,61 @@ availability and a configured model determine whether a real conversation can ru
 Restoring a show/history does not resume a generation automatically. Interrupted
 conversations show their status and can be continued by sending another message.
 
+## Connections and musical modulation
+
+The sixth view keeps sync pairing and audio capture explicit. Read-only opening
+loads port/input lists and status. Saving a sync configuration never connects it;
+Connect starts only enabled adapters, and audio capture has its own Start button.
+Configured MIDI ports retain exact name guards, and missing or renamed ports need
+explicit reselection. Live pairing includes bridge identity, track/clip/rack
+indices, optional expected names, note-to-cue launches with musical durations,
+and controller-to-parameter bounds. The selected clock reports waiting, stale,
+paused or locked state without selecting a nearby player automatically. Audio
+shows measured energy/timing and the host's consumed-event count.
+
+Connections owns a single status poll while mounted. Closing the view invalidates
+pending responses but preserves running host resources. Runtime/epoch replacement
+invalidates callbacks and status; portable configuration comes from the new show.
+Draft pairing/mapping edits survive ordinary status refreshes. Browser checks
+verified inert opening, clock source selection, actual saved pairing/mappings and
+reload restoration, explicit audio input preparation and a 390 px layout. No
+physical resource was started by these checks.
+
+The live inspector provides per-parameter random motion. The global panel can
+select instances, effect definitions, cues or categories, choose parameter/range
+policies, and save the controller as a launchable cue. Intervals accept fractions
+in beats, bars and phrases. Manual knob edits hold the parameter until resumed;
+the overlay does not overwrite canonical values. Actual browser checks verified
+bounded fractional-beat glides, pause/resume, manual holds, controller stop and
+cue-owned controller cleanup against the real server. Active controllers and
+instances were removed after the checks.
+
+## Passive Push display route
+
+`/push-display` mounts a separate Reagent/re-frame view at exactly 960×160. It
+never initializes studio polling, keyboard/gesture listeners, WebGL or Neovim.
+The display transport calls `globalThis.tolglowPushDisplay.update(view)` with a
+complete snapshot; that function dispatches synchronously and flushes Reagent.
+`ready` becomes true after mounting. The worker waits two animation frames before
+capture. Snapshot replacement clears absent prior fields and bounds the visible
+parameters, row labels and cells to eight.
+
+The display shares pure typed presentation with the web inspector: numeric and
+choice labels, booleans, enum values, colors, vectors/ranges, category tags and
+musical envelope stage labels. Category colors are independent of cue swatches.
+Sparkline rendering requires supplied finite samples and caps them at 256; no
+fabricated animation substitutes for signal data. The display currently shows
+the selected effect's eight parameters and the first cue row, not a full grid
+overlay or a native Push 3 graphics implementation.
+
+The optimized route was browser-tested at 960×160 with every supported parameter
+type, real supplied samples and complete snapshot replacement. Its requests
+contained only static assets: no API calls, graphics/editor imports or canvases.
+The actual Node capture worker and JVM process bridge also produced PNG captures.
+In this software-rendered Chromium environment, 60 capture frames measured a
+median 66.8 ms and p95 73.8 ms (14.79 fps); this is local transport evidence, not
+physical Push USB throughput or a performance guarantee.
+
 ## Build, verification and remaining evidence
 
 Install pinned npm dependencies with `npm ci`, then run `npm run studio:build`
@@ -233,7 +288,7 @@ for the production Shadow CLJS bundle or `npm run studio:dev` for live compilati
 The `:cljs` Clojure CLI alias supplies Reagent/re-frame/Shadow dependencies. The
 compiled bundle is served at `/studio/js/main.js`; generated files are not source.
 
-`npm run studio:test` currently runs 28 tests and 124 assertions against the actual
+`npm run studio:test` currently runs 44 tests and 220 assertions against the actual
 registered re-frame handlers and interceptors, with effects left unapplied.
 Coverage includes held acknowledgement races, independent pointers, page-exit
 cleanup, optimistic parameter writes, musical durations, expected versions,
@@ -241,6 +296,8 @@ runtime identity, partial projections, incomplete numeric edits, saved settings,
 stale chat/history responses, typed fixture mapping and obsolete fixture-service
 responses after show replacement, composition overrides, and graphical rig
 pointer ownership and save acknowledgements that arrive after newer rig edits.
+Additional cases cover inert Connections lifecycle and port guards, typed mapping
+payloads, audio selection, modulation ranges/tokens and passive display snapshots.
 The last test build had zero warnings.
 
 Optimized-bundle browser checks observed real cue launches and parameter changes

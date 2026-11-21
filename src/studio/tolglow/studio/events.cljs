@@ -30,7 +30,10 @@
   #{"/api/definition" "/api/rig" "/api/composition" "/api/composition/run"
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
-    "/api/fixtures/publish" "/api/fixtures/patch"})
+    "/api/fixtures/publish" "/api/fixtures/patch"
+    "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff"
+    "/api/audio/start" "/api/audio/stop"
+    "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
 (defn guard-request [db request]
   (if (and (:body request) (guarded-paths (:path request)))
     (update request :body #(merge {:expected-epoch (get-in db [:show :epoch])}
@@ -43,7 +46,7 @@
              (let [db (get-in context [:coeffects :db])]
                (update context :effects
                  (fn [effects]
-                   (cond-> effects
+                   (cond-> (if (nil? (:fx effects)) (dissoc effects :fx) effects)
                      (:studio/http effects) (update :studio/http #(guard-request db %))
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
@@ -172,7 +175,8 @@
           updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
       {:db updated
        :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
-                                          [:dispatch [:fixtures/runtime-change]] (notice "Show restarted; controls follow the new epoch."))
+                                          [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:modulation/runtime-change]]
+                                          (notice "Show restarted; controls follow the new epoch."))
              (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
              (conj [:dispatch [:studio/settings-received (:settings show)]]))
        :dispatch-later [{:ms (if hidden? 1500 100) :dispatch [:studio/poll]}]})
@@ -203,7 +207,7 @@
   (let [prefs (:ui settings) raw-view (:view prefs)
         view (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view))]
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
-      (contains? #{:perform :compose :rig :library :assistant} view) (assoc-in [:ui :view] view)
+      (contains? #{:perform :compose :rig :library :assistant :connections} view) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
       (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs)))))
 (rf/reg-event-fx :studio/settings-received

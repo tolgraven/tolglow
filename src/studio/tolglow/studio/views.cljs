@@ -5,9 +5,12 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-library :as fixture-library]
-            [tolglow.studio.interop :as interop]))
+            [tolglow.studio.interop :as interop]
+            [tolglow.studio.modulation :as modulation]
+            [tolglow.studio.parameter-widgets :as widgets]))
 
 (defn- send! [event] (rf/dispatch event))
 ;; Controlled values must reach app-db before React restores the input after
@@ -61,7 +64,7 @@
      [:nav {:aria-label "Studio views"}
       (for [[view title icon n] [[:perform "Perform" "▦" "1"] [:compose "Compose" "▤" "2"]
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
-                                 [:assistant "Assistant" "✦" "5"]]]
+                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"]]]
         ^{:key view}
         [:button.nav-item {:class (when (= view (:view ui)) "selected") :data-view (name view)
                            :aria-current (when (= view (:view ui)) "page")
@@ -199,13 +202,18 @@
 
 (defn- parameter-control [instance parameter schema & [handlers]]
   (let [value (get-in instance [:params parameter] (:default schema))
-        type (:type schema "number")
+        choices (:choices schema)
+        type (if (seq choices) "choice" (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         bounds (:bounds schema) title (or (:name schema) (label parameter))]
     [:div.param-row {:data-param (name parameter)}
-     [:label [:span title] [:output (if (vector? value) (str/join ", " (map numeric-label value)) (numeric-label value))]]
+     [:label [:span title] [:output (if (vector? value) (str/join ", " (map numeric-label value)) (widgets/value-label schema value))]]
      (case type
+       "choice" (let [selected (or (first (keep-indexed #(when (= value (:value %2)) %1) choices)) 0)]
+                  [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
+                   (for [[index choice] (map-indexed vector choices)]
+                     ^{:key index} [:option {:value index} (or (:label choice) (label (:id choice)) (str (:value choice)))])])
        "boolean" [:input {:type "checkbox" :aria-label title :checked (boolean value) :on-change #(change! (checked? %))}]
        "enum" (let [choices (vec (or (:values schema) (:options schema)))
                     selected (or (first (keep-indexed #(when (= value %2) %1) choices)) 0)]
@@ -225,7 +233,8 @@
        [number-input {:type (if bounds "range" "number") :aria-label title :value (or value 0)
                 :min (first bounds) :max (second bounds)
                 :step (if (= "integer" type) 1 (if bounds (/ (- (second bounds) (first bounds)) 1000) "any"))
-                :on-change #(when-let [n (number-value %)] (change! n))}])]))
+                :on-change #(when-let [n (number-value %)] (change! n))}])
+     (when-not handlers [modulation/parameter-widget (:id instance) parameter schema value])]))
 
 (defn- inspector [db]
   (let [show (:show db) instances (:instances show)
@@ -243,6 +252,7 @@
       (if selected
         [:<> [:div.inspector-heading [:div [:h3 (display-name cue)] [:p (str (:phase selected) " · " (:effect-id selected))]]
               [button nil "Release ↘" [:studio/command "instance/end" {:instance-id (:id selected)}] "text-button"]]
+         [widgets/category-tags (:categories definition) (:category-colors show)]
          (for [[parameter schema] (:params definition)] ^{:key (str (:id selected) "/" parameter)} [parameter-control selected parameter schema])
          (when (empty? (:params definition)) [:p.small.muted "This effect has no adjustable parameters."])]
         [:div.empty-state [:span.empty-symbol "◌"] [:strong "Start with a spark."]
@@ -321,7 +331,7 @@
   [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))}
    [heading "YOUR LIVE CANVAS" "Make room for a little magic." "Layer a color. Find a rhythm. Follow the feeling."
     [:div.live-chip [:span] "LIVE SESSION"]]
-   [:div.performance-layout [cue-grid db] [:div.performance-side [preview-panel db] [inspector db] [auto-panel db] [response-panel db]]]])
+   [:div.performance-layout [cue-grid db] [:div.performance-side [preview-panel db] [inspector db] [auto-panel db] [response-panel db] [modulation/panel db]]]])
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
@@ -632,7 +642,7 @@
     [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
    [:span.mobile-file-actions [button "mobile-export" "Export show ↗" [:studio/export] "text-button"]
     [:label#mobile-import.text-button.file-label {:html-for "import-show"} "Import show ↙"]]
-   [:span#shortcut-hint "B blackout · Space transport · 1–5 views"]])
+   [:span#shortcut-hint "B blackout · Space transport · 1–6 views"]])
 
 (defn studio []
   (let [db @(rf/subscribe [:studio/db])
@@ -651,6 +661,7 @@
        (when (= :rig (get-in db [:ui :view])) [rig-view {:ui (:ui db) :show (select-keys (:show db) [:rig])}])
        [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
        [chat/panel db]
+       (when (= :connections (get-in db [:ui :view])) [connections/panel {:show (select-keys (:show db) [:cues :transport])}])
        [footer db]]]
      [cue-actions db] [prompt-dialog db]
      (when-let [toast (get-in db [:ui :toast])]

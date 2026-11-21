@@ -4,14 +4,17 @@
             [tolglow.studio.events]
             [tolglow.studio.subs]
             [tolglow.studio.interop]
-            [tolglow.studio.views :as views]))
+            [tolglow.studio.views :as views]
+            [tolglow.studio.push-display :as push-display]))
 
 (defonce root (atom nil))
 (defonce listeners (atom []))
 
+(defn device-display? [] (= "/push-display" (.-pathname js/location)))
+
 (defn mount! []
   (when-not @root (reset! root (rdom/create-root (.getElementById js/document "app"))))
-  (rdom/render @root [views/studio]))
+  (rdom/render @root (if (device-display?) [push-display/component] [views/studio])))
 
 (defn- listen! [target event handler]
   (.addEventListener target event handler)
@@ -39,9 +42,14 @@
                  "3" (rf/dispatch [:studio/set-view :rig])
                  "4" (rf/dispatch [:studio/set-view :library])
                  "5" (rf/dispatch [:studio/set-view :assistant])
+                 "6" (rf/dispatch [:studio/set-view :connections])
                  nil)))))
 
 (defn ^:export init! []
-  (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
-  (install-listeners!)
+  (if (device-display?)
+    (do (.add (.-classList (.-body js/document)) "push-display-page")
+        (push-display/install-api!)
+        (rf/dispatch-sync [:push-display/update {}]))
+    (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
+        (install-listeners!)))
   (mount!))

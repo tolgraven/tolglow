@@ -6,6 +6,7 @@
             [re-frame.registrar :as registrar]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-library :as fixtures]
+            [tolglow.studio.connections :as connections]
             [tolglow.studio.chat]))
 
 ;; Execute actual registered event handlers/interceptors while leaving their
@@ -337,3 +338,73 @@
     (is (true? (get-in received [:db :ui :rig-dirty?])))
     (is (= 5 (get-in received [:db :ui :rig-draft :trusses 0 :length])))
     (is (nil? (:db replacement)))))
+
+(deftest opening-connections-reads-status-without-starting-resources
+  (let [opened (transition base [:connections/open])
+        poll (transition (:db opened) [:connections/poll])
+        requests (map second (:fx poll))
+        early (transition (assoc (:db opened) :show nil) [:connections/poll])]
+    (is (= #{"/api/sync" "/api/audio" "/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
+    (is (every? #(nil? (:body %)) requests))
+    (is (true? (get-in poll [:db :connections :polling?])))
+    (is (nil? (:fx (transition (:db poll) [:connections/poll]))))
+    (is (= [:connections/poll] (get-in early [:dispatch-later 0 :dispatch])))))
+
+(deftest midi-selection-keeps-name-guards-until-explicit-reselection
+  (let [form (-> connections/sync-defaults (assoc-in [:midi :enabled?] true)
+                 (assoc-in [:midi :input-index] "2") (assoc-in [:midi :expected-input-name] "Original"))
+        db (assoc base :connections {:sync-form form :ports [{:index 2 :name "Replacement" :input? true}]})
+        selected (transition db [:connections/select-port :input "2"])
+        payload (connections/sync-payload (:db selected))]
+    (is (thrown? js/Error (connections/sync-payload db)))
+    (is (= 2 (get-in payload [:midi :input-index])))
+    (is (= "Replacement" (get-in payload [:midi :expected-input-name])))
+    (is (nil? (get-in payload [:midi :output-index])))))
+
+(deftest connection-mappings-preserve-musical-values-and-namespaced-identities
+  (let [db (assoc base :connections
+                  {:sync-form (assoc-in connections/sync-defaults [:live :pairing]
+                                        {:track-index "2" :clip-slot-index "3" :rack-device-index "1" :expected-track-name "Lighting rack"})
+                   :notes [{:control "36" :cue-id "colors/ember" :mode "one-shot" :duration-value "0.25" :duration-unit "bars"}]
+                   :parameters [{:control "12" :cue-id "colors/ember" :param "rig/aim" :low "-1" :high "1"}]})
+        payload (connections/sync-payload db)]
+    (is (= {:cue-id "colors/ember" :mode "one-shot" :duration {:bars 0.25}} (get-in payload [:live :mappings "36"])))
+    (is (= {:cue-id "colors/ember" :param "rig/aim" :bounds [-1 1]} (get-in payload [:live :parameters "12"])))
+    (is (= {:track-index 2 :clip-slot-index 3 :rack-device-index 1 :expected-track-name "Lighting rack"} (get-in payload [:live :pairing])))
+    (is (thrown? js/Error (connections/sync-payload (update-in db [:connections :notes] #(conj % (first %))))))))
+
+(deftest audio-input-is-explicit-and-protected-against-enumeration-changes
+  (let [none (assoc base :connections {:audio-form connections/audio-defaults})
+        default (assoc-in none [:connections :audio-form :input] "system")
+        stale (-> none (assoc-in [:connections :audio-form :input] "1")
+                  (assoc-in [:connections :audio-form :expected-name] "Original")
+                  (assoc-in [:connections :inputs] [{:mixer-index 1 :name "Replacement"}]))
+        selected (transition stale [:connections/select-audio-input "1"])]
+    (is (thrown? js/Error (connections/audio-payload none)))
+    (is (true? (:default? (connections/audio-payload default))))
+    (is (= 48000 (:sample-rate (connections/audio-payload default))))
+    (is (thrown? js/Error (connections/audio-payload stale)))
+    (is (= "Replacement" (:mixer-name (connections/audio-payload (:db selected)))))
+    (is (= "/api/audio/start" (get-in (transition default [:connections/audio-start]) [:fx 0 1 :path])))))
+
+(deftest closed-connections-ignore-obsolete-polls-and-keep-new-form-values
+  (let [db (assoc base :connections (assoc connections/defaults :visible? true))
+        old-token (connections/token db)
+        closed (transition db [:connections/close])
+        late (transition (:db closed) [:connections/loaded old-token :sync {:config connections/sync-defaults}])
+        edited (transition db [:connections/edit [:sync-form :live :endpoint] "http://localhost:9000/live"])
+        saved (transition (:db edited) [:connections/configured old-token :configure {:config connections/sync-defaults}])
+        prior-poll (transition (:db saved) [:connections/loaded old-token :sync {:config connections/sync-defaults}])]
+    (is (nil? (:db late)))
+    (is (= "http://localhost:9000/live" (get-in prior-poll [:db :connections :sync-form :live :endpoint])))
+    (is (false? (get-in closed [:db :connections :visible?])))))
+
+(deftest connection-actions-carry-current-runtime-identity
+  (let [db (assoc-in base [:show :runtime-id] "current")
+        source (transition db [:connections/action :source "beat-link"])
+        configure (transition db [:connections/configure false])]
+    (is (= "current" (get-in source [:fx 0 1 :body :runtime-id])))
+    (is (= 7 (get-in source [:fx 0 1 :body :expected-epoch])))
+    (is (= "beat-link" (get-in source [:db :connections :sync-form :selected-source])))
+    (is (= "/api/sync/configure" (get-in configure [:fx 0 1 :path])))
+    (is (nil? (:dispatch configure)))))
