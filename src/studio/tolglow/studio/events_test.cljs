@@ -517,3 +517,20 @@
     (is (true? (get-in result [:db :ui :performance :expanded "7:12"])))
     (is (= "held" (get-in result [:db :ui :launch-mode])))
     (is (= "7:12" (:studio/focus-instance result)))))
+
+(deftest live-connection-preserves-arrangement-and-disabled-parameter-lanes
+  (let [form (-> connections/sync-defaults
+                 (assoc-in [:live :automap?] false)
+                 (assoc-in [:live :pairing] {:track-index "4" :arrangement-index "0" :rack-device-index ""}))
+        db (assoc base :connections {:sync-form form
+                                     :parameters [{:control "12" :cue-id "auto/red" :param "shape" :type "enum"
+                                                   :values ["sine" "saw"] :low "0" :high "1" :disabled? true :lane-note "102"}]})
+        live (:live (connections/sync-payload db))
+        arrange (transition db [:connections/action :arrange "48.5"])]
+    (is (= {:track-index 4 :arrangement-index 0} (:pairing live)))
+    (is (false? (:automap? live)))
+    (is (= {:cue-id "auto/red" :param "shape" :bounds [0 1] :lane-note 102
+            :values ["sine" "saw"] :type "enum" :disabled? true} (get-in live [:parameters "12"])))
+    (is (= "/api/sync/arrange" (get-in arrange [:fx 0 1 :path])))
+    (is (= 48.5 (get-in arrange [:fx 0 1 :body :song-beat])))
+    (is (string? (get-in arrange [:fx 0 1 :body :request-id])))))
