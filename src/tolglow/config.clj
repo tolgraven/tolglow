@@ -150,8 +150,8 @@
    {:universe 1, :offset 400, :type :moving
     :list [[:rgbw-36-moving     -1.5 1.2 -0.5]
            [:rgbw-12-12-moving   1.5 1.2 -0.5 #_:y-rotation #_(degrees 180)]
-           `[tolglow.fixtures/rgbw-60-moving-beam 0.0 0.2 -1.0
-             :y-rotation (afterglow.transform/degrees 180)]]} ; :rotation {:y 180} ideal
+           [fixtures/rgbw-60-moving-beam 0.0 0.2 -1.0
+            :y-rotation (degrees 180)]]} ; :rotation {:y 180} ideal
    :moving-mini
    {:universe 1, :offset 150, :type :moving
     :list [[:rgbw-7-12-moving -2.0 3.0 0.0]
@@ -173,9 +173,9 @@
            #_[:pixtol-60-2m  -1.0 2.0 0.0 :y-rotation (degrees 45)]]}
    :tube
    {:start-universe 11, :type :strip
-    :list `[[#(tolglow.fixtures/pixel-strip
-               10, :color-layout :rgbw, :x [-1.0 1.0] :y [4.0 4.0]
-               :channels ~pixtol-chs)]]}
+    :list [[#(fixtures/pixel-strip
+              10 :color-layout :rgbw :x [-1.0 1.0] :y [4.0 4.0]
+              :channels pixtol-chs)]]}
    #_:fogger
    #_{:universe 1, :offset 511
     :list [[:af-250-fogger 0.0 0.0 0.0]]}})
@@ -305,7 +305,7 @@
             :wash {}
             :strip {:groups [:strip :tube]
                     :names [:strip-1 :tube-1]}}
-    :patches patches :enabled true}
+    :fixture-types fixture-types :patches patches :enabled true}
   ;; :universes (extract-auto-from-patches :universe and :starting-universe etc...)
   :channels channel-pages
   :cue-pages {:definitions pages
