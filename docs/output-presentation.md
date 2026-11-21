@@ -142,9 +142,7 @@ network delivery and preview/UI contention; adding medians does not prove a
 
 ## Running the output scheduler
 
-The host boundary is `tolglow.output.scheduler`. Its name describes its
-job: send frames on a steady physical clock, even while a render is late. It is
-not the effect evaluator or the 3D preview renderer.
+The Afterglow publisher (`afterglow.output.scheduler`) sends frames on a steady physical clock, including when an effect is late. Tolglow supplies the show clock, patch, epoch and pause look.
 
 ```mermaid
 flowchart LR

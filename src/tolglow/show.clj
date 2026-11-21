@@ -29,7 +29,7 @@
             [tolglow.composition :as composition]
             [tolglow.output :as output]
             [tolglow.studio.display :as display]
-            [tolglow.output.scheduler :as output-scheduler]
+            [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
             [tolglow.persistence :as persistence]
