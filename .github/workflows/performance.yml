@@ -1,8 +1,7 @@
 name: Master show performance evidence
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '17 5 * * 1'
+  workflow_call:
   push:
     branches: [master]
     paths:
@@ -28,7 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: ${{ github.sha }}
+          # Reusable calls originate on the default branch (currently effects).
+          # Measure master for those calls, never the caller's older source tree.
+          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || 'master' }}
           path: tolglow
       - name: Resolve paired Afterglow master once
         uses: actions/checkout@v7.0.1

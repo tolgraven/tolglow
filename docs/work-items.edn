@@ -1,7 +1,59 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :authoring/aim-path-effects
+ [{:id :foundation/behavior-inventory
+   :title "Inventory performance and authoring behavior from the three reference revisions"
+   :kind :documentation :status :done :owner nil
+   :paths ["tolglow/docs/feature-parity-inventory.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Pin the Afterglow main, Tolglow effects and tolglow-web source revisions"
+                "Tie individual operator behaviors to existing tests or concrete open acceptance checks"]
+   :evidence ["docs/feature-parity-inventory.md contains three source-linked tables with observable checks"]}
+  {:id :web/typed-state-push
+   :title "Deliver committed show state through Reitit, Transit and bounded WebSockets"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/shared/tolglow/studio/transit.cljc"
+           "tolglow/src/shared/tolglow/studio/page_routes.cljc"
+           "tolglow/src/tolglow/studio/state_stream.clj"]
+   :depends-on [:web/state-delta-transport]
+   :acceptance ["Preserve color types, musical fractions and map keys across JVM and ClojureScript"
+                "Recover missing delta bases and reconnect in an optimized browser without HTTP show-state polls"
+                "Resolve direct links and browser history against the same named page routes as Ring"]
+   :evidence ["docs/state-stream.md and docs/studio-transit.md"
+              "Optimized Chromium received 136 patches, recovered a wrong base and forced disconnect, and sent 2 Transit commands. Passive Push opened zero show sockets."
+              "Reitit direct links, browser history and saved selection exercised in test/studio/navigation_browser.cjs"]}
+  {:id :native/apple-calibration-build-gate
+   :title "Reconcile calibration with master and verify unsigned Apple targets on macOS CI"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/.github/workflows/tests.yml" "tolglow/native/iOS/RigCalibration"
+           "tolglow/native/Tests/check_macos.sh" "tolglow/native/watchOS/TolglowWatchApp.swift"
+           "tolglow/native/README.md"
+           "tolglow/docs/rig-calibration.md"]
+   :depends-on [:native/lidar-rig-calibration-v1]
+   :acceptance ["Preserve both master integration and saved-model calibration disarming before thaw"
+                "Build shared Swift tests and unsigned iOS/watchOS targets on a compatible macOS host"
+                "Keep native build and physical hardware evidence distinct"]
+   :evidence ["Merged real master ff24662; restore-disarming remains before persistence/thaw rekeys instance sources"
+              "CI run44891609591: Java17/21/25 pure+parity, Studio and native all passed; parity529/4448"
+              "macos-15/Xcode16.4/Swift6.1.2: seven Swift tests passed; unsigned iOS and watchOS simulator builds passed"
+              "Actual SDK build caught and fixed watchOS-unavailable DisclosureGroup; no physical-device or LiDAR accuracy claim"
+              "https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227"]}
+  {:id :native/lidar-rig-calibration-v1
+   :title "Identify fixtures and propose rig calibration from committed patterns and AR depth"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/studio/calibration.clj"
+           "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
+           "tolglow/src/tolglow/studio/output_scheduler.clj" "tolglow/docs/rig-calibration.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Depth observations and temporal identity require physical output receipts"
+                "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
+                "Owned calibration overrides release on cancel or timeout without ending human effects"
+                "ARKit capture checks camera permission and LiDAR capability; native hardware evidence remains explicit"]
+   :evidence ["Focused calibration: 8 tests / 84 assertions passed, including actual full-show import disarming"
+              "Integrated pure: 465 tests / 3690 assertions passed; subsequent parity: 487 tests / 3817 assertions passed"
+              "Initial native static contracts: 6 existing plus 2 calibration checks passed; Apple build evidence follows in native/apple-calibration-build-gate; physical LiDAR/output unrun"
+              "docs/rig-calibration.md; tap-assisted capture and fitting foundation, automatic photometric detection remains planned"]}
+  {:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/aim_paths.clj" "tolglow/test/tolglow/aim_paths_test.clj"

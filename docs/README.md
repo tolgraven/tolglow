@@ -30,6 +30,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
+| [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
+| [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
 | [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |
 | [Compatibility repairs](compatibility-progress.md) | Actual namespace and legacy API repairs |

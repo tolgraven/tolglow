@@ -1,0 +1,62 @@
+# Performance and authoring behavior to carry forward
+
+A performer who releases a pad after a cue relaunch should hear the new music and see the new lights continue. Someone scrolling past the simulator should be able to keep mixing cues without spending GPU time drawing an invisible room. These details have observable outcomes that can be tested independently of the runtime or UI design.
+
+The tables cite three fixed source revisions. The last column names either a current test for a specific behavior or an acceptance case still to exercise. A source citation alone establishes what to look for. For control-by-control Push coverage, see the [control audit](control-parity-audit.md) and [parameter widget inventory](parameter-widget-parity.md).
+
+## Afterglow upstream main
+
+Reference revision [Deep-Symmetry/afterglow at bb5dfd1](https://github.com/Deep-Symmetry/afterglow/tree/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c).
+
+| Interaction | Reference behavior | Check in the new runtime and controls |
+| --- | --- | --- |
+| Launch a pad with saved settings | Defaults initialize the cue. Saved grid values, velocity-derived variables and caller overrides take increasing precedence. Each responsive variable can narrow the velocity range. [Grid launch][ag-show] · [Cue variables][ag-cues] | Launch the same cue from a pad and a compound cue with a conflicting saved value, strike and explicit override. Check the final value and the default used on the next launch. |
+| Strike, hold and release | A held cue follows the button. Shift can latch it. Graceful release lets the effect finish. A force request removes it immediately. An instance guard protects a replacement under the same effect key. [Cue options][ag-cues] · [Ending effects][ag-show] | Release an old activation after relaunch. Also test Shift-held strobe, release tail and forced stop on web and physical Push. [Existing coverage and gaps](control-parity-audit.md) |
+| Stack effects | Priority orders contributions. More recent effects at equal priority run later. A cue can end related keys on launch. [Cue priorities][ag-cues] | Launch two effects at the same priority, then an exclusive effect. Compare resolved values and surviving instances with one and several workers. |
+| Edit variables during performance | String keys create cue-local variables. Keywords address shared show variables. Compact displays can use a short name. A saved preset belongs to a grid cell and can be cleared. [Cue variables][ag-cues] · [Grid storage][ag-controllers] | Run two cues with the same temporary variable name and one shared color. Edit each, save one cell, clear it and relaunch both. |
+| Show the current pad color and waveform | A color function sees the cue, active effect, show and clock snapshot. Returning nil falls back to the configured color. A visualizer captures the variable map and returns a function sampled against metronome snapshots. [Cue colors and visualizers][ag-cues] | Test the falling-back color and compact label before and during launch. The generated-waveform tests already exercise effective live values, clock binding and changes on edits. [Waveform tests](../test/tolglow/studio/waveforms_test.clj) |
+| Run macros and code cues | A compound cue launches multiple grid cells with individual overrides, tracks their instance IDs, stays active while any child it started is active and can end those children. A code cue runs once on launch with the show and metronome snapshot. [Compound and code cues][ag-cues] | Replace one child independently, stop the parent and verify the replacement survives. Count code callbacks through press, hold and release. Sequential playback is an additional authoring mode. |
+| Keep a controller and web page in step | A linked grid can scroll with the web view. Cell feedback can go to MIDI notes/controllers and callbacks on activation and ending. MIDI feedback registrations have device disconnect cleanup. [Grid controllers][ag-controllers] | Link two viewports, move one, disconnect, reconnect and activate a cell. Check viewport position and count LED/feedback messages. |
+| Align musical clocks | One snapshot represents beat, bar, phrase and phases. A beat ratio of one half samples twice per beat. Meter and phrase length are configurable. The upstream Carabiner source includes a protocol reader and marks metronome phase alignment as unfinished. [Rhythm][ag-rhythm] · [Carabiner][ag-carabiner] | Fractional steps and meter changes have [modulation tests](../test/tolglow/modulation_test.clj). Check a real Link peer joining, changing tempo and leaving against the [sync implementation](sync-progress.md). |
+
+## Tolglow effects branch
+
+Reference revision [tolgraven/tolglow at 01146ec](https://github.com/tolgraven/tolglow/tree/01146ece7731ec06aa1ee6409342373096c8e0dc). The examples in that checkout live in the top-level `tolglow/` directory.
+
+| Authoring detail | Reference behavior | Check in the modern project |
+| --- | --- | --- |
+| Patch several fixtures together | A group supplies `:universe`, a starting `:offset` (default 1), optional `:type` and ordered `:list`. Entries can carry a registry key, fixture map or factory, coordinates and rotation options. The example names individual fixtures from the group and their 1-based position. [Configuration][tg-config] · [Expansion][tg-patch] | Expand four identical entries, then a mixed group. Compare IDs, addresses, group membership, pose and channel map with four explicit patches. Resolve a Clojure factory in trusted authoring code and serialize its expanded fixture data. |
+| Allocate universes and pixels | A group with `:start-universe` advances a universe per entry. The older same-universe stride looked at top-level coarse and fine offsets. A strip supplies individually positioned heads, color order and an optional global channel prefix. [Patch loop][tg-patch] · [Fixtures][tg-fixtures] | Preserve both grouping choices. A new test for shorthand expansion should include head channels and a strip spanning the 512 boundary. Current fixture tests cover color layouts, fine offsets, prefix and centered pixel positions. [Fixture tests](../test/tolglow/fixtures_test.clj) |
+| Address one group or the whole rig | `group-parts` derives fixture selection, display name, effect key and related end keys. A global dimmer can supersede the group dimmers. A group dimmer can supersede the global dimmer while an unrelated group keeps running. [Cue helpers][tg-cue] | Launch group A, group B, global, then group A again. Assert active keys and fixture output after each launch. Exercise the author's `end-rest?` choice. |
+| Play a page by muscle memory | `main-dimmer` puts velocity-to-level strobe cues on the bottom row and dimmer parameter cues above, with a shared strobe-color cue. Movement, pointing, channel-control, velocity and color have their own page builders. [Pages][tg-pages] | Generate the page at a nonzero grid offset. Check coordinates, groups, velocity target and saved color by operating it from web and grid. |
+| Build and inspect a signal | `param/ratio` expresses beats per number of cycles. `multi-lfo` combines oscillators. `cue/auto` attaches a visualizer that uses the cue variables. The parameter catalogue includes defaults, bounds, gain, offset and phase. [Parameters][tg-param] · [Cue helpers][tg-cue] · [Catalogue][tg-config] | Change cycles, gain and offset during a running cue. Compare the visible resulting curve with the value driving a head at the same phase. [Signal tests](../test/tolglow/signals_test.clj) · [Live projections](waveform-projections.md) |
+| Randomize selectively on the beat | The effects page has separate operations for cue alpha, a bar callback and beat-triggered color randomization. A one-shot cue helper builds a beat-timed chase. [Effects page][tg-pages] · [One-shot helper][tg-cue] | Keep unrelated parameters unchanged. Exercise seed, bounds, fractional steps, holds, pause and restore against the same musical timeline. Current tests include these cases and an exact cue-expiry boundary. [Modulation tests](../test/tolglow/modulation_test.clj) |
+
+## tolglow-web interaction details
+
+Reference revision [tolgraven/tolglow-web at 2b58843](https://github.com/tolgraven/tolglow-web/tree/2b588435a37812628fa48617f3d57d60acb15bce).
+
+| Interaction | Evidence and acceptance |
+| --- | --- |
+| Scroll the preview completely out of view | The intersection observer drives `playback!` on zero/positive intersection. Pause cancels the animation frame and stops fixture-state and live-shader subscriptions. Repeated requests for the same state are ignored. Mount installs a resize listener. Unmount pauses and disposes renderer and controls. Verify zero further draws, worker frames, camera ticks and fog steps while offscreen, then one resumption using current fixture values. [Original preview][web-three] |
+| Switch tabs, blur the window or leave the preview page | Foreground and tab visibility are additional requirements. An intersecting canvas in a background window must also pause. Test overlapping reasons, e.g. blur → scroll out → focus → scroll in. Sleep through several show updates and check camera/fog time on return. Test worker and fallback, fullscreen, zero-size canvas, and unmount/remount. The remaining app must continue to receive show state. [Original viewport behavior][web-three] · [Camera navigation](preview-navigation.md) |
+| Mix several active effects | The active list filters and sorts running cues. A filter can be saved, applied and deleted. Stop controls select all, visible or hidden active cues. Rows can be undocked. Verify each stop selection with two matching cues and one hidden cue. Check the action on a narrow viewport with multiple active effects. [Filter and active list][web-views] |
+| Edit without losing the previous value | The text widget supports immediate and commit-on-blur modes. Enter can commit a draft or save a nonempty filter. Escape in deferred mode restores the external value. Verify typing, Escape, blur and an external update arriving during editing. [Input widget][web-ui] |
+| Adjust a color in place | The picker edits hue while preserving the current color's other components and provides separate lightness and saturation sliders. Verify changing hue preserves the chosen saturation, lightness and alpha. Check server echo, the Studio swatch and the selected Push view. [Color widget][web-ui] · [Typed wire values](studio-transit.md) |
+
+When restoring a row, add the regression at the entry point a performer or show author uses. Record the test, commit and remaining hardware check in the [work ledger](work-items.edn). A missing source example or an untested device interaction stays an open acceptance case.
+
+[ag-show]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/show.clj
+[ag-cues]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/effects/cues.clj
+[ag-controllers]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/controllers.clj
+[ag-rhythm]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/rhythm.clj
+[ag-carabiner]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/carabiner.clj
+[tg-config]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/config.clj
+[tg-patch]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/util.clj
+[tg-fixtures]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/fixtures.clj
+[tg-pages]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/page.clj
+[tg-param]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/param.clj
+[tg-cue]: https://github.com/tolgraven/tolglow/blob/01146ece7731ec06aa1ee6409342373096c8e0dc/tolglow/cue.clj
+[web-three]: https://github.com/tolgraven/tolglow-web/blob/2b588435a37812628fa48617f3d57d60acb15bce/src/cljs/tolglow_web/three.cljs#L561-L650
+[web-views]: https://github.com/tolgraven/tolglow-web/blob/2b588435a37812628fa48617f3d57d60acb15bce/src/cljs/tolglow_web/views.cljs#L428-L488
+[web-ui]: https://github.com/tolgraven/tolglow-web/blob/2b588435a37812628fa48617f3d57d60acb15bce/src/cljs/tolglow_web/views/ui_component.cljs#L274-L345

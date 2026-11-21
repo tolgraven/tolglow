@@ -38,6 +38,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       // light/shadow shader layout, not compile a different lit-scene program.
       engine.update({...snapshot, output: {values: {}}}); await engine.whenReady; return engine.getTelemetry();
     });
+    assert.equal(first.lightingMode, 'hold');
     assert.equal(first.thread, 'worker'); assert.equal(first.ready, true); assert.equal(first.failed, null);
     assert.equal(first.fixtureCount, 8); assert.ok(first.shadowCount > 0);
     assert.equal(first.activeLights, 0);
@@ -72,7 +73,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(heartbeat.telemetry.programCount, first.programCount, 'A cue launch must not compile a new light-count shader');
 
     const fenced = await page.evaluate(async () => {
-      engine.pause(); await engine.draw();
+      engine.setLightingMode('interpolate'); engine.pause(); await engine.draw();
       // Change show epoch after a real render starts, while its shader work is
       // still in progress. The old image must close without presentation.
       const discarded = engine.discardedFrames;
@@ -87,6 +88,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       const draw = engine.draw(); await nextStart; await draw;
       return {discarded: engine.discardedFrames - discarded, telemetry: engine.getTelemetry()};
     });
+    assert.equal(fenced.telemetry.lightingMode, 'interpolate');
     assert.ok(fenced.discarded >= 1); assert.equal(fenced.telemetry.epoch, 2); assert.equal(fenced.telemetry.ready, true);
     const resized = await page.evaluate(async () => {
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
@@ -94,7 +96,9 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       return {telemetry, disposed: engine.disposed, terminated: engine.worker === null,
         channelClosed: engine.channel.closed, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await engine.draw()};
     });
-    assert.deepEqual(resized.telemetry.pixels, [360, 225]);
+    const scale = resized.telemetry.renderScale;
+    assert.ok(scale >= .5 && scale <= 1);
+    assert.deepEqual(resized.telemetry.pixels, [Math.round(360 * scale), Math.round(225 * scale)]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
     assert.equal(resized.drawAfterDispose, false);
     assert.deepEqual(errors, []);
@@ -104,7 +108,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       const calls = [], getContext = canvas.getContext.bind(canvas); canvas.getContext = (...args) => {calls.push(args[0]); return getContext(...args);};
       const url = URL.createObjectURL(new Blob([`throw new Error('deliberate startup failure');`], {type: 'text/javascript'}));
       const renderer = new RoomPreview(canvas, document.querySelector('#status'), {workerFactory: () => new Worker(url)});
-      renderer.setNavigationMode('walk'); renderer.setNavigationSpeed(3); renderer.setInteractionActive(true);
+      renderer.setLightingMode('interpolate'); renderer.setNavigationMode('walk'); renderer.setNavigationSpeed(3); renderer.setInteractionActive(true);
       const navigationStates = [], secondaryStates = [];
       const unsubscribe = renderer.onNavigationChange(state => navigationStates.push(state));
       const unsubscribeSecondary = renderer.onNavigationChange(state => secondaryStates.push(state));
@@ -115,6 +119,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
         secondaryObserved: secondaryStates.at(-1), cameraShared: renderer.camera === renderer.fallback.camera,
         calls, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await renderer.draw()};
     });
+    assert.equal(fallback.telemetry.lightingMode, 'interpolate');
     assert.equal(fallback.telemetry.thread, 'main'); assert.equal(fallback.telemetry.ready, true);
     assert.match(fallback.telemetry.fallbackReason, /deliberate startup failure/);
     assert.equal(fallback.calls[0], 'webgl2'); assert.equal(fallback.ownerRemoved, true);

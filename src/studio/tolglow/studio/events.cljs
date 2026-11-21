@@ -173,8 +173,8 @@
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
            runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
-           (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
-           (conj [:dispatch [:studio/settings-received (:settings show)]]))}))
+           (or epoch-changed? (not (:settings-loaded? db)))
+           (conj [:dispatch [:studio/settings-received (or (:settings show) {})]]))}))
 
 (rf/reg-event-db :studio/stream-opening
   (fn [db [_ session id]]
@@ -204,7 +204,7 @@
 (rf/reg-event-fx :studio/stream-closed
   (fn [{:keys [db]} [_ session id reason]]
     (when (current-stream? db session id)
-      {:db (assoc db :stream-id nil :pending-params {}
+      {:db (assoc db :stream-id nil
                   :connection {:connected? false :error (str "Reconnecting: " reason)})
        :dispatch [:studio/release-pointers]})))
 
@@ -715,6 +715,7 @@
   (fn [{:keys [db]} [_ key value]]
     (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
                            :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
+                           :lighting-mode (#{"hold" "interpolate"} value)
                            :camera (contains? #{"audience" "overview"} value) false)]
       (when valid? {:db (assoc-in db [:ui :preview-settings key] value) :studio/preview [key value]}))))
 (rf/reg-event-fx :studio/preview-expand

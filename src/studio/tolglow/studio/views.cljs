@@ -50,7 +50,7 @@
 (defn- label [value] (str/replace (if (keyword? value) (name value) (str value)) #"[-_]" " "))
 (defn- find-id [items id] (some #(when (= (:id %) id) %) items))
 (defn- display-name [item] (or (:name item) (label (:id item))))
-(defn- swatch [item] (or (:swatch item) "#a8b99a"))
+(defn- swatch [item] (widgets/swatch-css (or (:swatch item) "#a8b99a")))
 (defn- color-style [item] {"--cue-color" (swatch item)})
 (defn- numeric-label [value]
   (if (number? value) (str/replace (.toFixed value 3) #"\.?0+$" "") (str value)))
@@ -235,9 +235,9 @@
                     selected (or (first (keep-indexed #(when (= value %2) %1) choices)) 0)]
                 [:select {:aria-label title :value selected :on-change #(change! (get choices (js/parseInt (input-value %) 10)))}
                  (for [[index item] (map-indexed vector choices)] ^{:key index} [:option {:value index} (label item)])])
-       "color" [:input {:type "color" :aria-label title :value (hex-color value)
+       "color" [:input {:type "color" :aria-label title :value (hex-color (widgets/color-components value))
                          :on-change #(change! (cond-> (color-components (input-value %))
-                                               (= 4 (count value)) (conj (nth value 3))))}]
+                                               (and (vector? value) (= 4 (count value))) (conj (nth value 3))))}]
        ("vector" "range")
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]
@@ -273,7 +273,7 @@
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
-   [interop/preview (:show db)]
+   [interop/preview (or (:server-presentation db) (:show db))]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -285,6 +285,11 @@
                  :on-change #(input! [:studio/preview-setting :quality (input-value %)])}
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
+      [:label "Fixture updates"
+       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode] "hold")
+                 :on-change #(input! [:studio/preview-setting :lighting-mode (input-value %)])}
+        [:option {:value "hold"} "Follow show frames"]
+        [:option {:value "interpolate"} "Smooth · one frame delay"]]]
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
        [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])

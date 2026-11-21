@@ -32,6 +32,7 @@
                (assoc patch :changes [[:set [:instances 99 :params] {}]])
                (assoc patch :changes [[:remove [:instances 0]]])
                (assoc patch :changes [[:remove [:missing]]])
+               (assoc patch :changes [[:remove [:revision]]])
                (assoc patch :changes [[:set [:missing :child] 1]])
                (assoc patch :changes [["move" [:nullable] 1]])
                (assoc patch :changes [[:set [:nullable]]])

@@ -6,7 +6,7 @@
 (def protocol "tolglow-state/2")
 
 (defn identity-of [view] (select-keys view [:runtime-id :show-id :epoch]))
-(defn- order-of [view] (mapv #(get view % 0) [:epoch :revision :frame-number]))
+(defn- order-of [view] (mapv view [:epoch :revision :frame-number]))
 (defn- token? [value] (and (string? value) (<= 1 (count value) 128)))
 (defn- fail! [] (throw (ex-info "Invalid projection delta" {})))
 
