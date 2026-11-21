@@ -1,0 +1,63 @@
+name: Tolglow
+options:
+  bundleIdPrefix: org.tolglow
+  deploymentTarget:
+    iOS: '18.0'
+    watchOS: '11.0'
+packages:
+  TolglowSensorCore:
+    path: Core
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # Set your own development team in Xcode; no signing credentials are stored.
+targets:
+  TolglowPhone:
+    type: application
+    platform: iOS
+    sources: [iOS, Shared]
+    info:
+      path: iOS/Info.plist
+      properties:
+        CFBundleDisplayName: Tolglow
+        UILaunchScreen: {}
+        NSMotionUsageDescription: Read device motion while you explicitly preview or conduct lights.
+        NSLocalNetworkUsageDescription: Connect to your chosen Tolglow lighting host and send armed OSC observations.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios
+        TARGETED_DEVICE_FAMILY: '1,2'
+    dependencies:
+      - package: TolglowSensorCore
+      - target: TolglowWatch
+        embed: true
+  TolglowWatch:
+    type: application
+    platform: watchOS
+    sources: [watchOS, Shared]
+    info:
+      path: watchOS/Info.plist
+      properties:
+        CFBundleDisplayName: Tolglow
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: org.tolglow.ios
+        NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
+    dependencies:
+      - package: TolglowSensorCore
+schemes:
+  TolglowPhone:
+    build:
+      targets:
+        TolglowPhone: all
+  TolglowWatch:
+    build:
+      targets:
+        TolglowWatch: all

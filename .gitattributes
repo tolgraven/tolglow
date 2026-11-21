@@ -1,0 +1,4 @@
+resources/studio/vendor/neovim/nvim.data binary
+resources/studio/vendor/neovim/nvim.wasm binary
+# Keep SHA-pinned upstream Bruvbox source byte-for-byte, including its spacing.
+resources/studio/vendor/neovim/bruvbox/** -whitespace

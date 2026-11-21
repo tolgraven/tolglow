@@ -1,0 +1,589 @@
+{
+  "status": "passed",
+  "at": "2026-11-21T04:55:02.454Z",
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+  "oracle": "afterglow.render.ir/emit-glsl + compile-expression",
+  "absoluteTolerance": 0.000003,
+  "relativeTolerance": 0.000003,
+  "correctness": [
+    {
+      "id": "musical-phase",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 0,
+      "timings": {
+        "uploadMs": 0.8200000002980232,
+        "submitMs": 8.184999999590218,
+        "fenceWaitMs": 41.95999999996275,
+        "readbackMs": 6.1000000005587935,
+        "totalMs": 56.24500000011176
+      }
+    },
+    {
+      "id": "constant",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 5.960464455334602e-9,
+      "timings": {
+        "uploadMs": 0.03000000026077032,
+        "submitMs": 11.75,
+        "fenceWaitMs": 7.660000000149012,
+        "readbackMs": 2.9049999993294477,
+        "totalMs": 22.31499999947846
+      }
+    },
+    {
+      "id": "position",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 0,
+      "timings": {
+        "uploadMs": 0.03000000026077032,
+        "submitMs": 6.65500000026077,
+        "fenceWaitMs": 12.65500000026077,
+        "readbackMs": 0.5,
+        "totalMs": 19.81000000052154
+      }
+    },
+    {
+      "id": "absolute-clock",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 2.0027161040658825e-9,
+      "timings": {
+        "uploadMs": 0.054999999701976776,
+        "submitMs": 4.099999999627471,
+        "fenceWaitMs": 12.65500000026077,
+        "readbackMs": 4.059999999590218,
+        "totalMs": 20.81499999947846
+      }
+    },
+    {
+      "id": "elapsed-and-params",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.0002,
+        "relative": 0.000003
+      },
+      "limitation": "Exploratory transcendental tolerance; SwiftShader sin/cos differ about 1.3e-4 from the CPU oracle. Not approved for fine-DMX parity.",
+      "maxAbsoluteError": 0.00012486813106837857,
+      "timings": {
+        "uploadMs": 0.0400000000372529,
+        "submitMs": 4.0499999998137355,
+        "fenceWaitMs": 21.644999999552965,
+        "readbackMs": 1.415000000037253,
+        "totalMs": 27.109999999403954
+      }
+    },
+    {
+      "id": "elapsed-arithmetic",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 7.450580596923828e-9,
+      "timings": {
+        "uploadMs": 0.024999999441206455,
+        "submitMs": 2.6899999994784594,
+        "fenceWaitMs": 16.550000000745058,
+        "readbackMs": 0.5249999994412065,
+        "totalMs": 19.764999999664724
+      }
+    },
+    {
+      "id": "vector-parameter",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.000003,
+        "relative": 0.000003
+      },
+      "limitation": null,
+      "maxAbsoluteError": 0,
+      "timings": {
+        "uploadMs": 0.044999999925494194,
+        "submitMs": 5.889999999664724,
+        "fenceWaitMs": 12.475000000558794,
+        "readbackMs": 1.9449999993667006,
+        "totalMs": 20.309999999590218
+      }
+    },
+    {
+      "id": "two-components",
+      "components": 124,
+      "tolerance": {
+        "absolute": 0.0002,
+        "relative": 0.000003
+      },
+      "limitation": "Exploratory transcendental tolerance; SwiftShader sin/cos differ about 1.3e-4 from the CPU oracle. Not approved for fine-DMX parity.",
+      "maxAbsoluteError": 0.00013361599666650292,
+      "timings": {
+        "uploadMs": 0.0400000000372529,
+        "submitMs": 17.37000000011176,
+        "fenceWaitMs": 14.179999999701977,
+        "readbackMs": 3.2349999994039536,
+        "totalMs": 34.78499999921769
+      }
+    }
+  ],
+  "lifecycle": [
+    {
+      "name": "musical-clock-and-meter-validation",
+      "status": "passed"
+    },
+    "missing/invalid inputs rejected before submission",
+    "one in-flight frame enforced",
+    "cancellation discards result and next frame recovers",
+    "failed compilation retains last good program",
+    "unavailable WebGL2 reports explicit unsupported result",
+    "expired fence deadline discards even an already completed result",
+    "context loss rejects pending output",
+    "disposed runner rejects use"
+  ],
+  "benchmarks": [
+    {
+      "count": 1000,
+      "warmup": 3,
+      "samples": 12,
+      "maxAbsoluteError": 7.450580596923828e-9,
+      "milliseconds": {
+        "uploadMs": {
+          "p50": 0.024999999441206455,
+          "p95": 0.03500000014901161,
+          "p99": 0.03500000014901161,
+          "min": 0.009999999776482582,
+          "max": 0.03500000014901161
+        },
+        "submitMs": {
+          "p50": 0.5700000002980232,
+          "p95": 4.479999999515712,
+          "p99": 4.479999999515712,
+          "min": 0.3600000003352761,
+          "max": 4.479999999515712
+        },
+        "fenceWaitMs": {
+          "p50": 8.28000000026077,
+          "p95": 35.375,
+          "p99": 35.375,
+          "min": 4.134999999776483,
+          "max": 35.375
+        },
+        "readbackMs": {
+          "p50": 2.6499999994412065,
+          "p95": 29.320000000298023,
+          "p99": 29.320000000298023,
+          "min": 0.2999999998137355,
+          "max": 29.320000000298023
+        },
+        "totalMs": {
+          "p50": 11.929999999701977,
+          "p95": 51.36500000022352,
+          "p99": 51.36500000022352,
+          "min": 4.875,
+          "max": 51.36500000022352
+        }
+      },
+      "observations": [
+        {
+          "uploadMs": 0.02500000037252903,
+          "submitMs": 3.735000000335276,
+          "fenceWaitMs": 18.309999999590218,
+          "readbackMs": 29.320000000298023,
+          "totalMs": 51.36500000022352
+        },
+        {
+          "uploadMs": 0.03000000026077032,
+          "submitMs": 2.8450000006705523,
+          "fenceWaitMs": 8.334999999962747,
+          "readbackMs": 0.6199999991804361,
+          "totalMs": 11.799999999813735
+        },
+        {
+          "uploadMs": 0.02500000037252903,
+          "submitMs": 0.5700000002980232,
+          "fenceWaitMs": 9.375,
+          "readbackMs": 0.375,
+          "totalMs": 10.320000000298023
+        },
+        {
+          "uploadMs": 0.02000000048428774,
+          "submitMs": 0.44000000040978193,
+          "fenceWaitMs": 4.134999999776483,
+          "readbackMs": 0.2999999998137355,
+          "totalMs": 4.875
+        },
+        {
+          "uploadMs": 0.009999999776482582,
+          "submitMs": 0.5499999998137355,
+          "fenceWaitMs": 23.75,
+          "readbackMs": 11.93500000052154,
+          "totalMs": 36.235000000335276
+        },
+        {
+          "uploadMs": 0.03000000026077032,
+          "submitMs": 0.48000000044703484,
+          "fenceWaitMs": 35.375,
+          "readbackMs": 9.149999999441206,
+          "totalMs": 45.00499999988824
+        },
+        {
+          "uploadMs": 0.024999999441206455,
+          "submitMs": 4.479999999515712,
+          "fenceWaitMs": 15.955000000074506,
+          "readbackMs": 2.5049999998882413,
+          "totalMs": 22.93999999947846
+        },
+        {
+          "uploadMs": 0.02500000037252903,
+          "submitMs": 3.0750000001862645,
+          "fenceWaitMs": 4.264999999664724,
+          "readbackMs": 11.995000000111759,
+          "totalMs": 19.334999999962747
+        },
+        {
+          "uploadMs": 0.03500000014901161,
+          "submitMs": 0.9950000001117587,
+          "fenceWaitMs": 4.150000000372529,
+          "readbackMs": 2.6499999994412065,
+          "totalMs": 7.794999999925494
+        },
+        {
+          "uploadMs": 0.014999999664723873,
+          "submitMs": 0.3600000003352761,
+          "fenceWaitMs": 8.269999999552965,
+          "readbackMs": 3.2999999998137355,
+          "totalMs": 11.929999999701977
+        },
+        {
+          "uploadMs": 0.024999999441206455,
+          "submitMs": 0.5249999994412065,
+          "fenceWaitMs": 8.28000000026077,
+          "readbackMs": 17.100000000558794,
+          "totalMs": 25.90500000026077
+        },
+        {
+          "uploadMs": 0.015000000596046448,
+          "submitMs": 1.1000000005587935,
+          "fenceWaitMs": 4.139999999664724,
+          "readbackMs": 0.6450000004842877,
+          "totalMs": 5.885000000707805
+        }
+      ]
+    },
+    {
+      "count": 10000,
+      "warmup": 3,
+      "samples": 12,
+      "maxAbsoluteError": 7.450580596923828e-9,
+      "milliseconds": {
+        "uploadMs": {
+          "p50": 0.03000000026077032,
+          "p95": 0.0400000000372529,
+          "p99": 0.0400000000372529,
+          "min": 0.024999999441206455,
+          "max": 0.0400000000372529
+        },
+        "submitMs": {
+          "p50": 0.7050000000745058,
+          "p95": 7.315000000409782,
+          "p99": 7.315000000409782,
+          "min": 0.5899999998509884,
+          "max": 7.315000000409782
+        },
+        "fenceWaitMs": {
+          "p50": 14.415000000037253,
+          "p95": 135.29999999981374,
+          "p99": 135.29999999981374,
+          "min": 8.415000000037253,
+          "max": 135.29999999981374
+        },
+        "readbackMs": {
+          "p50": 1.4699999997392297,
+          "p95": 29.019999999552965,
+          "p99": 29.019999999552965,
+          "min": 0.43499999959021807,
+          "max": 29.019999999552965
+        },
+        "totalMs": {
+          "p50": 21.375,
+          "p95": 143.23500000033528,
+          "p99": 143.23500000033528,
+          "min": 9.479999999515712,
+          "max": 143.23500000033528
+        }
+      },
+      "observations": [
+        {
+          "uploadMs": 0.029999999329447746,
+          "submitMs": 0.6849999995902181,
+          "fenceWaitMs": 12.355000000447035,
+          "readbackMs": 1.6499999994412065,
+          "totalMs": 14.68999999947846
+        },
+        {
+          "uploadMs": 0.024999999441206455,
+          "submitMs": 0.5899999998509884,
+          "fenceWaitMs": 12.544999999925494,
+          "readbackMs": 0.7300000004470348,
+          "totalMs": 13.865000000223517
+        },
+        {
+          "uploadMs": 0.0400000000372529,
+          "submitMs": 0.875,
+          "fenceWaitMs": 29.139999999664724,
+          "readbackMs": 0.9100000001490116,
+          "totalMs": 30.924999999813735
+        },
+        {
+          "uploadMs": 0.0400000000372529,
+          "submitMs": 0.7050000000745058,
+          "fenceWaitMs": 12.595000000670552,
+          "readbackMs": 8.074999999254942,
+          "totalMs": 21.375
+        },
+        {
+          "uploadMs": 0.03500000014901161,
+          "submitMs": 0.8100000005215406,
+          "fenceWaitMs": 14.415000000037253,
+          "readbackMs": 1.4699999997392297,
+          "totalMs": 16.695000000298023
+        },
+        {
+          "uploadMs": 0.03000000026077032,
+          "submitMs": 1.084999999962747,
+          "fenceWaitMs": 21.070000000298023,
+          "readbackMs": 0.47999999951571226,
+          "totalMs": 22.634999999776483
+        },
+        {
+          "uploadMs": 0.02500000037252903,
+          "submitMs": 0.6849999995902181,
+          "fenceWaitMs": 43.41000000014901,
+          "readbackMs": 5.555000000633299,
+          "totalMs": 49.65000000037253
+        },
+        {
+          "uploadMs": 0.03499999921768904,
+          "submitMs": 0.6499999994412065,
+          "fenceWaitMs": 9.509999999776483,
+          "readbackMs": 0.6050000004470348,
+          "totalMs": 10.764999999664724
+        },
+        {
+          "uploadMs": 0.03000000026077032,
+          "submitMs": 0.6299999998882413,
+          "fenceWaitMs": 8.415000000037253,
+          "readbackMs": 0.43499999959021807,
+          "totalMs": 9.479999999515712
+        },
+        {
+          "uploadMs": 0.02500000037252903,
+          "submitMs": 7.315000000409782,
+          "fenceWaitMs": 16.50499999988824,
+          "readbackMs": 29.019999999552965,
+          "totalMs": 52.83999999985099
+        },
+        {
+          "uploadMs": 0.029999999329447746,
+          "submitMs": 2.2599999997764826,
+          "fenceWaitMs": 16.759999999776483,
+          "readbackMs": 7.084999999962747,
+          "totalMs": 26.104999999515712
+        },
+        {
+          "uploadMs": 0.03000000026077032,
+          "submitMs": 1.3650000002235174,
+          "fenceWaitMs": 135.29999999981374,
+          "readbackMs": 6.570000000298023,
+          "totalMs": 143.23500000033528
+        }
+      ]
+    }
+  ],
+  "timingMeaning": "CPU wall time, including browser scheduling. Fence wait is not isolated GPU execution time.",
+  "context": {
+    "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+    "shadingLanguage": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "vendor": "Google Inc. (Google)",
+    "maxTextureSize": 8192,
+    "acceleration": "software",
+    "floatTarget": "RGBA32F",
+    "readback": "PIXEL_PACK_BUFFER + fenceSync + getBufferSubData"
+  },
+  "browserMessages": [
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    },
+    {
+      "type": "warning",
+      "message": "performance warning: READ-usage buffer was written, then fenced, but written again before being read back. This discarded the shadow copy that was created to accelerate readback."
+    }
+  ]
+}

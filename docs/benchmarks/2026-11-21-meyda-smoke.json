@@ -1,0 +1,19 @@
+{
+  "package": "meyda",
+  "version": "5.6.3",
+  "runtime": "v24.22.3",
+  "status": "passed",
+  "assertions": 3,
+  "input": "1024 samples, 48000 Hz, 0.5 amplitude sine at FFT bin16 (750 Hz), rectangular window",
+  "values": {
+    "rms": 0.35355338782812584,
+    "energy": 127.99999799781907,
+    "spectralCentroid": 16.0000209156622,
+    "spectralFlatness": 2.269035955399675e-14,
+    "spectralRolloff": 751.46771037182
+  },
+  "notes": [
+    "spectralCentroid here is FFT bins; convert using sampleRate/bufferSize before comparing Hz",
+    "Pure extract API only; no WebAudio/AudioWorklet microphone, real music or beat inference tested"
+  ]
+}

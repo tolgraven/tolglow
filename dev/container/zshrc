@@ -1,0 +1,9 @@
+# System configuration works with a per-session, nonpersistent HOME tmpfs.
+autoload -Uz compinit
+compinit -d /tmp/tolglow-zcompdump
+setopt autocd interactivecomments histignorealldups
+bindkey -e
+PROMPT='%F{214}%n%f %F{109}%~%f %# '
+RPROMPT='%F{244}tolglow container%f'
+source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh

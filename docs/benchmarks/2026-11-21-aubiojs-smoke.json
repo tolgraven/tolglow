@@ -1,0 +1,70 @@
+{
+  "package": "aubiojs",
+  "version": "0.2.1",
+  "runtime": "v24.22.3",
+  "sampleRate": 48000,
+  "hopSize": 512,
+  "windowSize": 2048,
+  "signal": "60 seconds synthetic exponentially decaying 90 Hz + 1900 Hz clicks at 120 BPM",
+  "frames": 5625,
+  "beatEvents": 16,
+  "onsetEvents": 76,
+  "finalBpm": 121.68673706054688,
+  "finalConfidence": 2.6484575271606445,
+  "firstBeat": {
+    "blockStartSample": 144384,
+    "value": 0.2714424133300781,
+    "bpm": 120.92472839355469,
+    "confidence": 0
+  },
+  "lastBeats": [
+    {
+      "blockStartSample": 1199616,
+      "value": 0.040874481201171875,
+      "bpm": 121.69776916503906,
+      "confidence": 2.5636096000671387
+    },
+    {
+      "blockStartSample": 1583616,
+      "value": 0.1571521759033203,
+      "bpm": 121.69676971435547,
+      "confidence": 2.5719497203826904
+    },
+    {
+      "blockStartSample": 1967616,
+      "value": 0.075103759765625,
+      "bpm": 121.6933822631836,
+      "confidence": 2.717980146408081
+    },
+    {
+      "blockStartSample": 2759680,
+      "value": 0.12972450256347656,
+      "bpm": 121.68673706054688,
+      "confidence": 2.6484575271606445
+    }
+  ],
+  "firstOnsets": [
+    0,
+    0.9928125143051147,
+    1.4935624599456787,
+    1.9943333864212036,
+    2.495041608810425
+  ],
+  "combinedTempoOnsetCpuMs": {
+    "p50": 0.23349999999982174,
+    "p95": 0.46059999999999945,
+    "max": 27.026149000000032
+  },
+  "deleteSupported": {
+    "tempo": true,
+    "onset": true
+  },
+  "limits": [
+    "Node synthetic smoke only, no real audio, browser AudioWorklet, music corpus or JVM adapter",
+    "CPU includes both calls, excludes input generation, audio capture, queueing and clock alignment",
+    "No downbeat/phrase/mood inference verified"
+  ],
+  "status": "accuracy-gate-failed",
+  "gate": "beatEvents>30 && onsetEvents>30 && abs(finalBpm-120)<5",
+  "apiMismatch": "Onset requires 4 runtime constructor arguments including method; npm .d.ts declares 3"
+}
