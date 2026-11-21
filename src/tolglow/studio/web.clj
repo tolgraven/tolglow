@@ -181,6 +181,7 @@
 
 (def operations
   {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+   "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -254,6 +255,8 @@
     "/api/fixtures" (read-action fixture! :snapshot "Fixture library unavailable")
     "/api/audio" (read-action audio! :status "Audio service unavailable")
     "/api/audio/inputs" (read-action audio! :inputs "Audio service unavailable")
+    "/api/audio/returns/mixers" (read-action audio! :return-mixers "Audio service unavailable")
+    "/api/audio/returns" (read-action audio! :return-status "Audio service unavailable")
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
@@ -293,6 +296,7 @@
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch})
    (post-actions "/api/audio/" audio! ok {"start" :start "stop" :stop})
+   (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
