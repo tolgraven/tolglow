@@ -29,7 +29,7 @@
     tolglow.studio.terminal-test tolglow.studio.sensors-test tolglow.studio.sensor-osc-test
     tolglow.studio.sensor-host-test tolglow.studio.output-scheduler-test
     tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test
-    tolglow.studio.projection-test])
+    tolglow.studio.event-subscribers-test tolglow.studio.projection-test])
 
 (def suites
   {"pure" pure-tests

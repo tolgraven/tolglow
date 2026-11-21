@@ -1,15 +1,19 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :sync/link-playback-and-pause-lighting
-   :title "Follow Ableton Link playback and choose the paused light output"
-   :kind :implementation :status :done :owner nil
-   :paths ["tolglow/src/tolglow/integrations/ableton_link.clj" "tolglow/src/tolglow/output/pause_look.clj" "tolglow/docs/ableton-link.md"]
-   :depends-on [:foundation/tests]
-   :acceptance ["Link playback edges reach the show clock through a loopback daemon" "Manual and Link pauses can select a faint ambient color or blackout" "Save and restore pairing and output settings"]
-   :evidence ["Real Carabiner-protocol TCP socket, host clock transitions, retained musical lifetimes, RGBW sink capture, master/blackout precedence and Transit restore: 3 tests / 48 assertions"
-              "Optimized Chromium at touch-tablet dimensions saved/reloaded Link pairing and ambient RGB/level, switched to blackout; test/studio/link_pause_browser.cjs"
-              "Physical Live, cross-machine phase and real fixtures remain hardware gates in docs/ableton-link.md"]}
+ [{:id :render/calibrated-moving-head-shader
+   :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
+   :kind :research :status :done :owner nil
+   :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
+           "tolglow/dev/gpu/profile-movers.cjs" "tolglow/dev/tolglow/mover_oracle.clj"
+           "tolglow/bin/profile-mover-shader" "tolglow/docs/moving-head-shader.md"]
+   :depends-on [:render/gpu-experiment-v1]
+   :acceptance ["Drive at least 64 differently mounted heads through a changing world-space aim path"
+                "Compare calibrated axes, reachability, and multi-universe coarse/fine output with the paired Afterglow renderer"
+                "Record upload, dispatch, fence, readback, CPU packing and total wall time with the actual renderer"]
+   :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
+              "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
+              "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
   {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
@@ -127,6 +131,15 @@
               "Aggregate parity before final closed-path metadata guard: 502 tests / 4225 assertions passed"
               "Real output changes only selected mover; full show round trip and stale admission covered"
               "docs/aim-paths.md; 3D interaction and hardware accuracy are separate gates"]}
+  {:id :sync/link-playback-and-pause-lighting
+   :title "Follow Ableton Link playback and choose the paused light output"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/ableton_link.clj" "tolglow/src/tolglow/output/pause_look.clj" "tolglow/docs/ableton-link.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Link playback edges reach the show clock through a loopback daemon" "Manual and Link pauses can select a faint ambient color or blackout" "Save and restore pairing and output settings"]
+   :evidence ["Real Carabiner-protocol TCP socket, host clock transitions, retained musical lifetimes, RGBW sink capture, master/blackout precedence and Transit restore: 3 tests / 48 assertions"
+              "Optimized Chromium at touch-tablet dimensions saved/reloaded Link pairing and ambient RGB/level, switched to blackout; test/studio/link_pause_browser.cjs"
+              "Physical Live, cross-machine phase and real fixtures remain hardware gates in docs/ableton-link.md"]}
   {:id :performance/master-mixed-rig-profiling
    :title "Profile complete mixed rigs on master and optimize measured hot paths"
    :kind :implementation :status :in-progress
@@ -2023,6 +2036,18 @@
    :depends-on
    [:development/workspace-service-v1 :development/terminal-v1],
    :owner nil}
+  {:id :automation/event-subscriber-actions :kind :implementation :status :done
+   :title "Bind captured show events to filtered registry actions and musical sequences"
+   :owner nil
+   :paths ["tolglow/src/tolglow/studio/event_subscribers.clj" "tolglow/src/tolglow/studio/event_callbacks.clj"
+           "tolglow/test/tolglow/studio/event_subscribers_test.clj" "tolglow/docs/event-subscribers.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Run filtered cue and unplaced effect launches from actual committed inputs without an inspector"
+                "Keep sequences, selection and timing deterministic and restore portable subscriber registrations"
+                "Execute user callbacks away from the frame owner and reject stale results"]
+   :evidence ["Ring registration, analyzed 65 Hz PCM onset, headless subscriber delivery, unplaced effect launch; REPL fn Transit save/restore and execution"
+              "Optimized browser exercised random Ember one-shots, delayed opacity, cross-tab pushes and observed clock-beat subscriber ids"
+              "Paired parity 562 tests / 4704 assertions, Afterglow PR12 merged 36abc94, docs/event-subscribers.md"]}
   {:id :audio/band-and-bass-patch-sources
    :title "Map live band levels and confident sub-bass pitch to cue parameters"
    :kind :implementation :status :done :owner nil
