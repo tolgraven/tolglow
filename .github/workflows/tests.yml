@@ -54,7 +54,22 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
           cli: 1.12.7.1681
-          lein: 2.13.1
+      - name: Install the verified Leiningen release
+        shell: bash
+        run: |
+          lein_dir="$RUNNER_TEMP/tolglow-lein"
+          mkdir -p "$lein_dir"
+          curl --fail --location --retry 3 \
+            https://github.com/technomancy/leiningen/releases/download/2.13.1/leiningen-2.13.1-standalone.jar \
+            --output "$lein_dir/lein.jar"
+          printf '2e4c36cbaef717d0fa589a1f95e4c526a1cb6c35b48dc92e6dbb30d6f8595b5c  %s\n' "$lein_dir/lein.jar" | sha256sum --check -
+          cat > "$lein_dir/lein" <<'LEIN'
+          #!/usr/bin/env bash
+          exec java -cp "$TOLGLOW_LEIN_JAR" clojure.main -m leiningen.core.main "$@"
+          LEIN
+          chmod +x "$lein_dir/lein"
+          printf 'TOLGLOW_LEIN_JAR=%s\n' "$lein_dir/lein.jar" >> "$GITHUB_ENV"
+          printf '%s\n' "$lein_dir" >> "$GITHUB_PATH"
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
