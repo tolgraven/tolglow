@@ -117,3 +117,11 @@ rig definitions (initial 10,000-pixel hydration about 1.37 MB). These results do
 measure full-pixel live preview or a browser. Allocation includes JVM clients,
 oracle checks and instrumentation. Fixed run order and differing tails do not
 establish that adding clients improves performance; retain the complete data.
+
+## Rotated moving heads and current connected workloads
+
+[The dedicated 64/128-head report](2026-11-21-movers-ci/README.md) retains all
+three raw matrices and verified artifact provenance from run 44900142541.
+It separates actual host ticks from instrumented aiming/packing, checks all
+heads through layered opacity sweeps, and records the remaining 10,000-pixel
+subscriber deadline misses without claiming a matched speedup.

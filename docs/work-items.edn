@@ -303,8 +303,7 @@
               "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
   {:id :performance/animated-moving-heads
    :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
-   :kind :implementation :status :in-progress
-   :owner "master_render_performance_profiler_and_optimizations"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/dev/tolglow/bench_movers.clj" "tolglow/dev/tolglow/bench_movers_reference.clj"
            "afterglow/dev/afterglow/bench_movement_reference.clj" "afterglow/dev/AGENTS.md"
            "tolglow/bin/profile-movers"]
@@ -312,7 +311,9 @@
    :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
                 "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
                 "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
-   :evidence ["All seven 64-head lanes passed the full 20-step opacity cycle through Lein at clean 4bcaff1 + Afterglow fcfd6be: 64 unique positions/rotations, 24 effects, all 48 heads beyond index 15 verified"
+   :evidence ["PR 53 merged 11055f4 after all regression jobs and dedicated CI 44900142541 passed; full raw evidence in docs/benchmarks/master-performance/2026-11-21-movers-ci"
+              "Clean f3a6796 + d353f18: two-worker 64-head host p50/p95/p99 2.31/2.76/4.35 ms; 128-head 3.32/4.14/4.43 ms; zero sampled ticks above25 ms, all geometry/channel/state oracles passed"
+              "All seven 64-head lanes passed the full 20-step opacity cycle through Lein at clean 4bcaff1 + Afterglow fcfd6be: 64 unique positions/rotations, 24 effects, all 48 heads beyond index 15 verified"
               "Independent reference exposed missing packed pan history after zero opacity; Afterglow PR13 merged eeb04cd, regression red before fix, render/IR 46/744 and parity 320/3718 green"
               "Optional 128-head scalar host hit the real 500ms worker timeout on the loaded shared machine; retain as failed evidence, dedicated runner timing pending"
               "Mathematical geometry/physical-channel reference lives in Afterglow dev; Tolglow retains declarative effects, cues, admission, host and paired workflow"]}
