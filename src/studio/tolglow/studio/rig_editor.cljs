@@ -66,6 +66,7 @@
         "cancel" (if (and gesture (= token (:token gesture)))
                    (restore-checkpoint db (-> state (dissoc :gesture) (update :undo pop)) (:before gesture)) db)
         db))))
+(rf/reg-event-db :rig-editor/open (fn [db _] (put-editor db (editor db))))
 (rf/reg-event-db :rig-editor/interaction (fn [db [_ detail]] (interaction db detail)))
 (rf/reg-event-db :rig-editor/set
   (fn [db [_ path value]] (put-editor db (assoc-in (editor db) path value))))
@@ -215,7 +216,7 @@
       [:button.button.primary {:disabled (or (:publishing state) (< (count (:points state)) 2) (empty? (:targets state))) :on-click #(rf/dispatch [:rig-editor/publish false])} "Create cue"]
       [:button.button {:disabled (or (:publishing state) (< (count (:points state)) 2) (empty? (:targets state))) :on-click #(rf/dispatch [:rig-editor/publish true])} "Create + run"]]
      (when (:message state) [:p.rig-editor-message {:role "status"} (:message state)])]))
-(defn panel [db]
+(defn- editor-panel [db]
   (let [state (editor db) projection (select-keys state [:tool :plane :plane-value :snap :selection :points :selected-point])
         show (assoc (:show db) :rig (get-in db [:ui :rig-draft]) :editor (assoc projection :closed? (get-in state [:path :closed?])))]
     [:section.panel.rig-editor {:aria-label "Three dimensional rig and movement editor"}
@@ -245,3 +246,10 @@
        [:p.small.muted "Move keeps an object's depth in the chosen plane. Rotate turns around the plane normal. Choose Explore to move the camera; Escape cancels a drag."]
        [pose-fields db state]]
       [path-fields db state]]]))
+
+
+(def panel
+  (r/create-class
+    {:display-name "rig-and-path-editor"
+     :component-did-mount (fn [_] (rf/dispatch [:rig-editor/open]))
+     :reagent-render editor-panel}))

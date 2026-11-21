@@ -12,7 +12,8 @@
            "tolglow/src/engines/preview/editor.test.js"
            "tolglow/src/engines/preview/editor-browser-qa.mjs"
            "tolglow/src/engines/preview/overlay.js"
-           "tolglow/resources/studio/rig-editor.css"]
+           "tolglow/resources/studio/rig-editor.css"
+           "tolglow/docs/rig-editor.md"]
    :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"
                 "Pose changes reuse meshes and worker updates remain bounded"
                 "Plane paths publish validated musical cues and run only on explicit request"

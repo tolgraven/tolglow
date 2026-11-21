@@ -42,6 +42,13 @@ export class RigOverlay {
       }
     }
   }
-  render(renderer, camera) {if (!this.scene.children.length) return; const auto = renderer.autoClear; renderer.autoClear = false; renderer.clearDepth(); renderer.render(this.scene, camera); renderer.autoClear = auto;}
+  render(renderer, camera) {
+    if (!this.scene.children.length) return;
+    // EffectComposer restores the caller's render target after its screen pass.
+    // Authoring hints belong on the presented canvas, not the fog composite.
+    const auto = renderer.autoClear, target = renderer.getRenderTarget();
+    try {renderer.setRenderTarget(null); renderer.autoClear = false; renderer.clearDepth(); renderer.render(this.scene, camera);}
+    finally {renderer.autoClear = auto; renderer.setRenderTarget(target);}
+  }
   dispose() {this.clear();}
 }

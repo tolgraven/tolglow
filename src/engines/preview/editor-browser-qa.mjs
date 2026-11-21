@@ -114,12 +114,19 @@ try {
   assert.equal((await editor(page)).tool, 'navigate'); assert.equal((await editor(page)).points.length, 0);
   await panel.getByLabel('Saved aim paths').selectOption(id);
   await page.evaluate(async () => {const e = document.querySelector('.rig-editor canvas').tolglowPreview; e.pause(); await e.draw();});
+  const visiblePathPixels = await page.evaluate(() => {
+    const source = document.querySelector('.rig-editor canvas'), copy = document.createElement('canvas'); copy.width = source.width; copy.height = source.height;
+    const context = copy.getContext('2d'); context.drawImage(source, 0, 0); const pixels = context.getImageData(0, 0, copy.width, copy.height).data;
+    let count = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 140 && pixels[i+1] > 180 && pixels[i+2] > 120 && pixels[i+1] > pixels[i] + 5) count++;
+    return count;
+  });
+  assert.ok(visiblePathPixels > 10, `Path handles/lines missing from the presented image (${visiblePathPixels} pixels)`);
   await panel.screenshot({path: `${directory}/desktop-editor.png`});
   const telemetry = await page.evaluate(() => document.querySelector('.rig-editor canvas').tolglowPreview.getTelemetry());
   await page.evaluate(() => {window.oldRigPreview = document.querySelector('.rig-editor canvas').tolglowPreview;});
   await page.locator('[data-view="compose"]').click();
   await page.waitForFunction(() => oldRigPreview.disposed && !oldRigPreview.canvas.tolglowPreview);
-  assert.deepEqual(errors, []); reports.push({name: 'desktop', passed: ['draft placement', 'undo', 'Escape cancel', 'rotation', 'precise numeric editing', 'fixture/truss save', 'draw/edit path', 'create without launch', 'one-shot run', 'actual file export/import', 'show identity rebase', 'teardown'], telemetry, errors});
+  assert.deepEqual(errors, []); reports.push({name: 'desktop', passed: ['draft placement', 'undo', 'Escape cancel', 'rotation', 'precise numeric editing', 'fixture/truss save', 'draw/edit path', 'create without launch', 'one-shot run', 'actual file export/import', 'show identity rebase', 'teardown'], telemetry, visiblePathPixels, errors});
   await context.close();
 
   for (const [name, width, height, fallback] of [['ipad', 820, 1180, false], ['phone-fallback', 390, 844, true]]) {

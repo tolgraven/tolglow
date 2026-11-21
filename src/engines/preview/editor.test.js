@@ -64,3 +64,13 @@ test('moving an existing path handle retains its height and grab offset', () => 
   assert.ok(Math.hypot(...messages.at(-1).point.map((n, i) => n - [0, 2, 0][i])) < 1e-10);
   input.move({...event, clientX: p.x + 50}); assert.equal(messages.at(-1).point[1], 2); input.dispose();
 });
+
+test('authoring hints render onto the presented canvas after composer and restore renderer ownership', () => {
+  const overlay = new RigOverlay(); overlay.update({rig, editor: {tool: 'draw', points: [[0, 0, 0], [1, 0, 0]]}});
+  const composite = {name: 'fog composite'}, draws = [], renderer = {autoClear: true, target: composite,
+    getRenderTarget(){return this.target;}, setRenderTarget(target){this.target = target;}, clearDepth(){},
+    render(scene){draws.push({target: this.target, autoClear: this.autoClear, children: scene.children.length});}};
+  overlay.render(renderer, camera);
+  assert.equal(draws[0].target, null); assert.equal(draws[0].autoClear, false); assert.ok(draws[0].children > 0);
+  assert.equal(renderer.target, composite); assert.equal(renderer.autoClear, true); overlay.dispose();
+});
