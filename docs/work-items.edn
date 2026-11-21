@@ -28,6 +28,42 @@
                 "Effect and cue publication is atomic and does not implicitly launch output"
                 "Path metadata survives ordinary show save/load and stale revisions reject"]
    :evidence []}
+  {:id :preview/camera-navigation-v1
+   :title "Explore the rig with keyboard and touch and follow active fixtures automatically"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/engines/preview/camera-navigation.js"
+           "tolglow/src/engines/preview/camera-navigation.test.js"
+           "tolglow/src/engines/preview/camera-navigation.test.mjs"
+           "tolglow/src/studio/tolglow/studio/camera_controls.cljs"
+           "tolglow/src/studio/tolglow/studio/camera_controls_test.cljs"
+           "tolglow/resources/studio/camera-navigation.css"
+           "tolglow/docs/preview-navigation.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["One camera owner exposes the same navigation API for worker and fallback"
+                "WASD, drag look, accessible touch controls and manual tour takeover work in Chromium"
+                "Tours follow actual lit fixtures with bounded motion and pause during editing or reduced motion"
+                "Typing, blur, visibility and disposal do not leave held movement active"]
+   :evidence ["Shared constructor, preview control and interop hunks coordinated with rig editor owner"
+              "Frontend 138 tests / 730 assertions passed; optimized release 148 files, zero warnings"
+              "Three pure camera planner tests and actual Chromium worker/fallback input lifecycle gate passed"
+              "Full preview regression: 24 tests passed including actual GPU-context fog and worker startup fallback navigation/observer preservation"
+              "Compiled desktop 1440x1000, iPad 1024x768 and phone 390x844 controls: actual pointer/touch hold and drag passed; page errors empty"
+              "docs/preview-navigation.md; Chromium SwiftShader, no physical GPU or Safari claim"]}
+ ;; Follow-up owns only passive Push presentation; device commands stay shared.
+  {:id :web/push-preset-global-widgets
+   :title "Show cue preset feedback and touched global controls on Push"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/push_display.cljs"
+           "tolglow/src/studio/tolglow/studio/push_display_test.cljs"
+           "tolglow/resources/studio/push-display.css" "tolglow/docs/push-global-control-widgets.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Preset state and action reflect shared device projections without local commands"
+                "Master and tempo touches show actual values, bounds, units and external sync lock"
+                "Eight parameters, waveform/audio previews and exact 960x160 layout remain available"]
+   :evidence ["Frontend 139 tests / 738 assertions passed; direct Node runner exited zero"
+              "Optimized release: 147 files, zero warnings"
+              "13 optimized browser checks from 11 actual shared Push projections; exact 960x160, no API polling"
+              "docs/push-global-control-widgets.md; fresh screenshots and no physical hardware claim"]}
   {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil
@@ -1772,7 +1808,6 @@
     "tolglow/docs/benchmarks/audio-waveform-bench.clj"
     "tolglow/docs/benchmarks/2026-11-21-audio-waveform.edn"
     "tolglow/src/tolglow/studio/audio.clj"
-    "tolglow/src/tolglow/studio/display.clj"
     "afterglow/src/afterglow/control/devices/push_2.clj"],
    :acceptance
    ["Actual captured effective params and version identity, no stateful effect re-evaluation"
@@ -1838,4 +1873,20 @@
    :evidence ["Delayed-create ownership and cancellation cleanup fixed and verified with actual Docker"
               "Workspace/terminal combined gate: 22 tests / 139 assertions; updated-image Docker gate 7 / 59"
               "Packaged PTY resource and terminal gate 7 tests / 43 assertions"
-              "docs/terminal.md" "docs/dev-workspaces.md" "docs/control-parity-audit.md"]}]}
+              "docs/terminal.md" "docs/dev-workspaces.md" "docs/control-parity-audit.md"]}
+  {:id :devices/push-packaged-webview-v1
+   :title "Own packaged Push webview worker extraction and process cleanup"
+   :kind :implementation :status :done
+   :owner nil
+   :paths ["tolglow/src/tolglow/studio/display.clj"
+           "tolglow/test/tolglow/studio/display_test.clj"
+           "tolglow/src/tolglow/integrations/display_bridge/worker.js"
+           "tolglow/src/tolglow/integrations/display_bridge/worker.test.js"
+           "tolglow/docs/push-display-packaging.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Checkout and executable-JAR workers open only at explicit connection"
+                "Owned extraction and process cleanup on success, failed startup and cancellation"
+                "External Playwright module resolution remains explicit and works after extraction"]
+   :evidence ["JVM display 10 tests / 50 assertions and Node worker 6 tests pass; final combined pure JVM462/3631 passed on Java17 with pinned Node26 after the workspace metadata fix"
+              "Actual Node26/Chromium capture of built re-frame page through jar resource; PNG dimensions, process exit and temporary-file cleanup checked"
+              "See docs/push-display-packaging.md; no physical USB or throughput claim"]}]}
