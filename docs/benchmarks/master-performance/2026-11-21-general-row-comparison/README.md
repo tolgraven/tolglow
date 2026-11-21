@@ -59,8 +59,8 @@ compilation and escape-analysis decisions can vary, but that is not proof of the
 cause. A separate production engine/renderer invocation confirmed zero general
 targets and zero calls to the changed helper in that pixel-only corpus. Follow-up
 attribution must distinguish that unreachable path from compiler/boxing allocation
-before making broader optimization claims. The performance change remains held
-while a reversed baseline/candidate/baseline run checks this discrepancy.
+before making broader optimization claims. Acceptance was held until the reverse
+comparison below investigated this discrepancy.
 
 ## Connected clients and all-geometric heads
 
@@ -98,6 +98,50 @@ No measured moving-head host tick exceeded 25 ms. Allocation varies by about
 one percent rather than showing a convincing benefit. One baseline pass is not
 replication; the repeated candidate checks drift, and adjacent frame samples are
 correlated. Keep all passes and controls when deciding the next investigation.
+
+## Reversed comparison
+
+[Run 44903326748](https://github.com/tolgraven/tolglow/actions/runs/44903326748)
+repeated the same full matrices in **old / new / old** order. Every oracle passed.
+The [unaltered reverse artifact](reverse-artifact.zip), ID `14706759150`, has
+SHA-256 `d3adc207f01d6139ff0414bfaa6fce12f65e5f1e2204f7d8c6414219c9146ec3`.
+[Its host summary](reverse-host-summary.edn) records the exact revisions too.
+Here the archive's root and `candidate-repeat/` contain **old `ba3f9c7`**;
+`baseline/` contains **new `d5c85e5`**. These directory labels reflect the
+workflow inputs, so identify implementations by their recorded commits.
+
+This runner reports AMD EPYC 9V74, four processors, with the same Java, heap,
+warmup and samples. Sources, options and environments match within each run;
+timings must not be compared directly across the two different CPU models.
+Two-worker host results from the reversed run:
+
+| Pixels + movers | Pass | p50 ms | p95 ms | p99 ms | Ticks >25 ms | Owner/worker MB/tick |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 + 0 | Old | 11.62 | 13.72 | 19.93 | 0 | 12.693 |
+| 10,000 + 0 | New | 12.18 | 14.17 | 21.89 | 0 | 13.891 |
+| 10,000 + 0 | Old repeat | 11.63 | 17.28 | 21.42 | 0 | 13.892 |
+| 10,000 + 8 | Old | 13.49 | 16.09 | 23.09 | 1 | 16.694 |
+| 10,000 + 8 | New | 13.99 | 18.47 | 23.40 | 0 | 16.300 |
+| 10,000 + 8 | Old repeat | 14.05 | 16.74 | 23.87 | 0 | 17.892 |
+
+The **unchanged old code** itself gains approximately 1.199 MB/tick in both
+10,000-pixel cases. Thus the original control difference is not deterministic
+evidence of a regression caused by the new scan. The new mixed path stays near
+16.300 MB in all three candidate JVMs and allocates less than both old passes.
+Afterglow PR #30 was merged as `e0e2409` after both comparisons and exact-head
+regression checks passed. This supports the scan as a narrow allocation change,
+with no claim of improved frame timing or complete-system allocation. All 64/128-head host
+ticks in the reversed run were below 25 ms; their allocation/latency distributions
+remain in the archive, rather than being replaced by a favorable summary.
+
+The control variation still merits investigation. In Tolglow's compiler,
+`finish-fields!` uses generic `(not= 1.0 scale)` for every output element. Five
+values per pixel times a 24-byte boxed `Double` predicts 1.2 MB for 10,000 pixels,
+and JFR sampled boxed doubles in this function. Escape analysis is a plausible
+explanation, not a proven causal trace. A separate change hoists the primitive
+comparison outside the element loop while retaining multiplication and all
+validation; it has its own matched app-revision measurement and must not be
+folded into this renderer result.
 
 ## Why this path was investigated
 
