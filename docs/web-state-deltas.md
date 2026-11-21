@@ -99,7 +99,7 @@ The measurements exclude physical output, network transport and browser work.
   restart all passed with no page errors. Preview was explicitly paused for this
   transport test; it makes no renderer or physical iPad Safari performance claim.
 
-Retained reports use the same 1000-pixel/1012-cue workload on Java21.0.13:
+Retained reports use the same 1000-pixel/1012-cue workload on Java 21.0.13:
 
 | JSON body | Observed bytes |
 | --- | ---: |
@@ -114,10 +114,10 @@ were around 0.4KB; initial effect output changes can produce larger patches.
 These are UTF-8 JSON body bytes before HTTP compression, not network throughput.
 
 The [initial report](benchmarks/2026-11-21-state-delta-before.edn) at checkpoint
-`16b1e08` measured HTTP projection/diff/encoding at median31.031ms/p95110.134ms.
+`16b1e08` measured HTTP projection/diff/encoding at median 31.031ms / p95 110.134ms.
 The [incremental report](benchmarks/2026-11-21-state-delta-incremental.edn), after
 reusing unchanged wire subtrees and exact incremental size accounting, measured
-median2.295ms/p9512.615ms. Both timing summaries exclude the first five samples;
-35 observations remain. The second run's maximum was16.526ms. These are small
+median 2.295ms / p95 12.615ms. Both timing summaries exclude the first five samples;
+35 observations remain. The second run's maximum was 16.526ms. These are small
 local JVM measurements, separate from frame-render time, real network latency,
 physical outputs and browser costs; they are not a production deadline guarantee.

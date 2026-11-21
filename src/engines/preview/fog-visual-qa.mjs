@@ -15,7 +15,7 @@ try {
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.route('**/fog-visual-qa', route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
     <body style="margin:0;background:#080a0c;color:white"><canvas style="display:block;width:1280px;height:760px"></canvas>
-    <div id="status"></div><script type="module">import {RoomPreview} from '/studio/preview.js?v=${Date.now()}';
+    <div id="status"></div><script type="module">import {SceneRenderer as RoomPreview} from '/studio/preview.js?v=${Date.now()}';
     window.engine=new RoomPreview(document.querySelector('canvas'),document.querySelector('#status'));</script></body>`}));
   await page.goto(`${origin}/fog-visual-qa`);
   await page.waitForFunction(() => window.engine?.fog, {timeout: 30000});
@@ -23,13 +23,13 @@ try {
   if (!snapshot.rig?.fixtures) throw new Error('QA requires a real rig snapshot');
   snapshot.output ||= {}; snapshot.output.values = Object.fromEntries(snapshot.rig.fixtures.map(f => [f.id, {'emitted-color': [0, 0, 0]}]));
   await page.evaluate(snapshot => {
-    cancelAnimationFrame(engine.frame); engine.setQuality('desktop'); engine.update(snapshot); engine.setWorkLight(.35);
+    engine.pause(); engine.setQuality('desktop'); engine.update(snapshot); engine.setWorkLight(.35);
     engine.controls.enableDamping = false; engine.setCamera('audience'); engine.fog.field.clear(.07); engine.fog.upload();
   }, snapshot);
   const images = [];
   async function capture(name, amount) {
     const telemetry = await page.evaluate(amount => {
-      cancelAnimationFrame(engine.frame); engine.setFog(amount); engine.draw(0);
+      engine.pause(); engine.setFog(amount); engine.draw(0);
       const gl = engine.renderer.getContext(), debug = gl.getExtension('WEBGL_debug_renderer_info');
       return {...engine.getTelemetry(), gpuRenderer: debug && gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)};
     }, amount);
