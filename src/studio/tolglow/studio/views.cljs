@@ -11,6 +11,7 @@
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.modulation :as modulation]
+            [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
@@ -48,7 +49,7 @@
 (defn- label [value] (str/replace (if (keyword? value) (name value) (str value)) #"[-_]" " "))
 (defn- find-id [items id] (some #(when (= (:id %) id) %) items))
 (defn- display-name [item] (or (:name item) (label (:id item))))
-(defn- swatch [item] (or (:swatch item) "#a8b99a"))
+(defn- swatch [item] (widgets/swatch-css (or (:swatch item) "#a8b99a")))
 (defn- color-style [item] {"--cue-color" (swatch item)})
 (defn- numeric-label [value]
   (if (number? value) (str/replace (.toFixed value 3) #"\.?0+$" "") (str value)))
@@ -71,9 +72,8 @@
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
                                  [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"]]]
         ^{:key view}
-        [:button.nav-item {:class (when (= view (:view ui)) "selected") :data-view (name view)
-                           :aria-current (when (= view (:view ui)) "page")
-                           :on-click #(send! [:studio/set-view view])}
+        [:a.nav-item {:href (nav/href view) :class (when (= view (:view ui)) "selected") :data-view (name view)
+                       :aria-current (when (= view (:view ui)) "page")}
          [:span.nav-icon {:aria-hidden true} icon] title [:span.nav-key n]])]
      [:div.sidebar-bottom
       [:div.connection [:i#connection-dot {:class (if (:connected? connection) "connected" "failed")}]
@@ -234,9 +234,9 @@
                     selected (or (first (keep-indexed #(when (= value %2) %1) choices)) 0)]
                 [:select {:aria-label title :value selected :on-change #(change! (get choices (js/parseInt (input-value %) 10)))}
                  (for [[index item] (map-indexed vector choices)] ^{:key index} [:option {:value index} (label item)])])
-       "color" [:input {:type "color" :aria-label title :value (hex-color value)
+       "color" [:input {:type "color" :aria-label title :value (hex-color (widgets/color-components value))
                          :on-change #(change! (cond-> (color-components (input-value %))
-                                               (= 4 (count value)) (conj (nth value 3))))}]
+                                               (and (vector? value) (= 4 (count value))) (conj (nth value 3))))}]
        ("vector" "range")
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]

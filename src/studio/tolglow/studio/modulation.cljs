@@ -128,8 +128,7 @@
 (rf/reg-event-fx :modulation/accepted
   (fn [{:keys [db]} [_ token key notice _]]
     (if (= token (request-token db))
-      {:db (store db (-> (state db) (update :pending dissoc key) (assoc :notice notice)))
-       :dispatch [:studio/poll]} {})))
+      {:db (store db (-> (state db) (update :pending dissoc key) (assoc :notice notice)))} {})))
 (rf/reg-event-fx :modulation/failed
   (fn [{:keys [db]} [_ token key error]]
     (if (= token (request-token db)) (failure db key error) {})))

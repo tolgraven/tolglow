@@ -30,6 +30,7 @@
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -63,8 +64,7 @@
 (defn repls [runtime] (connections/repls (:connections runtime)))
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
-(defn snapshot [runtime]
-  (let [{:keys [model output status modulation-view]} @(:state runtime)]
+(defn- project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :waveform-revision (get-in model [:waveforms :revision] 0)
@@ -102,9 +102,11 @@
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
+                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
 
-(declare send-output!)
+(defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(declare send-output! heartbeat!)
 
 (defn create-runtime
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
@@ -145,6 +147,7 @@
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
       :browser-projections (projection/create)
+      :state-stream (state-stream/create #(project-snapshot @runtime-ref %) #(heartbeat! @runtime-ref %))
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
@@ -162,6 +165,7 @@
                          (swap! cache #(assoc (if (>= (count %) 256) {} %) definition compiled))
                          compiled))))}]
        (reset! runtime-ref runtime)
+       (state-stream/publish! (:state-stream runtime) @(:state runtime))
        runtime))))
 
 (defn- restart-model [model time-ms]
@@ -737,7 +741,8 @@
              (try (connections/publish! (:connections runtime) (:model next-state))
                   (catch Exception error (vreset! reactive-error (error-data error))))
              (when @reactive-error
-               (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error)))))
+               (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
+             (state-stream/publish! (:state-stream runtime) @(:state runtime)))))
        (finally (finish-resource-work! runtime @retired @candidates @retired-devices
                                        @restored-generation @restarted-generation))))))
 
@@ -798,7 +803,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(projection/clear! (:browser-projections runtime))
+                             [#(state-stream/close! (:state-stream runtime))
+                              #(projection/clear! (:browser-projections runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
@@ -1133,6 +1139,7 @@
   "Create the portable Ring application for this explicitly owned runtime."
   [runtime]
   (web/app {:snapshot! #(browser-snapshot runtime %)
+            :state-stream! #(state-stream/response (:state-stream runtime) %)
             :definition! (fn [kind id]
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
                              (or (get definitions id)

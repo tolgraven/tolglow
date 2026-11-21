@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.navigation :as nav]
             [tolglow.studio.repl-code :as code]))
 
 (def defaults {:open? false :session-id "main" :source "(+ 1 2)" :dirty? false
@@ -50,7 +51,7 @@
     (when-let [log (.querySelector js/document ".repl-log")]
       (when (< (- (.-scrollHeight log) (.-scrollTop log) (.-clientHeight log)) 100)
         (js/requestAnimationFrame #(set! (.-scrollTop log) (.-scrollHeight log)))))))
-(rf/reg-fx :repl/popup (fn [session-id] (.open js/window (str "/repl?session-id=" (js/encodeURIComponent session-id)) "tolglow-repl" "popup,width=1000,height=720")))
+(rf/reg-fx :repl/popup (fn [session-id] (.open js/window (nav/href :repl {:session-id session-id}) "tolglow-repl" "popup,width=1000,height=720")))
 (rf/reg-fx :repl/abort (fn [_] (when-let [controller (:stream @resources)] (.abort controller)) (swap! resources dissoc :stream)))
 (rf/reg-fx :repl/stream
   (fn [{:keys [body run token]}]

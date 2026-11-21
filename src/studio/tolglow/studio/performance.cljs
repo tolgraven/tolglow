@@ -167,7 +167,6 @@
       {:db (store db (cond-> (update (state db) :requests dissoc request-key)
                        (and (= operation "instance/opacity-set") (= serial (get-in (state db) [:opacity key :serial])))
                        (assoc-in [:opacity key :revision] (:revision ack))))
-       :dispatch [:studio/poll]
        :dispatch-later (when (and (= operation "instance/opacity-set") (get-in (state db) [:opacity key :scheduled?]))
                          [{:ms 65 :dispatch [:performance/flush-opacity token key]}])} {})))
 (rf/reg-event-fx :performance/failed
@@ -257,7 +256,7 @@
        [:strong "All running"]]
       (for [group groups :let [id (wire (:id group)) selected? (and (= "categories" (:scope form)) (some #{id} (:categories form)))]]
         ^{:key id} [:button.performance-category {:type "button" :aria-pressed (boolean selected?)
-                                                 :style {"--category-color" (:color group "#91a4bb")}
+                                                 :style {"--category-color" (widgets/swatch-css (:color group "#91a4bb"))}
                                                  :on-click #(rf/dispatch [:performance/category-toggle id])}
                     [:strong (widgets/label id)] [:span (count (:instance-ids group))]])]
      (when-not disabled?
