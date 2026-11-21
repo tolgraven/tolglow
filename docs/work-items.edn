@@ -29,6 +29,22 @@
               "Full Tolglow parity against merged Afterglow f951313: 480 tests / 3737 assertions passed"
               "Malformed saved values failed the new regression tests before the fix"
               "docs/show-files.md"]}
+  {:id :control/expressive-mapping-policy
+   :title "Map expressive device axes to cue parameters with overrides and disable controls"
+   :kind :implementation :status :in-progress :owner "push3_mpe_cue_automapping_overrides_disable"
+   :paths ["afterglow/src/afterglow/control/devices/expressive.clj"
+           "afterglow/src/afterglow/control/devices/mpe.clj"
+           "afterglow/test/afterglow/control/devices/mpe_test.clj"
+           "afterglow/doc/architecture/expressive-devices.md"
+           "tolglow/src/tolglow/studio/expressive.clj"
+           "tolglow/test/tolglow/studio/expressive_test.clj"
+           "tolglow/docs/expressive-mapping.md"]
+   :depends-on [:control/expressive-v1]
+   :acceptance ["Automatic semantic mappings remain reviewable and manually overridable"
+                "Device/cue/axis/parameter disable switches preserve held-note ownership"
+                "Portable settings restore without opening hardware"
+                "Re-frame UI edits bounded typed mappings through Ring"]
+   :evidence []}
   {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
