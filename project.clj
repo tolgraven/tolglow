@@ -10,11 +10,11 @@
   :resource-paths ~(:resource-paths (tolglow.build-manifest/manifest "."))
   :repositories ~(:repositories (tolglow.build-manifest/manifest "."))
   :test-paths ["test"]
-  :main tolglow.studio
+  :main tolglow.application
   :target-path "target/%s"
   :jvm-opts ["-Djava.awt.headless=true"]
   :profiles {:dev {:source-paths ["dev"]}
-             :uberjar {:aot [tolglow.studio]}}
+             :uberjar {:aot [tolglow.application]}}
   :test-selectors
   {:default (fn [metadata]
               (not= 'tolglow.studio.terminal-docker-test (ns-name (:ns metadata))))

@@ -57,9 +57,9 @@ Fresh runtimes register portable subscriptions that survive normal full-show
 registry restoration:
 
 ```clojure
-(afterglow.reactive/subscribe (tolglow.studio/reactions runtime)
+(afterglow.reactive/subscribe (tolglow.show/reactions runtime)
                              [:runtime/effect-events])
-(afterglow.reactive/subscribe (tolglow.studio/reactions runtime)
+(afterglow.reactive/subscribe (tolglow.show/reactions runtime)
                              [:runtime/effect-faults])
 ```
 
@@ -68,7 +68,7 @@ Use sequence numbers when processing only newly appended history. Retry uses the
 same queue as other controls:
 
 ```clojure
-(tolglow.studio/submit! runtime
+(tolglow.show/submit! runtime
   {:op :instance/retry :instance-id "0:1" :expected-epoch 0})
 ```
 

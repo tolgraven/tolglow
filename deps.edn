@@ -12,7 +12,8 @@
         ring/ring-core {:mvn/version "1.15.6"}
         ring/ring-jetty-adapter {:mvn/version "1.15.6"}
         tolgraven/afterglow {:local/root "../afterglow"}}
- :aliases {:studio {:main-opts ["-m" "tolglow.studio"]}
+ :aliases {:run {:main-opts ["-m" "tolglow.application"]}
+           :studio {:main-opts ["-m" "tolglow.application"]}
            :cljs {:replace-paths ["src/studio" "src/shared" "resources"]
                   :extra-deps {thheller/shadow-cljs {:mvn/version "3.5.14"}
                                metosin/reitit-frontend {:mvn/version "0.11.0"}

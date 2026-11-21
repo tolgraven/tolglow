@@ -2,17 +2,20 @@
   (:require [clojure.test :refer :all]
             [clojure.data.json :as json]
             [ring.core.protocols :as protocols]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.application :as app]
+            [tolglow.data :as data]
             [tolglow.transit :as wire]
             [tolglow.agents :as agents]))
 
 (defmacro with-runtime [[name] & body]
-  `(let [~name (studio/create-runtime)]
-     (try ~@body (finally (studio/stop! ~name)))))
+  `(let [~name (show/create-runtime)]
+     (try ~@body (finally (app/stop! ~name)))))
 
 (defn apply-at! [runtime type payload time]
-  (let [reply (studio/submit! runtime type payload)]
-    (studio/tick! runtime time)
+  (let [reply (show/submit! runtime type payload)]
+    (show/tick! runtime time)
     (deref reply 1000 ::missing)))
 
 (deftest real-control-compiler-workers-and-output
@@ -20,25 +23,25 @@
     (let [payload {:op :cue/launch :cue-id :ember :command-id "launch-once"}
           ack (apply-at! r :command payload 0)]
       (is (= :accepted (:status ack)))
-      (is (= 1 (count (:instances (studio/snapshot r)))))
-      (studio/tick! r 100)
-      (is (pos? (first (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color]))))
+      (is (= 1 (count (:instances (show/snapshot r)))))
+      (show/tick! r 100)
+      (is (pos? (first (get-in (show/snapshot r) [:output :values :head-1 :emitted-color]))))
       (is (= ack (apply-at! r :command payload 200)) "Server-stamped time preserves retries")
-      (is (= 1 (count (:instances (studio/snapshot r)))))
+      (is (= 1 (count (:instances (show/snapshot r)))))
       (is (= :accepted (:status (apply-at! r :command {:op :param/set :instance-id (:instance-id ack)
                                                        :param :level :value 0.25} 300))))
-      (is (= 0.25 (get-in (studio/snapshot r) [:instances 0 :params :level])))
-      (is (nil? (get-in (studio/snapshot r) [:status :error]))))))
+      (is (= 0.25 (get-in (show/snapshot r) [:instances 0 :params :level])))
+      (is (nil? (get-in (show/snapshot r) [:status :error]))))))
 
 (deftest blackout-survives-an-effect-failure
   (with-runtime [r]
     (apply-at! r :command {:op :cue/launch :cue-id :ember} 0)
-    (studio/tick! r 100)
+    (show/tick! r 100)
     (let [failing (assoc r :compile (fn [_] (fn [_] (throw (ex-info "bad effect" {})))))
           ack (apply-at! failing :command {:op :blackout/set :value true} 200)]
       (is (= :accepted (:status ack)))
-      (is (get-in (studio/snapshot r) [:instances 0 :fault]))
-      (is (nil? (get-in (studio/snapshot r) [:status :error])))
+      (is (get-in (show/snapshot r) [:instances 0 :fault]))
+      (is (nil? (get-in (show/snapshot r) [:status :error])))
       (is (every? zero? (mapcat seq (vals (get-in @(:state r) [:output :universes]))))))))
 
 (deftest held-gesture-lease-and-instance-specific-release
@@ -46,10 +49,10 @@
     (let [held (apply-at! r :command {:op :cue/launch :cue-id :ember :launch {:mode :held}
                                       :source {:adapter :web :session-id "gone"}} 0)]
       (apply-at! r :command {:op :cue/launch :cue-id :ice} 1)
-      (studio/tick! r 11000)
+      (show/tick! r 11000)
       (is (= :releasing (get-in @(:state r) [:model :instances (:instance-id held) :phase])))
-      (studio/tick! r 12000)
-      (is (= [:ice] (mapv :cue-id (:instances (studio/snapshot r))))))))
+      (show/tick! r 12000)
+      (is (= [:ice] (mapv :cue-id (:instances (show/snapshot r))))))))
 
 (deftest logical-sequencer-owns-only-its-launches
   (with-runtime [r]
@@ -59,19 +62,19 @@
                                           :slots [{:cue-id :ember :duration-ms 200}
                                                   {:cue-id :ice :duration-ms 200}]} 0))))
     (apply-at! r :composition-run {:id :test} 0)
-    (is (some #{:ember} (map :cue-id (:instances (studio/snapshot r)))))
-    (studio/tick! r 250)
-    (is (some #{:ice} (map :cue-id (:instances (studio/snapshot r)))))
+    (is (some #{:ember} (map :cue-id (:instances (show/snapshot r)))))
+    (show/tick! r 250)
+    (is (some #{:ice} (map :cue-id (:instances (show/snapshot r)))))
     (apply-at! r :composition-stop {:id :test} 300)
-    (studio/tick! r 2000)
-    (is (= [:spot] (mapv :cue-id (:instances (studio/snapshot r)))))))
+    (show/tick! r 2000)
+    (is (= [:spot] (mapv :cue-id (:instances (show/snapshot r)))))))
 
 (deftest full-state-export-import-restores-output-and-rejects-stale-operations
   (with-runtime [r]
     (apply-at! r :command {:op :cue/launch :cue-id :ember} 0)
-    (studio/tick! r 150)
+    (show/tick! r 150)
     (let [handler (studio/handler r)
-          saved (studio/snapshot r)
+          saved (show/snapshot r)
           old-id (get-in saved [:instances 0 :id])
           response (handler {:request-method :get :uri "/api/export"})
           exported (:body response)]
@@ -81,29 +84,29 @@
         (is (= 2 (:schema-version document)))
         (is (every? bytes? (vals (get-in document [:frame-output :universes])))))
       (is (= :accepted (:status (apply-at! r :import {:source exported} 100))))
-      (is (= 1 (:epoch (studio/snapshot r))))
-      (is (= (:time-ms saved) (:time-ms (studio/snapshot r))))
-      (is (= (:frame-number saved) (:frame-number (studio/snapshot r))))
-      (is (= (:output saved) (:output (studio/snapshot r))))
-      (is (= 1 (count (:instances (studio/snapshot r)))))
-      (is (not= old-id (get-in (studio/snapshot r) [:instances 0 :id])))
+      (is (= 1 (:epoch (show/snapshot r))))
+      (is (= (:time-ms saved) (:time-ms (show/snapshot r))))
+      (is (= (:frame-number saved) (:frame-number (show/snapshot r))))
+      (is (= (:output saved) (:output (show/snapshot r))))
+      (is (= 1 (count (:instances (show/snapshot r)))))
+      (is (not= old-id (get-in (show/snapshot r) [:instances 0 :id])))
       (is (= :rejected (:status (apply-at! r :command {:op :instance/end :instance-id old-id} 150))))
       (is (= :rejected (:status (apply-at! r :command {:op :cue/launch :cue-id :ember :epoch 0} 200))))
-      (let [rig (:rig (studio/snapshot r))
+      (let [rig (:rig (show/snapshot r))
             bad (assoc-in rig [:fixtures 1 :address] 1)]
         (is (= :rejected (:status (apply-at! r :rig bad 300))))
-        (is (= rig (:rig (studio/snapshot r))))))))
+        (is (= rig (:rig (show/snapshot r))))))))
 
 (deftest stale-runtime-and-queued-pre-restore-actions-cannot-mutate-restored-state
   (with-runtime [r]
-    (let [exported (pr-str (studio/export-show r))
-          restore (studio/submit! r :import {:source exported})
-          stale (studio/submit! r {:op :master/set :value 0.2})]
-      (studio/tick! r 0)
+    (let [exported (pr-str (show/export-show r))
+          restore (show/submit! r :import {:source exported})
+          stale (show/submit! r {:op :master/set :value 0.2})]
+      (show/tick! r 0)
       (is (= :accepted (:status @restore)))
       (is (= :rejected (:status @stale)))
-      (is (= 1.0 (:master (studio/snapshot r))))
-      (is (= :rejected (:status @(studio/submit! r {:op :blackout/set :value true :runtime-id "old-process"})))))))
+      (is (= 1.0 (:master (show/snapshot r))))
+      (is (= :rejected (:status @(show/submit! r {:op :blackout/set :value true :runtime-id "old-process"})))))))
 
 (deftest browser-api-keeps-public-snapshot-and-origin-boundary
   (with-runtime [r]
@@ -119,46 +122,46 @@
       (is (= 404 (:status (handler {:request-method :get :uri "/../deps.edn"})))))))
 
 (deftest stopped-runtime-rejects-instead-of-orphaning-promises
-  (let [r (studio/create-runtime)
-        pending (studio/submit! r {:op :master/set :value 0.2})]
-    (studio/stop! r)
+  (let [r (show/create-runtime)
+        pending (show/submit! r {:op :master/set :value 0.2})]
+    (app/stop! r)
     (is (= :rejected (:status (deref pending 1000 ::missing))))
-    (is (= :rejected (:status (deref (studio/submit! r {:op :master/set :value 0.3}) 1000 ::missing))))))
+    (is (= :rejected (:status (deref (show/submit! r {:op :master/set :value 0.3}) 1000 ::missing))))))
 
 (deftest selected-response-modulates-output-without-drifting-canonical-params
   (with-runtime [r]
     (let [ack (apply-at! r :command {:op :cue/launch :cue-id :ember} 0)
           id (:instance-id ack)]
-      (studio/tick! r 100)
-      (let [full (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])
+      (show/tick! r 100)
+      (let [full (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])
             canonical (get-in @(:state r) [:model :instances id :params])]
         (is (= :accepted (:status (apply-at! r :response {:id :fade :select {:instance-ids [id]}
                                                          :params [:level] :envelope {:attack-ms 100 :release-ms 100}}
                                             100))))
-        (is (every? zero? (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])))
-        (studio/tick! r 150)
-        (is (= (mapv #(* 0.5 %) full) (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])))
-        (studio/tick! r 200)
+        (is (every? zero? (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
+        (show/tick! r 150)
+        (is (= (mapv #(* 0.5 %) full) (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
+        (show/tick! r 200)
         (is (= canonical (get-in @(:state r) [:model :instances id :params])))
         (apply-at! r :response-release {:id :fade} 200)
-        (studio/tick! r 300)
-        (is (every? zero? (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])))
+        (show/tick! r 300)
+        (is (every? zero? (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
         (apply-at! r :response-delete {:id :fade} 300)
-        (is (= full (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])))
+        (is (= full (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
         (is (= canonical (get-in @(:state r) [:model :instances id :params])))))))
 
 (deftest clock-integrates-old-tempo-before-applying-current-commands
   (with-runtime [r]
-    (studio/tick! r 500)
-    (is (= 1.0 (get-in (studio/snapshot r) [:transport :beat])))
+    (show/tick! r 500)
+    (is (= 1.0 (get-in (show/snapshot r) [:transport :beat])))
     (apply-at! r :command {:op :transport/set :transport {:bpm 60}} 1000)
-    (is (= 2.0 (get-in (studio/snapshot r) [:transport :beat])))
+    (is (= 2.0 (get-in (show/snapshot r) [:transport :beat])))
     (apply-at! r :command {:op :transport/set :transport {:playing? false}} 1500)
-    (studio/tick! r 5000)
-    (is (= 2.5 (get-in (studio/snapshot r) [:transport :beat])))
+    (show/tick! r 5000)
+    (is (= 2.5 (get-in (show/snapshot r) [:transport :beat])))
     (apply-at! r :command {:op :transport/set :transport {:playing? true}} 5000)
-    (studio/tick! r 6000)
-    (is (= 3.5 (get-in (studio/snapshot r) [:transport :beat])))))
+    (show/tick! r 6000)
+    (is (= 3.5 (get-in (show/snapshot r) [:transport :beat])))))
 
 (deftest registry-page-generation-is-visible-and-idempotent
   (with-runtime [r]
@@ -173,7 +176,7 @@
     (let [initial (get-in @(:state r) [:model :rig])
           portable (assoc-in initial [:fixtures 0 :id] "imported/head")]
       (is (= :accepted (:status (apply-at! r :rig portable 0))))
-      (let [from-browser (-> portable studio/normalize-json
+      (let [from-browser (-> portable data/normalize-json
                              (assoc-in [:fixtures 0 :position] [1 2 3]))]
         (is (= :accepted (:status (apply-at! r :rig from-browser 0))))
         (is (= "imported/head" (get-in @(:state r) [:model :rig :fixtures 0 :id])))
@@ -202,9 +205,9 @@
                                                                      (range) tools)}}]}) "data: [DONE]\n\n")
                                 (str (event {:choices [{:delta {:content "Red is running."}}]}) "data: [DONE]\n\n")))
                     {:status 200})
-        r (studio/start! {:port 0 :agent-options {:transport transport}})]
+        r (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:agent-options {:transport transport}}))]
     (try
-      (agents/configure! (studio/agent-manager r) {:provider :self-hosted :model "scripted" :endpoint "http://unused.test/v1/chat/completions"})
+      (agents/configure! (show/agent-manager r) {:provider :self-hosted :model "scripted" :endpoint "http://unused.test/v1/chat/completions"})
       (let [handler (studio/handler r)
             response (handler {:request-method :post :uri "/api/chat"
                                :body (java.io.ByteArrayInputStream. (.getBytes "{\"message\":\"Create and run a red cue\"}" "UTF-8"))})
@@ -212,8 +215,8 @@
         (protocols/write-body-to-stream (:body response) response output)
         (is (= 200 (:status response)))
         (is (re-find #"Red is running" (.toString output "UTF-8")))
-        (is (some #(= :agent-red (:id %)) (:effects (studio/snapshot r)))))
-      (is (some #(= :agent-red (:cue-id %)) (:instances (studio/snapshot r))))
+        (is (some #(= :agent-red (:id %)) (:effects (show/snapshot r)))))
+      (is (some #(= :agent-red (:cue-id %)) (:instances (show/snapshot r))))
       (is (= :agent-red (get-in @(:state r) [:model :pages :agent :cells [0 0]])))
-      (is (= [0.8 0.0 0.0] (get-in (studio/snapshot r) [:output :values :head-1 :emitted-color])))
-      (finally (studio/stop! r)))))
+      (is (= [0.8 0.0 0.0] (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
+      (finally (app/stop! r)))))
