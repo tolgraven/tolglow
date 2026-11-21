@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [tolglow.application :as app]
+            [tolglow.studio.agents :as agents]
             [tolglow.modules :as modules]
             [tolglow.show :as show])
   (:import [java.nio.file Files]))
@@ -69,3 +70,49 @@
             (is (.contains state (:id runtime))))
           (finally (app/stop! runtime))))
       (finally (doseq [file [saved config-file dir]] (io/delete-file file true))))))
+
+(def configured-venue
+  {:init {:components [:show] :modules [:fixtures :cue-pages :waveforms :agents :web-server] :post []}
+   :show {:workers 1 :workspace-options nil}
+   :web-server false
+   :fixtures {:patches [{:id :desk :position [0 0 0] :address 1 :universe 20 :channels {:dimmer 1}}]}
+   :cue-pages {:definitions [{:id :desk-page :name "Desk" :cells {}}]}
+   :waveforms {:definitions [{:id :flat :version 1 :name "Flat" :params {} :range [0 1]
+                              :expression {:op :const :value 0.25}}]}
+   :agents {:provider :openai :model "venue-model"}})
+
+(deftest venue-var-installs-waveforms-and-agent-settings
+  (let [runtime (app/launch! ["--config" "tolglow.application-test/configured-venue"])]
+    (try
+      (is (= [:desk] (mapv :id (get-in (show/snapshot runtime) [:rig :fixtures]))))
+      (is (= "Desk" (get-in @(:state runtime) [:model :pages :desk-page :name])))
+      (is (= [:show :fixtures :cue-pages :waveforms :agents] (get-in runtime [:application :loaded-components])))
+      (is (= :flat (get-in (show/waveform-action! runtime :registry {}) [:waveforms :flat :id])))
+      (is (= "venue-model" (:model (agents/public-config (show/agent-manager runtime)))))
+      (finally (app/stop! runtime)))))
+
+(deftest declarative-audio-sync-and-sensor-modules-own-their-inputs
+  (let [opened-audio (promise) opened-clock (promise) released (promise)
+        closed-audio (atom 0) closed-clock (atom 0)
+        config {:init {:components [:show] :modules [:sensors :clock-sync :audio] :post []}
+                :show {:workers 1 :workspace-options nil
+                       :audio-options {:open-source! (fn [cfg]
+                                                       (deliver opened-audio cfg)
+                                                       {:read! (fn [& _] @released -1)
+                                                        :close! #(do (swap! closed-audio inc) (deliver released true))})}
+                       :sync-options {:midi-factory (fn [_ _]
+                                                      {:open! (fn [receive!] (deliver opened-clock receive!) :clock)
+                                                       :close! (fn [_] (swap! closed-clock inc))})}}
+                :audio {:enabled true :default? true :block-frames 240}
+                :clock-sync {:midi {:enabled? true :input-index 0} :selected-source :midi-clock}
+                :sensors {:sources {"watch" {:config {:version 1}
+                                             :pairing {:credential-ref (str "credential-" (java.util.UUID/randomUUID))}}}}}
+        runtime (app/start! config)]
+    (try
+      (is (= [:show :sensors :clock-sync :audio] (get-in runtime [:application :loaded-components])))
+      (is (= 240 (:block-frames (deref opened-audio 2000 nil))))
+      (is (fn? (deref opened-clock 2000 nil)))
+      (is (= :midi-clock (get-in (show/sync-action! runtime :status {}) [:clock :selected-source])))
+      (is (= {:version 1} (get-in @(:state runtime) [:model :sensors :sources "watch" :config])))
+      (finally (app/stop! runtime)))
+    (is (= 1 @closed-clock @closed-audio))))

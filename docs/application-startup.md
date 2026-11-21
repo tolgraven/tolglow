@@ -64,7 +64,9 @@ take precedence.
 | ID | Startup action |
 | --- | --- |
 | `:show` | Creates the runtime and starts its render and output schedules. Top-level `:hz` sets the frame rate. `:show` accepts runtime options including `:model`, `:workers`, `:ola` and `:artnet`. |
-| `:show-state` | Loads `:load-file` as a full Transit backup, applies `:actions` in order and saves to `:save-file` during shutdown if configured. |
+| `:fixtures` | Publishes fixture type `:definitions` and installs the ordered full fixture `:patches` vector using the rig validator. |
+| `:cue-pages` | Installs `:definitions` in order. Each page has an ID and a map from grid coordinates to registered cue IDs. |
+| `:show-state` | Loads `:load-file` as a full Transit backup, runs `:actions` (command maps or zero-argument Clojure functions) in order and saves to `:save-file` during shutdown if configured. |
 | `:sensors` | Installs `:sources` keyed by device ID. Each entry has the source's portable `:config` and `:pairing`. |
 | `:osc` | Opens the sensor OSC receiver on `:address` and `:port-in`. Its actual bound port is in the module value. |
 | `:clock-sync` | Configures the show’s synchronization manager and opens the enabled sources. An original `{:type :midi :device "…"}` selects a unique JVM MIDI input by name. |

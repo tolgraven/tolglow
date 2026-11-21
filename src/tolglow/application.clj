@@ -41,7 +41,8 @@
 (defn- show-state [context {:keys [load-file save-file actions]}]
   (let [runtime (need-show context)]
     (when load-file (accepted! (show/load-show! runtime load-file)))
-    (doseq [command actions] (accepted! (show/submit! runtime command)))
+    (doseq [action actions]
+      (if (fn? action) (action) (accepted! (show/submit! runtime action))))
     {:value {:load-file load-file :save-file save-file}
      :stop! (when save-file #(show/save-show! runtime save-file))}))
 
@@ -70,6 +71,23 @@
     {:value (show/sync-action! runtime :start {})
      :stop! #(show/sync-action! runtime :stop {})}))
 
+(defn- install-fixtures [context {:keys [definitions patches]}]
+  (let [runtime (need-show context)]
+    (doseq [definition definitions]
+      (accepted! (show/submit! runtime :definition {:kind :fixtures :definition definition})))
+    (when (some? patches)
+      (when-not (vector? patches)
+        (throw (ex-info "Fixture patches must be an ordered vector of rig fixtures" {})))
+      (let [rig (get-in @(:state runtime) [:model :rig])]
+        (accepted! (show/submit! runtime :rig (assoc rig :fixtures patches)))))
+    {:value (get-in @(:state runtime) [:model :rig :fixtures])}))
+
+(defn- install-cue-pages [context {:keys [definitions]}]
+  (let [runtime (need-show context)]
+    (doseq [page definitions]
+      (accepted! (show/submit! runtime {:op :page/put :page page})))
+    {:value (get-in @(:state runtime) [:model :pages])}))
+
 (defn- install-waveforms [context {:keys [definitions]}]
   (let [runtime (need-show context)]
     (doseq [definition definitions]
@@ -94,7 +112,8 @@
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
    :audio start-audio :osc start-osc :sensors configure-sensors :waveforms install-waveforms
-   :expressive install-expressive :agents configure-agents})
+   :expressive install-expressive :agents configure-agents
+   :fixtures install-fixtures :cue-pages install-cue-pages})
 
 (defn start!
   "Launch a show using :init stages and per-module :enabled options. Supply a
