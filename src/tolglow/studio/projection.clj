@@ -60,39 +60,47 @@
     (reduce + 0 (map json-size-change before after))
     :else (- (byte-count after) (byte-count before))))
 
+(defn- collect-changes
+  [before after max-operations set-op remove-op id-key ordered-keys]
+  (let [result (volatile! [])
+        emit! (fn [operation]
+                (when (>= (count @result) max-operations)
+                  (throw (ex-info "Projection patch exceeds operation bound" {::limit true})))
+                (vswap! result conj operation))]
+    (try
+      (letfn [(visit [path old next]
+                (when-not (= old next)
+                  (cond
+                    ;; Transit records, including colours, are tagged values.
+                    (and (map? old) (map? next) (not (record? old)) (not (record? next)))
+                    (do
+                      (doseq [key (ordered-keys (remove #(contains? next %) (keys old)))]
+                        (emit! [remove-op (conj path key)]))
+                      (doseq [key (ordered-keys (keys next))]
+                        (if (contains? old key)
+                          (visit (conj path key) (get old key) (get next key))
+                          (emit! [set-op (conj path key) (get next key)]))))
+                    (and (vector? old) (vector? next) (= (count old) (count next))
+                         (every? true? (map #(= (get %1 id-key) (get %2 id-key)) old next)))
+                    (dotimes [i (count next)]
+                      (visit (conj path i) (nth old i) (nth next i)))
+                    :else (emit! [set-op path next]))))]
+        (visit [] before after)
+        @result)
+      (catch clojure.lang.ExceptionInfo error
+        (if (::limit (ex-data error)) nil (throw error))))))
+
 (defn changes
-  "Return ordered [set/remove path value] operations, or nil when max-operations
-  is exceeded. Keys are wire strings. Vector element paths are used only when
-  length and, for identifiable records, ID order match the exact base."
+  "Return ordered JSON set/remove operations or nil if the patch is too large."
   ([before after] (changes before after 4096))
   ([before after max-operations]
-   (let [result (volatile! [])
-         emit! (fn [operation]
-                 (when (>= (count @result) max-operations)
-                   (throw (ex-info "Projection patch exceeds operation bound" {::limit true})))
-                 (vswap! result conj operation))]
-     (try
-       (letfn [(visit [path old next]
-                 (when-not (= old next)
-                   (cond
-                     (and (map? old) (map? next))
-                     (do
-                       (doseq [key (sort (remove #(contains? next %) (keys old)))]
-                         (emit! ["remove" (conj path key)]))
-                       (doseq [key (sort (keys next))]
-                         (if (contains? old key)
-                           (visit (conj path key) (get old key) (get next key))
-                           (emit! ["set" (conj path key) (get next key)]))))
-                     (and (vector? old) (vector? next) (= (count old) (count next))
-                          (= (mapv #(when (map? %) (get % "id")) old)
-                             (mapv #(when (map? %) (get % "id")) next)))
-                     (doseq [index (range (count next))]
-                       (visit (conj path index) (nth old index) (nth next index)))
-                     :else (emit! ["set" path next]))))]
-         (visit [] before after)
-         @result)
-       (catch clojure.lang.ExceptionInfo error
-         (if (::limit (ex-data error)) nil (throw error)))))))
+   (collect-changes before after max-operations "set" "remove" "id" sort)))
+
+(defn typed-changes
+  "Return Transit operations with the original map keys and atomic tagged values.
+  Sibling map edits commute, so heterogeneous keys need no comparison or coercion."
+  [before after]
+  (collect-changes before after 4096 :set :remove :id identity))
 
 (defn create
   "Create an inert HTTP-owned cache. Serialized byte accounting bounds retained
