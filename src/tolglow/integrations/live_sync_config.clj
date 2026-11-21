@@ -74,4 +74,3 @@
             "Invalid Live pairing, recording route or mapping")
     (check-endpoint! endpoint)
     live))
-

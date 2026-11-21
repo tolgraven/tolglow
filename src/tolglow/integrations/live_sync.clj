@@ -196,70 +196,86 @@
                                       (contains? event :note) (assoc :note (:note event)))) (:commands result))]
         (commands! manager run commands)))))
 
+(defn- receive-handoff! [manager run {:keys [mode envelope]}]
+  (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
+    (swap! (:state manager) assoc-in [:config :live :mode] mode)
+    (commands! manager run (:commands result))
+    (doseq [event (:events result)] (emit! manager run event))
+    (when (:live @(:resources run))
+      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode mode}))))
+
+(defn- receive-recording! [manager run {:keys [command ack]} at]
+  (let [{:keys [config recording]} @(:state manager)
+        {:keys [record-route poll-ms]} (:live config)
+        observed (recording-at recording (get command :time-ms at) (max 1500 (* 3 poll-ms)))
+        plan (bridge-step! manager #(ableton/record-command % command ack observed))]
+    (when (seq (if (= :midi record-route) (:midi plan) (:intents plan)))
+      (enqueue-io!
+       manager run
+       (fn []
+         (let [result (try (transport/execute-plan! @(:resources run) record-route plan observed command ack)
+                           (catch Exception error
+                             {:status :indeterminate :error (error-data error) :command-id (:command-id command)}))]
+           (queue! manager run {:type :live/executed :result result})))))))
+
+(defn- remember-learned-parameter! [manager run id descriptor]
+  (let [spec (live-params/descriptor descriptor)
+        sources (get-in @(:state manager) [:config :live :observed-parameters])]
+    (when (and (not (contains? sources id)) (< (count sources) live-params/max-parameters))
+      (swap! (:state manager) assoc-in [:config :live :observed-parameters id] spec)
+      (update-parameter-watchers! manager run))))
+
+(defn- receive-parameter! [manager run {:keys [type event-id time-ms sample]}]
+  (let [live (get-in @(:state manager) [:config :live])
+        id (live-params/wire-id (:id sample))
+        generation @(:parameter-generation run)]
+    (when (and generation (= generation (:generation sample))
+               (contains? (:observed-parameters live) id))
+      (if (= :live/parameter type)
+        (when-let [observation (live-params/observation live event-id time-ms sample)]
+          (emit! manager run observation))
+        (when-let [reason (and (string? (:reason sample)) (:reason sample))]
+          (let [diagnostic {:id id :reason (subs reason 0 (min 512 (count reason)))}]
+            (swap! (:state manager) update-in [:parameter-watch :skipped] (fnil conj []) diagnostic)
+            (emit! manager run (assoc diagnostic :type :live/parameter-lost))))))))
+
+(defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms payload]}]
+  (when (and (= :executed (:status response)) (#{:inspect :configure-destination} op))
+    (if (= status-version @(:status-version run))
+      (process-status! manager run (:result response) time-ms round-trip-ms)
+      (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0))))
+  (when (= :executed (:status response))
+    (case op
+      :watch-parameters (when (= @(:parameter-generation run) (:id response))
+                          (swap! (:state manager) assoc :parameter-watch (:result response)))
+      :describe-selected-parameter (remember-learned-parameter! manager run (:id payload) (:result response))
+      nil))
+  (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
+    (swap! (:state manager) assoc :last-execution response))
+  (if (= :inspect op)
+    (when-not (= :executed (:status response))
+      (swap! (:state manager) assoc :last-error (:error response)))
+    (emit! manager run (assoc response :type :live/execution :op op))))
+
 (defn- receive! [manager run event at]
-  (let [config (:config @(:state manager))]
-    (case (:type event)
-      :midi/control (midi-control! manager run (:event event))
-      :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
-                       (swap! (:status-version run) inc))
-      (:live/parameter :live/parameter-error)
-      (let [sample (:sample event) id (live-params/wire-id (:id sample))]
-        (when (and (some? @(:parameter-generation run))
-                   (= @(:parameter-generation run) (:generation sample))
-                   (contains? (get-in config [:live :observed-parameters]) id))
-          (if (= :live/parameter (:type event))
-            (when-let [data (live-params/observation (:live config) (:event-id event) (:time-ms event) sample)]
-              (emit! manager run data))
-            (when (string? (:reason sample))
-              (let [diagnostic {:id id :reason (subs (:reason sample) 0 (min 512 (count (:reason sample))))}]
-                (swap! (:state manager) update-in [:parameter-watch :skipped] (fnil conj []) diagnostic)
-                (emit! manager run (assoc diagnostic :type :live/parameter-lost)))))))
-      :live/forget-parameter
-      (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
-          (update-parameter-watchers! manager run))
-      :live/midi (do (when-not (= :tolglow-feedback (get-in event [:event :origin]))
-                       (midi/observe-midi! manager run (:event event) :live :live-playback (get event :time-ms at)))
-                    (midi-control! manager run (:event event)))
-      :live/acknowledgement
-      (receive-ack! manager (:note event) (:ack event) (:envelope event))
-      :live/handoff
-      (let [result (bridge-step! manager #(ableton/handoff % (:mode event) (:envelope event)))]
-        (swap! (:state manager) assoc-in [:config :live :mode] (:mode event))
-        (commands! manager run (:commands result))
-        (doseq [event (:events result)] (emit! manager run event))
-        (when (:live @(:resources run)) (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (:mode event)})))
-      :record/command
-      (let [cmd (:command event) ack (:ack event) recording (recording-at (:recording @(:state manager))
-                                                                                       (get cmd :time-ms at) (max 1500 (* 3 (get-in config [:live :poll-ms]))))
-            plan (bridge-step! manager #(ableton/record-command % cmd ack recording))]
-        (when (seq (if (= :midi (get-in config [:live :record-route])) (:midi plan) (:intents plan)))
-          (enqueue-io! manager run
-                       (fn []
-                         (let [result (try (transport/execute-plan! @(:resources run) (get-in config [:live :record-route]) plan recording cmd ack)
-                                           (catch Exception error {:status :indeterminate :error (error-data error) :command-id (:command-id cmd)}))]
-                           (queue! manager run {:type :live/executed :result result}))))))
-      :live/executed (do (swap! (:state manager) assoc :last-execution (:result event))
-                         (emit! manager run (assoc (:result event) :type :live/execution)))
-      :live/response
-      (let [response (:response event)]
-        (when (= :executed (:status response))
-          (when (and (= :watch-parameters (:op event)) (= @(:parameter-generation run) (:id response)))
-            (swap! (:state manager) assoc :parameter-watch (:result response)))
-          (when (= :describe-selected-parameter (:op event))
-            (let [id (get-in event [:payload :id]) spec (live-params/descriptor (:result response))
-                  table (get-in config [:live :observed-parameters])]
-              (when (and (not (contains? table id)) (< (count table) live-params/max-parameters))
-                (swap! (:state manager) assoc-in [:config :live :observed-parameters id] spec)
-                (update-parameter-watchers! manager run))))
-          (when (#{:inspect :configure-destination} (:op event))
-            (if (= (:status-version event) @(:status-version run))
-              (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))
-              (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0)))))
-        (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} (:op event)) (swap! (:state manager) assoc :last-execution response))
-        (when-not (= :inspect (:op event)) (emit! manager run (assoc response :type :live/execution :op (:op event))))
-        (when (and (= :inspect (:op event)) (not= :executed (:status response)))
-          (swap! (:state manager) assoc :last-error (:error response))))
-      (fail! :invalid-event "Unknown synchronization event"))))
+  (case (:type event)
+    :midi/control (midi-control! manager run (:event event))
+    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+                     (swap! (:status-version run) inc))
+    (:live/parameter :live/parameter-error) (receive-parameter! manager run event)
+    :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
+                               (update-parameter-watchers! manager run))
+    :live/midi (let [message (:event event)]
+                 (when-not (= :tolglow-feedback (:origin message))
+                   (midi/observe-midi! manager run message :live :live-playback (get event :time-ms at)))
+                 (midi-control! manager run message))
+    :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))
+    :live/handoff (receive-handoff! manager run event)
+    :record/command (receive-recording! manager run event at)
+    :live/executed (do (swap! (:state manager) assoc :last-execution (:result event))
+                       (emit! manager run (assoc (:result event) :type :live/execution)))
+    :live/response (receive-response! manager run event)))
+
 
 (defn- prepare-state [state phase]
   (when (and (= phase :start) (>= (count (:retired state)) 16))
