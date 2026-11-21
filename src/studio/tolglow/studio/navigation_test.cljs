@@ -30,7 +30,7 @@
 
 (deftest fresh-show-without-settings-can-save-its-first-page-preference
   (let [db (dissoc base :show :settings-loaded? :settings-supported?)
-        installed (full-frame db (dissoc (:show base) :settings))
+        installed (full-frame db (assoc (dissoc (:show base) :settings) :runtime-id "preview" :show-id :main))
         preferences (some (fn [[op event]]
                             (when (and (= op :dispatch) (= :studio/settings-received (first event))) event))
                           (:fx installed))]
