@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import {cameraControls, cameraPreset, cameraKey} from './camera.js';
+import {cameraControls, cameraPreset} from './camera.js';
+import {CameraNavigator} from './camera-navigation.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
@@ -46,8 +47,12 @@ export class SceneRenderer {
       catch (error) { this.fail(error); }
     }, {signal});
     if (!platform.worker) {
+      this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
+        room: () => this.room, snapshot: () => this.snapshot,
+        active: () => !this.paused && !this.disposed && !document.hidden && this.visible && !!canvas.getClientRects().length,
+        reducedMotion: () => this.reducedMotion.matches});
       document.addEventListener('visibilitychange', () => { this.lastFrame = 0; }, {signal});
-      canvas.addEventListener('keydown', event => this.keydown(event), {signal});
+      this.reducedMotion.addEventListener('change', () => this.navigation.notify(), {signal});
     }
     if (platform.autoStart !== false) this.scheduleFrame(0);
   }
@@ -228,17 +233,20 @@ export class SceneRenderer {
   }
   setCamera(name) {
     if (!this.camera) return;
+    this.navigation?.setMode('orbit');
     cameraPreset(this.camera, this.controls, this.room, name); this.cameraName = name;
   }
   resetCamera() { this.setCamera('audience'); }
+  setNavigationMode(mode) {this.navigation?.setMode(mode);}
+  setNavigationSpeed(speed) {this.navigation?.setSpeed(speed);}
+  setInteractionActive(active) {this.navigation?.setInteractionActive(active);}
+  moveCamera(direction, pressed) {this.navigation?.move(direction, pressed);}
+  getNavigationState() {return this.navigation?.state() || null;}
+  onNavigationChange(callback) {return this.navigation?.subscribe(callback) || (() => {});}
   focusFixture(id) {
     const entry = this.fixtures.find(f => f.id === String(id)); if (!entry) return false;
+    this.navigation?.setMode('orbit');
     this.controls.target.copy(entry.root.position); this.camera.position.copy(entry.root.position).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
-  }
-  keydown(event) {
-    if (cameraKey(this.camera, this.controls, this.room, event.key)) {
-      event.preventDefault(); if (event.key === 'Home') this.cameraName = 'audience';
-    }
   }
   scheduleFrame(delay) {
     clearTimeout(this.frameTimer); globalThis.cancelAnimationFrame?.(this.frame);
@@ -248,7 +256,7 @@ export class SceneRenderer {
       this.frame = globalThis.requestAnimationFrame ? requestAnimationFrame(time => this.animate(time)) : setTimeout(() => this.animate(performance.now()), 0);
     }, delay);
   }
-  pause() { this.paused = true; clearTimeout(this.frameTimer); globalThis.cancelAnimationFrame?.(this.frame); }
+  pause() { this.paused = true; this.navigation?.clearInput(); clearTimeout(this.frameTimer); globalThis.cancelAnimationFrame?.(this.frame); }
   resume() { if (!this.disposed) {this.paused = false; this.lastFrame = 0; this.scheduleFrame(0);} }
   animate(time) {
     if (this.disposed || this.paused) return;
@@ -267,7 +275,7 @@ export class SceneRenderer {
   }
   draw(dt = 0) {
     if (this.disposed || this.lost || !this.renderer) return false;
-    const started = performance.now(); this.controls.update();
+    const started = performance.now(); if (this.platform.worker) this.controls.update();
     const simulate = !this.reducedMotion.matches || this.clock < this.fogAnimationUntil;
     // Both preview worklights illuminate airborne material: the sky hemisphere
     // alone made dense water droplets unnaturally blue/dark against the warm
@@ -317,7 +325,7 @@ export class SceneRenderer {
   dispose() {
     if (this.disposed) return; this.disposed = true; this.ready = false;
     this.pause(); this.abort.abort(); this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect();
-    this.controls?.dispose(); this.fog?.dispose();
+    this.navigation?.dispose(); this.controls?.dispose(); this.fog?.dispose();
     for (const entry of this.fixtures) { entry.dispose(); entry.light?.dispose(); }
     if (this.content) disposeGeometry(this.content);
     this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
