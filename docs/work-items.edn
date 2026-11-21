@@ -3,19 +3,26 @@
  :items
  [{:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
-   :kind :implementation :status :in-progress :owner "web_state_delta_transport_and_resynchronization"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/projection.clj"
            "tolglow/test/tolglow/studio/projection_test.clj"
            "tolglow/src/studio/tolglow/studio/projection.cljs"
            "tolglow/src/studio/tolglow/studio/projection_test.cljs"
-           "tolglow/docs/web-state-deltas.md"]
+           "tolglow/docs/web-state-deltas.md"
+           "tolglow/docs/benchmarks/state-delta-bench.clj"
+           "tolglow/docs/benchmarks/2026-11-21-state-delta-before.edn"
+           "tolglow/docs/benchmarks/2026-11-21-state-delta-incremental.edn"]
    :depends-on [:foundation/tests]
    :acceptance ["Exact base tokens prevent stale or missing deltas from corrupting state"
                 "Runtime-owned bounded cache stays outside the lighting clock"
                 "Optimistic edits remain separate from acknowledged server snapshots"
                 "Actual JSON and browser checks demonstrate bandwidth savings and resynchronization"]
    :notes "Root delegates browser-snapshot plus minimal cache construction/cleanup; UI owner transfers events snapshot/poll regions after e47d5ae."
-   :evidence []}
+   :evidence ["Backend parity485 tests /3779 assertions; final incremental JSON/Ring7 /62 passed"
+              "Frontend143 tests /764 assertions; optimized148 files zero warnings"
+              "Five actual browser transport/recovery workflows passed, page errors empty"
+              "1000fixture/1012cue measurement: full450198 bytes median vs delta4280; HTTP delta median2.295ms"
+              "docs/web-state-deltas.md"]}
   {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil

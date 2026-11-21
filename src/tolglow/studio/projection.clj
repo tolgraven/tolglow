@@ -13,6 +13,53 @@
 (defn- byte-count [value]
   (alength (.getBytes ^String (json/write-str value) StandardCharsets/UTF_8)))
 
+(declare wire-value)
+
+(defn- wire-key [key]
+  (let [key (wire-value key nil nil)]
+    (if (string? key) key (str key))))
+
+(defn- wire-value [value before previous-wire]
+  ;; Snapshot library/rig subtrees are persistent data. Reuse their normalized
+  ;; wire form rather than walking every fixture and cue on every HTTP poll.
+  (if (= value before) previous-wire
+    (cond
+      (keyword? value) (subs (str value) 1)
+      (map? value)
+      (let [keys (mapv wire-key (keys value))
+            unique? (= (count keys) (count (set keys)))]
+        (into {} (map (fn [[key child] wire-key]
+                        [wire-key (wire-value child (when unique? (get before key))
+                                              (when unique? (get previous-wire wire-key)))]) value keys)))
+      ;; Match the public JSON conversion: postwalk first rebuilds the set
+      ;; with normalized members, then exposes that set's iteration as an array.
+      (set? value) (vec (into #{} (map #(wire-value % nil nil)) value))
+      (sequential? value)
+      (let [before (when (sequential? before) (vec before))]
+        (mapv (fn [index child]
+                (wire-value child (get before index)
+                            (when (vector? previous-wire) (get previous-wire index)))) (range) value))
+      :else value)))
+
+(defn- json-size-change [before after]
+  ;; Exact UTF-8 JSON size difference. Unchanged subtrees cost one equality
+  ;; check; a scalar edit does not serialize the entire rig/library for sizing.
+  (cond
+    (= before after) 0
+    (and (map? before) (map? after))
+    (+ (- (max 0 (dec (count after))) (max 0 (dec (count before))))
+       (reduce (fn [total key]
+                 (+ total
+                    (cond
+                      (and (contains? before key) (contains? after key))
+                      (json-size-change (get before key) (get after key))
+                      (contains? after key) (+ (byte-count key) 1 (byte-count (get after key)))
+                      :else (- (+ (byte-count key) 1 (byte-count (get before key)))))))
+               0 (into (set (keys before)) (keys after))))
+    (and (vector? before) (vector? after) (= (count before) (count after)))
+    (reduce + 0 (map json-size-change before after))
+    :else (- (byte-count after) (byte-count before))))
+
 (defn changes
   "Return ordered [set/remove path value] operations, or nil when max-operations
   is exceeded. Keys are wire strings. Vector element paths are used only when
@@ -68,9 +115,9 @@
   (let [state @(:state store)]
     {:entries (count (:entries state)) :bytes (:bytes state) :closed? (:closed? state)}))
 
-(defn- retain [store state token view size]
+(defn- retain [store state token source view size]
   (if (or (contains? (:entries state) token) (> size (:max-bytes store))) state
-    (loop [state (-> state (assoc-in [:entries token] {:view view :bytes size})
+    (loop [state (-> state (assoc-in [:entries token] {:source source :view view :bytes size})
                     (update :order conj token) (update :bytes + size))]
       (if (or (> (count (:order state)) (:max-entries store)) (> (:bytes state) (:max-bytes store)))
         (let [old (first (:order state))]
@@ -79,21 +126,24 @@
         state))))
 
 (defn project!
-  "Build a full or exact-base patch envelope from an already JSON-shaped view.
+  "Build a full or exact-base patch envelope from a portable Studio view.
   Missing/evicted bases and changed show identities produce full snapshots.
   Every result is based on its request token; no client session or queue is kept.
   Call only at an HTTP/output boundary, outside the lighting owner's lock."
-  [store view requested-base]
+  [store source requested-base]
+  (when-not (map? source) (throw (ex-info "Projection source must be a map" {})))
   (let [requested-base (when (and (string? requested-base) (<= 1 (count requested-base) 128)) requested-base)]
     (locking (:lock store)
       (let [state @(:state store)
             _ (when (:closed? state) (throw (ex-info "Projection cache is closed" {})))
             latest (peek (:order state))
-            token (if (= view (get-in state [:entries latest :view])) latest (str (UUID/randomUUID)))
+            previous (get-in state [:entries latest])
+            view (wire-value source (:source previous) (:view previous))
+            token (if (= view (:view previous)) latest (str (UUID/randomUUID)))
             base (get-in state [:entries requested-base :view])
             full {:protocol protocol :kind "full" :base-token requested-base :token token
                   :identity (identity-of view) :view view}
-            view-size (byte-count view)
+            view-size (if previous (+ (:bytes previous) (json-size-change (:view previous) view)) (byte-count view))
             ;; JSON object order cannot change this length. Avoid serializing
             ;; the entire large view twice just to compare envelope sizes.
             full-size (+ view-size (- (byte-count (assoc full :view nil)) 4))
@@ -103,5 +153,5 @@
                     {:protocol protocol :kind "patch" :base-token requested-base :token token
                      :identity (identity-of view) :changes operations})
             result (if (and patch (< (byte-count patch) full-size)) patch full)]
-        (reset! (:state store) (retain store state token view view-size))
+        (reset! (:state store) (retain store state token source view view-size))
         result))))

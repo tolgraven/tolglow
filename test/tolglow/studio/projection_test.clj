@@ -83,6 +83,30 @@
     (is (= 10 (count (distinct (map :token responses)))))
     (is (= 11 (:entries (projection/status cache))))))
 
+(deftest incremental-normalization-and-byte-accounting-match-actual-json
+  (let [cache (projection/create {:max-entries 1})
+        identity {:runtime-id "runtime" :show-id :main :epoch 0 :revision 1}
+        sources [{:payload {:rig/aim [0 1 2] :nil nil :set #{:color :dimmer}}}
+                 {:payload {:rig/aim [0 1.0 2] :text "åäö \"\n\\"}}
+                 {:payload {:rig/aim [0 1.0] :text "åäö \"\n\\" :nil nil}}
+                 {:payload {}}
+                 {:payload []}
+                 {:payload (list :a :b)}
+                 {:payload {:a 1 "a" 2}}
+                 {:payload {:a 2 "a" 3}}
+                 {}]]
+    (doseq [source sources]
+      (let [source (merge identity source)
+            full (projection/project! cache source nil)]
+        (is (= (wire source) (get (wire full) "view")))
+        (is (= (alength (.getBytes ^String (json/write-str (:view full)) "UTF-8"))
+               (:bytes (projection/status cache)))))))
+  (let [cache (projection/create)
+        first (projection/project! cache view nil)
+        second (projection/project! cache (assoc view "frame-number" 11) nil)]
+    (is (identical? (get-in first [:view "library"]) (get-in second [:view "library"])))
+    (is (thrown? clojure.lang.ExceptionInfo (projection/project! cache nil nil)))))
+
 (deftest actual-ring-state-deltas-follow-commands-and-show-restarts
   (let [runtime (studio/create-runtime {:workers 1 :workspace-options nil})
         app (studio/handler runtime)

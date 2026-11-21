@@ -58,10 +58,14 @@ Concurrent requests retain their explicit bases; slow browsers simply request
 the newest projection and recover if their base has expired.
 
 Projection, comparison and JSON encoding happen on HTTP request threads.
+Unchanged persistent subtrees reuse their normalized wire values, and exact
+incremental JSON size accounting avoids serializing the entire library merely
+to decide whether a delta is smaller. The cache retains both source and wire
+forms; unchanged subtrees are shared across its bounded history.
 Rendering workers and the physical output publisher continue using complete
 immutable context and never compute network diffs. The cache lock is separate
 from the lighting owner lock. This reduces wire bytes; it does not eliminate
-snapshot traversal or JSON encoding costs on the server.
+all comparison or JSON encoding costs on the server.
 
 ## Verification
 
@@ -70,7 +74,7 @@ serialization, removals/null, record reorder, epoch/runtime replacement,
 concurrent requests, eviction, bounds and cache cleanup. The frontend suite
 exercises protocol application and registered re-frame transitions, including
 optimistic edits, acknowledgements and stale full responses. Browser and payload
-measurement results are recorded below after execution.
+measurement results are recorded below.
 
 The test command now compiles the Node test bundle without shadow-cljs autorun
 and runs Node explicitly. An intentionally failing temporary assertion was used
@@ -82,3 +86,38 @@ Reproduce wire measurements with
 1000 patched RGBW pixels, 1012 cues and one active effect, alternates parameter
 edits and ordinary ticks, and compares full, conditional and delta Ring bodies.
 The measurements exclude physical output, network transport and browser work.
+
+
+### Executed gates and wire measurements
+
+- Backend full parity after the master integration: **485 tests / 3779 assertions**, green.
+- Final incremental normalization/accounting and actual Ring gate: **7 tests / 62 assertions**, green.
+- Frontend: **143 tests / 764 assertions**, green through the explicit Node runner.
+- Optimized build: **148 files, zero warnings**.
+- Actual optimized-browser workflow: initial full/patch polling, cue launch and
+  parameter editing, missing-base recovery, connection-failure recovery and show
+  restart all passed with no page errors. Preview was explicitly paused for this
+  transport test; it makes no renderer or physical iPad Safari performance claim.
+
+Retained reports use the same 1000-pixel/1012-cue workload on Java21.0.13:
+
+| JSON body | Observed bytes |
+| --- | ---: |
+| Full view, median | 450,198 |
+| Previous conditional view during ordinary ticks, median | 3,342 |
+| Previous conditional view after a parameter edit, median | 450,198 |
+| New delta, minimum / median / maximum | 409 / 4,280 / 5,255 |
+
+All 40 measured updates used patches. Parameter-edit updates were approximately
+99% smaller than full/previous conditional responses. Ordinary settled frames
+were around 0.4KB; initial effect output changes can produce larger patches.
+These are UTF-8 JSON body bytes before HTTP compression, not network throughput.
+
+The [initial report](benchmarks/2026-11-21-state-delta-before.edn) at checkpoint
+`16b1e08` measured HTTP projection/diff/encoding at median31.031ms/p95110.134ms.
+The [incremental report](benchmarks/2026-11-21-state-delta-incremental.edn), after
+reusing unchanged wire subtrees and exact incremental size accounting, measured
+median2.295ms/p9512.615ms. Both timing summaries exclude the first five samples;
+35 observations remain. The second run's maximum was16.526ms. These are small
+local JVM measurements, separate from frame-render time, real network latency,
+physical outputs and browser costs; they are not a production deadline guarantee.
