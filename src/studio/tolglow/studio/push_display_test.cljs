@@ -1,5 +1,6 @@
 (ns tolglow.studio.push-display-test
-  (:require [cljs.test :refer-macros [deftest is]]
+  (:require [thi.ng.color.core :as color]
+            [cljs.test :refer-macros [deftest is]]
             [re-frame.db :as db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
@@ -27,6 +28,12 @@
   (is (= 0.75 (widgets/proportion {:bounds [-1 1]} 0.5)))
   (is (= 1 (widgets/proportion {:bounds [0 1]} 2)))
   (is (nil? (widgets/proportion {:bounds [1 1]} 1))))
+
+(deftest web-and-push-widgets-render-the-shared-color-record
+  (let [v (color/rgba 1 0 0 0.5)]
+    (is (= [1 0 0 0.5] (widgets/color-components v)))
+    (is (= "rgba(255,0,0,0.5)" (widgets/color-css v)))
+    (is (= "#123456" (widgets/color-css (color/int24 0x123456))))))
 
 (deftest push-navigation-retains-authoritative-banks-and-touch-without-expanding-the-view
   (let [bank {:index 1 :count 2 :total 10 :offset 8}

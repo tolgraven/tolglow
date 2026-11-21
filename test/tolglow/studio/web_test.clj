@@ -71,3 +71,30 @@
           (is (= "chat/done" (get (json/read-str (subs (.readLine reader) 6)) "type")))
           (is (= true (deref finished 1000 false)))))
       (finally (deliver release true) (.stop server)))))
+
+(deftest reitit-routes-match-pages-methods-and-stream-upgrades
+  (let [upgrades (atom [])
+        app (web/app {:state-stream! (fn [request]
+                                      (swap! upgrades conj (:headers request))
+                                      {:status 101 :headers {} :body nil})
+                      :snapshot! (constantly {})
+                      :heartbeat! (constantly nil)})]
+    (doseq [path ["/perform" "/compose" "/rig" "/library" "/assistant" "/connections"
+                  "/develop" "/repl" "/push-display"]]
+      (let [page (app {:request-method :get :uri path})]
+        (is (= [200 "text/html; charset=utf-8"]
+               [(:status page) (get-in page [:headers "Content-Type"])]))
+        (when (instance? java.io.Closeable (:body page)) (.close ^java.io.Closeable (:body page)))))
+    (let [rejected (app (request :post "/api/state" {}))]
+      (is (= 405 (:status rejected)))
+      (is (= "GET, HEAD" (get-in rejected [:headers "Allow"]))))
+    (is (= 405 (:status (app (request :get "/api/command" {})))))
+    (is (= 404 (:status (app (request :put "/api/nonexistent" {})))))
+    (is (= 404 (:status (app (request :get "/unknown-view" {})))))
+    (is (= 404 (:status (app (request :get "/studio/no-such-file.js" {})))))
+    (is (= 200 (:status (app (request :head "/rig" {})))))
+    (is (= 405 (:status (app (request :head "/api/state/stream" {})))))
+    (is (empty? @upgrades))
+    (is (= 101 (:status (app {:request-method :get :uri "/api/state/stream"
+                              :headers {"upgrade" "websocket"}}))))
+    (is (= [{"upgrade" "websocket"}] @upgrades))))

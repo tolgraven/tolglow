@@ -275,8 +275,7 @@
     (if (false? (:valid? result))
       {:db (store db (assoc (state db) :busy nil :diagnostics (:diagnostics result) :error "Resolve the patch diagnostics below."))}
       {:db (-> db (store (assoc (state db) :busy nil :notice "Fixture added to the rig. Its address and position are now saved."))
-               (assoc-in [:ui :rig-dirty?] false))
-       :dispatch [:studio/poll]})))
+               (assoc-in [:ui :rig-dirty?] false))})))
 
 (defn- field [s key label & [attrs]]
   [:label {:for (str "fixture-patch-" (name key))} label

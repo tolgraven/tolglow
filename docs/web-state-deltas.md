@@ -1,12 +1,9 @@
-# Browser state deltas
+# HTTP state deltas and benchmark history
 
-Studio's show-state endpoint now supports versioned deltas. The re-frame client
-requests `/api/state?projection=delta-v1`; initial requests receive a full view.
-Following requests send the last accepted `base` token. Unchanged authoring data,
-fixtures and instance fields are then omitted instead of being resent after
-every parameter edit. The existing foreground/background poll intervals remain
-100ms/1500ms. This change does not introduce a WebSocket server; the envelope can
-also be carried over a future WebSocket or SSE connection.
+The Studio browser consumes the [Transit WebSocket state stream](state-stream.md).
+This document records the HTTP inspection endpoint and its original measurements.
+An inspector can request `/api/state?projection=delta-v1` to receive a full view,
+then supply the last accepted `base` token to request changed fields.
 
 Plain `/api/state` remains a complete inspection API. Conditional inspection
 queries using runtime, epoch and revision still omit unchanged authoring data.
