@@ -1,0 +1,112 @@
+(ns tolglow.studio.projection-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [clojure.data.json :as json]
+            [tolglow.studio :as studio]
+            [tolglow.studio.projection :as projection]
+            [tolglow.studio.web :as web]))
+
+(def view
+  {"runtime-id" "runtime" "show-id" "main" "epoch" 0 "revision" 2 "frame-number" 10
+   "library" (vec (repeat 100 {"name" "Unchanged cue" "params" {"level" 0.5}}))
+   "instances" [{"id" "0:1" "params" {"rig/aim" [0 1 2] "level" 0.5}}]})
+
+(defn wire [value] (json/read-str (json/write-str (web/json-data value))))
+
+(deftest patches-distinguish-removal-nil-and-vector-identity
+  (let [before {"drop" true "nullable" 3 "params" {"rig/aim" [0 1 2]}}
+        after {"nullable" nil "new" false "params" {"rig/aim" [0 4 2]}}]
+    (is (= [["remove" ["drop"]] ["set" ["new"] false]
+            ["set" ["nullable"] nil] ["set" ["params" "rig/aim" 1] 4]]
+           (projection/changes before after)))
+    (is (nil? (projection/changes before after 2))))
+  (let [before [{"id" "a" "value" 1} {"id" "b" "value" 2}]
+        after (vec (reverse before))]
+    (is (= [["set" ["instances"] after]]
+           (projection/changes {"instances" before} {"instances" after})))
+    (is (= [["set" ["instances"] [(first before)]]]
+           (projection/changes {"instances" before} {"instances" [(first before)]})))))
+
+(deftest full-initial-frame-and-exact-base-json-delta
+  (let [cache (projection/create)
+        full (projection/project! cache view nil)
+        next (-> view (update "frame-number" inc) (assoc-in ["instances" 0 "params" "level"] 0.8))
+        patch (projection/project! cache next (:token full))]
+    (is (= "full" (:kind full)))
+    (is (= view (:view full)))
+    (is (= "patch" (:kind patch)))
+    (is (= (:token full) (:base-token patch)))
+    (is (= [["set" ["frame-number"] 11] ["set" ["instances" 0 "params" "level"] 0.8]]
+           (get (wire patch) "changes")))
+    (is (= "tolglow-state/1" (get (wire patch) "protocol")))
+    (is (= 2 (:entries (projection/status cache))))
+    (is (= [] (:changes (projection/project! cache next (:token patch)))))
+    (is (= (:token patch) (:token (projection/project! cache next (:token patch)))))))
+
+(deftest stale-missing-evicted-or-replaced-show-bases-receive-full-state
+  (let [cache (projection/create {:max-entries 2})
+        first (projection/project! cache view nil)
+        second (projection/project! cache (update view "frame-number" inc) (:token first))
+        third (projection/project! cache (update view "frame-number" + 2) (:token second))]
+    (is (= "full" (:kind (projection/project! cache view "unknown-token"))))
+    (is (= "full" (:kind (projection/project! cache view (:token first)))))
+    (is (= "full" (:kind (projection/project! cache (assoc view "epoch" 1) (:token third)))))
+    (is (= "full" (:kind (projection/project! cache (assoc view "runtime-id" "replacement") (:token third)))))
+    (is (= "full" (:kind (projection/project! cache (assoc view "show-id" "new-show") (:token third)))))
+    (is (= 2 (:entries (projection/status cache))))))
+
+(deftest cache-byte-and-patch-bounds-never-create-a-partial-result
+  (let [cache (projection/create {:max-bytes 100})
+        full (projection/project! cache view nil)]
+    (is (= "full" (:kind (projection/project! cache view (:token full)))))
+    (is (= 0 (:entries (projection/status cache)))))
+  (let [cache (projection/create {:max-operations 1})
+        full (projection/project! cache view nil)]
+    (is (= "full" (:kind (projection/project! cache (assoc view "revision" 3 "frame-number" 11) (:token full))))))
+  (let [cache (projection/create)
+        small (select-keys view ["runtime-id" "show-id" "epoch" "revision" "frame-number"])
+        first (projection/project! cache small nil)
+        expanded (into small (map (fn [i] [(str "field-" i) i]) (range 30)))]
+    (is (= "full" (:kind (projection/project! cache expanded (:token first)))))
+    (projection/clear! cache)
+    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status cache)))
+    (is (thrown? clojure.lang.ExceptionInfo (projection/project! cache small nil)))))
+
+(deftest concurrent-http-clients-keep-their-own-exact-base
+  (let [cache (projection/create {:max-entries 16})
+        first (projection/project! cache view nil)
+        jobs (mapv (fn [index]
+                     (future (projection/project! cache (assoc view "frame-number" (+ 11 index)) (:token first))))
+                   (range 10))
+        responses (mapv deref jobs)]
+    (is (every? #(= "patch" (:kind %)) responses))
+    (is (every? #(= (:token first) (:base-token %)) responses))
+    (is (= 10 (count (distinct (map :token responses)))))
+    (is (= 11 (:entries (projection/status cache))))))
+
+(deftest actual-ring-state-deltas-follow-commands-and-show-restarts
+  (let [runtime (studio/create-runtime {:workers 1 :workspace-options nil})
+        app (studio/handler runtime)
+        request (fn [query]
+                  (let [response (app {:request-method :get :uri "/api/state" :query-string query})]
+                    (is (= 200 (:status response)))
+                    (json/read-str (:body response))))]
+    (try
+      (let [full (request "projection=delta-v1")
+            token (get full "token")
+            reply (studio/submit! runtime {:op :master/set :value 0.4})]
+        (studio/tick! runtime 25)
+        (is (= :accepted (:status @reply)))
+        (let [delta (request (str "projection=delta-v1&base=" token))
+              plain (request "")]
+          (is (= "patch" (get delta "kind")))
+          (is (= token (get delta "base-token")))
+          (is (some #{["set" ["master"] 0.4]} (get delta "changes")))
+          (is (= 0.4 (get plain "master")))
+          (is (nil? (get plain "protocol")))
+          (studio/submit! runtime {:op :show/restart})
+          (studio/tick! runtime 50)
+          (let [reset (request (str "projection=delta-v1&base=" (get delta "token")))]
+            (is (= "full" (get reset "kind")))
+            (is (= 1 (get-in reset ["view" "epoch"]))))))
+      (finally (studio/stop! runtime)))
+    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status (:browser-projections runtime))))))

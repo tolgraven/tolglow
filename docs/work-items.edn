@@ -1,7 +1,22 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/push-navigation-task-checks-v1
+ [{:id :web/state-delta-transport
+   :title "Send versioned state deltas and recover complete browser projections"
+   :kind :implementation :status :in-progress :owner "web_state_delta_transport_and_resynchronization"
+   :paths ["tolglow/src/tolglow/studio/projection.clj"
+           "tolglow/test/tolglow/studio/projection_test.clj"
+           "tolglow/src/studio/tolglow/studio/projection.cljs"
+           "tolglow/src/studio/tolglow/studio/projection_test.cljs"
+           "tolglow/docs/web-state-deltas.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Exact base tokens prevent stale or missing deltas from corrupting state"
+                "Runtime-owned bounded cache stays outside the lighting clock"
+                "Optimistic edits remain separate from acknowledged server snapshots"
+                "Actual JSON and browser checks demonstrate bandwidth savings and resynchronization"]
+   :notes "Root delegates browser-snapshot plus minimal cache construction/cleanup; UI owner transfers events snapshot/poll regions after e47d5ae."
+   :evidence []}
+  {:id :web/push-navigation-task-checks-v1
    :title "Expose Push navigation and application task checks in shared Studio UI"
    :kind :implementation :status :done :owner nil
    :depends-on [:control/webview-display-v1 :development/workspace-service-v1]

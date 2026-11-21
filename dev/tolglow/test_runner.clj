@@ -25,7 +25,8 @@
     tolglow.studio.workspace-test tolglow.studio.development-test tolglow.studio.restart-host-test
     tolglow.studio.terminal-test tolglow.studio.sensors-test tolglow.studio.sensor-osc-test
     tolglow.studio.sensor-host-test tolglow.studio.output-scheduler-test
-    tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test])
+    tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test
+    tolglow.studio.projection-test])
 
 (def suites
   {"pure" pure-tests

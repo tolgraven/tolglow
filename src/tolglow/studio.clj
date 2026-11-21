@@ -26,6 +26,7 @@
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -137,6 +138,7 @@
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
+      :browser-projections (projection/create)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
@@ -748,7 +750,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(output-scheduler/close! (:publisher runtime))
+                             [#(projection/clear! (:browser-projections runtime))
+                              #(output-scheduler/close! (:publisher runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -884,7 +887,8 @@
       (submit! runtime :import {:source (str source)}))))
 
 (defn browser-snapshot
-  "Bound preview values; omit unchanged authoring data on conditional polls."
+  "Bound preview values. Delta clients receive versioned, exact-base envelopes;
+  inspection requests can retrieve a complete or authoring-conditional view."
   [runtime query]
   (let [view (snapshot runtime)
         preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
@@ -893,10 +897,13 @@
         partial? (and (= (:runtime-id view) (get query "runtime-id"))
                       (= (str (:epoch view)) (get query "epoch"))
                       (= (str (:revision view)) (get query "revision")))]
-    (if partial?
+    (cond
+      (= "delta-v1" (get query "projection"))
+      (projection/project! (:browser-projections runtime) (json-data view) (get query "base"))
+      partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
-      view)))
+      :else view)))
 
 (defn fixture-action!
   "Fixture library operations; publication and patching join the owner queue."
