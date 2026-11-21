@@ -34,9 +34,17 @@
 (deftest closed-and-ping-pong-paths-retain-portable-editor-data
   (let [closed (paths/definition model (assoc path-spec :closed? true))
         reverse (paths/definition model (assoc path-spec :mode :ping-pong))]
-    (is (= (first (:points (:editor closed))) (peek (:points (:editor closed)))))
+    (is (= (:points path-spec) (get-in closed [:editor :points])))
+    (is (= (first (:points path-spec)) (:value (peek (get-in closed [:outputs :aim :spec :keyframes])))))
     (is (= [1.0 0.0 1.0] (:value ((tween/compile-tween (get-in reverse [:outputs :aim :spec])) 6))))
     (is (registry/data? closed))))
+
+(deftest maximum-size-closed-path-remains-editable
+  (let [spec (assoc path-spec :closed? true :points (mapv #(vector % 0 0) (range 256)))
+        effect (paths/definition model spec)]
+    (is (= 256 (count (get-in effect [:editor :points]))))
+    (is (= 257 (count (get-in effect [:outputs :aim :spec :keyframes]))))
+    (is (= effect (paths/definition model (merge spec (:editor effect)))))))
 
 (deftest invalid-paths-and-stale-publication-are-rejected-before-effects-exist
   (doseq [spec [(assoc path-spec :points [[1 1 1] [1 1 1]])
