@@ -29,7 +29,7 @@
   function Adapter(options) {
     if (!options || typeof options.api !== "function" || typeof options.dictionaryCall !== "function" || typeof options.readDictionary !== "function")
       fault("adapter-options", "LiveAPI, dictionary-call and dictionary-reader boundaries are required");
-    this.api = options.api; this.dictionaryCall = options.dictionaryCall; this.readDictionary = options.readDictionary;
+    this.api = options.api; this.parameters = options.parameters; this.dictionaryCall = options.dictionaryCall; this.readDictionary = options.readDictionary;
     this.mode = "live"; this.destination = null; this.pendingNotes = {}; this.history = {}; this.order = [];
     this.historyLimit = options.historyLimit || 2048;
     this.provisionalDuration = options.provisionalDuration === undefined ? 1 / 16 : options.provisionalDuration;
@@ -83,7 +83,7 @@
       clock: {beat: songBeat, bpm: Number(this.read(song, "tempo")), "playing?": !!this.read(song, "is_playing"),
         meter: {"beats-per-bar": numerator * 4 / denominator, "bars-per-phrase": 4},
         "time-signature": {numerator: numerator, denominator: denominator}},
-      capabilities: {"record-notes?": true, "record-cc?": false, "parameter-note-lanes?": true, "arrangement-placement?": true, "chain-colors?": true,
+      capabilities: {"observe-parameters?": !!this.parameters, "record-notes?": true, "record-cc?": false, "parameter-note-lanes?": true, "arrangement-placement?": true, "chain-colors?": true,
         "direct-pad-color?": false, "provisional-note-beats": this.provisionalDuration}};
     if (this.destination) {
       var objects = this.destinationObjects(), clip = objects.clip;
@@ -218,12 +218,18 @@
       switch (request.op) {
         case "inspect": result = this.inspect(); break;
         case "configure-destination": result = this.pair(payload); break;
+        case "describe-selected-parameter": case "watch-parameters":
+          if (!this.parameters) fault("parameter-observers-unavailable", "Load the parameter observer script in the device");
+          result = request.op === "watch-parameters" ? this.parameters.replace(payload.sources, payload.generation) : this.parameters.selected();
+          break;
         case "record-event": result = this.record(payload); break;
         case "place-in-arrangement": result = this.placeInArrangement(payload); break;
         case "pad-page": result = this.padPage(payload); break;
         case "handoff":
           if (payload.mode !== "live" && payload.mode !== "lighting") fault("mode", "Mode must be live or lighting");
-          this.mode = payload.mode; result = {mode: this.mode, "midi-thru?": this.mode === "live"}; break;
+          this.mode = payload.mode;
+          if (this.parameters) this.parameters.setActive(this.mode === "lighting");
+          result = {mode: this.mode, "midi-thru?": this.mode === "live"}; break;
         default: fault("operation", "Unknown Live bridge operation");
       }
       return {id: request.id, "protocol-version": 1, status: "executed", result: result};

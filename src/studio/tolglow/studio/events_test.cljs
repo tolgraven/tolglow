@@ -534,3 +534,15 @@
     (is (= "/api/sync/arrange" (get-in arrange [:fx 0 1 :path])))
     (is (= 48.5 (get-in arrange [:fx 0 1 :body :song-beat])))
     (is (string? (get-in arrange [:fx 0 1 :body :request-id])))))
+
+(deftest learned-live-automation-sources-survive-connection-form-edits
+  (let [descriptor {:path "live_set tracks 1 mixer_device volume" :name "Volume" :track-name "Bass"
+                    :device-name "Mixer" :range [0 1] :quantized? false}
+        db (assoc base :connections {:sync-form connections/sync-defaults
+                                     :sync {:config {:live {:observed-parameters {"bass" descriptor}}}}})
+        learn (transition db [:connections/action :learn-parameter "bass"])
+        forget (transition db [:connections/action :forget-parameter "bass"])]
+    (is (= {"bass" descriptor} (get-in (connections/sync-payload db) [:live :observed-parameters])))
+    (is (= "/api/sync/learn-parameter" (get-in learn [:fx 0 1 :path])))
+    (is (= "bass" (get-in learn [:fx 0 1 :body :id])))
+    (is (= "/api/sync/forget-parameter" (get-in forget [:fx 0 1 :path])))))
