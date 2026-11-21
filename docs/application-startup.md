@@ -83,6 +83,9 @@ Modules enable startup actions. The REPL can configure the same runtime and
 operate it after launch. The application keeps process handles outside show
 backups. Full show files preserve the saved model and its connection settings.
 
+The show also accepts an optional native expression backend and a per-frame GPU
+wait budget. [Configure and inspect native rendering](native-shader-show.md)
+
 ## Original startup behavior
 
 The effects branch at `01146ec` runs `tolglow.core/activate-show`, initializes

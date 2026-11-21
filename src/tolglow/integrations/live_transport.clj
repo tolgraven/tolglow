@@ -6,30 +6,43 @@
             [afterglow.sync.session :refer [fail!]])
   (:import [java.util UUID]))
 
+(defn- request! [config cancelled? id op payload]
+  (let [result (providers/http-transport!
+                {:method :post :url (:endpoint config)
+                 :headers {"content-type" "application/json" "accept" "application/json"}
+                 :body (json/write-str {:id id :protocol-version 1 :op op
+                                        :payload (cond-> payload
+                                                   (:bridge-id config) (assoc :expected-bridge-id (:bridge-id config))
+                                                   (:sync-session-id config) (assoc :sync-session-id (:sync-session-id config)))})}
+                (fn [_] nil)
+                {:timeout-ms (:timeout-ms config) :connect-timeout-ms (min 1000 (:timeout-ms config))
+                 :max-response-chars 1048576 :cancelled? cancelled?})]
+    (when-not (= 200 (:status result)) (fail! :live-http "Live bridge returned a failing HTTP status"))
+    (let [reply (json/read-str (:body result) :key-fn keyword)]
+      (when-not (and (= id (:id reply)) (= 1 (:protocol-version reply))
+                     (#{"executed" "rejected" "indeterminate"} (:status reply)))
+        (fail! :live-protocol "Live bridge response has invalid identity or protocol"))
+      (update reply :status keyword))))
+
 (defn transport
-  "Actual bounded localhost HTTP requests to the companion Max bridge. No HTTP
-  request happens at factory/open time. The owner explicitly invokes inspect or
-  writes; cancellation closes an active response through the shared transport."
+  "Open an inert handle. Shutdown cancels outstanding IO and releases the
+  session's native parameter observers if any may still be installed."
   [config]
-  {:open! (fn [_] {:cancelled? (atom false)})
-   :request! (fn [handle id op payload]
-               (let [result (providers/http-transport!
-                             {:method :post :url (:endpoint config)
-                              :headers {"content-type" "application/json" "accept" "application/json"}
-                              :body (json/write-str {:id id :protocol-version 1 :op op
-                                                     :payload (cond-> payload
-                                                                (:bridge-id config) (assoc :expected-bridge-id (:bridge-id config))
-                                                                (:sync-session-id config) (assoc :sync-session-id (:sync-session-id config)))})}
-                             (fn [_] nil)
-                             {:timeout-ms (:timeout-ms config) :connect-timeout-ms (min 1000 (:timeout-ms config))
-                              :max-response-chars 1048576 :cancelled? (:cancelled? handle)})]
-                 (when-not (= 200 (:status result)) (fail! :live-http "Live bridge returned a failing HTTP status"))
-                 (let [reply (json/read-str (:body result) :key-fn keyword)]
-                   (when-not (and (= id (:id reply)) (= 1 (:protocol-version reply))
-                                  (#{"executed" "rejected" "indeterminate"} (:status reply)))
-                     (fail! :live-protocol "Live bridge response has invalid identity or protocol"))
-                   (update reply :status keyword))))
-   :close! (fn [handle] (reset! (:cancelled? handle) true))})
+  {:open! (fn [_] {:cancelled? (atom false) :watching? (atom false)})
+   :request! (fn [{:keys [cancelled? watching?]} id op payload]
+               (let [watch? (= :watch-parameters op)
+                     sources? (seq (:sources payload))]
+                 ;; A lost acknowledgement can still have installed callbacks.
+                 (when (and watch? sources?) (reset! watching? true))
+                 (let [result (request! config cancelled? id op payload)]
+                   (when (and watch? (not sources?) (= :executed (:status result))) (reset! watching? false))
+                   result)))
+   :close! (fn [{:keys [cancelled? watching?]}]
+             (reset! cancelled? true)
+             (when (compare-and-set! watching? true false)
+               (let [id (str (UUID/randomUUID))]
+                 (request! (update config :timeout-ms min 250) (atom false) id :watch-parameters
+                           {:sources {} :generation id}))))})
 
 (defn- midi-bytes [event]
   (midi-codec/encode

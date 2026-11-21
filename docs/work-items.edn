@@ -3,8 +3,7 @@
  :items
  [{:id :build/leiningen-canonical-workflows
    :title "Use one Leiningen project for backend, frontend, tests and profiling"
-   :kind :implementation :status :in-progress
-   :owner "master_render_performance_profiler_and_optimizations"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"
            "tolglow/dev/tolglow/build_manifest.clj" "tolglow/dev/parity_deps.clj"
            "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin/test"
@@ -17,10 +16,10 @@
                 "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
                 "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
                 "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
-   :evidence ["Lein :cljs final integrated185tests/994assertions and optimized185files/zero warnings passed locally"
+   :evidence ["Lein :cljs final integrated 185 tests / 994 assertions and optimized 185 files / zero warnings passed locally"
               "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
-              "Plain lein test after sync lifecycle integration:591/4896 passed on Java21; final sync/manifest23/272 and actual profile-master/subscriber capture-oracle smoke passed; final OSC pin integration rechecked in CI"
-              "Exact e77fce7 CI44898916324 passed all Java17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
+              "Plain lein test after sync lifecycle integration: 591 / 4896 passed on Java 21; final sync/manifest 23 / 272, startup/manifest 9 / 54 and actual profiler capture-oracle smokes passed"
+              "PR 46 merged a237c48 after exact 260b033 CI 44899570846 passed all Java 17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
   {:id :fixtures/patch-groups
    :title "Normalize named patch lists and fixture-builder heads before installation"
    :kind :implementation :status :done :owner nil
@@ -86,6 +85,43 @@
    :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
               "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
               "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
+  {:id :render/afterglow-shader-execution
+   :title "Run Afterglow's calibrated fixture shader in a headless JVM or WebGL"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/native_gpu.clj"
+           "afterglow/test-native/afterglow/render/native_gpu_test.clj"
+           "afterglow/doc/architecture/moving-head-shaders.md"]
+   :depends-on [:render/calibrated-moving-head-shader]
+   :acceptance ["Both implementations accept world targets and directions with explicit previous pan"
+                "Verify actual shader readback against the CPU on Linux and macOS"
+                "Tolglow consumes the implementation from the paired dependency"]
+   :evidence ["Afterglow PRs 16, 19, 20 and 22; Tolglow PR 43"
+              "64 moving heads over 12 CPU-history frames, plus mixed movement, limits and lifecycle cases"
+              "Mesa llvmpipe and Apple Software Renderer executed the native tests; physical GPU timing remains open"]}
+  {:id :render/named-glsl-fields
+   :title "Compile named lighting fields into one transform-feedback shader"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/ir.clj" "afterglow/test/afterglow/render/ir_test.clj"
+           "afterglow/doc/architecture/numeric-shader-fields.md"]
+   :depends-on [:render/gpu-experiment-v1]
+   :acceptance ["The CPU and GPU accept the same named expression map"
+                "The shader reports per-field offsets and types plus captured clock and parameter bindings"]
+   :evidence ["Afterglow PR 23; Lein IR tests, 11 tests and 118 assertions"
+              "Chromium SwiftShader read back aim, color and focus for 2,048 positions; 14,336 exact comparisons against evaluate-batch in an arithmetic workload"]}
+
+  {:id :render/show-native-fields
+   :title "Configure native effect expression rendering through the show module"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/compute.clj" "tolglow/src/tolglow/compiler/batch.clj"
+           "tolglow/src/tolglow/show.clj" "tolglow/test-native/tolglow/native_show_test.clj"]
+   :depends-on [:render/named-glsl-fields]
+   :acceptance ["Effect workers emit pure ordered requests and share one native session per show"
+                "Recover late and failed requests on the CPU with the same frame inputs and report the fallback"
+                "Close native resources on shutdown or startup failure and discard late results after restart"]
+   :evidence ["docs/native-shader-show.md"
+              "Lein native show tests on Mesa llvmpipe with eight fixtures, two concurrent shader programs and a capture sink"
+              "A blocked real native draw spans show restart without an extra publication"]}
+
   {:id :render/physical-output-in-afterglow
    :title "Own physical DMX publication and fixture protocol handling in Afterglow"
    :kind :implementation :status :done :owner nil
@@ -265,6 +301,21 @@
               ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"
               "Subscriber correctness smoke: actual Jetty/JVM clients at 1k/10k pixels +8 movers, 0/4 fast +1 withheld ACK; model/intent/packet/preview and full reconstructed view parity passed"
               "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
+  {:id :performance/animated-moving-heads
+   :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_movers.clj" "tolglow/dev/tolglow/bench_movers_reference.clj"
+           "afterglow/dev/afterglow/bench_movement_reference.clj" "afterglow/dev/AGENTS.md"
+           "tolglow/bin/profile-movers"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
+                "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
+                "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
+   :evidence ["All seven 64-head lanes passed the full 20-step opacity cycle through Lein at clean 4bcaff1 + Afterglow fcfd6be: 64 unique positions/rotations, 24 effects, all 48 heads beyond index 15 verified"
+              "Independent reference exposed missing packed pan history after zero opacity; Afterglow PR13 merged eeb04cd, regression red before fix, render/IR 46/744 and parity 320/3718 green"
+              "Optional 128-head scalar host hit the real 500ms worker timeout on the loaded shared machine; retain as failed evidence, dedicated runner timing pending"
+              "Mathematical geometry/physical-channel reference lives in Afterglow dev; Tolglow retains declarative effects, cues, admission, host and paired workflow"]}
   {:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
    :kind :implementation :status :done :owner nil
@@ -1537,6 +1588,16 @@
    :kind :implementation,
    :depends-on [:control/kernel :integration/primitives-v1],
    :owner nil}
+  {:id :integration/live-observed-parameters
+   :title "Learn Live device and mixer automation as named patchbay sources"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/live_parameters.clj"
+           "tolglow/resources/devices/ableton-live/parameter_observers.js"
+           "tolglow/test/js/ableton-live/parameter_observers.test.js"]
+   :depends-on [:integration/live-bridge-assets-v1]
+   :acceptance ["Observe actual DeviceParameter.value on change" "Keep stable nested-rack paths, native ranges and names in saved show settings" "Disarm replaced or renamed sources and release all observer subscriptions"]
+   :evidence ["The behavioral Max host learned a nested Rack parameter, routed its native value through Ring and the patchbay to the running cue, reloaded it from a complete Transit show, and released all subscriptions on forget. A Chromium touch-viewport test learned and removed the source through the production Studio UI."
+              "resources/devices/ableton-live/README.md"]}
   {:evidence
    ["15 Node tests passed; JS syntax and whitespace checks passed"
     "tolglow/resources/devices/ableton-live/README.md"],

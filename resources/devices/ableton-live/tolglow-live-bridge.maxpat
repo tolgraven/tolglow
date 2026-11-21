@@ -30,7 +30,7 @@
             760,
             30
           ],
-          "text": "TOLGLOW \u00b7 Live bridge source patch \u00b7 Live 11+ / Max for Live",
+          "text": "TOLGLOW · Live bridge source patch · Live 11+ / Max for Live",
           "presentation": 1,
           "presentation_rect": [
             10,
@@ -745,6 +745,19 @@
             60
           ]
         }
+      },
+      {
+        "box": {
+          "id": "stopped-message",
+          "maxclass": "message",
+          "text": "stopped",
+          "patching_rect": [
+            320,
+            270,
+            56,
+            22
+          ]
+        }
       }
     ],
     "lines": [
@@ -1275,6 +1288,30 @@
             0
           ]
         }
+      },
+      {
+        "patchline": {
+          "source": [
+            "node-route",
+            3
+          ],
+          "destination": [
+            "stopped-message",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "stopped-message",
+            0
+          ],
+          "destination": [
+            "low",
+            0
+          ]
+        }
       }
     ],
     "dependency_cache": [
@@ -1285,6 +1322,11 @@
       },
       {
         "name": "live_api.js",
+        "type": "TEXT",
+        "implicit": 1
+      },
+      {
+        "name": "parameter_observers.js",
         "type": "TEXT",
         "implicit": 1
       },

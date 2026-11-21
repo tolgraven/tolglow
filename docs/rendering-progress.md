@@ -7,6 +7,9 @@ transport remain owned boundaries. Ordinary contributions and exact numeric expr
 Geometry fields can travel alongside colors and focus in typed batches.
 This is the new model/engine pipeline; it does not run old effect closures.
 
+A show can optionally evaluate supported expression groups on one shared native
+GPU session. [Configuration, deadlines and fallback](native-shader-show.md)
+
 ## Implemented path
 
 - `tolglow.compiler/compile-plan` supplies shared validation and prepared output

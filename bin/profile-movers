@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+afterglow_profile_root=$(cd "${AFTERGLOW_ROOT:-../afterglow}" && pwd)
+export AFTERGLOW_ROOT="$afterglow_profile_root"
+exec lein with-profile +benchmark run -m tolglow.bench-movers "$@"

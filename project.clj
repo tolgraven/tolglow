@@ -23,6 +23,9 @@
   :target-path "target/%s"
   :jvm-opts ["-Djava.awt.headless=true"]
   :profiles {:dev {:source-paths ["dev"]}
+             :native-gpu {:dependencies ~(get-in (tolglow.build-manifest/paired-project ".")
+                                                 [:profiles :native-gpu :dependencies])
+                          :test-paths ["test-native"]}
              :benchmark {:source-paths [~(tolglow.build-manifest/fork-source "dev")]
                          :jvm-opts ["-Xms768m" "-Xmx768m"]}
              :cljs {:source-paths ^:replace ["src/studio" "src/shared"]

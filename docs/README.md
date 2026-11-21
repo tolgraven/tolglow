@@ -45,7 +45,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
 | [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
-| [Rendering](architecture/rendering.md) | CPU backend, typed expressions and remaining acceleration work |
+| [Rendering](architecture/rendering.md) | CPU rendering, Afterglow GPU ownership and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
 | [Original stage baseline](benchmark-baseline.md) | Legacy assignment/packing measurement and exclusions |
 | [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |

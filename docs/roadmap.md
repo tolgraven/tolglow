@@ -24,7 +24,7 @@ modules now implement the following narrower milestones:
 | Integrations | Fixture library, sync/session boundary, Live bridge source assets, typed patch kernel, provider sessions | Actual Max/Live execution, audio/peer qualification, external providers and broader fixture formats |
 | Studio | Re-frame/Reagent frontend, Ring/Jetty API and SSE, Neovim WASM authoring, touch/keyboard controls, fixture/rig editors | Physical mobile/device validation, richer editors and production sessions |
 | Show files/resources | Complete model/output persistence, staged resource commit/retirement, agent history/credential refs, fixture cache, reactive state, guarded audio/sync intent | Real provider/peer reconnection and complete pairing UX |
-| GPU experiment | Actual float shader dispatch, asynchronous PBO/fence readback, CPU oracle comparison | Physical GPU measurements, JVM transport and complete output-pipeline integration |
+| GPU rendering | Afterglow’s headless JVM and WebGL moving-head shader, explicit pan history, mixed targets and directions, and named GLSL fields for color, aim or focus | Physical GPU throughput, full-show deadline measurements and fixture verification |
 
 Exact commands and checkpoint counts are in [testing.md](testing.md). CPU and
 software WebGL workloads differ; their timings must not be presented as a GPU

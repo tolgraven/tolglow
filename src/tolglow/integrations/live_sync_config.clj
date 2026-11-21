@@ -1,13 +1,14 @@
 (ns tolglow.integrations.live-sync-config
   "Portable Live bridge settings, MIDI mappings and recording destination."
   (:require [afterglow.sync.session :refer [fail!]]
-            [afterglow.time :as musical-time])
+            [afterglow.time :as musical-time]
+            [tolglow.integrations.live-parameters :as live-params])
   (:import [java.net URI]))
 
 (def defaults
   {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
    :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
-   :mappings {} :parameters {} :pairing nil :automap? true})
+   :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}})
 
 (defn- bounded-int? [value low high] (and (integer? value) (<= low value high)))
 (defn- text? [value limit] (and (string? value) (<= 1 (count value) limit)))
@@ -62,7 +63,8 @@
                  (update :record-route keyword)
                  (update :mode keyword)
                  (update :mappings #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
-                 (update :parameters mappings :parameters))
+                 (update :parameters mappings :parameters)
+                 (update :observed-parameters live-params/sources))
         {:keys [automap? mode record-route bridge-id channel poll-ms timeout-ms pairing endpoint]} live
         notes (concat (keys (:mappings live)) (keep :lane-note (vals (:parameters live))))]
     (check! (and (boolean? automap?) (#{:lighting :live} mode) (#{:bridge :midi} record-route)

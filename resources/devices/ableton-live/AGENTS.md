@@ -23,3 +23,9 @@ bounded request/command deduplication, callback order and late receipt handling.
 Run the Node tests and syntax checks. Test substitutes belong only at the
 external API boundary; HTTP lifecycle tests use real owned loopback listeners.
 Keep actual host/device acceptance explicitly pending until observed.
+
+`parameter_observers.js` binds selected device or mixer parameters. Store their
+canonical path, expected names and native range in the show. Keep Live object
+handles inside the Max device. Use property notifications, defer LiveAPI reads
+and clear callbacks and scheduled tasks on source removal. Replacing the source
+set changes the generation stamped on each sample.
