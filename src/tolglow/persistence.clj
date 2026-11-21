@@ -25,7 +25,7 @@
             [tolglow.studio.sync :as sync]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensors]
-            [tolglow.output.scheduler :as output-scheduler]
+            [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.integrations.audio-return :as audio-return]

@@ -4,8 +4,7 @@
             [ring.core.protocols :as protocols]
             [tolglow.studio :as studio]
             [tolglow.transit :as wire]
-            [tolglow.agents :as agents]
-            [tolglow.output :as output]))
+            [tolglow.agents :as agents]))
 
 (defmacro with-runtime [[name] & body]
   `(let [~name (studio/create-runtime)]
@@ -118,14 +117,6 @@
       (is (= 403 (:status (handler {:request-method :post :uri "/api/command"
                                     :headers {"origin" "https://elsewhere.test" "host" "localhost:8500"}}))))
       (is (= 404 (:status (handler {:request-method :get :uri "/../deps.edn"})))))))
-
-(deftest artnet-encodes-protocol-universe-order-and-unsigned-payload
-  (let [bytes (output/artdmx-packet 257 7 (vec (concat [0 127 128 255] (repeat 508 0))))
-        unsigned (mapv #(bit-and % 255) bytes)]
-    (is (= 530 (count bytes)))
-    (is (= [65 114 116 45 78 101 116 0 0 80 0 14 7 0 0 1 2 0] (subvec unsigned 0 18)))
-    (is (= [0 127 128 255] (subvec unsigned 18 22)))
-    (is (thrown? clojure.lang.ExceptionInfo (output/artdmx-packet 0 1 [0 0])))))
 
 (deftest stopped-runtime-rejects-instead-of-orphaning-promises
   (let [r (studio/create-runtime)

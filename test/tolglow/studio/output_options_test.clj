@@ -1,6 +1,8 @@
 (ns tolglow.studio.output-options-test
   (:require [clojure.test :refer [deftest is]]
             [tolglow.studio :as studio]
+            [afterglow.output.artnet :as artnet]
+            [afterglow.output.ola :as ola]
             [tolglow.output :as output]))
 
 (deftest explicit-output-cli-options-and-preview-default
@@ -21,8 +23,8 @@
 
 (deftest sink-selection-is-exclusive-before-any-output-is-opened
   (let [opened (atom [])]
-    (with-redefs [output/open-ola! #(do (swap! opened conj [:ola %]) :ola-sink)
-                  output/open-artnet! #(do (swap! opened conj [:artnet %]) :artnet-sink)]
+    (with-redefs [ola/open-ola! #(do (swap! opened conj [:ola %]) :ola-sink)
+                  artnet/open-artnet! #(do (swap! opened conj [:artnet %]) :artnet-sink)]
       (is (nil? (output/open-sink! {})))
       (is (empty? @opened))
       (is (thrown? clojure.lang.ExceptionInfo (output/open-sink! {:ola {} :artnet {:host "host"}})))

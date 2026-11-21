@@ -32,6 +32,19 @@
    :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
               "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
               "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
+  {:id :render/physical-output-in-afterglow
+   :title "Own physical DMX publication and fixture protocol handling in Afterglow"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/output/artnet.clj" "afterglow/src/afterglow/output/ola.clj"
+           "afterglow/src/afterglow/output/scheduler.clj" "afterglow/src/afterglow/rdm/codec.clj"
+           "afterglow/src/afterglow/rdm/transport.clj"
+           "tolglow/src/tolglow/output.clj" "tolglow/src/tolglow/rig/rdm.clj"]
+   :depends-on [:render/frame-v1]
+   :acceptance ["Independent Afterglow clients can open OLA and direct Art-Net sinks and use the frame scheduler"
+                "RDM discovery and control use Afterglow codecs and transport"
+                "Tolglow startup, calibration, pause settings and saved device associations use those same APIs"]
+   :evidence ["Afterglow TCP and UDP loopback, cancellation, generated protobuf parity and frame scheduling tests"
+              "Leiningen passed 25 Tolglow startup, RDM, pause and calibration integration tests with 227 assertions"]}
   {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
@@ -111,7 +124,7 @@
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/rig/calibration.clj"
            "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
-           "tolglow/src/tolglow/output/scheduler.clj" "tolglow/docs/rig-calibration.md"]
+           "afterglow/src/afterglow/output/scheduler.clj" "tolglow/docs/rig-calibration.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Depth observations and temporal identity require physical output receipts"
                 "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
@@ -631,7 +644,7 @@
     "tolglow/test/tolglow/studio/web_test.clj"
     "tolglow/bin/studio"
     "tolglow/src/tolglow/connections.clj"
-    "tolglow/src/tolglow/output/scheduler.clj"
+    "afterglow/src/afterglow/output/scheduler.clj"
     "tolglow/test/tolglow/output/scheduler_test.clj"
     "tolglow/test/tolglow/studio/sensor_host_test.clj"],
    :acceptance

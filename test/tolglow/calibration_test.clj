@@ -9,7 +9,7 @@
             [tolglow.persistence :as files]
             [tolglow.studio :as studio]
             [tolglow.demo :as demo]
-            [tolglow.output.scheduler :as scheduler]
+            [afterglow.output.scheduler :as scheduler]
             [tolglow.studio.web :as web]))
 
 (def fixture (assoc (first (demo/fixtures)) :position [0 0 0] :rotation-deg [180 25 -10]

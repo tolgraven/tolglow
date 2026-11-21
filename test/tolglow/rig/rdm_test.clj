@@ -1,10 +1,9 @@
 (ns tolglow.rig.rdm-test
   (:require [clojure.test :refer [deftest is]]
             [tolglow.rig.rdm :as rdm]
-            [tolglow.rig.rdm.codec :as codec]
-            [tolglow.rig.rdm.transport :as transport]
+            [afterglow.rdm.codec :as codec]
             [tolglow.demo :as demo])
-  (:import [java.net ServerSocket Socket InetAddress SocketException SocketTimeoutException]
+  (:import [java.net ServerSocket Socket InetAddress SocketException]
            [java.io DataInputStream EOFException]
            [java.nio ByteBuffer ByteOrder]))
 
@@ -91,48 +90,6 @@
                (if (> (System/nanoTime) deadline) (throw (ex-info "Test wait exceeded deadline" {}))
                    (do (Thread/sleep 5) (recur)))))))
 
-(deftest request-wire-layout-and-response-correlation
-  (is (= [8 1 18 8 8 180 36 21 4 3 2 1 24 0 32 240 1 42 2 0 100 48 1]
-         (codec/request-body "RDMCommand" (merge device {:pid 0xf0 :command :set :data [0 100]}))))
-  (is (= "1234:01020304" (codec/decode-uid [8 180 36 21 4 3 2 1])))
-  (doseq [request [(merge device {:pid 0x60 :sub-device 513}) (merge device {:pid 0x60 :data [256]})
-                   (merge device {:pid 0x60 :uid "invalid"})]]
-    (is (thrown? clojure.lang.ExceptionInfo (codec/request-body "RDMCommand" request))))
-  (is (thrown? clojure.lang.ExceptionInfo
-               (codec/decode-reply 2 "RDMCommand" (merge device {:pid 0x60}) [8 2 16 1 34 0])))
-  (is (thrown? clojure.lang.ExceptionInfo (codec/parse-protobuf [10 4 0])))
-  (is (= 200 (count (codec/decode-value 0x50 (vec (repeat 400 0))))))
-  (is (thrown? clojure.lang.ExceptionInfo (codec/decode-value 0x60 [1]))))
-
-(deftest actual-loopback-connection-handles-fragmented-protobuf
-  (let [state (atom {}) peer (loopback-peer (partial fixture-peer state) {:split? true}) close-ref (atom nil)
-        deadline (+ (System/nanoTime) 5000000000)]
-    (try
-      (let [connection (transport/open! {:host "127.0.0.1" :port (:port peer) :timeout-ms 1000} deadline #(reset! close-ref %))]
-        (try
-          (is (= [(:uid device)] (:uids ((:request! connection) "ForceDiscovery" {:universe 1 :full? true}))))
-          (let [response (transport/command! (:request! connection) (merge device {:pid 0x60}) deadline (constantly true))]
-            (is (= :ack (:status response)))
-            (is (= 12 (:footprint (codec/decode-value 0x60 (:data response))))))
-          (finally ((:close! connection)))))
-      (finally ((:close! peer))))))
-
-(deftest queued-set-completes-without-resending-and-preserves-nack
-  (let [calls (atom []) responses (atom [(assoc (ack (assoc device :sub-device 3 :pid 0x82 :command :set) [0 0]) :response-type 1)
-                                       (ack (assoc device :sub-device 3 :pid 0x82 :command :set) [])])
-        request! (fn [_ request] (swap! calls conj request) (let [r (first @responses)] (swap! responses subvec 1) r))
-        result (transport/command! request! (assoc device :sub-device 3 :pid 0x82 :command :set :data [65])
-                                   (+ (System/nanoTime) 1000000000) (constantly true))]
-    (is (= :ack (:status result)))
-    (is (= [:set :get] (mapv :command @calls)))
-    (is (= [0x82 0x20] (mapv :pid @calls)))
-    (is (= 0 (:sub-device (second @calls)))))
-  (is (= :unknown-pid (:reason (transport/command! (fn [_ request] (assoc (ack request [0 0]) :response-type 2))
-                                                   (assoc device :pid 0x9999) (+ (System/nanoTime) 1000000000) (constantly true)))))
-  (is (thrown? clojure.lang.ExceptionInfo
-               (transport/command! (fn [_ request] (assoc (ack request []) :command-class 1))
-                                   (assoc device :pid 0x60) (+ (System/nanoTime) 1000000000) (constantly true)))))
-
 (deftest manager-is-inert-and-stale-work-cannot-cross-a-show-epoch
   (let [model (atom (demo/model)) identity (atom {:runtime-id "test" :expected-epoch 0})
         calls (atom 0) entered (promise) release (promise) closed (promise)
@@ -190,11 +147,6 @@
         (is (every? #(= :cancelled (:status %)) (:jobs (rdm/status manager))))
         (is (zero? (.size (.getQueue ^java.util.concurrent.ThreadPoolExecutor (:executor manager))))))
       (finally (deliver release true) (rdm/close! manager)))))
-
-(deftest delayed-ack-cannot-exceed-absolute-deadline
-  (is (thrown? SocketTimeoutException
-               (transport/command! (fn [_ request] (assoc (ack request [255 255]) :response-type 1))
-                                   (assoc device :pid 0x60) (+ (System/nanoTime) 1000000000) (constantly true)))))
 
 (deftest actual-socket-timeout-leaves-show-data-unmodified
   (let [release (promise) peer (loopback-peer (fn [request] @release (fixture-peer (atom {}) request)))
