@@ -1,0 +1,8 @@
+;; Legacy namespaces live directly under tolglow/. No show is started by tests.
+{:paths ["."]
+ :deps {org.clojure/clojure {:mvn/version "1.11.4"}}
+ :aliases {:check-roadmap {:extra-paths ["dev"]
+                          :main-opts ["-m" "tolglow.check-roadmap"]}
+           :test {:extra-paths ["test" "dev"]
+                  :jvm-opts ["-Djava.awt.headless=true"]
+                  :main-opts ["-m" "tolglow.test-runner"]}}}

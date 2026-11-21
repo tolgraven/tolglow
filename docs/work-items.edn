@@ -1,0 +1,184 @@
+{:schema-version 1
+ :updated "2026-11-21"
+ :items
+ [{:id :foundation/survey :kind :documentation :status :done :owner nil
+   :title "Map actual repositories, behavior and compatibility gaps"
+   :paths ["tolglow/docs/codebase-survey.md" "tolglow/docs/branch-compatibility.md"]
+   :depends-on []
+   :acceptance ["Record source revisions, entry points and existing vs missing behavior"]
+   :evidence ["docs/codebase-survey.md" "docs/branch-compatibility.md"]}
+  {:id :foundation/tests :kind :implementation :status :done :owner nil
+   :title "Establish genuine pure and legacy characterization lanes"
+   :paths ["tolglow/test" "tolglow/dev" "tolglow/bin/test" "afterglow/test" "afterglow/dev/legacy_deps.clj" "afterglow/bin/test"]
+   :depends-on [:foundation/survey]
+   :acceptance ["Existing source runs without hardware" "Tests fail on errors and preserve legacy contracts" "Document test-only dependency override"]
+   :evidence ["docs/testing.md" "Afterglow legacy: 47 tests / 379 assertions passed" "Tolglow legacy: 20 tests / 103 assertions passed"]}
+  {:id :foundation/specifications :kind :documentation :status :done :owner nil
+   :title "Specify all requested capabilities and agent boundaries"
+   :paths ["tolglow/docs/architecture" "tolglow/docs/product" "tolglow/AGENTS.md" "afterglow/AGENTS.md"]
+   :depends-on [:foundation/survey]
+   :acceptance ["Current, proposed and research behavior distinguished" "Each feature has acceptance and prerequisites" "Major folders have guidance"]
+   :evidence ["docs/README.md" "docs/roadmap.md"]}
+  {:id :foundation/ci :kind :implementation :status :done :owner nil
+   :title "Add test CI definitions and machine-readable work tracking"
+   :paths ["tolglow/.github/workflows/tests.yml" "afterglow/.github/workflows/tests.yml" "tolglow/docs/work-items.edn" "tolglow/dev/tolglow/check_roadmap.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["CI defines Java 17/21 pure/legacy lanes" "Tracker validates dependencies and active ownership" "Hosted execution remains separately reported"]
+   :evidence ["docs/testing.md" "docs/work-log.md"]}
+  {:id :runtime/prototype :kind :implementation :status :done :owner nil
+   :title "Add isolated explicit-context evaluator with deterministic worker merge"
+   :paths ["afterglow/src/afterglow/runtime.clj" "afterglow/test/afterglow/runtime_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Pure step state threading" "Serial and forced out-of-order worker results agree" "Invalid partial results cannot return a frame" "No legacy wiring claims"]
+   :evidence ["Afterglow pure: 13 tests / 51 assertions passed" "docs/architecture/functional-runtime.md"]}
+  {:id :foundation/app-compatibility :kind :implementation :status :blocked :owner nil
+   :title "Select active fork branch and restore full application startup"
+   :paths ["tolglow/deps.edn" "afterglow/project.clj" "tolglow/tolglow/core.clj" "tolglow/tolglow/color.clj"]
+   :depends-on [:foundation/survey]
+   :blocker "Active user branch/local changes not yet confirmed; master lacks Param/color-type expected by Tolglow, tolmaster has undeclared thi.ng dependencies"
+   :acceptance ["Record selected paired SHAs" "Resolve exact app dependencies" "Start and stop headless app services cleanly" "Validate Beat Link release replacement separately"]
+   :evidence []}
+  {:id :render/benchmark :kind :implementation :status :done :owner nil
+   :title "Establish repeatable stage benchmark and plan full-frame profiling"
+   :paths ["afterglow/dev/afterglow/bench_render.clj" "afterglow/bin/bench" "tolglow/docs/benchmark-baseline.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Fixed workloads at 100/1000/10000 pixels" "Warmup and percentile/checksum output" "State excluded costs and machine metadata" "No hardware output"]
+   :evidence ["docs/benchmark-baseline.md" "docs/benchmarks/2026-11-21-assignment-packing.edn" "30 warmup and 100 measured frames at each of 100/1000/10000 heads; stable checksums"]}
+  {:id :runtime/replay :kind :implementation :status :planned :owner nil
+   :title "Capture legacy whole-frame oracle and deterministic command replay"
+   :paths ["afterglow/test/afterglow/replay" "afterglow/dev/afterglow/replay.clj"]
+   :depends-on [:foundation/app-compatibility :foundation/tests]
+   :acceptance ["Golden assignments/DMX for RGBW, movement, fine channels and kind ordering" "Fixed snapshots/RNG" "Recorded launch/end/restart histories"]
+   :evidence []}
+  {:id :control/kernel :kind :implementation :status :planned :owner nil
+   :title "Implement generic composable semantic commands and projections"
+   :paths ["afterglow/src/afterglow/control" "afterglow/test/afterglow/control"]
+   :depends-on [:foundation/specifications :runtime/prototype]
+   :acceptance ["Common launch/end/parameter/page/macro behavior" "Source identity, ordering, epoch and retry handling" "REPL and transport adapters use same API"]
+   :evidence []}
+  {:id :runtime/coordinator :kind :implementation :status :planned :owner nil
+   :title "Coordinate frame snapshots, bounded workers and owned output publication"
+   :paths ["afterglow/src/afterglow/runtime" "afterglow/test/afterglow/runtime"]
+   :depends-on [:runtime/replay :runtime/prototype :control/kernel]
+   :acceptance ["One immutable snapshot per frame" "Deterministic merge and stable precedence" "Deadlines/backpressure and stale-epoch rejection" "No partial publication"]
+   :evidence []}
+  {:id :runtime/migration :kind :implementation :status :planned :owner nil
+   :title "Migrate effect families through an explicit legacy adapter"
+   :paths ["afterglow/src/afterglow/effects" "afterglow/src/afterglow/show.clj" "afterglow/test/afterglow/effects"]
+   :depends-on [:runtime/coordinator]
+   :acceptance ["Channel/color/dimmer/movement/scenes/chases pass oracle" "State lives in context" "Legacy closures run only in declared compatibility lane" "Code-effect I/O uses explicit intents"]
+   :evidence []}
+  {:id :authoring/registry :kind :implementation :status :planned :owner nil
+   :title "Version declarative parameter, effect, cue and fixture definitions"
+   :paths ["tolglow/tolglow/registry" "tolglow/test/tolglow/registry"]
+   :depends-on [:control/kernel :foundation/app-compatibility]
+   :acceptance ["Schema validation with units, ranges, semantics and capabilities" "Data interpreter plus Clojure authoring API" "Stable identities/revisions" "Manual and generated registry pages"]
+   :evidence []}
+  {:id :runtime/hot-reload :kind :implementation :status :planned :owner nil
+   :title "Hot-reload running cue definitions and clear stale restart state"
+   :paths ["afterglow/src/afterglow/runtime/reload.clj" "tolglow/tolglow/registry/reload.clj"]
+   :depends-on [:runtime/coordinator :authoring/registry]
+   :acceptance ["Atomic validated activation" "Explicit migrate/restart/retain policies" "Invalid edits retain last good definition" "Epoch restart invalidates old cues/workers"]
+   :evidence []}
+  {:id :authoring/composition :kind :implementation :status :planned :owner nil
+   :title "Macros, compound cues, step sequences, tweens and response envelopes"
+   :paths ["tolglow/tolglow/composition" "tolglow/test/tolglow/composition"]
+   :depends-on [:authoring/registry :runtime/coordinator]
+   :acceptance ["Reusable slots with optional sequence timing" "Curved stepped fades, loop, ping-pong and seeded random order" "Logical-time keyframe tween sampling independent of frame rate" "All cues support one-shot/duration semantics" "Global/selected ADSR attack/release and retrigger policy"]
+   :evidence []}
+  {:id :authoring/automation :kind :implementation :status :planned :owner nil
+   :title "Semantic randomization and dependency-aware autonomous show policy"
+   :paths ["tolglow/tolglow/automation" "tolglow/test/tolglow/automation"]
+   :depends-on [:authoring/composition :control/kernel]
+   :acceptance ["Select what randomizes within meaningful parameter domains" "Intervals, durations, one-shots and page/all scope" "Movement can request compatible emission without defeating intentional darkness" "Seeded replay and human override"]
+   :evidence []}
+  {:id :control/push2 :kind :implementation :status :planned :owner nil
+   :title "Rewrite Push 2 as small composable transport, interaction and view modules"
+   :paths ["afterglow/src/afterglow/controllers/push2" "afterglow/test/afterglow/controllers/push2"]
+   :depends-on [:control/kernel]
+   :acceptance ["No domain cue behavior in protocol encoder" "Golden MIDI/display captures" "Reconnect, held pads, focus and parameter feedback" "Physical device validation"]
+   :evidence []}
+  {:id :control/push3 :kind :implementation :status :planned :owner nil
+   :title "Add verified Push 3 support"
+   :paths ["afterglow/src/afterglow/controllers/push3" "afterglow/test/afterglow/controllers/push3"]
+   :depends-on [:control/kernel]
+   :acceptance ["Document controller-mode protocol and capabilities from hardware" "Shared semantic conformance" "Do not assume Push 2 display/USB compatibility" "Standalone separately scoped"]
+   :evidence []}
+  {:id :control/adapters :kind :implementation :status :planned :owner nil
+   :title "Generic MIDI, OSC, web, REPL and sensor adapters"
+   :paths ["afterglow/src/afterglow/control/adapters" "afterglow/test/afterglow/control/adapters"]
+   :depends-on [:control/kernel]
+   :acceptance ["Transport values normalize to typed commands" "Origin/echo suppression and disconnect handling" "Timestamped calibrated sensor inputs" "No adapter directly mutates internal show atoms"]
+   :evidence []}
+  {:id :web/control :kind :implementation :status :planned :owner nil
+   :title "Responsive iPad-first performance UI with phone support"
+   :paths ["afterglow/src/afterglow/web" "afterglow/resources/public/control" "afterglow/resources/templates/control"]
+   :depends-on [:control/kernel :authoring/registry]
+   :acceptance ["Smooth touch cue/parameter interaction" "Long-press radial actions plus keyboard/tap alternative" "Copy/paste empty cues and add-to-macro" "Streaming reconnectable state and bounded updates" "Touch-browser tests"]
+   :evidence []}
+  {:id :web/editors :kind :implementation :status :planned :owner nil
+   :title "Declarative editors, reusable slots and Neovim WASM code authoring"
+   :paths ["afterglow/resources/public/editors" "afterglow/src/afterglow/web/editors"]
+   :depends-on [:web/control :authoring/composition :runtime/hot-reload]
+   :acceptance ["Code-free param/effect/cue/fixture editing" "Macro and sequence editors share slot UI" "Neovim worker isolation, lint/validation and optional valid-edit execution" "Show running definition revision and recover from failure"]
+   :evidence []}
+  {:id :render/cpu :kind :implementation :status :planned :owner nil
+   :title "Optimize CPU renderer with compiled rig plans and owned packed buffers"
+   :paths ["afterglow/src/afterglow/render" "afterglow/test/afterglow/render"]
+   :depends-on [:runtime/coordinator :runtime/replay :render/benchmark]
+   :acceptance ["Whole-frame profiling before/after" "Lower allocation with parity" "No overlapping buffer ownership" "Report p99, missed deadlines, Art-Net packing/transport and output limits"]
+   :evidence []}
+  {:id :render/accelerators :kind :research :status :planned :owner nil
+   :title "Typed keyword-map effect DSL, SIMD and GPU feasibility"
+   :paths ["afterglow/src/afterglow/render/ir" "afterglow/dev/afterglow/accelerators"]
+   :depends-on [:render/cpu :authoring/registry]
+   :acceptance ["CPU interpreter is reference" "Typed geometry/color/aim/focus buffers" "High-level Quil-like API lowers supported operations" "GLSL cache and capability validation" "Include upload/readback/fence latency and fallback in comparison"]
+   :evidence []}
+  {:id :fixtures/library :kind :implementation :status :planned :owner nil
+   :title "Fixture type editor, imports and integrated definition search"
+   :paths ["tolglow/tolglow/fixture_library" "afterglow/src/afterglow/fixtures/import"]
+   :depends-on [:authoring/registry :web/control]
+   :acceptance ["Preserve declarative configuration" "Document QXF/OFL/GDTF and other format coverage/limitations" "Validate channels, modes and provenance before activation" "Search/download review with license metadata"]
+   :evidence []}
+  {:id :simulator/rig :kind :implementation :status :planned :owner nil
+   :title "Shared 3D rig editor and preview scene model"
+   :paths ["afterglow/resources/public/simulator" "tolglow/tolglow/rig"]
+   :depends-on [:web/control :fixtures/library :control/kernel]
+   :acceptance ["Trusses/fixture library placement, angles and calibration" "Same stable rig ids/units in runtime and preview" "Measured mobile quality tiers" "Preview cannot stall hardware output"]
+   :evidence []}
+  {:id :simulator/volumetrics :kind :research :status :planned :owner nil
+   :title "Realistic optics, shaped fog injection and evolving room haze"
+   :paths ["afterglow/resources/public/simulator/volumetrics"]
+   :depends-on [:simulator/rig]
+   :acceptance ["Persistent density with emission/advection/diffusion/dissipation" "Dense shaped plumes evolve into haze" "No volumetric beam in clear air while lit surfaces remain" "Mobile quality/performance budgets and visual references"]
+   :evidence []}
+  {:id :integration/live :kind :implementation :status :planned :owner nil
+   :title "Ableton Live clip/drum-rack integration and recording"
+   :paths ["afterglow/src/afterglow/integrations/live" "tolglow/integrations/live"]
+   :depends-on [:control/adapters :authoring/registry]
+   :acceptance ["Cue/parameter clip mapping and 64-pad color feedback" "Record cue launches, stops and parameter actions when armed" "Loop/seek/tempo alignment and echo suppression" "Clean Push/Live mode handoff"]
+   :evidence []}
+  {:id :integration/audio :kind :research :status :planned :owner nil
+   :title "Parameter audio carriers, per-channel/per-pad effects and returned analysis"
+   :paths ["tolglow/integrations/audio" "tolglow/tolglow/audio_bridge"]
+   :depends-on [:integration/live :authoring/composition]
+   :acceptance ["Calibrated sine pitch/value encoding and level tracking" "Individual channels and drum-pad effect chains" "Confidence/latency-aware pitch, envelope and spectral residual features" "Echo/reverb tails outlive cue source without stuck parameters"]
+   :evidence []}
+  {:id :integration/agents :kind :implementation :status :planned :owner nil
+   :title "Provider configuration, streaming agent chat and REPL-driven show creation"
+   :paths ["tolglow/tolglow/agents" "afterglow/resources/public/chat" "afterglow/src/afterglow/web/agents"]
+   :depends-on [:control/adapters :authoring/automation :runtime/hot-reload :web/editors]
+   :acceptance ["OpenAI/Anthropic/OpenRouter/self-hosted adapters with server-side secrets" "Fixture-aware prompt to validated show and evolving registry" "One iteration/duration authoring and human co-performance" "REPL/API capability parity" "Verify Codex session/MCP feasibility before promising embedding"]
+   :evidence []}
+  {:id :simulator/environments :kind :research :status :planned :owner nil
+   :title "Environment prefabs and phone/LiDAR/splat-assisted room capture"
+   :paths ["tolglow/environments" "afterglow/resources/public/simulator/import"]
+   :depends-on [:simulator/rig]
+   :acceptance ["Document model provenance/license for club references" "Calibrate scale/axes and editable geometry" "Do not treat visual splats as lighting/collision geometry without reconstruction"]
+   :evidence []}
+  {:id :integration/duck :kind :research :status :planned :owner nil
+   :title "Later: trainable dancing robot duck telemetry as lighting control"
+   :paths ["tolglow/integrations/robotics"]
+   :depends-on [:control/adapters]
+   :acceptance ["Confirm product name/SDK (microduck is unverified)" "Procedural movement sequences plus trained behaviors" "Timestamped measured movement maps through sensor adapter" "Separate robot control loop from lighting render deadlines"]
+   :evidence []}]}

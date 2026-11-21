@@ -1,0 +1,34 @@
+name: Architecture regression tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+        suite: [pure, legacy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tolglow
+      - name: Check out the characterized Afterglow fork
+        if: matrix.suite == 'legacy'
+        uses: actions/checkout@v4
+        with:
+          repository: tolgraven/afterglow
+          ref: 16b0b4cac70433e4118038dfbfd304e22d1d9018
+          path: afterglow
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: 1.11.1.1435
+      - name: Run explicit test lane
+        working-directory: tolglow
+        run: ./bin/test "${{ matrix.suite }}"
+      - name: Validate work tracking
+        if: matrix.suite == 'pure'
+        working-directory: tolglow
+        run: clojure -M:check-roadmap

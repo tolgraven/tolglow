@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+suite="${1:-pure}"
+if (( $# > 1 )) || [[ "$suite" != pure && "$suite" != legacy ]]; then
+  echo 'Usage: bin/test [pure|legacy]' >&2
+  exit 2
+fi
+if [[ "$suite" == legacy ]]; then
+  afterglow_root="${AFTERGLOW_ROOT:-../afterglow}"
+  afterglow_root=$(cd "$afterglow_root" && pwd)
+  if [[ ! -f "$afterglow_root/project.clj" ]]; then
+    echo 'Legacy tests need the companion Afterglow checkout with project.clj.' >&2
+    exit 2
+  fi
+  legacy_deps=$(clojure -M dev/legacy_deps.clj "$afterglow_root/project.clj" "$afterglow_root")
+  exec clojure -Sdeps "$legacy_deps" -M:test legacy
+fi
+exec clojure -M:test pure
