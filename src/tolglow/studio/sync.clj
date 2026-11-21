@@ -583,12 +583,7 @@
             mapping (get-in state [:bridge :parameters controller])
             instance (when (and mapping (not (:disabled? mapping)) (:resolve-instance! callbacks))
                        ((:resolve-instance! callbacks) (:cue-id mapping)))
-            result (bridge-step! manager
-                                 (fn [current]
-                                   (let [resolved (cond-> current instance
-                                                    (assoc-in [:parameters controller :instance-id] instance))
-                                         result (ableton/midi->commands resolved event envelope)]
-                                     (update result :state assoc :parameters (:parameters current)))))
+            result (bridge-step! manager #(ableton/midi->commands % event envelope instance))
             commands (mapv #(update % :source merge
                                     (cond-> {:sync-run-id (:id run) :source-id (or (:source-id event) (get-in state [:config :live :source-id]))}
                                       (contains? event :note) (assoc :note (:note event)))) (:commands result))]

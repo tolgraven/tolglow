@@ -136,6 +136,19 @@
                         (Long/parseLong (subs swatch 1) 16)
                         (:live-color (first (pad-page [cue]))))})))
 
+(defn- index-mappings [mappings parameters]
+  {:mappings mappings :parameters parameters
+   :lane-controllers (into {} (keep (fn [[cc mapping]] (when-let [note (:lane-note mapping)] [note cc]))) parameters)
+   :cue-notes (into {} (for [[note mapping] (reverse (sort-by key mappings)) :when (not (:disabled? mapping))]
+                         [(:cue-id mapping) note]))
+   :parameter-controls (group-by (comp :param val) (remove (comp :disabled? val) (sort-by key parameters)))})
+
+(defn- indexes [state]
+  (let [cached (::indexes (meta state))]
+    (if (and (identical? (:mappings state) (:mappings cached))
+             (identical? (:parameters state) (:parameters cached))) cached
+        (index-mappings (:mappings state) (:parameters state)))))
+
 (defn new-bridge
   "mappings: note -> {:cue-id id :mode :held|:persistent|:timed|:one-shot
   :duration-ms n :velocity-param keyword}; parameters: cc -> {:instance-id id
@@ -147,12 +160,11 @@
                   (map? mappings) (map? parameters) (every? midi-number? (keys mappings))
                   (every? midi-number? (keys parameters)) (integer? history-limit) (pos? history-limit))
      (fail! "Invalid Live bridge configuration" {}))
-   {:id id :mode mode :channel channel :mappings mappings :parameters parameters
-    :lane-controllers (into {} (keep (fn [[cc mapping]] (when-let [note (:lane-note mapping)] [note cc]))) parameters)
-    :cue-notes (into {} (for [[note mapping] (reverse (sort-by key mappings)) :when (not (:disabled? mapping))]
-                          [(:cue-id mapping) note]))
-    :parameter-controls (group-by (comp :param val) (remove (comp :disabled? val) (sort-by key parameters)))
-    :held {} :instances {} :instance-order [] :instance-slot 0 :recorded #{} :record-order [] :history-limit history-limit}))
+   (with-meta
+     {:id id :mode mode :channel channel :mappings mappings :parameters parameters
+      :held {} :instances {} :instance-order [] :instance-slot 0
+      :recorded #{} :record-order [] :history-limit history-limit}
+     {::indexes (index-mappings mappings parameters)})))
 
 (defn- command [state envelope op data]
   (merge envelope {:op op :source {:type :ableton :bridge-id (:id state) :origin :live-playback}} data))
@@ -160,7 +172,7 @@
   (assoc envelope :command-id (str (:command-id envelope) "/" suffix)))
 
 (defn parameter-controller [state {:keys [type controller note]}]
-  (case type :cc controller :note-on (get-in state [:lane-controllers note]) nil))
+  (case type :cc controller :note-on (get-in (indexes state) [:lane-controllers note]) nil))
 
 (defn midi->commands
   "Translate a MIDI event without applying commands. Supply the shared control
@@ -168,47 +180,49 @@
   a held launch so note-off targets its exact activation ID. Echoed feedback
   (:origin :tolglow-feedback) is suppressed. Unmapped and other-channel input
   yields no commands. Live mode transfers ownership away from lighting."
-  [state {:keys [type note velocity controller value channel origin] :as event} envelope]
-  (when-not (and (integer? channel) (<= 1 channel 16)
-                 (case type
-                   (:note-on :note-off) (and (midi-number? note) (midi-number? (or velocity 0)))
-                   :cc (and (midi-number? controller) (midi-number? value))
-                   false))
-    (fail! "Invalid MIDI event" {:event event}))
-  (let [off? (or (= type :note-off) (and (= type :note-on) (zero? (or velocity 0))))
-        mapping (get-in state [:mappings note])
-        target (get-in state [:parameters (parameter-controller state event)])
-        held (get-in state [:held note])]
-    (cond
-      (or (not= :lighting (:mode state)) (not= channel (:channel state))
-          (= origin :tolglow-feedback)) {:state state :commands []}
-      (and off? held)
-      (if-let [instance-id (:instance-id held)]
-        {:state (update state :held dissoc note)
-         :commands [(command state envelope :instance/end {:instance-id instance-id})]}
-        {:state (assoc-in state [:held note :released?] true) :commands []})
-      off? {:state state :commands []}
-      (and target (not (:disabled? target)))
-      (let [cmd (command state envelope :param/set
-                         {:param (:param target)
-                          :value (decode-value target (if (= :cc type) (/ value 127.0) (/ (dec velocity) 126.0)))})
-            pending-note (first (for [[n h] (:held state)
-                                      :when (and (not (:released? h)) (nil? (:instance-id h))
-                                                 (= (:cue-id target) (get-in state [:mappings n :cue-id])))] n))]
-        (cond
-          pending-note {:state (assoc-in state [:held pending-note :updates (:param target)] cmd) :commands []}
-          (:instance-id target) {:state state :commands [(assoc cmd :instance-id (:instance-id target))]}
-          :else {:state (assoc-in state [:next-params (:cue-id target) (:param target)] (:value cmd)) :commands []}))
-      (and (= type :note-on) mapping (not (:disabled? mapping)) (nil? held))
-      (let [mode (get mapping :mode :persistent)
-            launch (cond-> {:mode mode :params (get-in state [:next-params (:cue-id mapping)] {})}
-                     (:duration mapping) (assoc :duration (:duration mapping))
-                     (:duration-ms mapping) (assoc :duration-ms (:duration-ms mapping))
-                     (:velocity-param mapping) (assoc-in [:params (:velocity-param mapping)] (/ velocity 127.0)))
-            cmd (command state envelope :cue/launch {:cue-id (:cue-id mapping) :launch launch})]
-        {:state (cond-> (update state :next-params dissoc (:cue-id mapping)) (= mode :held) (assoc-in [:held note] {:command-id (:command-id cmd)}))
-         :commands [cmd]})
-      :else {:state state :commands []})))
+  ([state event envelope] (midi->commands state event envelope nil))
+  ([state {:keys [type note velocity controller value channel origin] :as event} envelope resolved-instance]
+   (when-not (and (integer? channel) (<= 1 channel 16)
+                  (case type
+                    (:note-on :note-off) (and (midi-number? note) (midi-number? (or velocity 0)))
+                    :cc (and (midi-number? controller) (midi-number? value))
+                    false))
+     (fail! "Invalid MIDI event" {:event event}))
+   (let [off? (or (= type :note-off) (and (= type :note-on) (zero? (or velocity 0))))
+         mapping (get-in state [:mappings note])
+         target (get-in state [:parameters (parameter-controller state event)])
+         target (cond-> target (and target resolved-instance) (assoc :instance-id resolved-instance))
+         held (get-in state [:held note])]
+     (cond
+       (or (not= :lighting (:mode state)) (not= channel (:channel state))
+           (= origin :tolglow-feedback)) {:state state :commands []}
+       (and off? held)
+       (if-let [instance-id (:instance-id held)]
+         {:state (update state :held dissoc note)
+          :commands [(command state envelope :instance/end {:instance-id instance-id})]}
+         {:state (assoc-in state [:held note :released?] true) :commands []})
+       off? {:state state :commands []}
+       (and target (not (:disabled? target)))
+       (let [cmd (command state envelope :param/set
+                          {:param (:param target)
+                           :value (decode-value target (if (= :cc type) (/ value 127.0) (/ (dec velocity) 126.0)))})
+             pending-note (first (for [[n h] (:held state)
+                                       :when (and (not (:released? h)) (nil? (:instance-id h))
+                                                  (= (:cue-id target) (get-in state [:mappings n :cue-id])))] n))]
+         (cond
+           pending-note {:state (assoc-in state [:held pending-note :updates (:param target)] cmd) :commands []}
+           (:instance-id target) {:state state :commands [(assoc cmd :instance-id (:instance-id target))]}
+           :else {:state (assoc-in state [:next-params (:cue-id target) (:param target)] (:value cmd)) :commands []}))
+       (and (= type :note-on) mapping (not (:disabled? mapping)) (nil? held))
+       (let [mode (get mapping :mode :persistent)
+             launch (cond-> {:mode mode :params (get-in state [:next-params (:cue-id mapping)] {})}
+                      (:duration mapping) (assoc :duration (:duration mapping))
+                      (:duration-ms mapping) (assoc :duration-ms (:duration-ms mapping))
+                      (:velocity-param mapping) (assoc-in [:params (:velocity-param mapping)] (/ velocity 127.0)))
+             cmd (command state envelope :cue/launch {:cue-id (:cue-id mapping) :launch launch})]
+         {:state (cond-> (update state :next-params dissoc (:cue-id mapping)) (= mode :held) (assoc-in [:held note] {:command-id (:command-id cmd)}))
+          :commands [cmd]})
+       :else {:state state :commands []}))))
 
 (defn acknowledge-launch
   "Resolve a pending held launch with a control ack. A release or handoff before
@@ -262,12 +276,11 @@
             (assoc-in [:instance-order slot] id)
             (assoc :instance-slot (mod (inc slot) (:history-limit state)))))))
 
-(defn saved-bridge [bridge]
-  (dissoc bridge :parameter-controls :cue-notes :lane-controllers :instance-order :instance-slot :next-params))
-
 (defn restore-bridge [bridge instances]
-  (reduce (fn [state [id cue-id]] (remember-instance state id cue-id))
-          (merge (saved-bridge bridge) (new-bridge bridge)) (sort-by (comp str key) instances)))
+  (let [initialized (new-bridge bridge)
+        state (with-meta (merge (dissoc bridge :next-params) initialized) (meta initialized))]
+    (reduce (fn [state [id cue-id]] (remember-instance state id cue-id))
+            state (sort-by (comp str key) instances))))
 
 (defn- record-one
   "Observe an accepted control command. Return MIDI + bridge clip intents only
@@ -280,8 +293,9 @@
                        (= :cue/launch (:op cmd)) (:instance-id ack))
                 (remember-instance state (:instance-id ack) (:cue-id cmd)) state)
         cue-id (or (:cue-id cmd) (get-in state [:instances (:instance-id cmd)]))
-        note (get-in state [:cue-notes cue-id])
-        cc (first (for [[controller mapping] (get-in state [:parameter-controls (:param cmd)])
+        compiled (indexes state)
+        note (get-in compiled [:cue-notes cue-id])
+        cc (first (for [[controller mapping] (get-in compiled [:parameter-controls (:param cmd)])
                         :when (or (and (:instance-id mapping) (= (:instance-id cmd) (:instance-id mapping)))
                                   (= cue-id (:cue-id mapping)))]
                     [controller mapping]))

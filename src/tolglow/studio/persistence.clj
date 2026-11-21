@@ -351,7 +351,6 @@
 
 (defn- make-document [model frame-output]
   (cond-> {:schema-version schema-version :model (validate-model model)}
-    (get-in model [:integrations :ableton]) (update-in [:model :integrations :ableton] ableton/saved-bridge)
     (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
 
 (defn freeze
