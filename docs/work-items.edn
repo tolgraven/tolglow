@@ -1,7 +1,14 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :studio/committed-event-inspection
+ [{:id :sync/link-playback-and-pause-lighting
+   :title "Follow Ableton Link playback and choose the paused light output"
+   :kind :implementation :status :in-progress :owner "ableton_link_play_pause_and_configurable_ambient_pause_output"
+   :paths ["tolglow/src/tolglow/integrations/ableton_link.clj" "tolglow/src/tolglow/output/pause_look.clj" "tolglow/docs/ableton-link.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Link playback edges reach the show clock through a loopback daemon" "Manual and Link pauses can select a faint ambient color or blackout" "Save and restore pairing and output settings"]
+   :evidence []}
+  {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
    :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"

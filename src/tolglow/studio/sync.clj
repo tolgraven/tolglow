@@ -292,7 +292,7 @@
 
 (defn create-manager
   "Create inert resources/settings. Options inject :now-ms, :midi-factory
-  [config clock-ms], :beat-link-factory [config clock-ms], :live-factory [config]
+  [config clock-ms], :beat-link-factory and :link-factory [config clock-ms], :live-factory [config]
   and :queue-capacity (256). Factories return open!/close! plus optional
   send!/request!. No factory or device is invoked before explicit start!."
   ([] (create-manager {}))
