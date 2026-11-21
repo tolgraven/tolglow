@@ -4,7 +4,7 @@
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.transit :as wire])
   (:import [clojure.lang PersistentQueue]
-           [java.util Date UUID]
+           [java.util ArrayDeque Date UUID]
            [java.util.concurrent Semaphore]))
 
 (def protocol "tolglow-debug/1")
@@ -39,30 +39,48 @@
 
 (defn observing? [hub] (realized? (:worker hub)))
 
-(defn- append-batch [history events skipped]
-  (let [start (:high history)
-        latest (+ start (count events))
-        tail (take-last history-size events)
-        first-id (inc (- latest (count tail)))
+(defn- append-batch [history {:keys [start high stamp time semantic matches trace]}]
+  (let [events (concat (map-indexed (fn [i event]
+                                      (display-event stamp (get matches i)
+                                                     (if (contains? matches i) :matched :unknown) event))
+                                    semantic)
+                       (map #(display-event stamp (:subscribers %) :observed (assoc % :time time)) (:events trace)))
+        size (+ (count semantic) (count (:events trace)))
+        skip (max 0 (- size history-size))
         retained (into (:rows history)
-                       (map-indexed (fn [index event] (assoc event :id (+ first-id index))) tail))]
-    {:high (+ latest skipped)
+                       (map-indexed (fn [i event] (assoc event :id (+ start skip i 1))))
+                       (drop skip events))]
+    {:high high
      :rows (loop [rows retained]
              (if (> (count rows) history-size) (recur (pop rows)) rows))}))
 
 (defn commit!
-  "Called in owner commit order. No networking or encoding on this thread."
+  "Constant-size handoff in owner order. The worker projects, retains and encodes
+  rows. Evicted input batches still reserve their IDs, so clients see exact gaps."
   [hub time semantic matches trace]
   (when (observing? hub)
-    (when (or (seq semantic) (seq (:events trace)) (pos? (:skipped trace 0)))
-      (let [stamp (Date.)
-            rows (into (mapv (fn [i event]
-                               (display-event stamp (get matches i)
-                                              (if (contains? matches i) :matched :unknown) event))
-                             (range) semantic)
-                       (map #(display-event stamp (:subscribers %) :observed (assoc % :time time))) (:events trace))]
-        (swap! (:history hub) append-batch rows (:skipped trace 0))))
-    (when (seq @(:clients hub)) (wake! hub))))
+    (let [size (+ (count semantic) (count (:events trace)) (:skipped trace 0))]
+      (when (pos? size)
+        (let [^ArrayDeque pending (:pending hub)]
+          (locking pending
+            (let [start @(:sequence hub)
+                  high (+ start size)]
+              (vreset! (:sequence hub) high)
+              (when (= 16 (.size pending)) (.removeFirst pending))
+              (.addLast pending {:start start :high high :stamp (Date.) :time time
+                                 :semantic semantic :matches matches :trace trace})))))
+      (when (or (pos? size) (seq @(:clients hub))) (wake! hub)))))
+
+(defn- store-pending! [hub]
+  (let [^ArrayDeque pending (:pending hub)
+        batches (locking pending
+                  (when-not (.isEmpty pending)
+                    (let [batches (vec (.toArray pending))]
+                      (.clear pending)
+                      batches)))]
+    (when batches
+      ;; The worker owns history writes. No projection executes inside an atom retry.
+      (reset! (:history hub) (reduce append-batch @(:history hub) batches)))))
 
 (defn- event-message [hub state]
   (when-not (:events-pending state)
@@ -110,6 +128,7 @@
     (while (not @(:closed? hub))
       (.acquire ^Semaphore (:wake hub))
       (.drainPermits ^Semaphore (:wake hub))
+      (store-pending! hub)
       (doseq [[socket client] @(:clients hub)]
         (try (send-next! hub socket client)
              (catch Exception _ (retire! hub socket 1011 "Debug projection failed"))))
@@ -118,6 +137,7 @@
 
 (defn create [id frame!]
   (let [hub {:id id :frame! frame! :history (atom {:high 0 :rows PersistentQueue/EMPTY})
+             :pending (ArrayDeque.) :sequence (volatile! 0)
              :clients (atom {}) :closed? (atom false) :wake (Semaphore. 0)}]
     (assoc hub :worker (delay (doto (Thread. #(run-worker hub) "tolglow-debug-stream")
                                 (.setDaemon true) (.start))))))

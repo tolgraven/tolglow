@@ -27,10 +27,11 @@
       (keep (fn [{:keys [event category emitter]}]
               (when (keyword? (:type event))
                 {:type (:type event) :emitter emitter :category category
-                 :time time :data (if-let [instance (:instance event)]
-                                    (merge (dissoc event :type :instance)
-                                           (select-keys instance [:cue-id :effect-id :effect-version :launch-mode])
-                                           {:instance-id (:id instance)})
+                 :time time :data (if (map? (:instance event))
+                                    (let [instance (:instance event)]
+                                      (merge (dissoc event :type :instance)
+                                             (select-keys instance [:cue-id :effect-id :effect-version :launch-mode])
+                                             {:instance-id (:id instance)}))
                                     (dissoc event :type))})))
       (concat inputs
               (keep (fn [{:keys [operation command ack emitter-id]}]
@@ -39,8 +40,12 @@
                       :event (assoc (select-keys ack [:status :command-id :instance-id :code])
                                     :type (if (= :rejected (:status ack)) :command/rejected :command/accepted)
                                     :operation (or command operation))})) operations)
-              (map (fn [intent]
-                     (let [id (:instance-id intent)
+              (map (fn [value]
+                     (let [intent (cond
+                                    (map? value) (assoc value :type (or (:type value) (:op value) :effect/intent))
+                                    (keyword? value) {:type value}
+                                    :else {:type :effect/intent :value value})
+                           id (:instance-id intent)
                            instance (or (get-in after [:instances id]) (get-in before [:instances id]))]
                        {:category :effect
                         :emitter {:kind :effect :id (or (:effect-id intent) (:effect-id instance) id :engine)}

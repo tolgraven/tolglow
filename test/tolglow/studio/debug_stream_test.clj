@@ -3,6 +3,8 @@
             [ring.adapter.jetty :as jetty]
             [afterglow.reactive :as reactive]
             [tolglow.studio :as studio]
+            [tolglow.studio.effect-faults-test :as fault-fixtures]
+            [tolglow.studio.show-events :as show-events]
             [tolglow.studio.debug-stream :as debug]
             [tolglow.studio.transit :as wire])
   (:import [java.net URI]
@@ -107,3 +109,55 @@
       (studio/tick! runtime 110)
       (is (not-any? #(#{:audio/kick :beat-link/beat :instance/launched} (:type %)) @received))
       (finally (studio/stop! runtime)))))
+
+(deftest quarantined-effect-emits-one-committed-fault
+  (let [captured (atom [])
+        runtime (assoc (studio/create-runtime {:model (fault-fixtures/show) :workspace-options nil
+                                              :effect-log! (fn [_])})
+                       :event-admit (fn [model events] (swap! captured into events) {:model model}))]
+    (try
+      (let [launch (studio/submit! runtime :command {:op :cue/launch :cue-id :unstable})]
+        (studio/tick! runtime 25)
+        (studio/tick! runtime 50)
+        (let [faults (filter #(= :effect/failed (:type %)) @captured)]
+          (is (= 1 (count faults)))
+          (is (= (:instance-id @launch) (get-in (first faults) [:data :instance-id])))
+          (is (= :unstable (get-in (first faults) [:emitter :id])))))
+      (finally (studio/stop! runtime)))))
+
+(deftest opaque-effect-intents-and-failed-handler-admission-preserve-committed-state
+  (let [model {:show-id :main :epoch 1 :frame-number 2 :time-ms 18 :transport {:beat 0}}
+        state {:model model :output {:universes {}} :status {:last-intents [:spark 1 {:op :echo}]}}
+        result (show-events/commit (fn [_ _] (throw (ex-info "Bad handler" {}))) model state [])]
+    (is (= [:spark :effect/intent :echo] (mapv :type (:events result))))
+    (is (= model (get-in result [:state :model])))
+    (is (= "Bad handler" (get-in result [:state :status :event-dispatch-error :message])))))
+
+(deftest a-blocked-encoder-cannot-stall-the-frame-owner
+  (let [runtime (studio/create-runtime {:workspace-options nil})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        entered (promise) resume (promise) encode wire/encode
+        row {:type :test/frame :category :effect :emitter {:kind :effect :id :test} :data {}}]
+    (try
+      (let [client (connect server "") _ (receive client)]
+        (try
+          (send! client {:op :ack :cursor 0})
+          (with-redefs [wire/encode (fn [value]
+                                      (when (and (= :events (:kind value)) (seq (:events value)))
+                                        (deliver entered true) (deref resume 5000 nil))
+                                      (encode value))]
+            (debug/commit! (:debug-stream runtime) {} [row] {} nil)
+            (is (true? (deref entered 3000 false)))
+            (let [producer (future
+                             (dotimes [_ 20]
+                               (debug/commit! (:debug-stream runtime) {} (vec (repeat 50 row)) {} nil))
+                             :complete)]
+              (is (= :complete (deref producer 2000 :timeout))))
+            (deliver resume true)
+            (let [first-batch (receive client)]
+              (send! client {:op :ack :cursor (:cursor first-batch)}))
+            (let [latest (receive client)]
+              (is (= 488 (:skipped latest)))
+              (is (= 490 (:id (first (:events latest)))))))
+          (finally (deliver resume true) (.abort ^WebSocket (:socket client)))))
+      (finally (studio/stop! runtime) (.stop server)))))
