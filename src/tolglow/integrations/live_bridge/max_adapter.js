@@ -16,10 +16,10 @@ function init() {
     },
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.
-    dictionaryCall: function (object, method, data) { return object.call(method, JSON.stringify(data)); },
+    dictionaryCall: function (object, method, data) { return object.call(method, data); },
     readDictionary: function (value) {
-      if (value instanceof Array && value[0] === "dictionary") return JSON.parse(new Dict(value[1]).stringify());
-      if (value instanceof Array && value.length === 1) value = value[0];
+      if (Array.isArray(value) && value[0] === "dictionary") return JSON.parse(new Dict(value[1]).stringify());
+      if (Array.isArray(value) && value.length === 1) value = value[0];
       return typeof value === "string" ? JSON.parse(value) : value;
     }
   });

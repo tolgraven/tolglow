@@ -302,7 +302,7 @@
                   "cancel" :cancel "associate" :associate "unassociate" :unassociate "adopt" :adopt} "RDM service unavailable")
    (post-actions "/api/audio/" audio! ok {"start" :start "stop" :stop})
    (post-actions "/api/audio/returns/" audio! ok {"start" :return-start "stop" :return-stop})
-   (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff})
+   (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
     "/api/expressive/preview" (available expressive! "Expressive mapping preview unavailable" #(ok (expressive! (:json-params %))))

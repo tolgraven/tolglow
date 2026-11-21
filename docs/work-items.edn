@@ -911,21 +911,24 @@
    :kind :research,
    :depends-on [:simulator/rig],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Loopback Studio/Ring, Node for Max, Max JS and behavioral Live object graph record and replay edited clip data"
+               "src/tolglow/integrations/live_bridge/README.md"],
    :paths
-   ["afterglow/src/afterglow/integrations/live"
-    "tolglow/src/tolglow/integrations/live"],
+   ["tolglow/src/tolglow/integrations/ableton.clj"
+    "tolglow/src/tolglow/integrations/live_bridge"
+    "tolglow/test/tolglow/integrations/ableton_test.clj"],
    :acceptance
    ["Cue/parameter clip mapping and 64-pad color feedback"
     "Record cue launches, stops and parameter actions when armed"
     "Loop/seek/tempo alignment and echo suppression"
     "Clean Push/Live mode handoff"],
    :title "Ableton Live clip/drum-rack integration and recording",
-   :status :planned,
+   :status :blocked,
+   :blocker "Requires Ableton Live and Max to qualify clip writes during recording and device timing on a real Set.",
    :id :integration/live,
    :kind :implementation,
    :notes
-   "Tested transport-neutral Live protocol/state primitives exist. Actual Live-side clip/drum-rack bridge and recording workflow remain unverified.",
+   "Durable scalar parameter lanes, Session and Arrangement clip destinations, edited playback, recording and placement implemented. Physical Live verification remains open.",
    :depends-on [:control/adapters :authoring/registry],
    :owner nil}
   {:evidence [],
