@@ -180,6 +180,8 @@ injected LiveAPI. Neither test setup validates execution inside Ableton Live/Max
 
 ## Benchmarks and replacement gates
 
+Run `bin/profile-mover-shader 64 80` to compare shader movement with Afterglow's actual pan/tilt DMX output. Configuration, hardware selection and the optional byte-exact gate are documented in the [moving-head shader experiment](moving-head-shader.md).
+
 [Retained benchmark reports](benchmarks/README.md) distinguish the original
 assignment/packing stage, the new CPU backend before/after optimization, and
 software WebGL execution. Record workload, warmup, samples, environment, checksum,
