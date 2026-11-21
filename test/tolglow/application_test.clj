@@ -121,7 +121,7 @@
 (deftest failed-listener-releases-its-own-observer
   (let [runtime (app/start! {:init {:components [:show] :modules []}
                              :show {:workers 1 :workspace-options nil}})
-        listen! (requiring-resolve 'tolglow.show/listen!)]
+        listen! (requiring-resolve 'tolglow.studio/listen!)]
     (try
       (let [first-server (listen! runtime {:port 0})]
         (try
