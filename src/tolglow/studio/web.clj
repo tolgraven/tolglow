@@ -90,7 +90,7 @@
     (map? value) (into {} (map (fn [[k v]] [k (cond
                                                 (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
                                                 (and (= k :params) (= v "all")) :all
-                                                (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :categories} k))
+                                                (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :verified-axis-fixture-ids :categories} k))
                                                 (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
                                                 :else (normalize-json v))])) value)
     (vector? value) (mapv normalize-json value)
@@ -176,7 +176,7 @@
       (catch Exception error (.close input) (.close output) (throw error))))))
 
 (def operations
-  {"/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+  {"/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
@@ -224,9 +224,10 @@
 
 (defn- get-routes
   [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! audio! sync! waveform! workspace! terminal! sensor! repl!]}]
+           app-agent! fixture! audio! sync! waveform! workspace! terminal! sensor! repl! calibration!]}]
   (merge
-   {"/api/state" (fn [{:keys [query-params]}]
+   {"/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
+    "/api/state" (fn [{:keys [query-params]}]
                    (heartbeat! (get query-params "session"))
                    (ok (snapshot! query-params)))
     "/api/settings" (fn [_] (ok (:settings (snapshot! {}))))
