@@ -38,6 +38,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [V1 implementation contract](implementation-contract-v1.md) | Shared model/command/runtime boundaries |
 | [Testing](testing.md) | Commands, observed checkpoints and verification limits |
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
+| [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU backend, typed expressions and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |

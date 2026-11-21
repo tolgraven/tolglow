@@ -66,6 +66,13 @@ deterministic priority/order. It never publishes partial frames. Expired/release
 instances finish according to their envelope and are removed. Logical time is
 supplied by the shell. A registry revision change has an explicit reload policy.
 
+Recoverable effect faults quarantine only that revision, preserving committed
+state and dropping its attempted output/intents. Healthy instances continue.
+Bad reload candidates retain the last-good definition. Shared :instance/retry
+or a newer valid revision permits recovery. Renderer-attributed failures discard
+one evaluated result without rerunning healthy code. Global model/executor errors
+remain frame failures; see [effect recovery](effect-fault-isolation.md).
+
 `afterglow.render.frame/resolve-frame [fixtures assignments options]` resolves
 ordered contributions and returns `{:values <per-target map> :universes
 <universe to byte-array>}`. It owns all newly allocated buffers for this call;

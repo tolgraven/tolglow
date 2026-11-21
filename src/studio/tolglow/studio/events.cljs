@@ -104,14 +104,14 @@
         (.then (fn [response] (if (.-ok response) (.blob response) (throw (js/Error. "Show export failed.")))))
         (.then (fn [blob]
                  (let [url (.createObjectURL js/URL blob) link (.createElement js/document "a")]
-                   (set! (.-href link) url) (set! (.-download link) "tolglow-show.edn") (.click link)
+                   (set! (.-href link) url) (set! (.-download link) "tolglow-show.transit") (.click link)
                    (js/setTimeout #(.revokeObjectURL js/URL url) 1000)
                    (rf/dispatch [:studio/toast "Show exported."]))))
         (.catch #(rf/dispatch [:studio/failure (error-message %)])))))
 (rf/reg-fx :studio/read-file
   (fn [file]
     (if (> (.-size file) (* 16 1024 1024))
-      (rf/dispatch [:studio/failure "Choose a show definition no larger than 16 MiB."])
+      (rf/dispatch [:studio/failure "Choose a show file no larger than 16 MiB."])
       (-> (.text file) (.then #(rf/dispatch [:studio/import-source %]))
           (.catch #(rf/dispatch [:studio/failure (error-message %)]))))))
 
