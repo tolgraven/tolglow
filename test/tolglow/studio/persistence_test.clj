@@ -59,6 +59,22 @@
 
 (defn restored [model] (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000) (files/freeze model)))
 
+(deftest cue-presets-survive-roundtrip-and-reject-invalid-file-values
+  (let [launched (command (demo/model) :preset-launch {:op :cue/launch :cue-id :ember
+                                                      :launch {:params {:level 0.37}}})
+        saved (:model (command (:model launched) :preset-save
+                               {:op :cue/save-params :cue-id :ember :instance-id (get-in launched [:ack :instance-id])}))
+        cue (get-in saved [:registry :cues :ember])
+        result (restored saved)
+        relaunched (command result :preset-relaunch {:op :cue/launch :cue-id :ember})]
+    (is (= cue (get-in result [:registry :cues :ember])))
+    (is (= 0.37 (get-in relaunched [:model :instances (get-in relaunched [:ack :instance-id]) :params :level])))
+    (doseq [bad [nil [] {:level 2} {:missing 1}]]
+      (let [document (-> (files/freeze saved)
+                         (assoc-in [:model :registry :cues :ember :saved-params] bad)
+                         (assoc-in [:model :registry :versions [:cues :ember (:version cue)] :saved-params] bad))]
+        (is (thrown? clojure.lang.ExceptionInfo (files/thaw (demo/model) document)))))))
+
 (deftest complete-portable-roundtrip-preserves-musical-progress
   (let [model (rich-model)
         source (files/write-string model)

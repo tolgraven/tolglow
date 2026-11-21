@@ -111,6 +111,22 @@
       (throw (ex-info "Invalid parameter values" {:errors errors})))
     values))
 
+(defn cue-effect
+  "Resolve the effect version a cue will launch, including an explicit pin."
+  [registry cue]
+  (let [current (get-in registry [:effects (:effect-id cue)])]
+    (if-let [version (:effect-version cue)]
+      (or (get-in registry [:versions [:effects (:effect-id cue) version]])
+          (when (= version (:version current)) current))
+      current)))
+
+(defn validate-cue-params
+  "Validate authored and saved overrides independently against a cue's effect."
+  [effect cue]
+  (into (validate-params (:params effect {}) (:params cue {}))
+        (map #(update % :path (fn [path] (assoc path 0 :saved-params))))
+        (validate-params (:params effect {}) (:saved-params cue {}))))
+
 (def attributes #{:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
                   :red :green :blue :white :amber :uv :shutter :iris :frost :speed})
 (def blends #{:replace :max :add})
@@ -196,6 +212,8 @@
           (concat
            (when-not (identifier? (:effect-id definition)) [(error [:effect-id] "Cue needs an effect ID")])
            (when-not (or (nil? params) (map? params)) [(error [:params] "Cue parameter values must be a map")])
+           (when (and (contains? definition :saved-params) (not (map? (:saved-params definition))))
+             [(error [:saved-params] "Saved cue parameter values must be a map")])
            (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")]))
           :fixtures
           (let [channels (:channels definition)]
@@ -221,7 +239,7 @@
 (defn publish
   "Publish validated immutable data. An identical current version is idempotent;
   changed content needs a larger version. Cue references and overrides validate
-  against the current effect. Prior versions remain under :versions."
+  against the cue's selected effect version. Prior versions remain under :versions."
   [registry kind definition]
   (let [old (get-in registry [kind (:id definition)])
         historical-versions (for [[[k id version] _] (:versions registry)
@@ -230,12 +248,12 @@
         definition (if (and (= kind :cues) (map? definition) (not (contains? definition :version)))
                      (assoc definition :version (inc latest-version)) definition)
         errors (validate-definition kind definition)
-        effect (when (= kind :cues) (get-in registry [:effects (:effect-id definition)]))
+        effect (when (= kind :cues) (cue-effect registry definition))
         errors (cond-> errors
                  (and (= kind :cues) (nil? effect))
-                 (conj (error [:effect-id] "Referenced effect is not registered"))
+                 (conj (error [:effect-id] "Referenced effect version is not registered"))
                  (and (= kind :cues) effect)
-                 (into (validate-params (:params effect {}) (:params definition {}))))]
+                 (into (validate-cue-params effect definition)))]
     (when (seq errors) (throw (ex-info "Invalid definition" {:kind kind :errors errors})))
     (cond
       (= old definition) registry
