@@ -3,6 +3,7 @@
   (:gen-class)
   (:require [clojure.java.io :as io]
             [afterglow.control.devices.transports :as transports]
+            [afterglow.control.devices.repl :as devices]
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
@@ -52,10 +53,18 @@
     {:value (show/audio-action! runtime :start options)
      :stop! #(show/audio-action! runtime :stop {})}))
 
-(defn- start-osc [context {:keys [address port-in host port]}]
+(defn- start-sensor-osc [context {:keys [address port-in host port]}]
   (let [runtime (need-show context)]
     {:value (show/sensor-action! runtime :osc-start {:host (or host address "127.0.0.1") :port (or port port-in 0)})
      :stop! #(show/sensor-action! runtime :osc-stop {})}))
+
+(defn- start-osc [context {:keys [session-id port-out] :as options}]
+  (let [runtime (need-show context)
+        id (or session-id "osc")
+        device (show/connect-device! runtime :osc (assoc options :session-id id))]
+    {:value (cond-> {:device device :port (devices/osc-port device)}
+              port-out (assoc :send! (partial devices/send-osc! device)))
+     :stop! #(show/disconnect-device! runtime id)}))
 
 (defn- sync-config [{:keys [device type] :as options}]
   (if (and device (= :midi type))
@@ -111,7 +120,7 @@
 
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
-   :audio start-audio :osc start-osc :sensors configure-sensors :waveforms install-waveforms
+   :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
    :expressive install-expressive :agents configure-agents
    :fixtures install-fixtures :cue-pages install-cue-pages})
 
