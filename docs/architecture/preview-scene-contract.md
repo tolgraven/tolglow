@@ -42,11 +42,14 @@ graphics owner and no overlapping fog or renderer implementation lane.
 
 Coordinates are metres in the existing right-handed rig space: Y is up, X spans
 the room width and Z its depth. No decorative offset may move the simulated beam
-away from the actual fixture origin. Prefer the resolved world-space direction
-and aim. The CPU oracle's elevation convention makes tilt zero horizontal and
--90 degrees downward; pan/tilt fallbacks use that convention and declared
-calibration/fixture rotation. Test numerical aim
-against the renderer's CPU oracle. RGBW's resolved emitted RGB controls light
+away from the actual fixture origin. Project each visible moving head with
+`afterglow.render.frame/fixture-pose`. The calibrated mechanical angles and
+world direction in `:pose` reflect the committed pan and tilt, including end
+stops and wraps. Requested aim stays available to the editor. While smoothing
+frames, interpolate the mechanical angles only across continuous travel.
+With incomplete servo data, the preview can use a supplied world direction.
+The CPU oracle's elevation convention places zero along +Z and −90° down.
+RGBW's resolved emitted RGB controls light
 colour. Exposure/tone mapping are display transforms, not emitted DMX values.
 Missing photometry uses a documented visual estimate, never a claim of calibrated
 lux, IES behaviour or exact matching to a real fixture.

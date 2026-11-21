@@ -6,9 +6,16 @@ export function normalize(v) {
   const n = Math.hypot(...v);
   return n > 1e-9 ? v.map(x => x / n) : [0, -1, 0];
 }
+export function servoValue(output, axis) {
+  const level = output[axis] ?? output.channels?.[axis];
+  return Number.isFinite(level) && level >= 0 && level <= 1 ? level : undefined;
+}
 export function axisDegrees(fixture, output, axis) {
-  if (Number.isFinite(output[`${axis}-deg`])) return output[`${axis}-deg`];
-  const value = Number.isFinite(output[axis]) ? output[axis] : 0;
+  const degrees = axis + '-deg';
+  if (Number.isFinite(output.pose?.[degrees])) return output.pose[degrees];
+  const servo = servoValue(output, axis);
+  if (servo === undefined && Number.isFinite(output[degrees])) return output[degrees];
+  const value = servo ?? 0;
   const calibration = fixture.calibration?.[axis];
   if (Array.isArray(calibration) && calibration.length === 2 && calibration[1] !== 0)
     return (value * 255 - calibration[0]) / calibration[1] * 180;
@@ -27,8 +34,13 @@ export function rotateFixture(v, degrees = [0, 0, 0]) {
   return [x, y, z];
 }
 export function fixtureDirection(fixture, output = {}) {
-  if (vector(output.direction) && Math.hypot(...output.direction) > 1e-9) return normalize(output.direction);
-  if (vector(output.aim) && vector(fixture.position)) return normalize(output.aim.map((v, i) => v - fixture.position[i]));
+  if (vector(output.pose?.direction)) return output.pose.direction;
+  const axesKnown = (servoValue(output, 'pan') !== undefined && servoValue(output, 'tilt') !== undefined) ||
+    (Number.isFinite(output.pose?.['pan-deg']) && Number.isFinite(output.pose?.['tilt-deg']));
+  if (!axesKnown) {
+    if (vector(output.direction) && Math.hypot(...output.direction) > 1e-9) return normalize(output.direction);
+    if (vector(output.aim) && vector(fixture.position)) return normalize(output.aim.map((v, i) => v - fixture.position[i]));
+  }
   const pan = radians(axisDegrees(fixture, output, 'pan'));
   const tilt = radians(axisDegrees(fixture, output, 'tilt'));
   // CPU resolve-geometry convention: elevation0=+Z, elevation-90=down.
