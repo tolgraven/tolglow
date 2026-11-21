@@ -31,7 +31,11 @@
            (sparkle all :chance 0.2)]]
   (mapcat #(call % show snap) as)))
 
-(when *show*
+(defn start-demo!
+  "Explicitly install the live-coding demo in the bound show.
+  Requiring this namespace never launches or changes effects."
+  []
+  {:pre [(some? *show*)]}
 (def st (build-step-param :interval-ratio 4 :fade-fraction 0.5))
 (def st2  (build-step-param :interval-ratio 8 :fade-fraction 0.25))
 (def sin (quick-lfo "sine"))

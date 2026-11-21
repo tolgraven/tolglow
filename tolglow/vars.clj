@@ -101,7 +101,7 @@
                  :centered centered :resolution resolution}]
   (into {}
         (filter
-         (fn [[_ v]] some? v)
+         (fn [[_ v]] (some? v))
          segments))))) ;nuke any nil vals
 
 
@@ -144,15 +144,16 @@
 ; per-var can merge in overloads for specific keys. so think eg grab general lfo stuff, adjust starting phase without making a var from scratch?
 (defn auto "resolve loose keywords through use-vars, merge complete (vector) var-maps and single-map vars. XXX rename assemble?"
  [& more]
- (reduce into [] (map
-                  (fn [element]
-                   (condp = (type element)
-                     clojure.lang.Keyword (conj [] (element template))
-                     clojure.lang.PersistentArrayMap (conj [] element)
-                     thi.ng.color.core.HSLA (conj [] (cue-map [element]))
-                     String (conj [] (cue-map [(color/like element)]))
-                     element))
-                  more)))
+ (vec (mapcat
+        (fn [element]
+          (cond
+            (nil? element) []
+            (keyword? element) [(get template element)]
+            (color/color? element) [(cue-map [element])]
+            (map? element) [element]
+            (string? element) [(cue-map [(color/like element)])]
+            :else element))
+        more)))
 
 (defn alt-start
  [k start]

@@ -110,12 +110,6 @@
 
 (defn print-var-on-change [key value] (print key " " value "\t"))
 
-(defn watch-var
- [show-key & watcher]
- (let [watcher (or (first watcher) print-var-on-change)])
- (show/clear-variable-set-fn! key watcher)
- (show/add-variable-set-fn! key watcher))
-
 (defn hook-var
  [show-key f]
   (show/clear-variable-set-fn! show-key f)
@@ -128,8 +122,8 @@
 
 (defn watch-var
  [show-key & watcher]
- (let [watcher (or (first watcher) print-var-on-change)])
- (hook-var show-key watcher))
+ (let [watcher (or (first watcher) print-var-on-change)]
+   (hook-var show-key watcher)))
 
 
 (defn to-vars! "Set show vars from map"
@@ -203,7 +197,7 @@
 
 (defn space-phase "Return position of head, in dimension, with show bounds as 0-1 - generally left to right for x, low to high for y, front to back for z."
   [head show & {:keys [axis] :or {axis :x}}]
-  (let [dim @(:dimensions *show*)
+  (let [dim @(:dimensions show)
         [min-axis max-axis] (map #(key-str % "-" axis) ["min" "max"])
         ;; min-dim (keyword (str "min-" (str axis)))
         ;; max-dim (keyword (str "max-" (str axis)))
@@ -213,7 +207,7 @@
 
 (defn x-phase "Return a value that ranges from zero for the leftmost fixture in a show to 1 for the rightmost, for staggering the phase of an oscillator in making a can-can chase."
   [head show]
-  (let [dimensions @(:dimensions *show*)]
+  (let [dimensions @(:dimensions show)]
     (/ (- (:x head) (:min-x dimensions)) (- (:max-x dimensions) (:min-x dimensions)))))
 
 

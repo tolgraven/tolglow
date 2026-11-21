@@ -23,7 +23,7 @@
             [thi.ng.color.core :as clr]
             [thi.ng.math.core :as cmath]
             [taoensso.timbre :as timbre]
-            [taoensso.timbre.profiling :refer [pspy]]
+            [taoensso.tufte :refer [p] :rename {p pspy}]
             [clojure.core.memoize :as memo]
             [tolglow
              [color :as color :refer []]

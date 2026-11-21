@@ -26,8 +26,7 @@
     [param :as param] [setup :as setup]
     [graph :as graph]
     [util :as util :refer [apply-vm avar clamp clear! get-channels get-map-with key-str random-in-range space-phase value x-phase]]
-    [vars :as vars :refer [alt-start cue-map cue-maps]]
-    [viz :as viz]]
+    [vars :as vars :refer [alt-start cue-map cue-maps]]]
    [clojure.pprint :refer [pprint pp print-table]]))
 #_(when (cfg :debug :enabled)
  (map use '[clojure.tools.namespace.repl #_clojure.tools.trace #_debugger.core]))

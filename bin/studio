@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ ! -f resources/studio/js/main.js ]]; then
+  if [[ ! -d node_modules ]]; then
+    npm ci --no-audit --no-fund
+  fi
+  npm run studio:build
+fi
+exec clojure -M:studio "$@"

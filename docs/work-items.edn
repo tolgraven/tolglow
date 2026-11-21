@@ -1,0 +1,1340 @@
+{:schema-version 1,
+ :updated "2026-11-21",
+ :items
+ [{:evidence
+   ["Connections focused: 14 tests / 120 assertions passed"
+    "Connections + full-show persistence: 33 tests / 285 assertions passed"
+    "docs/show-files.md"],
+   :paths
+   ["tolglow/tolglow/studio/connections.clj"
+    "tolglow/test/tolglow/studio/connections_test.clj"],
+   :acceptance
+   ["Construct without network or device IO"
+    "Stage validated resource bundles before replacement"
+    "Persist history/cache/reactive state and explicitly resume rebased capture"
+    "Bound cancellation and close resources without replaying actions"],
+   :title
+   "Own studio connection resources and atomic restore lifecycle",
+   :status :done,
+   :id :web/connections-v1,
+   :kind :implementation,
+   :depends-on [:foundation/specifications],
+   :owner nil}
+  {:evidence
+   ["docs/codebase-survey.md" "docs/branch-compatibility.md"],
+   :paths
+   ["tolglow/docs/codebase-survey.md"
+    "tolglow/docs/branch-compatibility.md"],
+   :acceptance
+   ["Record source revisions, entry points and existing vs missing behavior"],
+   :title "Map actual repositories, behavior and compatibility gaps",
+   :status :done,
+   :id :foundation/survey,
+   :kind :documentation,
+   :depends-on [],
+   :owner nil}
+  {:evidence
+   ["docs/testing.md"
+    "Afterglow legacy: 47 tests / 379 assertions passed"
+    "Tolglow legacy: 20 tests / 103 assertions passed"],
+   :paths
+   ["tolglow/test"
+    "tolglow/dev"
+    "tolglow/bin/test"
+    "afterglow/test"
+    "afterglow/dev/legacy_deps.clj"
+    "afterglow/bin/test"],
+   :acceptance
+   ["Existing source runs without hardware"
+    "Tests fail on errors and preserve legacy contracts"
+    "Document test-only dependency override"],
+   :title "Establish genuine pure and legacy characterization lanes",
+   :status :done,
+   :id :foundation/tests,
+   :kind :implementation,
+   :depends-on [:foundation/survey],
+   :owner nil}
+  {:evidence ["docs/README.md" "docs/roadmap.md"],
+   :paths
+   ["tolglow/docs/architecture"
+    "tolglow/docs/product"
+    "tolglow/AGENTS.md"
+    "afterglow/AGENTS.md"],
+   :acceptance
+   ["Current, proposed and research behavior distinguished"
+    "Each feature has acceptance and prerequisites"
+    "Major folders have guidance"],
+   :title "Specify all requested capabilities and agent boundaries",
+   :status :done,
+   :id :foundation/specifications,
+   :kind :documentation,
+   :depends-on [:foundation/survey],
+   :owner nil}
+  {:evidence ["docs/testing.md" "docs/work-log.md"],
+   :paths
+   ["tolglow/.github/workflows/tests.yml"
+    "afterglow/.github/workflows/tests.yml"
+    "tolglow/docs/work-items.edn"
+    "tolglow/dev/tolglow/check_roadmap.clj"],
+   :acceptance
+   ["CI defines Java 17/21 pure/legacy lanes"
+    "Tracker validates dependencies and active ownership"
+    "Hosted execution remains separately reported"],
+   :title "Add test CI definitions and machine-readable work tracking",
+   :status :done,
+   :id :foundation/ci,
+   :kind :implementation,
+   :depends-on [:foundation/tests],
+   :owner nil}
+  {:evidence
+   ["Afterglow pure: 13 tests / 51 assertions passed"
+    "docs/architecture/functional-runtime.md"],
+   :paths
+   ["afterglow/src/afterglow/runtime.clj"
+    "afterglow/test/afterglow/runtime_test.clj"],
+   :acceptance
+   ["Pure step state threading"
+    "Serial and forced out-of-order worker results agree"
+    "Invalid partial results cannot return a frame"
+    "No legacy wiring claims"],
+   :title
+   "Add isolated explicit-context evaluator with deterministic worker merge",
+   :status :done,
+   :id :runtime/prototype,
+   :kind :implementation,
+   :depends-on [:foundation/tests],
+   :owner nil}
+  {:evidence
+   ["Afterglow tolmaster merge f235148aeca0eed12a2f25c611382351d8b7e38b"
+    "docs/compatibility-progress.md"
+    "Compatibility checkpoint: Tolglow legacy 32 tests / 184 assertions passed; compatibility namespace 12 / 81"],
+   :paths
+   ["tolglow/tolglow/core.clj"
+    "tolglow/tolglow/color.clj"
+    "tolglow/tolglow/param.clj"
+    "tolglow/tolglow/util.clj"
+    "tolglow/tolglow/vars.clj"
+    "tolglow/tolglow/fixtures.clj"
+    "tolglow/tolglow/cue.clj"
+    "tolglow/tolglow/page.clj"
+    "tolglow/tolglow/config.clj"
+    "tolglow/tolglow/setup.clj"
+    "tolglow/tolglow/osc.clj"
+    "tolglow/tolglow/fx.clj"
+    "tolglow/tolglow/live.clj"
+    "tolglow/test/tolglow/compatibility_test.clj"
+    "tolglow/docs/compatibility-progress.md"],
+   :acceptance
+   ["Preserve fork source in recorded merge"
+    "Declare required color and stable Beat Link dependencies"
+    "Load core/live without implicit show activation"
+    "Exercise repaired parameter, fixture and cue APIs"],
+   :title
+   "Integrate tolmaster and restore headless application namespace compatibility",
+   :status :done,
+   :id :foundation/app-compatibility,
+   :kind :implementation,
+   :notes
+   "Narrow compatibility milestone completed; real rig startup and physical output remain separate gates.",
+   :depends-on [:foundation/survey],
+   :owner nil}
+  {:evidence
+   ["docs/benchmark-baseline.md"
+    "docs/benchmarks/2026-11-21-assignment-packing.edn"
+    "30 warmup and 100 measured frames at each of 100/1000/10000 heads; stable checksums"],
+   :paths
+   ["afterglow/dev/afterglow/bench_render.clj"
+    "afterglow/bin/bench"
+    "tolglow/docs/benchmark-baseline.md"],
+   :acceptance
+   ["Fixed workloads at 100/1000/10000 pixels"
+    "Warmup and percentile/checksum output"
+    "State excluded costs and machine metadata"
+    "No hardware output"],
+   :title
+   "Establish repeatable stage benchmark and plan full-frame profiling",
+   :status :done,
+   :id :render/benchmark,
+   :kind :implementation,
+   :depends-on [:foundation/tests],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/test/afterglow/replay"
+    "afterglow/dev/afterglow/replay.clj"],
+   :acceptance
+   ["Golden assignments/DMX for RGBW, movement, fine channels and kind ordering"
+    "Fixed snapshots/RNG"
+    "Recorded launch/end/restart histories"],
+   :title
+   "Capture legacy whole-frame oracle and deterministic command replay",
+   :status :planned,
+   :id :runtime/replay,
+   :kind :implementation,
+   :depends-on [:foundation/app-compatibility :foundation/tests],
+   :owner nil}
+  {:evidence
+   ["Control and codec checkpoint: 36 tests / 1234 assertions passed"
+    "Latest model-only follow-up: 15 tests / 130 assertions passed, including preserved instance source"
+    "docs/implementation-contract-v1.md"],
+   :paths
+   ["afterglow/src/afterglow/control"
+    "afterglow/test/afterglow/control"],
+   :acceptance
+   ["Validated launch/end/parameter/page/registry operations"
+    "Source identity, ordering, epochs, revisions and bounded duplicate receipts"
+    "MIDI/OSC/Push 2 codecs produce shared interactions without IO"],
+   :title
+   "Implement v1 semantic command model, pure bindings/views and transport codecs",
+   :status :done,
+   :id :control/kernel,
+   :kind :implementation,
+   :notes
+   "New implementation only. Old source is a parity reference, never runtime adapter. Macro orchestration belongs to composition host.",
+   :depends-on [:foundation/specifications :runtime/prototype],
+   :owner nil}
+  {:evidence
+   ["Engine/executor targeted suite: 19 tests / 76 assertions passed"
+    "Captured definitions and current parameters, timed release, reload policies, restart, deadlines/cancellation/recovery exercised"
+    "docs/architecture/functional-runtime.md"],
+   :paths
+   ["afterglow/src/afterglow/runtime.clj"
+    "afterglow/src/afterglow/runtime"
+    "afterglow/test/afterglow/runtime_test.clj"
+    "afterglow/test/afterglow/runtime"],
+   :acceptance
+   ["Advance shared model with captured definition/current params"
+    "Timed launch, release and version reload semantics"
+    "Bounded worker closure/timeouts and no partial return"],
+   :title
+   "Wire explicit-context engine to shared model with owned worker boundary",
+   :status :done,
+   :id :runtime/engine-v1,
+   :kind :implementation,
+   :depends-on [:runtime/prototype :foundation/specifications],
+   :owner nil}
+  {:evidence
+   ["Last aggregate authoring run: 40 tests / 232 assertions passed"
+    "Subsequent response-only regression: 5 tests / 25 assertions passed"
+    "Registry/compiler, beat-based sequence sampling, tween/envelope, response middleware, macro, seeded random and emission-aware policy exercised"],
+   :paths
+   ["tolglow/tolglow/registry.clj"
+    "tolglow/tolglow/compiler.clj"
+    "tolglow/tolglow/composition"
+    "tolglow/tolglow/automation"
+    "tolglow/test/tolglow/registry_test.clj"
+    "tolglow/test/tolglow/compiler_test.clj"
+    "tolglow/test/tolglow/composition"
+    "tolglow/test/tolglow/automation"],
+   :acceptance
+   ["Validate and compile data into pure effect steps"
+    "Logical tween/envelope/sequence sampling"
+    "Seeded constrained random policy with emission dependencies"],
+   :title
+   "Executable declarative registry/compiler, composition and automation primitives",
+   :status :done,
+   :id :authoring/core-v1,
+   :kind :implementation,
+   :notes
+   "Primitive coverage is not complete authoring UX. Step fades, richer catch-up/seek policies and creative autonomous planning remain open.",
+   :depends-on [:foundation/specifications :runtime/prototype],
+   :owner nil}
+  {:evidence
+   ["CPU frame/IR targeted suite: 21 tests / 128 assertions passed"
+    "docs/benchmarks/2026-11-21-backend-optimized.edn"
+    "docs/benchmarks/README.md"],
+   :paths
+   ["afterglow/src/afterglow/render"
+    "afterglow/test/afterglow/render"
+    "afterglow/dev/afterglow/bench_backend.clj"],
+   :acceptance
+   ["Ordered assignments to validated fixture buffers"
+    "RGBW and coarse/fine patch semantics"
+    "CPU expression oracle plus supported GLSL emission"],
+   :title
+   "Owned-buffer frame backend and shared expression interpreter/GLSL compiler",
+   :status :done,
+   :id :render/frame-v1,
+   :kind :implementation,
+   :notes
+   "Measured CPU stage optimization; neither complete physical photometry nor a hard real-time deadline guarantee.",
+   :depends-on [:foundation/specifications :render/benchmark],
+   :owner nil}
+  {:evidence
+   ["Integrated Tolglow pure checkpoint: 88 tests / 513 assertions before final Ring streaming and response-host tests"],
+   :paths
+   ["tolglow/tolglow/studio.clj"
+    "tolglow/tolglow/studio/web.clj"
+    "tolglow/tolglow/studio/output.clj"
+    "tolglow/tolglow/studio/demo.clj"
+    "tolglow/test/tolglow/studio_test.clj"
+    "tolglow/test/tolglow/studio/web_test.clj"
+    "tolglow/bin/studio"
+    "afterglow/src/afterglow/control/model.clj"
+    "afterglow/test/afterglow/control/model_test.clj"
+    "afterglow/src/afterglow/runtime/engine.clj"
+    "afterglow/test/afterglow/runtime/engine_test.clj"],
+   :acceptance
+   ["Explicit start/stop with no load-time IO"
+    "Ring request/response handler separate from Ring Jetty adapter"
+    "Cue/parameter/editor interactions use shared model"
+    "Committed frame publication, session cleanup and independent output shell"
+    "Integrated API tests and fresh browser verification"
+    "Wire global/selected response middleware into committed frame evaluation"],
+   :title
+   "Integrate shared-engine studio host with Ring backend and explicit HTTP adapter",
+   :status :in-progress,
+   :id :web/studio-v1,
+   :kind :implementation,
+   :notes
+   "User requires Ring backend and re-frame frontend; separate frontend claims avoid host/renderer overlap. Final integrated counts pending root verification.",
+   :depends-on
+   [:control/kernel
+    :runtime/engine-v1
+    :authoring/core-v1
+    :render/frame-v1],
+   :owner "root"}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/runtime"
+    "afterglow/test/afterglow/runtime"],
+   :acceptance
+   ["One immutable snapshot per frame"
+    "Deterministic merge and stable precedence"
+    "Deadlines/backpressure and stale-epoch rejection"
+    "No partial publication"],
+   :title
+   "Coordinate frame snapshots, bounded workers and owned output publication",
+   :status :planned,
+   :id :runtime/coordinator,
+   :kind :implementation,
+   :notes
+   "Owned v1 executor and studio host exist; this broad milestone still requires whole-frame legacy replay and production publication/intent parity.",
+   :depends-on [:runtime/replay :runtime/prototype :control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/effects"
+    "afterglow/src/afterglow/show.clj"
+    "afterglow/test/afterglow/effects"],
+   :acceptance
+   ["Channel/color/dimmer/movement/scenes/chases pass parity oracles"
+    "All new state lives in explicit context"
+    "No runtime compatibility adapter or legacy closure execution path"
+    "Code-effect IO uses explicit intents"],
+   :title
+   "Rewrite effect families with old-source feature and functional parity oracles",
+   :status :planned,
+   :id :runtime/migration,
+   :kind :implementation,
+   :depends-on [:runtime/coordinator],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/tolglow/registry" "tolglow/test/tolglow/registry"],
+   :acceptance
+   ["Schema validation with units, ranges, semantics and capabilities"
+    "Data interpreter plus Clojure authoring API"
+    "Stable identities/revisions"
+    "Manual and generated registry pages"],
+   :title
+   "Version declarative parameter, effect, cue and fixture definitions",
+   :status :planned,
+   :id :authoring/registry,
+   :kind :implementation,
+   :notes
+   "V1 data registry/compiler and generated page reconciliation work. Full schema semantics, UI coverage and fixture library workflow remain open.",
+   :depends-on [:control/kernel :foundation/app-compatibility],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/runtime/reload.clj"
+    "tolglow/tolglow/registry/reload.clj"],
+   :acceptance
+   ["Atomic validated activation"
+    "Explicit migrate/restart/retain policies"
+    "Invalid edits retain last good definition"
+    "Epoch restart invalidates old cues/workers"],
+   :title
+   "Hot-reload running cue definitions and clear stale restart state",
+   :status :planned,
+   :id :runtime/hot-reload,
+   :kind :implementation,
+   :notes
+   "V1 supports pinned/restart/preserve-state definition policies and epochs. Arbitrary state migration and broad legacy live-reload parity remain open.",
+   :depends-on [:runtime/coordinator :authoring/registry],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/composition" "tolglow/test/tolglow/composition"],
+   :acceptance
+   ["Reusable slots with optional sequence timing"
+    "Curved stepped fades, loop, ping-pong and seeded random order"
+    "Logical-time keyframe tween sampling independent of frame rate"
+    "All cues support one-shot/duration semantics"
+    "Global/selected ADSR attack/release and retrigger policy"],
+   :title
+   "Macros, compound cues, step sequences, tweens and response envelopes",
+   :status :planned,
+   :id :authoring/composition,
+   :kind :implementation,
+   :notes
+   "V1 pure primitives exist; beat/response studio integration is active in authoring/beat-response-host-v1. Full stepped fades and editors remain open.",
+   :depends-on [:authoring/registry :runtime/coordinator],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/automation" "tolglow/test/tolglow/automation"],
+   :acceptance
+   ["Select what randomizes within meaningful parameter domains"
+    "Intervals, durations, one-shots and page/all scope"
+    "Movement can request compatible emission without defeating intentional darkness"
+    "Seeded replay and human override"],
+   :title
+   "Semantic randomization and dependency-aware autonomous show policy",
+   :status :planned,
+   :id :authoring/automation,
+   :kind :implementation,
+   :notes
+   "Seeded uniform/triangular sampling with bounds/max-change and emission-aware policy exist. Full user-directed creative auto show remains open.",
+   :depends-on [:authoring/composition :control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/controllers/push2"
+    "afterglow/test/afterglow/controllers/push2"],
+   :acceptance
+   ["No domain cue behavior in protocol encoder"
+    "Golden MIDI/display captures"
+    "Reconnect, held pads, focus and parameter feedback"
+    "Physical device validation"],
+   :title
+   "Rewrite Push 2 as small composable transport, interaction and view modules",
+   :status :planned,
+   :id :control/push2,
+   :kind :implementation,
+   :notes
+   "V1 composable adapter and source-derived codec tests are complete under control/devices. Physical device validation and full workflow parity remain outstanding.",
+   :depends-on [:control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/controllers/push3"
+    "afterglow/test/afterglow/controllers/push3"],
+   :acceptance
+   ["Document controller-mode protocol and capabilities from hardware"
+    "Shared semantic conformance"
+    "Do not assume Push 2 display/USB compatibility"
+    "Standalone separately scoped"],
+   :title "Add verified Push 3 support",
+   :status :planned,
+   :id :control/push3,
+   :kind :implementation,
+   :notes
+   "Only explicitly configured generic MIDI bindings are available. No verified native Push 3 display, discovery or standalone support.",
+   :depends-on [:control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/control/adapters"
+    "afterglow/test/afterglow/control/adapters"],
+   :acceptance
+   ["Transport values normalize to typed commands"
+    "Origin/echo suppression and disconnect handling"
+    "Timestamped calibrated sensor inputs"
+    "No adapter directly mutates internal show atoms"],
+   :title "Generic MIDI, OSC, web, REPL and sensor adapters",
+   :status :planned,
+   :id :control/adapters,
+   :kind :implementation,
+   :notes
+   "V1 session adapters exist for MIDI, OSC, sensor and REPL boundaries. Full transport conformance and calibrated hardware fixtures remain open.",
+   :depends-on [:control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/src/studio/tolglow/studio" "tolglow/resources/studio"],
+   :acceptance
+   ["ClojureScript re-frame events/db/subscriptions and Reagent components"
+    "Smooth iPad-first touch interaction plus phone layout"
+    "Long-press radial actions plus keyboard and visible-menu alternatives"
+    "Multitouch, held-cue cancellation, reconnect and independent user sessions"
+    "Real iPad Safari and phone performance/accessibility checks"],
+   :title "Responsive iPad-first performance UI with phone support",
+   :status :planned,
+   :id :web/control,
+   :kind :implementation,
+   :depends-on [:control/kernel :authoring/registry],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/resources/public/editors"
+    "afterglow/src/afterglow/web/editors"],
+   :acceptance
+   ["Code-free param/effect/cue/fixture editing"
+    "Macro and sequence editors share slot UI"
+    "Neovim worker isolation, lint/validation and optional valid-edit execution"
+    "Show running definition revision and recover from failure"],
+   :title
+   "Declarative editors, reusable slots and Neovim WASM code authoring",
+   :status :planned,
+   :id :web/editors,
+   :kind :implementation,
+   :depends-on
+   [:web/control :authoring/composition :runtime/hot-reload],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/render"
+    "afterglow/test/afterglow/render"],
+   :acceptance
+   ["Whole-frame profiling before/after"
+    "Lower allocation with parity"
+    "No overlapping buffer ownership"
+    "Report p99, missed deadlines, Art-Net packing/transport and output limits"],
+   :title
+   "Optimize CPU renderer with compiled rig plans and owned packed buffers",
+   :status :planned,
+   :id :render/cpu,
+   :kind :implementation,
+   :depends-on
+   [:runtime/coordinator :runtime/replay :render/benchmark],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/render/ir"
+    "afterglow/dev/afterglow/accelerators"],
+   :acceptance
+   ["CPU interpreter is reference"
+    "Typed geometry/color/aim/focus buffers"
+    "High-level Quil-like API lowers supported operations"
+    "GLSL cache and capability validation"
+    "Include upload/readback/fence latency and fallback in comparison"],
+   :title "Typed keyword-map effect DSL, SIMD and GPU feasibility",
+   :status :planned,
+   :id :render/accelerators,
+   :kind :research,
+   :depends-on [:render/cpu :authoring/registry],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/fixture_library"
+    "afterglow/src/afterglow/fixtures/import"],
+   :acceptance
+   ["Preserve declarative configuration"
+    "Document QXF/OFL/GDTF and other format coverage/limitations"
+    "Validate channels, modes and provenance before activation"
+    "Search/download review with license metadata"],
+   :title
+   "Fixture type editor, imports and integrated definition search",
+   :status :planned,
+   :id :fixtures/library,
+   :kind :implementation,
+   :depends-on [:authoring/registry :web/control],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/resources/public/simulator" "tolglow/tolglow/rig"],
+   :acceptance
+   ["Trusses/fixture library placement, angles and calibration"
+    "Same stable rig ids/units in runtime and preview"
+    "Measured mobile quality tiers"
+    "Preview cannot stall hardware output"],
+   :title "Shared 3D rig editor and preview scene model",
+   :status :planned,
+   :id :simulator/rig,
+   :kind :implementation,
+   :depends-on [:web/control :fixtures/library :control/kernel],
+   :owner nil}
+  {:evidence [],
+   :paths ["afterglow/resources/public/simulator/volumetrics"],
+   :acceptance
+   ["Persistent density with emission/advection/diffusion/dissipation"
+    "Dense shaped plumes evolve into haze"
+    "No volumetric beam in clear air while lit surfaces remain"
+    "Mobile quality/performance budgets and visual references"],
+   :title
+   "Realistic optics, shaped fog injection and evolving room haze",
+   :status :planned,
+   :id :simulator/volumetrics,
+   :kind :research,
+   :depends-on [:simulator/rig],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/integrations/live"
+    "tolglow/integrations/live"],
+   :acceptance
+   ["Cue/parameter clip mapping and 64-pad color feedback"
+    "Record cue launches, stops and parameter actions when armed"
+    "Loop/seek/tempo alignment and echo suppression"
+    "Clean Push/Live mode handoff"],
+   :title "Ableton Live clip/drum-rack integration and recording",
+   :status :planned,
+   :id :integration/live,
+   :kind :implementation,
+   :notes
+   "Tested transport-neutral Live protocol/state primitives exist. Actual Live-side clip/drum-rack bridge and recording workflow remain unverified.",
+   :depends-on [:control/adapters :authoring/registry],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/integrations/audio" "tolglow/tolglow/audio_bridge"],
+   :acceptance
+   ["Calibrated sine pitch/value encoding and level tracking"
+    "Individual channels and drum-pad effect chains"
+    "Confidence/latency-aware pitch, envelope and spectral residual features"
+    "Echo/reverb tails outlive cue source without stuck parameters"],
+   :title
+   "Parameter audio carriers, per-channel/per-pad effects and returned analysis",
+   :status :planned,
+   :id :integration/audio,
+   :kind :research,
+   :notes
+   "Tested sine/pitch/level/residual analysis primitives exist; real audio device routing, effect-chain tails and latency calibration remain open.",
+   :depends-on [:integration/live :authoring/composition],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/agents"
+    "afterglow/resources/public/chat"
+    "afterglow/src/afterglow/web/agents"],
+   :acceptance
+   ["OpenAI/Anthropic/OpenRouter/self-hosted adapters with server-side secrets"
+    "Fixture-aware prompt to validated show and evolving registry"
+    "One iteration/duration authoring and human co-performance"
+    "REPL/API capability parity"
+    "Verify Codex session/MCP feasibility before promising embedding"],
+   :title
+   "Provider configuration, streaming agent chat and REPL-driven show creation",
+   :status :planned,
+   :id :integration/agents,
+   :kind :implementation,
+   :notes
+   "Tested provider parsing/loopback HTTP and scripted tool loop exist. Bounded studio sessions active; real external provider and complete prompt-to-show behavior unverified.",
+   :depends-on
+   [:control/adapters
+    :authoring/automation
+    :runtime/hot-reload
+    :web/editors],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/environments"
+    "afterglow/resources/public/simulator/import"],
+   :acceptance
+   ["Document model provenance/license for club references"
+    "Calibrate scale/axes and editable geometry"
+    "Do not treat visual splats as lighting/collision geometry without reconstruction"],
+   :title
+   "Environment prefabs and phone/LiDAR/splat-assisted room capture",
+   :status :planned,
+   :id :simulator/environments,
+   :kind :research,
+   :depends-on [:simulator/rig],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/integrations/robotics"],
+   :acceptance
+   ["Confirm product name/SDK (microduck is unverified)"
+    "Procedural movement sequences plus trained behaviors"
+    "Timestamped measured movement maps through sensor adapter"
+    "Separate robot control loop from lighting render deadlines"],
+   :title
+   "Later: trainable dancing robot duck telemetry as lighting control",
+   :status :planned,
+   :id :integration/duck,
+   :kind :research,
+   :depends-on [:control/adapters],
+   :owner nil}
+  {:evidence
+   ["Root removed runtime/legacy.clj and its tests after explicit no-compatibility-layer instruction"],
+   :paths
+   ["afterglow/src/afterglow/runtime/legacy.clj"
+    "afterglow/test/afterglow/runtime/legacy_test.clj"],
+   :acceptance
+   ["No new-runtime compatibility bridge; old source retained only as parity reference"],
+   :title "Historical bridge experiment removed from the new runtime",
+   :status :done,
+   :id :runtime/legacy-bridge-v1,
+   :kind :implementation,
+   :notes
+   "Earlier 12/52 bridge experiment was explicitly withdrawn by user direction; not a delivered architecture capability.",
+   :depends-on
+   [:runtime/engine-v1 :control/kernel :foundation/app-compatibility],
+   :owner nil}
+  {:evidence
+   ["Device suite: 20 tests / 90 assertions passed"
+    "afterglow/src/afterglow/control/devices/README.md"
+    "Fake transport lifecycle plus real headless BufferedImage rendering; no physical device claim"],
+   :paths
+   ["afterglow/src/afterglow/control/devices"
+    "afterglow/test/afterglow/control/devices"],
+   :acceptance
+   ["Source-derived Push 2 input/LED protocol"
+    "Open/close/reconnect/user handoff and owned hold cleanup"
+    "Injected MIDI/display transports and isolated concurrent sessions"
+    "Explicit optional Java MIDI, OSC and Wayang shells with REPL facade"],
+   :title
+   "Composable Push 2 and generic transport sessions with injectable IO",
+   :status :done,
+   :id :control/devices-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel],
+   :owner nil}
+  {:evidence
+   ["Integration suite: 30 tests / 188 assertions passed"
+    "Actual loopback HttpClient UTF-8, cancel and timeout checks"
+    "External providers, Live bridge and audio hardware unverified"],
+   :paths
+   ["tolglow/tolglow/integrations"
+    "tolglow/test/tolglow/integrations"],
+   :acceptance
+   ["Validated fixture normalization and declared format limits"
+    "Transport-neutral Live/audio mappings"
+    "Streaming provider parsing, bounded HTTP cancellation/timeout"
+    "Scripted agent calls real control reducer"],
+   :title
+   "Fixture import, Live/audio primitives and provider-backed tool orchestration",
+   :status :done,
+   :id :integration/primitives-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel :authoring/core-v1],
+   :owner nil}
+  {:evidence
+   ["Frontend 28 tests / 124 assertions passed"
+    "Optimized release 129 files / 0 warnings"
+    "Restarted-server browser: 9 session + 6 authoring workflows; no console/page errors"
+    "docs/studio-ui.md"],
+   :paths
+   ["tolglow/src/studio/tolglow/studio/events.cljs"
+    "tolglow/src/studio/tolglow/studio/interop.cljs"
+    "tolglow/src/studio/tolglow/studio/core.cljs"
+    "tolglow/src/studio/tolglow/studio/subs.cljs"
+    "tolglow/resources/studio"
+    "tolglow/shadow-cljs.edn"
+    "tolglow/package.json"
+    "tolglow/package-lock.json"
+    "tolglow/docs/studio-ui.md"],
+   :acceptance
+   ["Actual re-frame app-db, events and subscriptions"
+    "Reagent component mount and explicit disposal"
+    "Specialized WebGL/Neovim JS engines remain behind interop boundary"
+    "Production build and fresh desktop/tablet/phone browser checks"],
+   :title "Migrate studio client state and effects to re-frame",
+   :status :done,
+   :id :web/reframe-state-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel :authoring/core-v1],
+   :owner nil}
+  {:evidence
+   ["Frontend 28 tests / 124 assertions passed"
+    "Optimized release 129 files / 0 warnings"
+    "Restarted-server browser: 9 session + 6 authoring workflows; no console/page errors"
+    "docs/studio-ui.md"],
+   :paths ["tolglow/src/studio/tolglow/studio/views.cljs"],
+   :acceptance
+   ["Declarative cue, editor, rig and chat components"
+    "Shared events/subscriptions with no parallel client state store"
+    "Touch/keyboard controls and held gesture cleanup"],
+   :title "Implement studio Reagent views consuming re-frame state",
+   :status :done,
+   :id :web/reframe-views-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel :authoring/core-v1],
+   :owner nil}
+  {:evidence
+   ["Agent session manager: 9 tests / 71 assertions passed"
+    "Configuration and secret redaction, bounded worker admission, queued snapshots, cancellation/active close and bounded conversation inputs"],
+   :paths
+   ["tolglow/tolglow/studio/agents.clj"
+    "tolglow/test/tolglow/studio/agents_test.clj"],
+   :acceptance
+   ["Runtime-only provider secrets excluded from public snapshots"
+    "Bounded worker/session lifecycle with cancel and shutdown"
+    "Streaming event projection and common tool dispatch"],
+   :title "Host bounded provider and chat sessions inside studio",
+   :status :done,
+   :id :integration/sessions-v1,
+   :kind :implementation,
+   :depends-on [:integration/primitives-v1 :control/kernel],
+   :owner nil}
+  {:evidence
+   ["New host 9 tests / 59 assertions plus existing studio 11 / 50: combined 20 / 109 passed"
+    "tolglow/studio/composition/README.md"],
+   :paths
+   ["tolglow/tolglow/studio/composition.clj"
+    "tolglow/test/tolglow/studio/composition_test.clj"
+    "tolglow/tolglow/studio/composition/README.md"],
+   :acceptance
+   ["Explicit beat clock and tempo/pause continuity"
+    "Playback projection exposes owned running state"
+    "Paused starts defer launch; old epochs discard playback"
+    "Stop/release affect only owned instance IDs"],
+   :title
+   "Host beat-based composition playback with pause and instance ownership",
+   :status :done,
+   :id :authoring/beat-response-host-v1,
+   :kind :implementation,
+   :notes
+   "Completes initial beat/composition host. Global response application belongs to studio host integration; full stepped fades/editor remain open.",
+   :depends-on [:authoring/core-v1 :control/kernel :runtime/engine-v1],
+   :owner nil}
+  {:evidence
+   ["7 oracle cases and 8 lifecycle groups passed in Chromium 156 ANGLE Vulkan SwiftShader SOFTWARE"
+    "docs/benchmarks/2026-11-21-webgl2-swiftshader.json"
+    "docs/gpu-experiment.md; no physical GPU or end-to-end acceleration claim"],
+   :paths
+   ["tolglow/resources/gpu/compute.js"
+    "tolglow/resources/gpu/test.html"
+    "tolglow/docs/gpu-experiment.md"],
+   :acceptance
+   ["Actual float shader dispatch and PBO/fence readback"
+    "CPU oracle comparisons with explicit operation tolerances"
+    "Resource and lifecycle checks"
+    "Record renderer and excluded pipeline costs"],
+   :title
+   "Run supported expression shaders with WebGL2 asynchronous readback",
+   :status :done,
+   :id :render/gpu-experiment-v1,
+   :kind :research,
+   :depends-on [:render/frame-v1],
+   :owner nil}
+  {:evidence
+   ["docs/testing.md; checkpoint counts distinguished from final integrated verification"
+    "docs/benchmarks/README.md and retained raw reports"
+    "Ledger and local Markdown links validated"],
+   :paths
+   ["tolglow/docs/README.md"
+    "tolglow/docs/roadmap.md"
+    "tolglow/docs/work-log.md"
+    "tolglow/docs/branch-compatibility.md"
+    "tolglow/docs/testing.md"
+    "tolglow/docs/work-items.edn"
+    "tolglow/docs/benchmarks"
+    "tolglow/AGENTS.md"
+    "tolglow/tolglow/AGENTS.md"
+    "tolglow/test/AGENTS.md"
+    "afterglow/AGENTS.md"],
+   :acceptance
+   ["Current vs historical vs proposed claims explicit"
+    "Disjoint active ownership and checked ledger"
+    "Durable benchmark provenance"
+    "Exact observed evidence without implying full roadmap completion"],
+   :title
+   "Reconcile implemented milestones, evidence and remaining architecture roadmap",
+   :status :done,
+   :id :documentation/delivery-sync,
+   :kind :documentation,
+   :depends-on
+   [:foundation/specifications :foundation/app-compatibility],
+   :owner nil}
+  {:evidence
+   ["docs/audio-analysis.md: nine upstream candidates with pinned sources/APIs/licenses"
+    "Meyda5.6.3: 3 independent feature assertions passed"
+    "aubiojs0.2.1 executes but synthetic callback-count gate failed, retained explicitly"
+    "docs/benchmarks/2026-11-21-meyda-smoke.json"
+    "docs/benchmarks/2026-11-21-aubiojs-smoke.json"],
+   :paths
+   ["tolglow/docs/audio-analysis.md"
+    "tolglow/docs/benchmarks/2026-11-21-aubiojs-smoke.json"
+    "tolglow/docs/benchmarks/2026-11-21-meyda-smoke.json"],
+   :acceptance
+   ["Verify upstream APIs/licenses/revisions"
+    "Distinguish streaming/online algorithms from offline analysis"
+    "Recommend measured integration boundary and explicit confidence/latency limits"
+    "Musical beat/bar/phrase units primary in authoring"],
+   :title
+   "Evaluate reusable open-source realtime beat, kick, energy and structural audio analysis",
+   :status :done,
+   :id :integration/audio-analysis-research,
+   :kind :research,
+   :depends-on [:integration/primitives-v1],
+   :owner nil}
+  {:evidence
+   ["12 tests / 119 assertions passed"
+    "48kHz 480-sample block: 500 warmup/2000 measured; p50 .052739ms, p95 .344487ms, p99 .500250ms, max15.204995ms; no hard deadline claim"],
+   :paths
+   ["tolglow/tolglow/integrations/analysis.clj"
+    "tolglow/test/tolglow/integrations/analysis_test.clj"
+    "tolglow/tolglow/integrations/README.md"],
+   :acceptance
+   ["Explicit sample block/rate/time/clock to next state/events"
+    "Adaptive kick-band onset threshold and refractory gate"
+    "Energy and breakdown hysteresis"
+    "Alignment confidence and event handler boundary"
+    "No claim of general learned mood/downbeat recognition"],
+   :title "Bounded block audio feature and clock-alignment event core",
+   :status :done,
+   :id :integration/audio-analysis-v1,
+   :kind :implementation,
+   :depends-on [:integration/primitives-v1 :control/kernel],
+   :owner nil}
+  {:evidence
+   ["afterglow.time-test: 3 tests / 30 assertions passed"
+    "Authoring timing suite: 61 tests / 357 assertions passed; actual control/compiler/engine/frame bars duration and tempo/meter changes"],
+   :paths
+   ["afterglow/src/afterglow/time.clj"
+    "afterglow/test/afterglow/time_test.clj"],
+   :acceptance
+   ["Beat/bar/phrase units are primary authoring data"
+    "Explicit meter and phrase anchor semantics"
+    "Finite validated conversion at millisecond boundaries"
+    "Fractional beats and tempo changes tested"],
+   :title
+   "Shared beat/bar/phrase conversions and musical duration contract",
+   :status :done,
+   :id :runtime/musical-time-v1,
+   :kind :implementation,
+   :depends-on [:runtime/engine-v1 :control/kernel],
+   :owner nil}
+  {:evidence
+   ["Audio boundary14 tests / 93 assertions passed; combined analysis26 / 214"],
+   :paths
+   ["tolglow/tolglow/studio/audio.clj"
+    "tolglow/test/tolglow/studio/audio_test.clj"],
+   :acceptance
+   ["Mono/stereo PCM decoding"
+    "Single owned worker and cancel/close cleanup"
+    "Explicit clock/events callback boundary"
+    "Injectable tests without physical audio activation"],
+   :title
+   "Explicit owned audio capture lifecycle with injected PCM streams",
+   :status :done,
+   :id :integration/audio-capture-v1,
+   :kind :implementation,
+   :depends-on [:integration/audio-analysis-v1],
+   :owner nil}
+  {:evidence
+   ["tolglow.studio.persistence-test: 19 tests / 165 assertions passed"
+    "Actual compiler/registry/patch, agent-state, fixture-cache and reactive validators invoked"
+    "No extra effect sampling or callback/source evaluation; custom readers not invoked"
+    "docs/show-files.md; root host integration remains a separate gate"],
+   :paths
+   ["tolglow/tolglow/studio/persistence.clj"
+    "tolglow/test/tolglow/studio/persistence_test.clj"
+    "tolglow/docs/show-files.md"],
+   :acceptance
+   ["Active states/captured versions/timers/transport/composition/auto RNG/rig/integration links preserved"
+    "Safe schema2 EDN with explicit extensions, no eval/live objects/raw secrets"
+    "Fresh epoch and rekeyed instance/owner references; no stale session leases"
+    "Optional committed frame validates before publication without advancing effects"
+    "Agent configs/history/credential references and reactive registration data validated"],
+   :title
+   "Complete versioned show-state freeze/restore with fresh epoch and validated references",
+   :status :done,
+   :id :show/persistence-v2,
+   :kind :implementation,
+   :depends-on
+   [:control/kernel
+    :runtime/engine-v1
+    :authoring/core-v1
+    :integration/primitives-v1],
+   :owner nil}
+  {:evidence
+   ["Reactive owner checkpoint: 20 tests / 99 assertions passed"
+    "docs/reactive.md"],
+   :paths
+   ["afterglow/src/afterglow/reactive.clj"
+    "afterglow/test/afterglow/reactive_test.clj"
+    "afterglow/src/afterglow/reactive"
+    "afterglow/test/afterglow/reactive"],
+   :acceptance
+   ["Pure registry validation before explicit trusted source restore"
+    "Portable cells/pending actions/watcher comparison state"
+    "Owned runtime subscriptions and no effect callbacks inside retry functions"],
+   :title
+   "Explicit reactive subscriptions, actions, cells and portable registry restoration",
+   :status :done,
+   :id :runtime/reactive-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel :runtime/engine-v1],
+   :owner nil}
+  {:evidence
+   ["Provider manager: 16 tests / 130 assertions passed"
+    "Local credential store: 5 tests / 31 assertions passed"
+    "tolglow/integrations/README.md"],
+   :paths
+   ["tolglow/tolglow/studio/agents.clj"
+    "tolglow/test/tolglow/studio/agents_test.clj"
+    "tolglow/tolglow/studio/credentials.clj"
+    "tolglow/test/tolglow/studio/credentials_test.clj"],
+   :acceptance
+   ["Pure normalized export validation"
+    "Full bounded conversations with valid tool call/results"
+    "Separate credential reference/store, no raw secrets in show files"
+    "Restore does not resume stale worker handles"],
+   :title
+   "Restore provider configuration, credential references and bounded chat history",
+   :status :done,
+   :id :integration/agent-persistence-v1,
+   :kind :implementation,
+   :depends-on [:integration/sessions-v1],
+   :owner nil}
+  {:evidence
+   ["13 tests / 129 assertions passed"
+    "Live OFL Robe catalog11 results, ledbeam query2, Robin LEDBeam150 four modes basic import with6 unmapped warnings"
+    "No broad fixture-format or hardware parity claim"],
+   :paths
+   ["tolglow/tolglow/studio/fixtures.clj"
+    "tolglow/test/tolglow/studio/fixtures_test.clj"
+    "tolglow/tolglow/integrations/gdtf.clj"
+    "tolglow/test/tolglow/integrations/gdtf_test.clj"],
+   :acceptance
+   ["Catalog/offline and remote OFL search/fetch/cache"
+    "Explicit GDTF1.1/1.2 supported subset with warnings"
+    "ZIP/XML bounds, no entity expansion/extraction"
+    "Source/license/checksum provenance; no activation"],
+   :title "Fixture catalog/import service and bounded GDTF subset",
+   :status :done,
+   :id :fixtures/import-v1,
+   :kind :implementation,
+   :depends-on [:integration/primitives-v1],
+   :owner nil}
+  {:evidence
+   ["31 tests / 318 assertions passed"
+    "docs/benchmarks/2026-11-21-backend-stage3-final.edn"
+    "docs/benchmarks/2026-11-21-typed-final-cpu.edn"
+    "No full-pipeline 40Hz guarantee; rich path and noisy runs retained"],
+   :paths
+   ["afterglow/src/afterglow/render"
+    "afterglow/test/afterglow/render"
+    "afterglow/dev/afterglow/bench_backend.clj"],
+   :acceptance
+   ["Typed batches and selected compact projection"
+    "Musical beat/bar/phrase expressions"
+    "Old-source byte parity and recorded workloads"
+    "Explicit allocation and timing limits"],
+   :title
+   "Typed spatial expression batches through DMX and independent compact preview projection",
+   :status :done,
+   :id :render/typed-batches-v1,
+   :kind :implementation,
+   :depends-on [:render/frame-v1 :runtime/musical-time-v1],
+   :owner nil}
+  {:evidence
+   ["Combined fixture manager/backend20 tests / 191 assertions passed"
+    "Actual default manager live fetch/import/export validation succeeded"],
+   :paths
+   ["tolglow/tolglow/studio/fixture_service.clj"
+    "tolglow/test/tolglow/studio/fixture_service_test.clj"],
+   :acceptance
+   ["Explicit network/cache ownership"
+    "Pure full-state checksum/identity/limit validation"
+    "Export/restore without automatic fixture publication"],
+   :title
+   "Owned fixture catalog manager with validated portable cache restoration",
+   :status :done,
+   :id :fixtures/service-v1,
+   :kind :implementation,
+   :depends-on [:fixtures/import-v1],
+   :owner nil}
+  {:evidence ["docs/product/expressive-performance.md"],
+   :paths
+   ["tolglow/docs/product/expressive-performance.md"
+    "tolglow/AGENTS.md"
+    "tolglow/tolglow/AGENTS.md"
+    "tolglow/test/AGENTS.md"
+    "afterglow/AGENTS.md"],
+   :acceptance
+   ["Preserve prior goals and map every new requirement"
+    "Separate actual modules, proposed behavior and external-host gates"],
+   :title
+   "Specify expanded expressive performance, signals and musical sharing scope",
+   :status :done,
+   :id :documentation/expressive-performance,
+   :kind :documentation,
+   :depends-on [:foundation/specifications],
+   :owner nil}
+  {:evidence
+   ["Host lifecycle: 12 tests / 80 assertions passed"
+    "Existing studio: 13 tests / 65 assertions passed"],
+   :paths
+   ["tolglow/tolglow/studio.clj"
+    "tolglow/test/tolglow/studio/connections_host_test.clj"],
+   :acceptance
+   ["Saved output/state publishes without an extra step"
+    "Dispose pending/stale imports and guard controller open/restore races"
+    "Reactive actions enter next frame; audio resumes after clock rebase"],
+   :title
+   "Commit model/resource restoration together and retire outside frame owner",
+   :status :done,
+   :id :web/connections-host-v1,
+   :kind :implementation,
+   :depends-on [:web/connections-v1 :show/persistence-v2],
+   :owner nil}
+  {:evidence
+   ["Connections including injected MIDI sync lifecycle: 16 tests / 158 assertions passed"],
+   :paths
+   ["tolglow/tolglow/studio/connections.clj"
+    "tolglow/test/tolglow/studio/connections_test.clj"],
+   :acceptance
+   ["Preserve sync config/wanted intent without activation during prepare"
+    "Invalidate old callbacks and close retired resources"
+    "Resume only through explicit host hook"],
+   :title "Own synchronization resources in staged connection bundles",
+   :status :done,
+   :id :web/connections-sync-v1,
+   :kind :implementation,
+   :depends-on [:web/connections-v1],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/studio/sync.clj"
+    "tolglow/test/tolglow/studio/sync_test.clj"
+    "afterglow/src/afterglow/control/clock.clj"
+    "afterglow/test/afterglow/control/clock_test.clj"
+    "tolglow/docs/sync-progress.md"],
+   :acceptance
+   ["Explicit source selection and stale/dropout policies"
+    "Inert settings restore and bounded owned resources"
+    "Verified Beat Link getters plus injected MIDI and loopback Live execution"],
+   :title
+   "Own selected clock and MIDI/Beat Link/Live synchronization boundaries",
+   :status :in-progress,
+   :id :integration/sync-v1,
+   :kind :implementation,
+   :depends-on [:control/kernel :integration/primitives-v1],
+   :owner "afterglow_baseline"}
+  {:evidence
+   ["15 Node tests passed; JS syntax and whitespace checks passed"
+    "tolglow/integrations/live_bridge/README.md"],
+   :paths ["tolglow/tolglow/integrations/live_bridge"],
+   :acceptance
+   ["Real loopback acknowledgements/deduplication and documented LiveAPI subset"
+    "Source Max patch and no fabricated binary host artifact"
+    "Keep Max/Live execution and unsupported CC editing explicit"],
+   :title
+   "Provide source Max/Node Live bridge with acknowledged protocol",
+   :status :done,
+   :id :integration/live-bridge-assets-v1,
+   :kind :implementation,
+   :depends-on [:integration/primitives-v1],
+   :owner nil}
+  {:evidence
+   ["9 tests / 67 assertions passed; checked-in 36-input trace"
+    "docs/runtime-replay.md"],
+   :paths
+   ["afterglow/src/afterglow/runtime/replay.clj"
+    "afterglow/test/afterglow/runtime/replay_test.clj"
+    "afterglow/test/afterglow/runtime/replay_fixture.edn"
+    "tolglow/docs/runtime-replay.md"],
+   :acceptance
+   ["Real control/engine/mixed renderer replay with portable state"
+    "Serial and reversed worker completion agree"
+    "Do not evaluate stateful effects twice to record observations"],
+   :title
+   "Record and verify functional model/command/clock/output traces",
+   :status :done,
+   :id :runtime/replay-v1,
+   :kind :implementation,
+   :depends-on [:runtime/engine-v1 :render/frame-v1],
+   :owner nil}
+  {:evidence
+   ["Rig 5 tests / 52 assertions; rig+persistence 24 / 217 passed"],
+   :paths
+   ["tolglow/tolglow/studio/rig.clj"
+    "tolglow/test/tolglow/studio/rig_test.clj"
+    "tolglow/tolglow/studio/persistence.clj"],
+   :acceptance
+   ["Finite physical dimensions/transforms and stable unique truss identities"
+    "Validate actual footprint collisions and preserve imported metadata"],
+   :title "Validate full rig patch footprints, rooms and trusses",
+   :status :done,
+   :id :fixtures/rig-validation-v1,
+   :kind :implementation,
+   :depends-on [:show/persistence-v2],
+   :owner nil}
+  {:evidence ["3 tests / 59 assertions passed"],
+   :paths ["tolglow/test/tolglow/studio/fixture_host_test.clj"],
+   :acceptance
+   ["Real HTTP handler/queue publication and invalid rig rejection"],
+   :title
+   "Exercise fixture publication and patching through Ring and frame owner",
+   :status :done,
+   :id :fixtures/host-v1,
+   :kind :implementation,
+   :depends-on [:fixtures/service-v1],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/src/studio/tolglow/studio/connections.cljs"
+    "tolglow/src/studio/tolglow/studio/views.cljs"
+    "tolglow/src/studio/tolglow/studio/core.cljs"
+    "tolglow/src/studio/tolglow/studio/events.cljs"
+    "tolglow/src/studio/tolglow/studio/events_test.cljs"
+    "tolglow/resources/studio/styles.css"
+    "tolglow/docs/studio-ui.md"],
+   :acceptance
+   ["Configure explicit sync/audio resources and selected source"
+    "Responsive keyboard/touch controls and lifecycle state"
+    "Production build, source tests and actual endpoint/browser checks"],
+   :title "Add a sixth studio view for sync and audio connections",
+   :status :in-progress,
+   :id :web/connections-ui-v1,
+   :kind :implementation,
+   :depends-on [:web/reframe-state-v1 :web/reframe-views-v1],
+   :owner "tolglow_baseline"}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/modulation.clj"
+    "tolglow/test/tolglow/modulation_test.clj"
+    "tolglow/docs/modulation.md"],
+   :acceptance
+   ["Pure seeded state and captured-meter scheduling"
+    "All supported schema types with bounds and targeting"
+    "Pause/hold/reconcile/restore semantics without global RNG"],
+   :title
+   "Implement typed musical seeded modulation and cue targeting",
+   :status :in-progress,
+   :id :authoring/modulation-v1,
+   :kind :implementation,
+   :depends-on [:authoring/core-v1 :runtime/musical-time-v1],
+   :owner "runtime_design"}
+  {:evidence
+   ["8 tests / 153 assertions passed with real scalar/typed renderer and control/engine"],
+   :paths
+   ["tolglow/tolglow/effects.clj"
+    "tolglow/test/tolglow/effects_test.clj"
+    "tolglow/docs/effect-recipes.md"],
+   :acceptance
+   ["Musical sin/triangle/saw/pulse and spatial wave recipes"
+    "Preserve ordered targets/blends and geometry fallback"
+    "Schema axes/categories/modifiers survive publication and hot reload"],
+   :title
+   "Provide declarative effect and musical waveform construction helpers",
+   :status :done,
+   :id :authoring/effect-recipes-v1,
+   :kind :implementation,
+   :depends-on [:authoring/core-v1],
+   :owner nil}
+  {:evidence [],
+   :paths
+   ["tolglow/tolglow/signals.clj"
+    "tolglow/test/tolglow/signals_test.clj"
+    "tolglow/docs/signals.md"],
+   :acceptance
+   ["Coordinate registry and host contract before implementation"
+    "Explicit signal state and normalized derivative/jagginess"
+    "Typed musical/audio signal nodes and behavior tests"],
+   :title
+   "Implement registered waveform/audio signal graph primitives",
+   :status :in-progress,
+   :id :authoring/signals-v1,
+   :kind :implementation,
+   :depends-on [:authoring/effect-recipes-v1],
+   :owner "feature_specs"}
+  {:evidence
+   ["Captured Push 3 subset checkpoint: 9 tests / 57 assertions passed; broader MPE work active"],
+   :paths
+   ["afterglow/src/afterglow/control/codecs/push_3.clj"
+    "afterglow/src/afterglow/control/codecs/mpe.clj"
+    "afterglow/src/afterglow/control/devices/push_3.clj"
+    "afterglow/src/afterglow/control/devices/mpe.clj"
+    "afterglow/src/afterglow/control/devices/seaboard.clj"
+    "afterglow/src/afterglow/control/devices/expressive.clj"
+    "afterglow/test/afterglow/control/codecs/push_3_test.clj"
+    "afterglow/test/afterglow/control/codecs/mpe_test.clj"
+    "afterglow/test/afterglow/control/devices/push_3_test.clj"
+    "afterglow/test/afterglow/control/devices/mpe_test.clj"
+    "afterglow/test/afterglow/control/devices/expressive_test.clj"
+    "afterglow/doc/architecture/expressive-devices.md"],
+   :acceptance
+   ["Verified explicit captures and standard MPE semantics"
+    "Per-note/channel/device ownership and schema-axis mapping"
+    "No native display/standalone/physical verification claim"],
+   :title
+   "Implement captured Push 3 and MPE/Seaboard expressive profiles",
+   :status :in-progress,
+   :id :control/expressive-v1,
+   :kind :implementation,
+   :depends-on [:control/devices-v1],
+   :owner "runtime_kernel"}
+  {:evidence [],
+   :paths
+   ["afterglow/src/afterglow/control/codecs/x_touch.clj"
+    "afterglow/src/afterglow/control/devices/x_touch.clj"
+    "afterglow/test/afterglow/control/codecs/x_touch_test.clj"
+    "afterglow/test/afterglow/control/devices/x_touch_test.clj"
+    "tolglow/docs/xtouch.md"],
+   :acceptance
+   ["Inspect actual remote-script/protocol reference and license"
+    "Mode-specific bytes, extensible banks and captured-message tests"
+    "Document color/PWM uncertainty separately from physical support"],
+   :title
+   "Research verified X-Touch/MCU reference and build composable adapter",
+   :status :in-progress,
+   :id :control/xtouch-v1,
+   :kind :implementation,
+   :depends-on [:control/devices-v1],
+   :owner "control_design"}
+  {:evidence [],
+   :paths ["tolglow/docs/product/expressive-performance.md"],
+   :acceptance
+   ["Stable metadata across web/controllers/Live"
+    "Explicit overlap, human ownership and pause/release semantics"],
+   :title "Add category colors, pause/removal, opacity and envelopes",
+   :status :planned,
+   :id :authoring/category-performance,
+   :kind :implementation,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/docs/architecture/control-and-web.md"],
+   :acceptance
+   ["Execute host/render/capture prototype and measure latency/cleanup"
+    "Capabilities select widgets and no competing show state"],
+   :title
+   "Evaluate rich shared Push widgets through offscreen re-frame/CSS rendering",
+   :status :planned,
+   :id :control/webview-widgets,
+   :kind :research,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/docs/product/expressive-performance.md"],
+   :acceptance
+   ["Typed ports, curves/ranges/envelopes and visible routing"
+    "Actual host acknowledgements, origin suppression and recording/playback tests"],
+   :title
+   "Expose musical Live notes/audio/activity/automation through typed patchbay",
+   :status :planned,
+   :id :integration/musical-patchbay,
+   :kind :implementation,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/docs/product/expressive-performance.md"],
+   :acceptance
+   ["Verified APIs and explicit clock/output authority"
+    "Peer loss/handoff and dual-host tests; preserve 64-pad mapping"],
+   :title
+   "Evaluate Link/AbleSet dual-laptop and Session View/rack workflow",
+   :status :planned,
+   :id :integration/link-ableset,
+   :kind :research,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/docs/product/expressive-performance.md"],
+   :acceptance
+   ["Inspect source/license/process and supported host versions"
+    "Compare new functional host installation, timing, REPL and persistence"],
+   :title
+   "Evaluate afterglow-max optional host/reference without legacy runtime bridge",
+   :status :planned,
+   :id :integration/max-host,
+   :kind :research,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}
+  {:evidence [],
+   :paths ["tolglow/docs/product/expressive-performance.md"],
+   :acceptance
+   ["Versioned manifests, provenance, dependencies and reviewable imports"
+    "Explicit sharing privacy selection separate from complete local backup"],
+   :title
+   "Build sharing site and explicit portable artifact/show/Live arrangement export",
+   :status :planned,
+   :id :sharing/artifacts,
+   :kind :implementation,
+   :depends-on [:documentation/expressive-performance],
+   :owner nil}]}
