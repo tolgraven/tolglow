@@ -38,7 +38,11 @@ function init() {
     api: liveObject,
     parameters: new TolglowParameters.Observers({
       api: liveObject, observe: observeParameter,
-      follow: function (path) { var slot = new LiveAPI(null, path); slot.mode = 1; return slot; },
+      follow: function (path, changed) {
+        var slot = new LiveAPI(changed, path);
+        slot.mode = 1;
+        return {get id() { return slot.id; }, close: function () { slot.id = 0; }};
+      },
       defer: function (fn) {
         var task = new Task(fn);
         task.schedule(0);

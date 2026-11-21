@@ -6,19 +6,22 @@ const {fixture} = require("./behavioral_host");
 
 function setup() {
   const host = fixture(), work = new Set(), emissions = [], diagnostics = [];
-  const handlers = new Set();
+  const handlers = new Set(), slots = new Set();
   const observers = new Observers({
     api: host.api,
-    follow: path => ({get id() {return host.api(path).id;}}),
+    follow(path, changed) {
+      slots.add(changed);
+      return {get id() {return host.api(path).id;}, close() {slots.delete(changed);}};
+    },
     defer: fn => {work.add(fn); return () => work.delete(fn);},
     observe: (_, fn) => {handlers.add(fn); return () => handlers.delete(fn);},
     emit: s => emissions.push(s), diagnostic: d => diagnostics.push(d)
   });
   function flush() {for (const fn of [...work]) {work.delete(fn); fn();}}
-  return {host, observers, handlers, emissions, diagnostics, flush};
+  return {host, observers, handlers, slots, emissions, diagnostics, flush};
 }
 test("native-unit samples follow value changes, mode, source replacement and disposal", () => {
-  const {host, observers, handlers, emissions, diagnostics, flush} = setup();
+  const {host, observers, handlers, slots, emissions, diagnostics, flush} = setup();
   const spec = observers.selected(), sources = {cutoff: spec};
   assert.equal(spec.path, host.cutoff.path);
   assert.deepEqual(spec.range, [20, 20000]);
@@ -44,10 +47,12 @@ test("native-unit samples follow value changes, mode, source replacement and dis
   flush();
   assert.equal(emissions[2].value, 555);
   host.paths[spec.path] = {...host.cutoff, id: 99};
-  notify(false);
+  // A track moved without changing its device parameter value.
+  for (const changed of slots) changed();
   flush();
   assert.equal(handlers.size, 0);
   assert.match(diagnostics[0].reason, /replaced/);
+  assert.equal(slots.size, 0);
   observers.setActive(true);
   flush();
   assert.equal(emissions.length, 3);

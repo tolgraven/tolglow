@@ -139,7 +139,8 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
       }
       const last = events[events.length - 1];
       if (event.kind === "parameter" && last && last.body.kind === "parameter" &&
-          last.body["sync-session-id"] === syncSessionId && last.body.sample.id === body.sample.id) {
+          last.body["sync-session-id"] === syncSessionId && last.body.sample && body.sample &&
+          last.body.sample.generation === body.sample.generation && last.body.sample.id === body.sample.id) {
         events[events.length - 1] = {body, resolve, reject};
         last.resolve({coalesced: true});
         return;

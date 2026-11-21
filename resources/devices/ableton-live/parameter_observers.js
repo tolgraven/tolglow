@@ -39,11 +39,14 @@
     if (!usable(selected)) fail("Select a device or mixer parameter in Live");
     return this.describe(this.api({id: Number(selected.id)}));
   };
+  function releaseEntry(entry) {
+    if (entry.cancel) entry.cancel();
+    if (entry.detach) entry.detach();
+    if (entry.slot && entry.slot.close) entry.slot.close();
+  }
   Observers.prototype.release = function (entries) {
     Object.keys(entries).forEach(function (id) {
-      var entry = entries[id];
-      if (entry.cancel) entry.cancel();
-      if (entry.detach) entry.detach();
+      releaseEntry(entries[id]);
     });
   };
   Observers.prototype.schedule = function (id, entry) {
@@ -70,8 +73,8 @@
           self.emit({id: id, generation: entry.generation, path: entry.spec.path, value: value, "automation-state": state});
         }
       } catch (error) {
-        if (entry.detach) { entry.detach(); entry.detach = null; }
         if (self.entries[id] === entry) delete self.entries[id];
+        releaseEntry(entry);
         self.diagnostic({id: id, generation: entry.generation, reason: error.message});
       }
     });
@@ -92,7 +95,9 @@
         if (actual.name !== spec.name || actual["track-name"] !== spec["track-name"] || actual["device-name"] !== spec["device-name"] ||
             actual.range[0] !== spec.range[0] || actual.range[1] !== spec.range[1] || actual["quantized?"] !== spec["quantized?"])
           fail("The saved parameter identity or range changed");
-        next[id] = {spec: spec, generation: generation, target: target, slot: self.follow(spec.path), objectId: Number(target.id), cancel: null};
+        var entry = {spec: spec, generation: generation, target: target, objectId: Number(target.id), cancel: null};
+        entry.slot = self.follow(spec.path, function () { self.schedule(id, entry); });
+        next[id] = entry;
       } catch (error) { skipped.push({id: id, reason: error.message}); }
     });
     try {
