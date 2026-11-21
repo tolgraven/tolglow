@@ -232,7 +232,8 @@
   (let [samples (byte-array (take 960 (cycle [(byte 0) (byte 32)])))
         input (java.io.ByteArrayInputStream. samples)
         runtime (show/create-runtime {:workspace-options nil
-                                      :audio-options {:open-source! (fn [_] {:read! #(.read input %1 %2 %3)
+                                      :audio-options {:open-source! (fn [_] {:started-at-ms 0.0
+                                                                            :read! #(.read input %1 %2 %3)
                                                                             :close! #(.close input)})}})
         server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
         client (connect server "waveform")]
@@ -241,8 +242,9 @@
       (send-control client {:op :connections :enabled? true})
       (let [base (receive client)]
         (acknowledge client base)
-        (let [handle (connections/start-audio! (:connections runtime) {:default? true} {:events! identity})]
-          (is (= :completed (:status (deref (:result handle) 3000 ::timeout)))))
+        (let [handle (connections/start-audio! (:connections runtime) {:default? true} {:events! identity})
+              result (deref (:result handle) 3000 ::timeout)]
+          (is (= :completed (:status result)) (str (:error result))))
         (loop [old (:view base) remaining 4]
           (let [message (receive client)
                 view (apply-patch old message)
