@@ -1,7 +1,23 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :control/cue-preset-integration
+ [{:id :web/interactive-3d-rig-editor
+   :title "Place fixtures in 3D and author musical moving-head aim paths"
+   :kind :implementation :status :in-progress
+   :owner "interactive_3d_rig_and_drawn_aim_paths"
+   :depends-on [:foundation/tests]
+   :paths ["tolglow/src/studio/tolglow/studio/rig_editor.cljs"
+           "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
+           "tolglow/src/engines/preview/editor.js"
+           "tolglow/src/engines/preview/editor.test.js"
+           "tolglow/src/engines/preview/overlay.js"
+           "tolglow/resources/studio/rig-editor.css"]
+   :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"
+                "Pose changes reuse meshes and worker updates remain bounded"
+                "Plane paths publish validated musical cues and run only on explicit request"
+                "Undo, cancel, stale identity and teardown are covered"]
+   :evidence ["Shared renderer pose/overlay hunks coordinated with camera navigation owner; parent owns Ring aim-path publication"]}
+  {:id :control/cue-preset-integration
    :title "Validate and restore shared cue parameter presets"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/registry.clj" "tolglow/src/tolglow/studio/persistence.clj"

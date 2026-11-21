@@ -1,3 +1,5 @@
+import {RigEditorInput} from './editor.js';
+import {RigOverlay} from './overlay.js';
 import * as THREE from 'three';
 import {cameraControls, cameraPreset, cameraKey} from './camera.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
@@ -128,9 +130,16 @@ export class SceneRenderer {
   }
   update(snapshot, force = false) {
     if (!snapshot || this.disposed || !this.renderer) return;
-    this.snapshot = snapshot; const rig = snapshot.rig || {};
+    this.snapshot = snapshot;
+    if (!this.platform.worker) {this.editorInput ||= new RigEditorInput(this); this.editorInput.update(snapshot);}
+    this.editorOverlay ||= new RigOverlay(); this.editorOverlay.update(snapshot);
+    const rig = snapshot.rig || {};
     const key = structuralKey(rig);
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
+    for (const entry of this.trusses || []) {
+      const spec = (rig.trusses || []).find(t => String(t.id) === entry.id);
+      if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
+    }
     const output = snapshot.output?.values || {};
     const currentFixtures = new Map((rig.fixtures || []).slice(0, this.options.fixtures).map(f => [String(f.id), f]));
     const illuminated = entry => Math.max(...emittedColor(output[entry.id] || {})) > .00001;
@@ -146,6 +155,8 @@ export class SceneRenderer {
     this.lightEntries = [];
     for (const entry of this.fixtures) {
       entry.fixture = currentFixtures.get(entry.id) || entry.fixture;
+      entry.root.position.fromArray(entry.fixture.position || [0, 0, 0]);
+      entry.root.rotation.set(...(entry.fixture['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');
       const resolved = output[entry.id] || {}, direction = fixtureDirection(entry.fixture, resolved), rgb = emittedColor(resolved);
       const world = new THREE.Quaternion().setFromUnitVectors(DOWN, new THREE.Vector3(...direction));
       entry.head.quaternion.copy(entry.root.quaternion).invert().multiply(world);
@@ -192,9 +203,10 @@ export class SceneRenderer {
     const r = rig.room || {}; this.room = [r.width || 12, r.height || 5, r.depth || 10].map(v => clamp(Number(v) || 1, 1, 100));
     this.fog?.setRoom(this.room);
     this.content = new THREE.Group(); this.scene.add(this.content); this.content.add(createRoom(this.room, this.materials));
+    this.trusses = [];
     for (const spec of (rig.trusses || []).slice(0, 24)) {
       if (Array.isArray(spec.position) && spec.position.every(Number.isFinite) && Number.isFinite(spec.length) && spec.length > 0)
-        this.content.add(createTruss(spec, this.materials));
+        {const root = createTruss(spec, this.materials); this.content.add(root); this.trusses.push({id: String(spec.id), root});}
     }
     this.fixtures = (rig.fixtures || []).slice(0, this.options.fixtures).map((fixture, index) => {
       const entry = createMovingHead(fixture, this.materials); finiteApertureMaterial(entry.lensMaterial, this.apertureUniform); entry.id = String(fixture.id); entry.fixture = fixture;
@@ -280,7 +292,7 @@ export class SceneRenderer {
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
-    this.composer.render(dt); this.lastCPU = performance.now() - started; this.draws++;
+    this.composer.render(dt); this.editorOverlay?.render(this.renderer, this.camera); this.lastCPU = performance.now() - started; this.draws++;
     // Backpressure leaves main-thread time for cue/parameter input when a
     // driver blocks on compilation/submission. Recover gradually after it clears.
     const nominal = 1000 / this.options.fps;
@@ -317,6 +329,7 @@ export class SceneRenderer {
   dispose() {
     if (this.disposed) return; this.disposed = true; this.ready = false;
     this.pause(); this.abort.abort(); this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect();
+    this.editorInput?.dispose(); this.editorOverlay?.dispose();
     this.controls?.dispose(); this.fog?.dispose();
     for (const entry of this.fixtures) { entry.dispose(); entry.light?.dispose(); }
     if (this.content) disposeGeometry(this.content);

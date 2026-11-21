@@ -1,3 +1,4 @@
+import {RigEditorInput} from './editor.js';
 import * as THREE from 'three';
 import {SceneRenderer} from './scene-renderer.js';
 import {cameraControls, cameraPreset, cameraKey} from './camera.js';
@@ -118,6 +119,7 @@ export class WorkerRoomPreview {
   update(snapshot) {
     if (this.fallback) return this.fallback.update(snapshot);
     if (!snapshot || this.disposed) return;
+    this.editorInput ||= new RigEditorInput(this); this.editorInput.update(snapshot);
     const nextIdentity = showIdentity(snapshot);
     if (this.identity !== nextIdentity) {
       this.identity = nextIdentity; this._ready = false;
@@ -127,7 +129,7 @@ export class WorkerRoomPreview {
     // Explicit graphics projection: no chat, credentials or definitions cross
     // the render boundary, and only emitted output drives the scene.
     this.snapshot = {'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
-      'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
+      'runtime-id': snapshot['runtime-id'], editor: snapshot.editor, 'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
     const room = snapshot.rig?.room || {}; this.room = [room.width || 12, room.height || 5, room.depth || 10].map(value => clamp(Number(value) || 1, 1, 100));
     this.sendState();
   }
@@ -172,6 +174,7 @@ export class WorkerRoomPreview {
   }
   stopProxy() {
     clearTimeout(this.startupTimer); cancelAnimationFrame(this.controlFrame); this.abort.abort();
+    this.editorInput?.dispose(); this.editorInput = null;
     this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect(); this.controls.dispose(); this.channel?.close();
     this.worker?.terminate(); this.worker = null;
   }
