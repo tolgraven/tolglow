@@ -111,6 +111,8 @@
                                                  offset [:responses (:id response) :state]) response)) %))
             (map? (:composition-runs model))
             (update :composition-runs #(into {} (map (fn [[id run]] [id (shift-run id run offset)])) %))
+            (seq (get-in model [:event-subscribers :runs]))
+            (update-in [:event-subscribers :runs] #(mapv (fn [run] (update run :due-beat + offset)) %))
             (:auto model) (update :auto shift-auto offset)
             (:modulation model)
             (update :modulation
