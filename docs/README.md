@@ -1,10 +1,10 @@
 # Tolglow / Afterglow architecture program
 
-Tolglow is a complete application project. JVM namespaces live under
-`src/tolglow/`; resources, tests, development support and commands live under
-`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` and `deps.edn`
-describe application/build entry points. Browser application source remains
-`src/studio/`, and specialized rendering engines remain `src/engines/`.
+Use the [repository map](../README.md#repository-map) to find the Clojure show
+runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
+and native companions.
+
+The canonical `project.clj` owns dependencies and Leiningen build profiles.
 
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,
@@ -30,7 +30,10 @@ cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
+| [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
+| [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
+| [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |

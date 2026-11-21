@@ -31,18 +31,20 @@ There is currently one physical sink per Studio process, not implicit fan-out.
 In the REPL:
 
 ```clojure
-(require '[tolglow.studio :as studio])
-(def running (studio/start! {:ola {:host "127.0.0.1" :port 9010
+(require '[tolglow.show :as show])
+(def running (show/start! {:ola {:host "127.0.0.1" :port 9010
                                   :connect-timeout-ms 1000
                                   :write-timeout-ms 25}}))
 ;; Stop sends the host's final blackout, then closes the owned connection.
-(studio/stop! running)
+(show/stop! running)
 ```
 
 The connect and write defaults are each 1000ms. These are transport timeouts,
 not musical durations. Set the write budget to the desired output deadline;
 25ms is one frame at 40fps. The connect budget covers TCP connection setup;
 system hostname resolution occurs before that setup and can take longer.
+
+From the REPL, callers can open the same drivers directly with `afterglow.output.ola/open-ola!` and `afterglow.output.artnet/open-artnet!`. Tolglow selects the driver from the show startup options.
 
 ## Patching USB DMX through OLA
 
@@ -87,7 +89,7 @@ Art-Net™ Designed by and Copyright Artistic Licence.
 
 ## Connection ownership and failure behavior
 
-`tolglow.studio.output/open-sink!` accepts `{:ola {...}}`, `{:artnet {...}}`, or
+`tolglow.output/open-sink!` accepts `{:ola {...}}`, `{:artnet {...}}`, or
 neither. `open-ola!` and `open-artnet!` return
 `{:send! (fn [universes frame-number]) :close! (fn []) :description {...}}`.
 The host owns their lifetime. Output happens on the dedicated serial publication
@@ -120,7 +122,7 @@ OLA framing uses native byte order; communicating hosts must agree on endianness
 
 ## Verification and remaining hardware gate
 
-`tolglow.studio.output-test` exercises both real UDP and TCP loopback sockets,
+`afterglow.output.artnet-test` and `afterglow.output.ola-test` exercise UDP and TCP loopback sockets,
 universe/byte boundaries, source-buffer ownership, repeated source frames,
 idempotent close, frame validation before publication, failure retirement, and
 a non-reading TCP peer that forces the OLA write deadline. Injected transports
@@ -128,7 +130,7 @@ cover deterministic close/write concurrency without a daemon or fixture.
 
 `tolglow.studio.output-options-test` exercises CLI selection, mutually exclusive
 sinks, startup failure cleanup and the actual Studio scheduler/start/stop with
-an injected OLA transport. `tolglow.studio.ola-protocol-parity-test`, in the
+an injected OLA transport. `afterglow.output.ola-protocol-parity-test`, in the
 dependency-rich parity lane, compares 336 combinations against the existing
 ola-clojure generated Java protobuf codec. Production output does not load that
 client. Focused commands and results belong in the integration test record.

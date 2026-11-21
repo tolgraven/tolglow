@@ -7,4 +7,4 @@ if [[ ! -f resources/studio/js/main.js ]]; then
   fi
   npm run studio:build
 fi
-exec clojure -M:studio "$@"
+exec lein run -- "$@"

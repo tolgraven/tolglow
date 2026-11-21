@@ -11,10 +11,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'src/tolglow/compiler.clj'
-      - 'src/tolglow/compiler/**'
-      - 'src/tolglow/studio.clj'
-      - 'src/tolglow/studio/**'
+      - 'src/tolglow/**'
       - 'dev/tolglow/bench_show.clj'
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
@@ -22,8 +19,7 @@ on:
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
-      - 'src/shared/tolglow/studio/**'
-      - 'deps.edn'
+      - 'src/shared/tolglow/**'
       - 'project.clj'
       - '.github/workflows/tests.yml'
       - '.github/workflows/performance.yml'
@@ -59,17 +55,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: DeLaGuardo/setup-clojure@13.7.0
-        with:
-          cli: 1.12.7.1681
-          lein: 2.13.1
+      - name: Install the verified Leiningen release
+        working-directory: tolglow
+        run: .github/scripts/install-lein
       - name: Cache Maven dependencies
         uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.m2/repository
             !~/.m2/repository/**/*.lastUpdated
-          key: performance-maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'afterglow/deps.edn') }}
+          key: performance-maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
           restore-keys: performance-maven-${{ runner.os }}-
       - name: Profile complete mixed shows with scalar oracle
         working-directory: tolglow

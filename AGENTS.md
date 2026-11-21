@@ -12,17 +12,23 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - Tolglow owns authoring, registry/compiler, composition/policy, integrations and
   the new studio. The companion `tolgraven/afterglow` fork owns the shared
   runtime/control/render modules, device transports and legacy application.
+  Moving-head calibration, GLSL, GPU dispatch and readback belong in Afterglow.
+  Tolglow can measure a whole show through that API and owns the Studio scene.
   Keep independent repositories and preserve existing `tolmaster` work.
 - The full project has JVM application source under `src/tolglow/`, with
   `resources/`, `test/`, `dev/`, `bin/`, and a root `project.clj` application
   manifest. `src/` is the JVM classpath source root; the repository root is not.
-  The new browser source is under `src/studio/`. `deps.edn` now supports the
-  application and tests, including a local `../afterglow` dependency. Both test
+  The browser source is under `src/studio/`. `project.clj` is the canonical
+  application/test manifest, including paired `../afterglow` sources (override
+  with `AFTERGLOW_ROOT`). Both test
   lanes consume new fork APIs; the old default-master pin is not sufficient.
 - The studio frontend is **ClojureScript with re-frame and Reagent**. The backend
   is **Ring**, with a separate Jetty server adapter. Keep domain transitions in
   the common model; re-frame app-db owns client projections/interaction state.
-  Specialized WebGL/Neovim WASM JS engines belong behind explicit interop.
+  Keep `src/` for Clojure, ClojureScript, shared CLJC code and local documentation.
+  Author the Three.js engine in `js/preview/`. Public assets and executable device
+  resources belong under `resources/`. Use `test/js/` for renderer and device
+  JavaScript tests and `dev/` for executable QA and profiling tools.
 - `core` and `live` now have headless require/reload tests. Read source before
   importing unfamiliar scratch/graphics namespaces. `live/start-demo!`, rig
   activation, physical device discovery and output are explicit operations,
@@ -30,8 +36,8 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 ## Development contract
 
-- Run `./bin/test pure` and applicable `./bin/test parity` against the paired
-  fork. Run `clojure -M:check-roadmap` after tracking changes. Frontend changes
+- Run `lein test-pure` and applicable `lein test` against the paired
+  fork. Run `lein check-roadmap` after tracking changes. Frontend changes
   require the configured production build plus fresh browser interaction
   checks; desktop viewport emulation does not prove real iPad Safari behavior.
   See [testing](docs/testing.md) for exact scope and observed results.

@@ -6,8 +6,8 @@
             [tolglow.clock :as clock]
             [tolglow.compiler :as compiler]
             [tolglow.composition.response :as response]
-            [tolglow.studio.composition :as composition]
-            [tolglow.studio.persistence :as persistence]
+            [tolglow.composition :as composition]
+            [tolglow.persistence :as persistence]
             [tolglow.automation.policy :as policy]
             [tolglow.modulation :as modulation]
             [tolglow.integrations.patch :as patch]))

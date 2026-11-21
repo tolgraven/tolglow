@@ -12,6 +12,8 @@ support RDM. DMX output support alone does not establish RDM support. Direct
 Art-Net RDM/ArtTod discovery remains a separate implementation task. Existing
 OLA and direct ArtDMX lighting sinks remain unchanged.
 
+Afterglow owns RPC framing and RDM commands in `afterglow.rdm.codec` and `afterglow.rdm.transport`. Tolglow manages jobs, show-epoch fencing and saved device associations in `tolglow.rig.rdm`.
+
 ## Workflow
 
 1. Set the OLA host/port and enable the session. Choose the RDM universe and run
@@ -111,8 +113,7 @@ start the explicit QA host. It has preview output and creates its own TCP OLA
 peer; there is no real olad or fixture connection:
 
 ```sh
-clojure -Sdeps '{:aliases {:rdm-qa {:extra-paths ["test" "dev"]}}}' \
-  -M:rdm-qa -m tolglow.rdm-qa
+lein run -m tolglow.rdm-qa
 ```
 
 Wait for `Owned RDM QA host ready`, then run `node test/studio/rdm_browser.mjs`.

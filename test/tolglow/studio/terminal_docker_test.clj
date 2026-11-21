@@ -3,9 +3,9 @@
   missing Docker/image is a failure, never silently skipped or a host-shell fallback."
   (:require [clojure.test :refer :all]
             [clojure.string :as str]
-            [tolglow.studio.workspace :as workspace]
-            [tolglow.studio.workspace-test :as fixtures]
-            [tolglow.studio.terminal :as terminal])
+            [tolglow.development.workspace :as workspace]
+            [tolglow.development.workspace-test :as fixtures]
+            [tolglow.development.terminal :as terminal])
   (:import [java.util Base64]
            [java.nio.charset StandardCharsets]
            [java.util.concurrent CountDownLatch TimeUnit]))
@@ -17,7 +17,8 @@
   (fixtures/with-workspace {}
     (fn [{:keys [manager] :as fixture}]
       (workspace/create! manager {:id "container"})
-      (let [term (terminal/create-manager (merge {:resolve-workspace #(workspace/runtime-paths manager %)} options))]
+      (let [term (terminal/create-manager (merge {:resolve-workspace #(workspace/runtime-paths manager %)
+                                                  :image (or (System/getenv "TOLGLOW_DEV_TEST_IMAGE") "tolglow-dev:local")} options))]
         (try (f (assoc fixture :terminal term :paths (workspace/runtime-paths manager "container")))
              (finally (terminal/close! term)
                       (is (empty? (:pending-containers
@@ -35,13 +36,13 @@
   (with-container {}
     (fn [{:keys [terminal paths first]}]
       (let [repo (get-in paths [:repositories :tolglow])
-            code "import os,subprocess,json; print(json.dumps({'uid':os.getuid(),'cwd':os.getcwd(),'git':subprocess.check_output(['git','status','--porcelain']).decode(),'socket':os.path.exists('/var/run/docker.sock')})); open('src/from-container.txt','w').write('owned'); print(subprocess.check_output(['java','-version'],stderr=subprocess.STDOUT).decode()); print(subprocess.check_output(['node','--version']).decode()); print(subprocess.check_output(['clojure','-Sdescribe']).decode())"
+            code "import os,subprocess,json; print(json.dumps({'uid':os.getuid(),'cwd':os.getcwd(),'git':subprocess.check_output(['git','status','--porcelain']).decode(),'socket':os.path.exists('/var/run/docker.sock')})); open('src/from-container.txt','w').write('owned'); print(subprocess.check_output(['java','-version'],stderr=subprocess.STDOUT).decode()); print(subprocess.check_output(['node','--version']).decode()); print(subprocess.check_output(['lein','version']).decode())"
             result ((terminal/runner terminal) (request paths ["python3" "-c" code]))]
         (is (= 0 (:exit-code result)) (:output result))
         (is (str/includes? (:output result) "\"socket\": false"))
         (is (str/includes? (:output result) "25.0"))
         (is (str/includes? (:output result) "v26."))
-        (is (str/includes? (:output result) "1.12.7.1681"))
+        (is (str/includes? (:output result) "Leiningen 2.13.1"))
         (is (= "owned" (slurp (str (:path repo) "/src/from-container.txt"))))
         (is (not (.exists (java.io.File. (str first "/src/from-container.txt")))))
         (let [blocked ((terminal/runner terminal) (request paths ["python3" "-c" (str "open(" (pr-str (str (:common-dir repo) "/refs/heads/main")) ",'w').write('no')")]))]

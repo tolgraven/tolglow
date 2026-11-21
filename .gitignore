@@ -6,6 +6,6 @@ target/
 .lein-failures
 *.class
 *.jar
-node_modules/
+node_modules
 .shadow-cljs/
 resources/studio/js/

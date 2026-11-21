@@ -6,7 +6,7 @@
             [afterglow.render.frame :as render]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
-            [tolglow.studio :as studio]
+            [tolglow.show :as show]
             [tolglow.bench-show :as bench]
             [tolglow.bench-movers-reference :as reference]
             [clojure.java.io :as io]
@@ -101,16 +101,16 @@
 
 (defn- host-runner [{:keys [model indices definitions]} typed? workers]
   (let [sink (bench/capture-sink)
-        runtime (studio/create-runtime {:model model :workers workers :batch? typed? :sink sink :workspace-options nil})]
+        runtime (show/create-runtime {:model model :workers workers :batch? typed? :sink sink :workspace-options nil})]
     ;; Match the pipeline lane's prepared compiler cache. Compilation belongs
     ;; to construction/warmup, not the engine's first worker deadline.
     (doseq [definition definitions] ((:compile runtime) definition))
-    {:close #(studio/stop! runtime)
+    {:close #(show/stop! runtime)
      :initial-preview (mapv (fn [fixture] {:id (:id fixture) :pan 0.0 :tilt 0.0}) (get-in model [:rig :fixtures]))
      :run (fn [i]
             (let [start (System/nanoTime)
-                  replies (mapv #(studio/submit! runtime %) (commands i))
-                  _ (studio/tick! runtime (* 25.0 (inc i)))
+                  replies (mapv #(show/submit! runtime %) (commands i))
+                  _ (show/tick! runtime (* 25.0 (inc i)))
                   end (System/nanoTime)
                   {:keys [model output status]} @(:state runtime)]
               (when (or (:error status) (:output-error status) (:reactive-error status)
@@ -225,7 +225,7 @@
                   :notes ["64/128 differently placed and rotated RGBW moving heads, 24 real running effects, three competing priority layers launched in reverse priority order."
                           "Logical 25ms ticks at 120BPM; targets vary by fixture position/group/layer and musical beat. Opacity cycles exact 0/1, rising/falling and simultaneous mixtures."
                           "Every head, including indices 16 onward, is checked against an independent matrix/blend/calibration/channel oracle and scalar full-model/intent/ArtDMX reference."
-                          "Host timing includes enqueue/admission, actual Studio tick, rendering, reactive publication and ArtDMX capture. All-head oracle projection happens afterward, outside host duration."
+                          "Host timing includes enqueue/admission, actual headless show tick, rendering, reactive publication and ArtDMX capture. All-head oracle projection happens afterward, outside host duration."
                           "Pipeline timing includes real advancing engine state, prior compact movement history, all-head projection and packet encoding."
                           "Both pipeline and host compiler caches are prepared before warmup. Cold definition compilation is not a measured frame phase."
                           "Instrumented-render-phases is a separate diagnostic pass: nested fixture timers report aim solving and remaining channel packing/preview work, with timer overhead. Never substitute its timing for uninstrumented deadlines."

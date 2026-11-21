@@ -1,6 +1,6 @@
 # Signal routing in the running studio
 
-The patch bay now runs in the actual owner frame, before parameter modulation and effect evaluation. `tolglow.studio.routing` captures input, calls the pure `tolglow.integrations.patch` graph, then submits resulting `:param/set` commands through the studio's common command reducer. The graph itself opens no devices. The owner still renders once and decides whether to send physical output.
+The patch bay now runs in the actual owner frame, before parameter modulation and effect evaluation. `tolglow.routing` captures input, calls the pure `tolglow.integrations.patch` graph, then submits resulting `:param/set` commands through the studio's common command reducer. The graph itself opens no devices. The owner still renders once and decides whether to send physical output.
 
 ## Admission and source discovery
 
@@ -46,15 +46,15 @@ The shared [clock rebasing helper](clock-domains.md) shifts routing envelope/sou
 A trusted REPL session can feed the same bounded mailbox without opening a device:
 
 ```clojure
-(def patch-input (tolglow.studio/sync-callbacks runtime))
+(def patch-input (tolglow.show/sync-callbacks runtime))
 ((:events! patch-input)
  {:type :sync/observation
   :observation {:source-id "software/demo/level"
                 :event-id "gesture-1" :kind :control
                 :value 0.75 :gate? true :confidence 1.0 :origin :software
-                :observed-at-ms (:time-ms (tolglow.studio/snapshot runtime))}})
+                :observed-at-ms (:time-ms (tolglow.show/snapshot runtime))}})
 ```
 
-Recreate the callback after show import/restart and use a new event identity for each observation. Scheduled studio frames consume the input; tests call `studio/tick!` explicitly.
+Recreate the callback after show import/restart and use a new event identity for each observation. Scheduled studio frames consume the input; tests call `show/tick!` explicitly.
 
 `tolglow.studio.routing-host-test` covers real decoded MIDI bytes through an injected transport, actual analyzer feature callbacks, release tails, restored activation IDs, stale callbacks, graph validation, re-enable receipt identity, bounded admission/inventory, rejected-write retries, queued historical input, and repeated source/seek changes. Its eight tests contain 88 assertions. These are executable host checks with no physical MIDI/audio/lighting device. They do not claim real-device latency, audio DSP quality, or an installed Live pairing.

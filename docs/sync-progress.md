@@ -1,12 +1,18 @@
 # Clock and Live integration boundary
 
-The new control clock is immutable data in `afterglow.control.clock`.
-`tolglow.studio.sync` owns explicit MIDI, Pro DJ Link, Ableton Link and companion Live bridge
-resources. Requiring either namespace, validating a configuration or restoring
-saved settings does not open a device, register a Beat Link listener or connect
-to Live. The studio supplies its logical `now-ms` clock when creating a manager;
-the default monotonic JVM clock is appropriate only when it also defines the
-host's logical time domain.
+The immutable control clock is in `afterglow.control.clock`. A per-show
+`afterglow.sync` manager owns the event queue, monotonic clock and resources
+opened by the MIDI, Beat Link and Ableton Link adapters. Protocol acquisition
+lives in `afterglow.sync.midi`, `afterglow.sync.beat-link` and
+`afterglow.sync.ableton-link`. Creating a manager and restoring its
+configuration leave these connections closed.
+
+`tolglow.integrations.live-sync/create-manager` adds a Live clip adapter to
+this manager. Its pairing and mapping definitions live in `live-sync-config`,
+the HTTP and outbound MIDI executor in `live-transport`, and the pure command
+and recording mappings in `tolglow.integrations.ableton`. These functions can
+be used from the REPL or a headless show. Studio binds host callbacks and
+supplies show time so capture and rendering share a time domain.
 
 These protocols are different:
 
@@ -17,8 +23,8 @@ These protocols are different:
 | Ableton Live companion bridge | Song tempo/playhead, selected clip position/recording state, MIDI notes/CC, acknowledged note edits and existing Drum Rack chain feedback | Loopback HTTP and injected LiveAPI tests; actual Max/Live host acceptance unverified |
 | Ableton Link through local Carabiner | Session beat, tempo, peers and optional shared start/stop | [Configuration, pause lighting and qualification](ableton-link.md) |
 
-`afterglow.dj-link` was read as reference but is not required: its legacy global
-listeners and mutable synchronization mechanisms are not part of this boundary.
+`afterglow.sync.beat-link` registers its listeners when the show starts the
+adapter and releases them when that session closes.
 
 ## Explicit clocks and source selection
 
@@ -49,8 +55,12 @@ bounded.
 ## Manager API and persistence
 
 ```clojure
+(require '[afterglow.sync :as sync]
+         '[afterglow.sync.session :as session]
+         '[tolglow.integrations.live-sync :as live-sync])
+
 (def manager
-  (sync/create-manager {:now-ms #(logical-show-time)
+  (live-sync/create-manager {:now-ms #(logical-show-time)
                         ;; Optional injection seams, no factories invoked here:
                         ;; :midi-factory (fn [config clock-ms] ...)
                         ;; :beat-link-factory (fn [config clock-ms] ...)
@@ -66,7 +76,7 @@ bounded.
                       :commands! enqueue-commands!
                       :envelope! current-control-envelope
                       :resolve-instance! current-instance-for-cue})
-(sync/clock-at manager next-frame-time-ms)
+(session/clock-at manager next-frame-time-ms)
 (sync/stop! manager)
 (sync/close! manager)
 ```
@@ -97,12 +107,12 @@ number plus IP address or MAC; announcements resolve MAC matching. Discovery
 alone never chooses a player. Live pairing stores track/clip-slot/rack indices
 and optional expected track/clip names; Live object IDs are session-specific and
 are not saved as durable pairings. Default canonical settings can be obtained
-from `(sync/validate-config {})` rather than copied into another implementation.
+from `(live-sync/validate-config {})` rather than copied into another implementation.
 
 ## Live control, recording and connection ownership
 
 The companion source assets and installation steps live in
-[`live_bridge/README.md`](../src/tolglow/integrations/live_bridge/README.md). It is a
+[`ableton-live/README.md`](../resources/devices/ableton-live/README.md). It is a
 Max for Live device source patch, not a fabricated `.amxd` binary. It must be
 opened and saved in an actual licensed Max/Live installation. The current
 dictionary-call codec for Live's note editing APIs still needs actual-host
@@ -132,8 +142,8 @@ rather than discarding ownership silently.
 
 After publishing a control receipt, the host calls
 `record! manager stamped-command acknowledgement`. Recording requires fresh,
-armed, writable Live recording state. Automation additionally requires automation
-arming. Echo origins and duplicate command receipts are suppressed. Musical cue
+armed, writable Live recording state. The native CC route also checks automation
+arming. Parameter velocity lanes use ordinary MIDI note recording. Echo origins and duplicate command receipts are suppressed. Musical cue
 launch durations remain beats/bars/phrases; clip time is supplied by Live. Clip
 loop position and absolute song beat are distinct so held-note lengths survive
 loop wraparound.
@@ -142,8 +152,10 @@ Exactly one recording route is selected:
 
 - `:bridge`: actual companion acknowledgements for Clip note editing. Launch
   uses a short provisional note, then end adjusts its exact note ID using the
-  activation identity and absolute song time. Unsupported automation edits must
-  be rejected by the companion, not presented as completed.
+  activation identity and absolute song time. Timed launches include their
+  beat length. Scalar parameter samples occupy separate editable velocity lanes.
+  Connections can pair either a Session slot or an Arrangement clip and place
+  finished clips at a chosen song beat.
 - `:midi`: sends actual note/CC bytes to the configured MIDI output. This reports
   delivery only; MIDI transmission cannot prove that Live recorded a clip.
 

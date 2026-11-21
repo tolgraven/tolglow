@@ -10,6 +10,7 @@
    ["/assistant"    {:name :assistant :surface :studio :view :assistant}]
    ["/connections"  {:name :connections :surface :studio :view :connections}]
    ["/develop"      {:name :develop :surface :studio :view :develop}]
+   ["/debug"        {:name :debug :surface :studio :view :debug}]
    ["/repl"         {:name :repl :surface :repl}]
    ["/push-display" {:name :push-display :surface :push-display}]])
 

@@ -3,8 +3,8 @@
             [clojure.test :refer [deftest is testing]]
             [tolglow.integrations.audio-duplex :as duplex]
             [tolglow.integrations.audio-return :as returns]
-            [tolglow.studio :as studio]
-            [tolglow.studio.persistence :as persistence])
+            [tolglow.show :as show]
+            [tolglow.persistence :as persistence])
   (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (def fixture {:id :wash :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1}})
@@ -21,8 +21,8 @@
                                                  [id {:id id :version 1 :effect-id :light}]))}
                      :settings {:audio-returns config}}))
 (defn send! [runtime op t]
-  (let [receipt (studio/submit! runtime op)]
-    (studio/tick! runtime t)
+  (let [receipt (show/submit! runtime op)]
+    (show/tick! runtime t)
     (deref receipt 1000 :timeout)))
 (defn dimmer [runtime]
   (bit-and 255 (aget ^bytes (get-in @(:state runtime) [:output :universes 1]) 0)))
@@ -62,7 +62,7 @@
                             (if (= :close incoming) -1
                               (do (System/arraycopy incoming 0 buffer offset n) n))))
                  :close! #(do (.offer reads :close) (.offer permits :close) (deliver closed true))})
-        runtime (studio/create-runtime {:model (show) :open-audio-returns! open! :workspace-options nil})
+        runtime (show/create-runtime {:model (show) :open-audio-returns! open! :workspace-options nil})
         manager (:audio-returns runtime) t (atom 0)
         model #(get @(:state runtime) :model)
         dry! (fn [] (.put permits :continue) (.poll writes 2 TimeUnit/SECONDS))
@@ -72,10 +72,10 @@
                     (.put reads bytes)
                     (is (await-value #(when (> (get-in @manager [:packet :windows "kick" :sequence] 0)
                                                seq-before) true)))
-                    (studio/tick! runtime (swap! t + 25))))]
+                    (show/tick! runtime (swap! t + 25))))]
     (try
       (let [dry-id (:instance-id (send! runtime {:op :cue/launch :cue-id :dry :launch {:params {:level 0.5}}} @t))]
-        (studio/audio-action! runtime :return-start {})
+        (show/audio-action! runtime :return-start {})
         (is (await-value #(= :running (:status @manager))))
         (dry!)
         (let [encoded (duplex/decode-channel (dry!) 2 1)
@@ -116,9 +116,9 @@
             (is (= #{replacement} (set (keys (:instances (model))))))
             (is (= 0.1 (get-in (model) [:instances replacement :params :level])))
             (is (< 24 (dimmer runtime) 28)))
-          (is (= :stopped (:status (studio/audio-action! runtime :return-stop {}))))
+          (is (= :stopped (:status (show/audio-action! runtime :return-stop {}))))
           (is (deref closed 2000 false))))
-      (finally (studio/stop! runtime)))))
+      (finally (show/stop! runtime)))))
 
 (deftest musical-deadline-and-confidence-gate-independent-of-physical-time
   (let [model (show) lane (first (:lanes (returns/validate-config model config)))
