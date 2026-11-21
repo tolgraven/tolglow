@@ -315,6 +315,19 @@
     (is (= 0.7 (:level (events/slot-parameters (:db reset) 0))))
     (is (= 0.7 (get-in y [:db :show :instances 0 :params :level])))))
 
+(deftest saved-cue-defaults-apply-before-slot-overrides-and-component-edits
+  (let [db (-> base
+               (assoc-in [:show :effects 0 :params] {:level {:default 0.2} :aim {:default [0 0 0]}})
+               (assoc-in [:show :cues 0 :params] {:level 0.4})
+               (assoc-in [:show :cues 0 :saved-params] {:level 0.8 :aim [0.1 0.2 0.3]})
+               (assoc-in [:ui :composition :slots] [{:cue-id "ember" :params {:level 0.6}}]))
+        edited (transition db [:studio/slot-param-component 0 :aim 1 0.9])
+        reset (transition (:db edited) [:studio/slot-params-reset 0])]
+    (is (= {:level 0.6 :aim [0.1 0.2 0.3]} (events/slot-parameters db 0)))
+    (is (= [0.1 0.9 0.3] (:aim (events/slot-parameters (:db edited) 0))))
+    (is (= {:level 0.8 :aim [0.1 0.2 0.3]} (events/slot-parameters (:db reset) 0)))
+    (is (= {:level 0.8 :aim [0.1 0.2 0.3]} (get-in edited [:db :show :cues 0 :saved-params])))))
+
 (deftest graphical-rig-edits-preserve-height-and-own-their-pointer
   (let [db (assoc-in base [:ui :rig-draft]
                      {:fixtures [{:id "head" :position [1 2 3]}]

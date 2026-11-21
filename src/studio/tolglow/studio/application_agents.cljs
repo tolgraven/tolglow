@@ -36,6 +36,7 @@
                     order (vec (take-last 100 (if (contains? (:items s) id) (:order s) (conj (:order s) id))))]
                 (-> s (assoc :order order) (update :items #(select-keys (assoc % id event) order))))
               "workspace/changes" (update-task s {:id (:selected s) :summary (:summary event)})
+              "workspace/check" (update-task s {:id (:selected s) :checks (assoc (:checks (task s) {}) (:profile event) (:result event))})
               "task/status" (update-task s (assoc (select-keys event [:status :error :checks :candidate]) :id (:selected s)))
               (update s :events #(vec (take-last 24 (conj (if (vector? %) % []) event))))))
           (-> s (assoc :cursor (:cursor data) :dropped? (:dropped? data))
@@ -153,6 +154,21 @@
                                         (reset! api-key ""))} "Save connection"]
        [:p.small.muted "The host stores the key in its credential vault. This connection edits application workspaces; show-authoring chat uses its own configuration."]])))
 
+(defn check-summary [selected]
+  {:checks (mapv (fn [[profile result]] (assoc result :profile (name profile))) (sort-by (comp str key) (:checks selected)))
+   :candidate-ready? (= "ready" (get-in selected [:candidate :status]))})
+
+(defn- checks-view [selected]
+  (let [{:keys [checks candidate-ready?]} (check-summary selected)]
+    (when (or (seq checks) candidate-ready?)
+      [:section.application-agent-checks {:aria-label "Application task checks"}
+       [:h3 "Checks"]
+       (for [check checks]
+         ^{:key (:profile check)} [:div.application-agent-check {:data-status (:status check)}
+                                  [:span (:profile check)] [:strong (:status check)]
+                                  (when-let [error (:error check)] [:p.connection-error (events/error-message error)])])
+       (when candidate-ready? [:p.application-agent-candidate "Candidate ready for review · not loaded into the running application"])])))
+
 (defn- view []
   (let [s @(rf/subscribe [:application-agents/state]) selected (task s) form (:form s)
         configured? (some #(and (= "codex" (:id %)) (:configured? %)) (:providers s))
@@ -170,9 +186,9 @@
         [:textarea#application-agent-prompt {:rows 5 :value (:prompt form) :placeholder "Improve an interaction, add a control, or fix a problem…"
                                              :on-change #(rf/dispatch-sync [:application-agents/edit :prompt (.. % -target -value)])}]]
        [:div.form-row
-        [:label "Start in" [:select {:value (:repo form) :on-change #(rf/dispatch-sync [:application-agents/edit :repo (.. % -target -value)])}
+        [:label "Start in" [:select {:aria-label "Application repository" :value (:repo form) :on-change #(rf/dispatch-sync [:application-agents/edit :repo (.. % -target -value)])}
                              [:option {:value "tolglow"} "Tolglow"] [:option {:value "afterglow"} "Afterglow"]]]
-        [:label "After the agent finishes" [:select {:value (:policy form) :on-change #(rf/dispatch-sync [:application-agents/edit :policy (.. % -target -value)])}
+        [:label "After the agent finishes" [:select {:aria-label "After the agent finishes" :value (:policy form) :on-change #(rf/dispatch-sync [:application-agents/edit :policy (.. % -target -value)])}
                                             [:option {:value "manual"} "Review manually"] [:option {:value "after-turn"} "Run checks and prepare review"]]]]
        [:button#application-agent-start.button.primary {:type "button" :disabled (or busy? (not configured?) (not (:runner-ready? s)) (str/blank? (:prompt form)))
                                                         :on-click #(rf/dispatch [:application-agents/start])}
@@ -204,6 +220,7 @@
              [:ul (for [[repo changes] (:repositories summary) change (take 24 changes)]
                     ^{:key (str repo (:path change))} [:li [:span (name repo)] [:code (:path change)]])]])
           (when (:dropped? s) [:p.small.muted "Older progress was trimmed. The current task state and full workspace diff remain available."])
+          [checks-view selected]
           [:div.application-agent-transcript {:aria-label "Application agent progress stream" :aria-live "polite" :aria-relevant "additions text"}
            (for [id (:order s)] ^{:key id} [item-view (get-in s [:items id])])
            (when (empty? (:order s)) [:p.small.muted "Waiting for agent output…"])]
