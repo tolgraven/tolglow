@@ -4,7 +4,7 @@ World-to-head transforms batch well. Each head reads its own mount, world-space 
 
 ## Reproduce
 
-Install the project's Clojure CLI and npm dependencies before running the profiles.
+Install Leiningen and the project's npm dependencies before running the profiles.
 
 ```sh
 npm ci
@@ -20,7 +20,7 @@ The JVM generates phase-shifted world-coordinate sine and cosine trajectories fo
 
 Afterglow compiles the patch once. Its ordinary `resolve-frame` receives one `:aim` assignment per head per frame and history from its own last frame. The experiment uses the resulting normalized pan, tilt, reachable flag and every byte of every universe as its reference. [Corpus and oracle](../dev/tolglow/mover_oracle.clj)
 
-The shader uploads mounting data once and receives each frame's world targets and its own previous pan. One vertex invocation per head applies inverse Z, Y and X rotations, computes yaw and elevation, tests the calibrated wrap candidates, picks the legal candidate nearest the previous pan and clamps unreachable axes. Transform feedback captures the results into a buffer with rasterization disabled. The benchmark copies this buffer into a staging buffer, waits asynchronously for its fence, reads it into CPU memory, then performs 1-based patch addressing, channel inversion and fractional-255 coarse/fine packing. [Shader](../resources/gpu/mover-aim.vert) · [Measurement harness](../dev/gpu/mover-shader.mjs)
+The shader uploads mounting data once and receives each frame's world targets and its own previous pan. One vertex invocation per head applies inverse Z, Y and X rotations, computes yaw and elevation, tests the calibrated wrap candidates, picks the legal candidate nearest the previous pan and clamps unreachable axes. Transform feedback captures the results into a buffer with rasterization disabled. Afterglow’s solver copies the axes into a staging buffer, waits asynchronously for its fence and reads them into CPU memory. Tolglow’s benchmark then performs 1-based patch addressing, channel inversion and fractional-255 coarse/fine packing. [Afterglow shader and solver](https://github.com/tolgraven/afterglow/tree/master/resources/gpu) · [Measurement harness](../dev/gpu/mover-shader.mjs)
 
 ## Measurement boundaries
 
@@ -38,5 +38,7 @@ Chromium 156 used ANGLE/Vulkan SwiftShader on an AMD EPYC 9V74 running Linux. Th
 | 128 | 4 | 20,480 | 1 / 19 | 62 of 80 | 6.09 / 25.46 / 31.21 ms | 5 |
 
 Both sets agreed on reachability for every head. The largest difference in the emitted unsigned 16-bit pan or tilt word was **1**. The 128-head corpus exercised 1,409 wrapped pan solutions and 623 unreachable head/target pairs. Fence waits dominated the median, at 4.17 ms for 64 heads and 4.29 ms for 128. A sample of 80 makes p99 the largest observation. The raw report includes per-stage timing distributions and independent rolling FNV-1a digests over all DMX universes. [Measured results](benchmarks/2026-11-21-moving-head-shader.json)
+
+After moving the GLSL and execution module into Afterglow, the same 80-frame corpus ran through the packaged solver at fork revision `4bec8d6`. It reproduced the byte differences, reachability flags and maximum 16-bit error in the table for both rigs. Tolglow loads both sources from the paired dependency at benchmark startup.
 
 For the preview, keep this computation on the same graphics device as the scene. For a physical-output backend, an equivalent native host benchmark on the target Mac needs to include readback synchronization, stale-frame handling and final DMX parity. These software measurements leave hardware acceleration and end-to-end speedup open. The existing CPU renderer continues driving physical output.

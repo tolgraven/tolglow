@@ -1,5 +1,6 @@
 (ns tolglow.studio.web-test
-  (:require [clojure.test :refer :all]
+  (:require [afterglow.render.gpu :as gpu]
+            [clojure.test :refer :all]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [ring.adapter.jetty :as jetty]
@@ -34,6 +35,15 @@
     (is (= 404 (:status (app {:request-method :get :uri "/studio/../deps.edn"}))))
     (is (= 403 (:status (app (assoc-in (request :post "/api/command" {}) [:headers "origin"] "https://foreign.test")))))
     (is (= 413 (:status (app (request :post "/api/command" {:value (apply str (repeat 262145 "x"))})))))))
+
+(deftest studio-serves-the-paired-afterglow-renderer
+  (let [app (web/app {})]
+    (doseq [[asset path] gpu/resources]
+      (let [response (app {:request-method :get :uri (str "/" path)})]
+        (is (= 200 (:status response)) path)
+        (when (#{:expression-runner :moving-head-solver} asset)
+          (is (= "text/javascript" (get-in response [:headers "Content-Type"])) path))
+        (is (= (gpu/source asset) (slurp (:body response) :encoding "UTF-8")) path)))))
 
 (deftest stream-cancels-producer-when-ring-output-fails
   (let [cancelled? (atom false)
