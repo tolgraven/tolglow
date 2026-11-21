@@ -72,6 +72,11 @@ editing suspension, tour retargeting, manual takeover, reduced motion, hidden
 state, projection aspect and disposal. Re-frame tests verify validated local
 camera effects and preservation of lighting show state.
 
+Validation on 2026-11-21: 24 preview tests and 138 frontend tests (730 assertions)
+passed. The optimized Studio build compiled 148 files with zero warnings. Compiled
+UI checks at 1440×1000, 1024×768 and 390×844 verified real mouse/touch movement,
+touch drag look, mode changes, reachable 44-pixel controls and no page errors.
+
 This is camera navigation, not a visual-quality milestone. Chromium's software
 renderer tests do not establish physical GPU performance or Safari/iPad device
 performance. Tour visibility is based on emitted light, not occlusion or cinematic

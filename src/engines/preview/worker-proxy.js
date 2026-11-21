@@ -19,6 +19,7 @@ export class WorkerRoomPreview {
     this.identity = showIdentity(null); this.visible = true; this.paused = false;
     this.fogAmount = .3; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
+    this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
     this.camera = new THREE.PerspectiveCamera(49, 1, .08, 100);
     this.controls = cameraControls(this.camera, canvas); cameraPreset(this.camera, this.controls, this.room, 'audience'); this.cameraName = 'audience';
@@ -32,7 +33,7 @@ export class WorkerRoomPreview {
       room: () => this.room, snapshot: () => this.snapshot,
       active: () => !this.paused && !this.disposed && !document.hidden && this.visible && !!canvas.getClientRects().length,
       reducedMotion: () => this.reducedMotion.matches, changed: () => this.sendState()});
-    this.navigation.subscribe(state => this.navigationCallback?.(state));
+    this.navigation.subscribe(state => this.notifyNavigation(state));
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
     this.intersectionObserver = new IntersectionObserver(entries => {
       this.visible = entries.some(entry => entry.isIntersecting); this.sendState();
@@ -150,9 +151,10 @@ export class WorkerRoomPreview {
   setInteractionActive(active) {if (this.fallback) return this.fallback.setInteractionActive(active); this.navigation.setInteractionActive(active);}
   moveCamera(direction, pressed) {if (this.fallback) return this.fallback.moveCamera(direction, pressed); this.navigation.move(direction, pressed);}
   getNavigationState() {return this.fallback ? this.fallback.getNavigationState() : this.navigation.state();}
+  notifyNavigation(state) {for (const callback of this.navigationListeners) callback(state);}
   onNavigationChange(callback) {
-    this.navigationCallback = callback; callback(this.getNavigationState());
-    return () => {if (this.navigationCallback === callback) this.navigationCallback = null;};
+    this.navigationListeners.add(callback); callback(this.getNavigationState());
+    return () => this.navigationListeners.delete(callback);
   }
   focusFixture(id) {
     if (this.fallback) return this.fallback.focusFixture(id);
@@ -193,11 +195,12 @@ export class WorkerRoomPreview {
       this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogAmount);
       if (this.snapshot) this.fallback.update(this.snapshot);
       this.fallback.camera.position.copy(this.camera.position); this.fallback.controls.target.copy(this.controls.target); this.fallback.controls.update();
+      this.camera = this.fallback.camera; this.controls = this.fallback.controls;
       if (navigation) {
         this.fallback.setNavigationMode(navigation.mode); this.fallback.setNavigationSpeed(navigation.speed);
         this.fallback.setInteractionActive(navigation.interacting);
       }
-      this.fallback.onNavigationChange(state => this.navigationCallback?.(state));
+      this.fallback.onNavigationChange(state => this.notifyNavigation(state));
       if (this.paused) this.fallback.pause();
       this.fallback.whenReady.then(this.resolveReady);
     } else {
@@ -207,6 +210,7 @@ export class WorkerRoomPreview {
   }
   dispose() {
     if (this.disposed) return; this.disposed = true; this._ready = false; this.stopProxy(); this.fallback?.dispose();
+    this.navigationListeners.clear();
     if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(null);
     else this.presenter?.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null;

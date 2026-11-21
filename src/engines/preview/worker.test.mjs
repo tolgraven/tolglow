@@ -105,11 +105,14 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       const url = URL.createObjectURL(new Blob([`throw new Error('deliberate startup failure');`], {type: 'text/javascript'}));
       const renderer = new RoomPreview(canvas, document.querySelector('#status'), {workerFactory: () => new Worker(url)});
       renderer.setNavigationMode('walk'); renderer.setNavigationSpeed(3); renderer.setInteractionActive(true);
-      const navigationStates = [], unsubscribe = renderer.onNavigationChange(state => navigationStates.push(state));
+      const navigationStates = [], secondaryStates = [];
+      const unsubscribe = renderer.onNavigationChange(state => navigationStates.push(state));
+      const unsubscribeSecondary = renderer.onNavigationChange(state => secondaryStates.push(state));
       renderer.update(snapshot); await renderer.whenReady; URL.revokeObjectURL(url);
       const telemetry = renderer.getTelemetry(), navigation = renderer.getNavigationState();
-      unsubscribe(); renderer.dispose();
+      unsubscribe(); unsubscribeSecondary(); renderer.dispose();
       return {telemetry, navigation, observed: navigationStates.at(-1), navigationDisposed: renderer.fallback.navigation.disposed,
+        secondaryObserved: secondaryStates.at(-1), cameraShared: renderer.camera === renderer.fallback.camera,
         calls, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await renderer.draw()};
     });
     assert.equal(fallback.telemetry.thread, 'main'); assert.equal(fallback.telemetry.ready, true);
@@ -119,6 +122,7 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     assert.equal(fallback.navigation.mode, 'walk'); assert.equal(fallback.navigation.speed, 3);
     assert.equal(fallback.navigation.interacting, true); assert.equal(fallback.navigationDisposed, true);
     assert.deepEqual(fallback.observed, fallback.navigation);
+    assert.deepEqual(fallback.secondaryObserved, fallback.navigation); assert.equal(fallback.cameraShared, true);
     assert.deepEqual(errors, []);
     t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, fenced, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
