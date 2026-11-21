@@ -62,6 +62,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
           cli: 1.12.7.1681
+          lein: 2.13.1
       - name: Cache Maven dependencies
         uses: actions/cache@v6.1.0
         with:

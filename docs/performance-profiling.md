@@ -90,6 +90,11 @@ from its placement and the captured musical beat. Effects launch in reverse
 priority order, so launch order and worker completion cannot silently replace
 the required priority order.
 
+The launcher uses the Leiningen `:benchmark` profile and its explicit paired
+Afterglow developer classpath. The independent geometry/DMX oracle lives in
+`afterglow.bench-movement-reference`; the Tolglow fixture/effect corpus does not
+implement another hardware renderer.
+
 ```sh
 AFTERGLOW_ROOT=../afterglow-performance bin/profile-movers \
   --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
