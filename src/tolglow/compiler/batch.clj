@@ -54,14 +54,15 @@
     (let [^doubles values values
           geometric? (contains? compiler/geometry-attributes attribute)
           scale (double (if (and envelope-result (contains? envelope-attributes attribute))
-                          (:value envelope-result) 1.0))]
+                          (:value envelope-result) 1.0))
+          scale? (not (== 1.0 scale))]
       (dotimes [index (alength values)]
         (let [value (* scale (aget values index))]
           (when-not (and (Double/isFinite value) (or geometric? (<= 0.0 value 1.0)))
             (fail! [:outputs attribute :value]
                    (if geometric? "World coordinates must be finite"
                        "Computed fixture output must be finite and within [0,1]")))
-          (when (not= 1.0 scale) (aset-double values index value))))))
+          (when scale? (aset-double values index value))))))
   outputs)
 
 (defn- contribution [{:keys [target-ids positions plan blend prepared expressions]} env envelope-result envelope-attributes]
