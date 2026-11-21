@@ -101,9 +101,13 @@
     (let [text (read-body-text request)
           mime (some-> (get-in request [:headers "content-type"]) (str/split #";" 2) first str/trim str/lower-case)
           transit? (= mime transit-type)
-          data (cond transit? (transit/decode text)
+          decoded (cond transit? (transit/decode text)
                      (str/blank? text) {}
                      :else (json/read-str text :key-fn keyword))
+          data (if (and transit? (= "/api/import" (:uri request))
+                        (map? decoded) (contains? decoded :schema-version))
+                 {:source text}
+                 decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
                      (not (str/starts-with? (:uri request) "/api/fixtures/")))]
       (handler (assoc request :json-params (if form? (normalize-json data) data))))))
@@ -235,9 +239,9 @@
                                                          (keyword (get query-params "id" "")))]
                           (ok {:source (pr-str definition)})
                           (data-response 404 {:message "Definition not found"})))
-    "/api/export" (fn [_] {:status 200 :headers {"Content-Type" "application/edn"
-                                                 "Content-Disposition" "attachment; filename=tolglow-show.edn"}
-                           :body (pr-str (export!))})
+    "/api/export" (fn [_] {:status 200 :headers {"Content-Type" transit-type
+                                                 "Content-Disposition" "attachment; filename=tolglow-show.transit"}
+                           :body (export!)})
     "/api/providers" (available provider-get! "Provider service unavailable" (fn [_] (ok (provider-get!))))
     "/api/chat/history" (available chat-history! "Chat history unavailable" (fn [_] (ok (chat-history!))))
     "/api/patch" (available patch! "Routing unavailable" (fn [_] (ok (patch!))))

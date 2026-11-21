@@ -1,7 +1,7 @@
 (ns tolglow.studio.connections-host-test
   (:require [afterglow.control.devices.repl :as devices]
             [afterglow.reactive :as reactive]
-            [clojure.edn :as edn]
+            [tolglow.studio.persistence :as files]
             [clojure.test :refer :all]
             [tolglow.studio :as studio]
             [tolglow.studio.agents :as agents]
@@ -221,7 +221,7 @@
 
 (deftest replacing-a-unicode-show-file-preserves-history-settings-and-frame-state
   (let [directory (Files/createTempDirectory "tolglow-host-show" (make-array FileAttribute 0))
-        file (.resolve directory "灯光.edn")]
+        file (.resolve directory "灯光.transit")]
     (try
       (with-runtime [r {}]
         (agents/restore! (studio/agent-manager r)
@@ -236,7 +236,7 @@
         (let [before (studio/snapshot r)]
           (spit (str file) "old contents" :encoding "UTF-8")
           (studio/save-show! r (str file))
-          (let [document (edn/read-string (slurp (str file) :encoding "UTF-8"))]
+          (let [document (files/read-string (slurp (str file) :encoding "UTF-8"))]
             (is (= "灯光 🦆" (get-in document [:model :settings :ui :title])))
             (is (= "舞う 🦆" (get-in document [:model :integrations :agents :conversations 0 :title]))))
           (apply-at! r {:op :master/set :value 0.2} 500)

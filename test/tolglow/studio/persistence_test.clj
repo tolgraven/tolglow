@@ -1,6 +1,8 @@
 (ns tolglow.studio.persistence-test
   (:require [clojure.test :refer :all]
             [afterglow.control.model :as control]
+            [tolglow.studio.transit :as wire]
+            [thi.ng.color.core :as color]
             [afterglow.runtime.engine :as engine]
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
@@ -192,7 +194,7 @@
 
 (deftest rejects-nonportable-state-and-secrets-without-silently-dropping-them
   (let [model (demo/model)]
-    (doseq [value [(atom 1) (fn [] 1) (Object.) (byte-array 2) (java.util.Date.) 'invoke]]
+    (doseq [value [(atom 1) (fn [] 1) (Object.) 'invoke]]
       (is (thrown? Exception (files/freeze (assoc-in model [:variables :bad] value)))))
     (doseq [change [{:provider {:api-key "do-not-persist"}}
                     {:authorization "Bearer secret"}]]
@@ -339,3 +341,26 @@
                                                :implementation {:type :source :namespace "user"
                                                                 :form source :bindings {}}}]}))))))
     (is (zero? @calls))))
+
+(deftest show-files-use-transit-values-and-own-their-snapshot
+  (let [stamp (java.util.Date. 2222)
+        packet (byte-array [0 1 -1])
+        values {:received-at stamp :dmx packet :aim [-1.25 3.5 4] :id (random-uuid)
+                :ink (color/hsla 0.25 0.5 0.75 0.4) :steps (list :down :up)}
+        model (assoc-in (demo/model) [:extensions :trace] values)
+        document (files/freeze model)
+        source (files/write-string model)
+        decoded (get-in (wire/decode source) [:model :extensions :trace])]
+    (is (= (dissoc values :dmx) (dissoc decoded :dmx)))
+    (is (= [0 1 -1] (vec (:dmx decoded))))
+    (.setTime stamp 3333)
+    (aset-byte packet 0 (byte 55))
+    (is (= 2222 (.getTime (get-in document [:model :extensions :trace :received-at]))))
+    (is (= [0 1 -1] (vec (get-in document [:model :extensions :trace :dmx]))))
+    (is (= (:ink values) (get-in (files/thaw (demo/model) (files/read-string source)) [:extensions :trace :ink])))))
+
+(deftest previous-schema-two-files-open-and-next-save-is-transit
+  (let [model (demo/model)
+        previous (pr-str {:schema-version 2 :model model})]
+    (is (= model (:model (files/read-string previous))))
+    (is (= model (:model (wire/decode (files/write-string model)))))))
