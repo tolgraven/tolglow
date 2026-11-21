@@ -205,7 +205,14 @@
                                  payload {:time-ms time-ms}))
           result (if (and (= :accepted (get-in result [:ack :status]))
                           (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
-                   (update result :model restart-model time-ms) result)]
+                   (update result :model
+                           (fn [next-model]
+                             (cond-> (restart-model next-model time-ms)
+                               (contains? model ::staging/pending)
+                               (as-> m (staging/collect (staging/begin m) :control
+                                                        {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
+                                                        (:events result))))))
+                   result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
                (seq (get-in model [:modulation :controllers]))
                (not= :patch (get-in payload [:source :type]))
@@ -435,7 +442,9 @@
       {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
        :ack {:status :accepted}})
      :import
-    {:model (:model payload) :restore? true :restored-output (:frame-output payload)
+    {:model (staging/collect (staging/begin (:model payload)) :show {:kind :studio :id :import}
+                             [{:type :show/restored}])
+     :restore? true :restored-output (:frame-output payload)
      :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}}
     (throw (ex-info "Unknown studio operation" {:type type}))))
 

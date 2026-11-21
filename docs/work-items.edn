@@ -1,7 +1,18 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :foundation/behavior-inventory
+ [{:id :studio/committed-event-inspection
+   :kind :implementation :status :in-progress
+   :owner "afterglow_event_dispatch_journal_and_transit_debug_stream"
+   :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
+   :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"
+           "tolglow/test/tolglow/studio/debug_stream_test.clj" "afterglow/src/afterglow/runtime/events.clj"]
+   :depends-on [:web/typed-state-push]
+   :acceptance ["Headless code consumes the same committed event batch as the Studio inspector"
+                "Loopback WebSocket carries bounded Transit batches, exact gap counts and actual subscriber IDs"
+                "Selected universe streams detached native binary over a separately acknowledged channel"]
+   :evidence ["Afterglow PR11 merged. Actual Jetty and headless event tests passed 3 tests / 23 assertions."]}
+  {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
    :paths ["tolglow/docs/feature-parity-inventory.md"]
