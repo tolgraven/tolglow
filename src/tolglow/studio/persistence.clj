@@ -351,6 +351,7 @@
 
 (defn- make-document [model frame-output]
   (cond-> {:schema-version schema-version :model (validate-model model)}
+    (get-in model [:integrations :ableton]) (update-in [:model :integrations :ableton] ableton/saved-bridge)
     (some? frame-output) (assoc :frame-output (validate-frame-output model frame-output))))
 
 (defn freeze
@@ -429,9 +430,8 @@
                       model [:ableton :audio :analysis])
         model (if-let [bridge (get-in model [:integrations :ableton])]
                 (assoc-in model [:integrations :ableton]
-                          (assoc bridge :held {} :recorded #{} :record-order []
-                                 :instances (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
-                                                         :when (ids old-id)] [(ids old-id) cue])))) model)
+                          (ableton/restore-bridge bridge (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
+                                                                  :when (ids old-id)] [(ids old-id) cue])))) model)
         model (assoc model :control
                      (assoc (:control saved) :next-instance (count ids)
                             :next-order (max (get-in saved [:control :next-order])

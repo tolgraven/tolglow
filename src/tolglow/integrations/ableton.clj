@@ -152,7 +152,7 @@
     :cue-notes (into {} (for [[note mapping] (reverse (sort-by key mappings)) :when (not (:disabled? mapping))]
                           [(:cue-id mapping) note]))
     :parameter-controls (group-by (comp :param val) (remove (comp :disabled? val) (sort-by key parameters)))
-    :held {} :instances {} :instance-order clojure.lang.PersistentQueue/EMPTY :recorded #{} :record-order [] :history-limit history-limit}))
+    :held {} :instances {} :instance-order [] :instance-slot 0 :recorded #{} :record-order [] :history-limit history-limit}))
 
 (defn- command [state envelope op data]
   (merge envelope {:op op :source {:type :ableton :bridge-id (:id state) :origin :live-playback}} data))
@@ -254,11 +254,20 @@
 
 (defn- remember-instance [state id cue-id]
   (if (contains? (:instances state) id) state
-      (let [order (conj (:instance-order state) id)
-            overflow? (> (count order) (:history-limit state))]
-        (cond-> (assoc-in state [:instances id] cue-id)
-          overflow? (update :instances dissoc (peek order))
-          true (assoc :instance-order (if overflow? (pop order) order))))))
+      (let [slot (:instance-slot state)
+            evicted (get (:instance-order state) slot)]
+        (-> state
+            (update :instances dissoc evicted)
+            (assoc-in [:instances id] cue-id)
+            (assoc-in [:instance-order slot] id)
+            (assoc :instance-slot (mod (inc slot) (:history-limit state)))))))
+
+(defn saved-bridge [bridge]
+  (dissoc bridge :parameter-controls :cue-notes :lane-controllers :instance-order :instance-slot :next-params))
+
+(defn restore-bridge [bridge instances]
+  (reduce (fn [state [id cue-id]] (remember-instance state id cue-id))
+          (merge (saved-bridge bridge) (new-bridge bridge)) (sort-by (comp str key) instances)))
 
 (defn- record-one
   "Observe an accepted control command. Return MIDI + bridge clip intents only
