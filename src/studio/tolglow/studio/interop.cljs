@@ -15,6 +15,7 @@
         :reset (js-invoke engine "resetCamera")
         :resize (js-invoke engine "resize")
         :worklight (when (fn? (aget engine "setWorkLight")) (js-invoke engine "setWorkLight" value))
+        :lighting-mode (js-invoke engine "setLightingMode" value)
         :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
         :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
         :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))
@@ -53,6 +54,23 @@
       (js-invoke engine "send" keys)
       (when-let [input (aget engine "input")] (.focus input)))))
 
+(defn- update-preview! [this engine show]
+  ;; Preserve the shared rig across frame updates, including worker transfers.
+  (let [rig (:rig show)
+        previous-rig (aget this "rig")
+        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (clj->js rig))
+        frame (clj->js (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
+                                         :blackout? :master :editor]))
+        intents (get-in show [:status :last-intents])]
+    (aset this "rig" rig)
+    (aset this "jsRig" js-rig)
+    (aset frame "rig" js-rig)
+    (aset frame "output" #js {:values (clj->js (get-in show [:output :values]))})
+    (aset frame "cut?" (boolean (or (:cut? show)
+                                    (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
+                                            (:type %)) intents))))
+    (js-invoke engine "update" frame)))
+
 (def preview
   (r/create-class
     {:display-name "room-preview"
@@ -76,13 +94,15 @@
                             (aset this "navigation-unsubscribe"
                                   (js-invoke engine "onNavigationChange"
                                              #(rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)]))))
-                          (when-let [show (second (r/argv this))] (js-invoke engine "update" (clj->js show)))
+                          (when-let [show (second (r/argv this))] (update-preview! this engine show))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"])])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
      :component-did-update
-     (fn [this _]
+     (fn [this old-argv]
        (when-let [engine (aget this "engine")]
-         (when-let [show (second (r/argv this))] (js-invoke engine "update" (clj->js show)))))
+         (let [show (second (r/argv this))]
+           (when (and show (not (identical? show (second old-argv))))
+             (update-preview! this engine show)))))
      :component-will-unmount
      (fn [this]
        (aset this "alive" false)
