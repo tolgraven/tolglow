@@ -1,4 +1,4 @@
-# Complete show files, schema 2
+# Transit show files, schema 2
 
 A show file stores the complete portable domain model and can also store its
 last committed output frame. It is not a preset containing only cue definitions.
@@ -13,15 +13,15 @@ There is no schema-1 or old-runtime compatibility adapter.
 
 (files/freeze model)                    ; -> {:schema-version 2 :model ...}
 (files/freeze model portable-output)    ; adds :frame-output
-(files/write-string model)             ; safe printable EDN document
+(files/write-string model)             ; Transit JSON text
 (files/write-string model portable-output)
 (files/read-string source)             ; exactly one validated document
 (files/thaw current-model document)    ; complete replacement model, no IO
 ```
 
-`read-string` does not eval source or permit custom tagged readers. It rejects
+The writer uses the Studio Transit codec. The reader accepts a single Transit document and can import an existing schema-2 EDN map. It rejects
 multiple documents/trailing forms, non-schema-2 input and documents larger than
-16 Mi characters. Freeze also enforces the serialized-size bound, so an oversized
+16 MiB of UTF-8 text. Freeze also enforces the serialized-size bound, so an oversized
 cache cannot produce a file that only fails later on load. The model is validated before return; `thaw` separately
 establishes fresh identity/ownership relative to the current show. All failures
 throw before a replacement is returned and leave the original model untouched.
@@ -55,8 +55,13 @@ throw before a replacement is returned and leave the original model untouched.
 The reader permits finite numbers (including ratios), strings, keywords, characters,
 booleans, nil, vectors, lists, sets and maps with recursively portable keys.
 This supports page coordinates, historical version keys and ownership tokens.
-Functions, symbols, refs/atoms, records, byte arrays, dates, UUID objects and
-other Java objects are rejected. Callback source is represented as a string,
+The shared codec preserves seven thi.ng.color records, exact musical fractions,
+timestamps (Transit date), UUIDs and byte arrays (Transit binary). World-space
+aim and position use ordered numeric vectors. Canonical event data uses maps
+with keyword keys. A boxed JVM byte travels as an integer. A 512-byte universe
+travels as binary and restores its original unsigned channel values. Explicit
+signed channel vectors retain their signed representation. Unknown records,
+functions, symbols and refs remain outside the portable model. Callback source is represented as a string,
 not a serialized executable function. Raw secret fields such as `:api-key`,
 `:password`, `:authorization` and access/refresh tokens are rejected. The agent
 manager exports redacted configuration/history with an opaque credential
@@ -224,3 +229,11 @@ open races and Unicode atomic file replacement. Real connection outcomes remain
 a separate physical/provider gate.
 No pure serializer test establishes physical device reconnection or successful
 external-provider authentication.
+
+## File and HTTP encoding
+
+Studio downloads `tolglow-show.transit` from `GET /api/export` with media type
+`application/transit+json`. The file picker accepts Transit shows and previous
+schema-2 EDN saves. The REPL's `save-show!` writes the same payload with atomic
+replacement. A client can also POST the downloaded bytes directly to `/api/import` with the same media type. Application structure, registry versions, ownership and restoration
+rules remain part of schema 2. Transit supplies the representation of its values.

@@ -37,6 +37,9 @@
    ["thi.ng.color/int32.v1" (type (color/int32 0)) (packed color/map->Int32 long -2147483648 4294967295)]
    ["thi.ng.color/css.v1" (type (color/css "")) css]])
 
+(def ^:private color-classes (into #{} (map second) color-types))
+(defn color-value? [value] (contains? color-classes (type value)))
+
 #?(:cljs (defrecord BeatFraction [numerator denominator]))
 
 (defn fraction? [v] #?(:clj (ratio? v) :cljs (instance? BeatFraction v)))
@@ -72,7 +75,10 @@
         color-types))
 
 (def ^:private read-handlers
-  (into {fraction-tag
+  (into {;; The standard JVM reader exposes a seq backed by a Java ArrayList.
+         ;; Materialize the standard list tag for callers that distinguish lists.
+         #?@(:clj ["list" (transit/read-handler #(apply list %))])
+         fraction-tag
          (transit/read-handler
           (fn [rep]
             (let [[n d] (fraction-parts rep)]

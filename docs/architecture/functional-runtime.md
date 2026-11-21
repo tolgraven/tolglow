@@ -1,10 +1,11 @@
 # Functional effect runtime
 
-Status: proposed architecture, grounded in the checked-out code, with a small
-experimental kernel implemented separately. Except for the explicitly identified
-kernel API below, the contracts and examples are design targets, not APIs already
-available to shows. Adopt them incrementally behind compatibility adapters and
-characterization tests.
+This retains the original migration design and source survey. Current callable
+contracts are in the [implementation contract](../implementation-contract-v1.md)
+and [effect error recovery](../effect-fault-isolation.md). The shared engine now
+owns command-driven instances, bounded workers, reload and isolated failures.
+Broader examples below remain design targets unless marked implemented. Old code
+is a parity reference; no runtime adapter executes old closures in the new engine.
 
 ## What the current code does
 
