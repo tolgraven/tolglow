@@ -2,6 +2,8 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
             [afterglow.control.devices.expressive :as mapping]
+            [afterglow.control.devices.seaboard :as seaboard]
+            [afterglow.control.devices.session :as session]
             [tolglow.studio :as studio]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.expressive :as expressive]
@@ -102,3 +104,57 @@
     (is (= :invalid-show (:persistence/error data)))
     (is (= [:settings :expressive :devices "push-main" :disabled-axes]
            (get-in data [:errors 0 :path])))))
+
+(deftest connected-profile-preview-uses-captured-defaults-and-axes
+  (let [show (demo/model)
+        profile {:id :seaboard-m :axes #{:pressure :slide :lift}
+                 :defaults {:param-mappings {:level :lift}
+                            :cue-mappings {:ember {:level {:axis :slide :inverted? true}}}}}
+        preview (expressive/preview show {:device-id "roli" :cue-id :ember :device-kind :push-3} profile)]
+    (is (= :connected (:profile-source preview)))
+    (is (= :seaboard-m (:device-kind preview)))
+    (is (= #{:pressure :slide :lift} (set (keys (:axes preview)))))
+    (is (= :slide (get-in preview [:mappings 0 :axis])))
+    (is (= 1.0 (get-in preview [:samples 0 :values :level])))
+    (is (= 0.0 (get-in preview [:samples 4 :values :level])))
+    (let [draft (expressive/preview show {:device-id "roli" :cue-id :ember
+                                         :policy {:params {:level nil}}} profile)]
+      (is (empty? (:mappings draft))))))
+
+(deftest settings-and-connected-preview-drive-the-same-real-device-instance
+  (let [runtime (studio/create-runtime {:workspace-options nil})
+        receive (atom nil)
+        dispatch! (fn [type payload]
+                    (let [receipt (studio/submit! runtime type payload)]
+                      (studio/tick! runtime 0) @receipt))
+        device (seaboard/connect!
+                {:session-id "roli-session" :mapping-id "roli-policy"
+                 :zone {:manager-channel 0 :member-channels [1 2]} :cue-id :ember
+                 :param-mappings {:level :lift}
+                 :model! #(get @(:state runtime) :model) :now-ms! (constantly 0)
+                 :dispatch! #(dispatch! :command %)
+                 :midi {:open! #(do (reset! receive %) :capture)
+                        :close! (fn [_]) :send! (fn [_ _] (throw (ex-info "Unexpected hardware output" {})))}})]
+    (try
+      (swap! (:devices runtime) assoc "roli-session" device)
+      (let [app (studio/handler runtime)
+            preview #(result (app (request "/api/expressive/preview"
+                                           {:device-id "roli-policy" :cue-id :ember})))
+            configured (preview)]
+        (is (= "connected" (:profile-source configured)))
+        (is (= "lift" (get-in configured [:mappings 0 :axis])))
+        (is (= :accepted (:status (dispatch! :settings {:scope :expressive
+                                                       :values {:devices {"roli-policy" {:params {:level :slide}}}}}))))
+        (@receive [0x91 60 127])
+        (let [id (get-in (session/snapshot device) [:local :selected-instance])]
+          (@receive [0xb1 74 127])
+          (is (= (get-in (preview) [:samples 4 :values :level])
+                 (get-in @(:state runtime) [:model :instances id :params :level])))
+          (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
+          (dispatch! :settings {:scope :expressive :values {:devices {"roli-policy" {:enabled? false}}}})
+          (@receive [0xb1 74 0])
+          (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
+          (is (empty? (:mappings (preview))))
+          (@receive [0x81 60 0])
+          (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))))
+      (finally (session/close! device) (reset! (:devices runtime) {}) (studio/stop! runtime)))))
