@@ -40,6 +40,7 @@
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.calibration.session :as calibration-session]
@@ -890,7 +891,9 @@
          (when-not (and @(:running runtime) (= epoch (:epoch before))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
-         (let [payload (if (= :import type)
+         (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
+                         (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+               payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
                                calibration-armed? (get-in document (into [:model] (conj calibration-session/artifact-path :armed?)))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
