@@ -9,8 +9,8 @@ definition references, DMX addresses, sparse/fine channels and axis calibration.
 
 It does **not** yet automatically detect/segment fixture lenses in video, infer
 hidden fixtures, infer unknown pan/tilt motor profiles, export reconstructed room
-meshes, or establish physical measurement accuracy. Xcode and a LiDAR device are
-required to verify the native target. No physical output was activated during
+meshes, or establish physical measurement accuracy. Unsigned iOS/watchOS targets now build in macOS CI; a LiDAR device is still
+required to verify capture and physical measurement accuracy. No physical output was activated during
 implementation/testing.
 
 ## Workflow
@@ -179,10 +179,21 @@ Evidence recorded for this initial implementation:
 - The existing pure test lane remains required, including all scheduler tests.
 - `python3 native/Tests/check_contract.py` and
   `python3 native/Tests/check_rig_calibration.py` are static manifest/source checks.
-- **Unrun here:** Swift compilation, Xcode iOS/watchOS targets, signing, real camera
-  permission/UI, LiDAR accuracy, physical fixture output, motor calibration and
-  device timing. Run `native/Tests/check_macos.sh` on a Mac, then a deliberately
-  armed controlled-rig capture and manual survey comparison.
+- After merging master through `ff24662`, [CI run 44891609591](https://github.com/tolgraven/tolglow/actions/runs/44891609591)
+  passed Java 17/21/25 pure and parity lanes, Studio and the native gate. The parity
+  lane ran **529 tests / 4,448 assertions**. Local parity before the final aim-path
+  merge ran **521 tests / 4,397 assertions** against the workflow-pinned Afterglow.
+- [The macOS job](https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227)
+  used **Xcode 16.4 / Swift 6.1.2**: all **seven Swift package tests** passed and
+  both **unsigned iOS/watchOS simulator targets built successfully**. The first SDK
+  build found a pre-existing Watch `DisclosureGroup` availability error; its
+  device/session details now use a supported `NavigationLink` screen.
+- The native CI gate runs when native sources or its workflow change. It performs
+  static contracts, Swift tests, XcodeGen and `native/Tests/check_macos.sh`.
+- **Still unrun:** simulator app launch, signing, real camera permission/UI, LiDAR
+  accuracy, physical fixture output, motor calibration and device timing. A passed
+  compiler/build gate does not establish these. Follow the build with a deliberately
+  armed controlled-rig capture and independent manual survey comparison.
 
 Next work: automatic lens/blob tracks and occlusion handling; adaptive confidence
 and timing from measured exposure/output latency; explicit pivot offsets and
