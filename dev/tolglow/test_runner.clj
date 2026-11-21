@@ -18,7 +18,8 @@
     tolglow.studio.persistence-test tolglow.studio.audio-test tolglow.studio.credentials-test
     tolglow.studio.fixtures-test tolglow.studio.fixture-service-test
     tolglow.studio.connections-test tolglow.studio.connections-host-test
-    tolglow.studio.output-test tolglow.studio.fixture-host-test tolglow.studio.rig-test
+    tolglow.studio.output-test tolglow.studio.output-options-test
+    tolglow.studio.fixture-host-test tolglow.studio.rig-test
     tolglow.studio.sync-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.studio.repl-test tolglow.studio.repl-manager-test tolglow.studio.repl-host-test
@@ -30,7 +31,8 @@
 
 (def suites
   {"pure" pure-tests
-   "parity" (into pure-tests '[tolglow.fixtures-test tolglow.parity-test])})
+   "parity" (into pure-tests '[tolglow.fixtures-test tolglow.parity-test
+                               tolglow.studio.ola-protocol-parity-test])})
 
 (defn -main [& [suite & extra]]
   (let [namespaces (get suites (or suite "pure"))]
