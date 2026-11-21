@@ -147,6 +147,11 @@ replacement retires the active subscription. Use **Forget**, select the correct
 control and learn it again. Switching to Live mode suspends output. Returning
 to Lighting mode publishes current values.
 
+Disconnecting in Studio asks the companion to clear the live observers while
+keeping the saved sources. Turning off the companion releases its observers
+locally and restores normal MIDI pass-through. Reconnecting installs the saved
+sources against the new sync session.
+
 The observer follows changes exposed through `DeviceParameter.value` and
 `automation_state` in Session or Arrangement. Relative clip modulation or
 a plug-in's internal modulation may affect audio without changing that exposed

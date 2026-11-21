@@ -100,4 +100,11 @@ function forward(event) {
 }
 function note(pitch, velocity, channel) { forward({type: velocity > 0 ? "note-on" : "note-off", note: pitch, velocity: velocity, channel: channel}); }
 function cc(value, controller, channel) { forward({type: "cc", controller: controller, value: value, channel: channel}); }
-function notifydeleted() { if (adapter && adapter.parameters) adapter.parameters.close(); outlet(0, "stop"); }
+function stopped() {
+  if (adapter) {
+    adapter.handle({id: "local-stopped-" + (++localId), op: "handoff", payload: {mode: "live"}});
+    if (adapter.parameters) adapter.parameters.close();
+    outlet(1, "thru", 1);
+  }
+}
+function notifydeleted() { stopped(); outlet(0, "stop"); }

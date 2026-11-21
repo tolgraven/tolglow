@@ -166,8 +166,9 @@
     (await-live #(pos? (:listeners (host! {:listeners true}))))
     (host! {:setParameter 10010})
     (await-live #(do (show/tick! runtime) (= 10010 (get-in @(:state runtime) [:model :routing :ports source :value]))))
-    (is (:accepted? (show/sync-action! runtime :forget-parameter {:id "cutoff"})))
-    (await-live #(zero? (:listeners (host! {:listeners true}))))))
+    (is (:stopped? (show/sync-action! runtime :stop {})))
+    (await-live #(zero? (:listeners (host! {:listeners true}))))
+    (is (contains? (get-in (sync/export-state manager) [:config :live :observed-parameters]) "cutoff"))))
 
 (deftest recorded-and-edited-midi-clip-plays-through-real-loopback-bridge
   (let [runtime (show/create-runtime)
