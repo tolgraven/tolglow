@@ -114,6 +114,8 @@ path and coexist with human performance.
 
 ## Production integrations and research
 
+The [Ableton Link adapter and pause lighting](ableton-link.md) support shared playback, tempo and beat phase through Carabiner. The remaining hardware gate exercises cross-computer Live playback, tempo changes and reconnects.
+
 Finish and verify the implemented Live bridge assets and clip/drum-rack mapping, recording feedback, colors, origin/echo
 suppression and Push mode ownership against a real Live-side bridge. Validate
 audio pitch/level/residual analysis, effect-chain routing and tails after source
