@@ -3,6 +3,7 @@
 .lsp/
 target/
 .nrepl-port
+.lein-failures
 *.class
 *.jar
 node_modules/
