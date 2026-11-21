@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [afterglow.control.model :as control]
             [afterglow.control.system :as system]
+            [afterglow.control.devices.expressive :as expressive]
             [afterglow.reactive.registry :as reactive-registry]
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
@@ -230,6 +231,10 @@
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (when (contains? (:settings model) :expressive)
+    (try (expressive/normalize-config (get-in model [:settings :expressive]))
+         (catch clojure.lang.ExceptionInfo error
+           (check-errors! (:errors (ex-data error)) [:settings :expressive]))))
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))

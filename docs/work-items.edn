@@ -31,6 +31,45 @@
               "Aggregate parity before final closed-path metadata guard: 502 tests / 4225 assertions passed"
               "Real output changes only selected mover; full show round trip and stale admission covered"
               "docs/aim-paths.md; 3D interaction and hardware accuracy are separate gates"]}
+  {:id :performance/master-mixed-rig-profiling
+   :title "Profile complete mixed rigs on master and optimize measured hot paths"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
+           "tolglow/.github/workflows/performance.yml"
+           "afterglow/src/afterglow/render/frame.clj" "afterglow/test/afterglow/render/frame_test.clj"
+           "afterglow/src/afterglow/render/AGENTS.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Repeatable scalar-oracle-checked 100/1000/10000-pixel and moving-head workloads"
+                "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
+                "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
+   :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
+              "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
+              "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
+              ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"]}
+  {:id :web/state-delta-transport
+   :title "Send versioned state deltas and recover complete browser projections"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/studio/projection.clj"
+           "tolglow/test/tolglow/studio/projection_test.clj"
+           "tolglow/src/studio/tolglow/studio/projection.cljs"
+           "tolglow/src/studio/tolglow/studio/projection_test.cljs"
+           "tolglow/docs/web-state-deltas.md"
+           "tolglow/docs/benchmarks/state-delta-bench.clj"
+           "tolglow/docs/benchmarks/2026-11-21-state-delta-before.edn"
+           "tolglow/docs/benchmarks/2026-11-21-state-delta-incremental.edn"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Exact base tokens prevent stale or missing deltas from corrupting state"
+                "Runtime-owned bounded cache stays outside the lighting clock"
+                "Optimistic edits remain separate from acknowledged server snapshots"
+                "Actual JSON and browser checks demonstrate bandwidth savings and resynchronization"]
+   :notes "Root delegates browser-snapshot plus minimal cache construction/cleanup; UI owner transfers events snapshot/poll regions after e47d5ae."
+   :evidence ["Backend parity 485 tests / 3779 assertions; final incremental JSON/Ring 7 / 62 passed"
+              "Frontend 143 tests / 764 assertions; optimized 148 files zero warnings"
+              "Five actual browser transport/recovery workflows passed, page errors empty"
+              "1000 fixture / 1012 cue measurement: full 450198 bytes median vs delta 4280; HTTP delta median 2.295ms"
+              "docs/web-state-deltas.md"]}
   {:id :preview/camera-navigation-v1
    :title "Explore the rig with keyboard and touch and follow active fixtures automatically"
    :kind :implementation :status :done :owner nil
@@ -81,6 +120,25 @@
               "Full Tolglow parity against merged Afterglow f951313: 480 tests / 3737 assertions passed"
               "Malformed saved values failed the new regression tests before the fix"
               "docs/show-files.md"]}
+  {:id :control/expressive-mapping-policy
+   :title "Map expressive device axes to cue parameters with overrides and disable controls"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/control/devices/expressive.clj"
+           "afterglow/src/afterglow/control/devices/mpe.clj"
+           "afterglow/test/afterglow/control/devices/mpe_test.clj"
+           "afterglow/doc/architecture/expressive-devices.md"
+           "tolglow/src/tolglow/studio/expressive.clj"
+           "tolglow/test/tolglow/studio/expressive_test.clj"
+           "tolglow/docs/expressive-mapping.md"]
+   :depends-on [:control/expressive-v1]
+   :acceptance ["Automatic semantic mappings remain reviewable and manually overridable"
+                "Device/cue/axis/parameter disable switches preserve held-note ownership"
+                "Portable settings restore without opening hardware"
+                "Ring preview uses the same mapper and connected device defaults"]
+   :evidence ["Afterglow parity: 297 tests / 3234 assertions passed; focused expressive 12 / 79"
+              "Tolglow Ring/host/persistence expressive tests: 6 tests / 50 assertions passed"
+              "Tolglow paired parity checkpoint: 486 tests / 3792 assertions passed"
+              "docs/expressive-mapping.md; UI owned by separate expressive mapping UI task"]}
   {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
