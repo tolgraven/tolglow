@@ -11,6 +11,7 @@
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.interop :as interop]
+            [tolglow.studio.rig-editor :as rig-editor]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
@@ -528,7 +529,8 @@
     [:section#view-rig.view {:hidden (not= :rig (get-in db [:ui :view]))}
      [heading "SET THE STAGE" "Everything has its place." "Position fixtures in metres and address their DMX channels."
       [button "save-rig" "Save rig" [:studio/rig-save] "button primary"]]
-     [rig-plan rig]
+     [rig-editor/panel db]
+     [:details.rig-plan-alternative [:summary "Top-down placement alternative"] [rig-plan rig]]
      [:div.rig-layout
       [:section.panel [:div.panel-top [:span.section-label "ROOM & FIXTURES"] [button "add-fixture" "Add RGBW head +" [:studio/rig-add] "text-button"]]
        [:div.form-body
@@ -700,7 +702,7 @@
           (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
        [perform-view db]
        (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
-       (when (= :rig (get-in db [:ui :view])) [rig-view {:ui (:ui db) :show (select-keys (:show db) [:rig])}])
+       (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
        [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
        [chat/panel db]
        (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]

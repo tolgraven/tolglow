@@ -1,0 +1,311 @@
+{
+  "scope": "Actual optimized re-frame/Ring workflows with captured output; Chromium viewport/touch emulation, not physical Safari or fixture validation",
+  "reports": [
+    {
+      "name": "desktop",
+      "passed": [
+        "draft placement",
+        "undo",
+        "Escape cancel",
+        "rotation",
+        "precise numeric editing",
+        "fixture/truss save",
+        "draw/edit path",
+        "create without launch",
+        "one-shot run",
+        "actual file export/import",
+        "show identity rebase",
+        "teardown"
+      ],
+      "telemetry": {
+        "lightingMode": "hold",
+        "targetRefreshHz": 10,
+        "ready": true,
+        "failed": null,
+        "renderer": "Three.js r187",
+        "quality": "low",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "pixels": [
+          484,
+          372
+        ],
+        "renderScale": 1,
+        "frameCPUms": 1413.875,
+        "frameIntervalMs": 3620.35000000149,
+        "idleBudgetMs": 1810.175000000745,
+        "frames": 10,
+        "geometryCount": 253,
+        "textureCount": 28,
+        "programCount": 26,
+        "activeLights": 0,
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "lightCap": 16,
+        "shadowCount": 1,
+        "workLight": 0.12,
+        "fogAmount": 0.3,
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "target": [
+          0,
+          1.9000000000000001,
+          -2.8000000000000007
+        ],
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            159,
+            122
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 4.820000000298023,
+          "uploads": 9,
+          "cells": 4800,
+          "steps": 16,
+          "time": 0.8000000000000002,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07288534500015278,
+          "maximumDensity": 1.4365408420562744,
+          "heat": 0.002368468872672787,
+          "activeSources": 1,
+          "massEstimate": 43.73120700009167
+        },
+        "visible": true,
+        "hidden": false,
+        "lost": false,
+        "epoch": 1,
+        "revision": 10,
+        "frameNumber": 15890,
+        "workerFrameMs": 1810.175000000745,
+        "gpuCompletionWaitMs": 396.125,
+        "bitmapTransferMs": 0.054999999701976776,
+        "thread": "worker",
+        "rendering": false,
+        "pendingState": false,
+        "inFlightState": 118,
+        "coalescedStates": 139,
+        "discardedFrames": 0,
+        "paused": false,
+        "navigation": {
+          "mode": "orbit",
+          "speed": 2,
+          "interacting": true,
+          "reduced-motion": false,
+          "tour-fixture": null,
+          "tour-waiting": false
+        }
+      },
+      "visiblePathPixels": 398,
+      "errors": []
+    },
+    {
+      "name": "ipad",
+      "passed": [
+        "actual touch add",
+        "touchcancel restores",
+        "discard restores navigation",
+        "44px controls",
+        "no horizontal overflow",
+        "renderer lifecycle"
+      ],
+      "telemetry": {
+        "lightingMode": "hold",
+        "targetRefreshHz": 10,
+        "ready": true,
+        "failed": null,
+        "renderer": "Three.js r187",
+        "quality": "low",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "pixels": [
+          498,
+          300
+        ],
+        "renderScale": 1,
+        "frameCPUms": 22.08000000193715,
+        "frameIntervalMs": 759.375,
+        "idleBudgetMs": 0,
+        "frames": 5,
+        "geometryCount": 208,
+        "textureCount": 28,
+        "programCount": 23,
+        "activeLights": 0,
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "lightCap": 16,
+        "shadowCount": 1,
+        "workLight": 0.12,
+        "fogAmount": 0.3,
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "target": [
+          0,
+          1.9000000000000001,
+          -2.8000000000000007
+        ],
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            164,
+            99
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 2.1350000016391277,
+          "uploads": 5,
+          "cells": 4800,
+          "steps": 8,
+          "time": 0.39999999999999997,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07151028774213046,
+          "maximumDensity": 0.8701195120811462,
+          "heat": 0.0012808010827440742,
+          "activeSources": 1,
+          "massEstimate": 42.906172645278275
+        },
+        "visible": true,
+        "hidden": false,
+        "lost": false,
+        "epoch": 1,
+        "revision": 12,
+        "frameNumber": 18185,
+        "workerFrameMs": 4836.519999999553,
+        "gpuCompletionWaitMs": 4814.344999998808,
+        "bitmapTransferMs": 0.03500000014901161,
+        "thread": "worker",
+        "rendering": false,
+        "pendingState": false,
+        "inFlightState": null,
+        "coalescedStates": 120,
+        "discardedFrames": 0,
+        "paused": false,
+        "navigation": {
+          "mode": "orbit",
+          "speed": 2,
+          "interacting": false,
+          "reduced-motion": false,
+          "tour-fixture": null,
+          "tour-waiting": false
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "phone-fallback",
+      "passed": [
+        "actual touch add",
+        "touchcancel restores",
+        "discard restores navigation",
+        "44px controls",
+        "no horizontal overflow",
+        "renderer lifecycle"
+      ],
+      "telemetry": {
+        "lightingMode": "hold",
+        "targetRefreshHz": 10,
+        "ready": true,
+        "failed": null,
+        "renderer": "Three.js r187",
+        "quality": "low",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "pixels": [
+          258,
+          263
+        ],
+        "renderScale": 1,
+        "frameCPUms": 7307.035000000149,
+        "frameIntervalMs": 29228.140000000596,
+        "idleBudgetMs": 21921.105000000447,
+        "nextFrameAt": 35013.6500000006,
+        "frames": 1,
+        "geometryCount": 201,
+        "textureCount": 27,
+        "programCount": 20,
+        "activeLights": 0,
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "lightCap": 16,
+        "shadowCount": 1,
+        "workLight": 0.12,
+        "fogAmount": 0.3,
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "target": [
+          0,
+          1.9000000000000001,
+          -2.8000000000000007
+        ],
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            85,
+            86
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 0.04000000283122063,
+          "uploads": 1,
+          "cells": 4800,
+          "steps": 0,
+          "time": 0,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07000000029802322,
+          "maximumDensity": 0.07000000029802322,
+          "heat": 0,
+          "activeSources": 1,
+          "massEstimate": 42.000000178813934
+        },
+        "visible": true,
+        "hidden": false,
+        "lost": false,
+        "epoch": 1,
+        "revision": 14,
+        "frameNumber": 19194
+      },
+      "errors": []
+    }
+  ],
+  "source-revision": "c4d2007fbc313345e8f7abc4af70f9bf6900ac85",
+  "commands": [
+    "npm run studio:test",
+    "npm run studio:build",
+    "./bin/test pure",
+    "node --test --test-concurrency=1 src/engines/preview/*.test.js src/engines/preview/*.test.mjs",
+    "node src/engines/preview/editor-browser-qa.mjs http://127.0.0.1:8515 /tmp/studio-qa/rig-editor-transit"
+  ],
+  "checks": {
+    "frontend": {
+      "tests": 164,
+      "assertions": 882,
+      "failures": 0
+    },
+    "jvm-pure": {
+      "tests": 516,
+      "assertions": 4080,
+      "failures": 0
+    },
+    "preview": {
+      "tests": 38,
+      "failures": 0
+    },
+    "release": {
+      "files": 179,
+      "warnings": 0
+    }
+  }
+}

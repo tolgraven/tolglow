@@ -3,6 +3,7 @@
             [afterglow.control.model :as control]
             [tolglow.clock :as clock]
             [tolglow.studio :as studio]
+            [tolglow.integrations.analysis :as analysis]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.routing :as routing]
@@ -229,4 +230,28 @@
                    (get-in @(:state runtime) [:model :instances id :duration-timer])))
             (is (= :running (get-in @(:state runtime) [:model :instances id :phase])))
             (is (= 10 (get-in @(:state runtime) [:model :routing :state :sources source-id :observed-at-ms]))))))
+      (finally (studio/stop! runtime)))))
+
+(deftest measured-bass-pitch-drives-an-active-effect-and-releases-on-silence
+  (let [runtime (studio/create-runtime {:model (model)})
+        source "audio/bass-pitch-hz"]
+    (try
+      (let [id (prepare! runtime (spec source :audio [20 180]))
+            samples (double-array (map #(* 0.5 (Math/sin (/ (* 2.0 Math/PI 65.0 %) 8000))) (range 1600)))
+            analyze (fn [state pcm t]
+                      (analysis/analyze state {:samples pcm :sample-rate 8000
+                                               :started-at-ms t :received-at-ms (+ 200 t)}))
+            tone (analyze (analysis/new-analyzer) samples 0)
+            publish (:features! (studio/audio-callbacks runtime))]
+        (publish (:features tone))
+        (studio/tick! runtime 200.0)
+        (let [model (:model @(:state runtime)) port (get-in model [:routing :ports source])]
+          (is (= [20.0 180.0] (:range port)))
+          (is (= :hz (get-in port [:port :unit])))
+          (is (true? (:gate? port)))
+          (is (> (:confidence port) 0.9))
+          (is (< (Math/abs (- (/ 45.0 160.0) (get-in model [:instances id :params :level]))) 0.02)))
+        (publish (:features (analyze (:state tone) (double-array 1600) 200)))
+        (studio/tick! runtime 400.0)
+        (is (false? (get-in @(:state runtime) [:model :routing :ports source :gate?]))))
       (finally (studio/stop! runtime)))))

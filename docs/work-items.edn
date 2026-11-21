@@ -1,7 +1,19 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/expressive-mapping-settings
+ [{:id :studio/committed-event-inspection
+   :kind :implementation :status :done :owner nil
+   :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
+   :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"
+           "tolglow/test/tolglow/studio/debug_stream_test.clj" "afterglow/src/afterglow/runtime/events.clj"]
+   :depends-on [:web/typed-state-push]
+   :acceptance ["Headless code consumes the same committed event batch as the Studio inspector"
+                "Loopback WebSocket carries bounded Transit batches, exact gap counts and actual subscriber IDs"
+                "Selected universe streams detached native binary over a separately acknowledged channel"]
+   :evidence ["Afterglow PR11 merged at 61cfbbf. Integrated JVM parity 552 tests / 4634 assertions before the final bounded-handoff test."
+              "Actual Jetty and headless debug tests passed 6 tests / 33 assertions, including blocked encoding, loss accounting and committed fault delivery."
+              "docs/studio-event-stream.md"]}
+  {:id :web/expressive-mapping-settings
    :title "Edit shared Push 3, Seaboard and generic MPE mappings with touch-friendly previews"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/expressive_mapping.cljs"
@@ -70,6 +82,28 @@
               "Integrated pure: 465 tests / 3690 assertions passed; subsequent parity: 487 tests / 3817 assertions passed"
               "Initial native static contracts: 6 existing plus 2 calibration checks passed; Apple build evidence follows in native/apple-calibration-build-gate; physical LiDAR/output unrun"
               "docs/rig-calibration.md; tap-assisted capture and fitting foundation, automatic photometric detection remains planned"]}
+  {:id :web/interactive-3d-rig-editor
+   :title "Place fixtures in 3D and author musical moving-head aim paths"
+   :kind :implementation :status :done :owner nil
+   :depends-on [:foundation/tests :authoring/aim-path-effects]
+   :paths ["tolglow/src/studio/tolglow/studio/rig_editor.cljs"
+           "tolglow/src/studio/tolglow/studio/rig_editor_test.cljs"
+           "tolglow/src/engines/preview/editor.js"
+           "tolglow/src/engines/preview/editor.test.js"
+           "tolglow/src/engines/preview/editor-browser-qa.mjs"
+           "tolglow/src/engines/preview/overlay.js"
+           "tolglow/resources/studio/rig-editor.css"
+           "tolglow/docs/rig-editor.md"
+           "tolglow/docs/benchmarks/rig-editor-browser.json"]
+   :acceptance ["Pointer and keyboard placement preserve fixture patch data in separate drafts"
+                "Pose changes reuse meshes and worker updates remain bounded"
+                "Plane paths publish validated musical cues and run only on explicit request"
+                "Undo, cancel, stale identity and teardown are covered"]
+   :evidence ["Frontend 164 tests / 882 assertions; optimized release 179 files, zero warnings"
+              "Integrated JVM pure 516 tests / 4080 assertions; preview regression 38 tests passed"
+              "Actual compiled desktop/iPad-touch/phone-fallback: placement, rotation, precision, undo/cancel, saves, paths, explicit launch, downloaded-file restore and teardown passed"
+              "Presented-canvas pixel assertion caught and guards compositor target ownership; other camera locks survive editor startup fallback"
+              "docs/rig-editor.md; docs/benchmarks/rig-editor-browser.json; Chromium SwiftShader/touch emulation, no physical hardware/Safari claim"]}
   {:id :authoring/aim-path-effects
    :title "Publish drawn world-space aim paths as musical tween effects and cues"
    :kind :implementation :status :done :owner nil
@@ -1948,6 +1982,15 @@
    :depends-on
    [:development/workspace-service-v1 :development/terminal-v1],
    :owner nil}
+  {:id :audio/band-and-bass-patch-sources
+   :title "Map live band levels and confident sub-bass pitch to cue parameters"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/bands.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Stream low/mid/high levels across PCM block boundaries and estimate monophonic bass in Hz"
+                "Apply a measured tone to an active effect parameter, close the pitch gate on silence"]
+   :evidence ["docs/audio-analysis.md"
+              "22 focused analysis + host routing tests, 226 assertions, including measured 41.2 Hz and 65 Hz and confidence gating"]}
   {:id :studio/transit-show-files
    :title "Save and restore complete show runs through the shared Transit codec"
    :kind :implementation :status :done :owner nil

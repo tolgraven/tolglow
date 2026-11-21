@@ -52,6 +52,9 @@
                                    [id (update-in source [:state :holds :gestures]
                                                   #(into {} (filter (fn [[_ hold]] (:instance-id hold))) %))])) sources)))))
 
+(defn- device-events [id events]
+  (mapv #(assoc % :device-id id) events))
+
 (defn configure
   "Pure source admission/update. Return release intents when replacing an active
   mapping. A pairing comes from pair!; no credential secret belongs in this model."
@@ -65,7 +68,7 @@
          sensors (assoc-in (or (:sensors model) empty-state) [:sources device-id]
                            {:config config :pairing pairing :armed-intent? false :state (:state released)})]
      (validate-state sensors)
-     {:model (assoc model :sensors sensors) :commands (owned-commands model device-id (:session-id state) (:commands released)) :events (:events released)})))
+     {:model (assoc model :sensors sensors) :commands (owned-commands model device-id (:session-id state) (:commands released)) :events (device-events device-id (:events released))})))
 
 (defn- live [manager]
   (let [state @(:state manager)] (when (:closed? state) (fail! :closed "Sensor manager is closed")) state))
@@ -213,7 +216,7 @@
                       (assoc-in [:sensors :sources device-id :armed-intent?] armed?))
            :commands (into (owned-commands model device-id (:session-id old) (:commands released))
                            (owned-commands model device-id session-id (:commands armed)))
-           :events (into (vec (:events released)) (:events armed))})))))
+           :events (device-events device-id (into (vec (:events released)) (:events armed)))})))))
 
 (defn calibrate [manager model device-id]
   (let [source (get-in model [:sensors :sources device-id]), observation (latest manager device-id)]
@@ -229,7 +232,7 @@
   (if-let [state (get-in model [:sensors :sources device-id :state])]
     (let [result (core/acknowledge state gesture-id ack)]
       {:model (assoc-in model [:sensors :sources device-id :state] (:state result))
-       :commands (owned-commands model device-id (:session-id state) (:commands result)) :events (:events result)})
+       :commands (owned-commands model device-id (:session-id state) (:commands result)) :events (device-events device-id (:events result))})
     {:model model :commands [] :events []}))
 
 (defn advance!
@@ -258,7 +261,7 @@
                             {:state state :commands [] :events []})]
              (-> acc (assoc-in [:model :sensors :sources id :state] (:state result))
                  (update :commands into (owned-commands (:model acc) id (:session-id state) (:commands result)))
-                 (update :events into (:events result)))))
+                 (update :events into (device-events id (:events result))))))
          {:model model :commands [] :events []} (get-in model [:sensors :sources] {}))]
     (let [result
           (reduce
@@ -282,13 +285,13 @@
                (-> acc (assoc-in [:model :sensors :sources id :state] (:state result))
                    (update :commands into (owned-commands (:model acc) id (:session-id old) (:commands released)))
                    (update :commands into (owned-commands (:model acc) id (:session-id state) (:commands result)))
-                   (update :events into (:events released)) (update :events into (:events result))))))) initial packets)
+                   (update :events into (device-events id (concat (:events released) (:events result))))))))) initial packets)
           result (reduce-kv
                   (fn [acc id source]
                     (let [expired (core/expire (:state source) (:config source) clock)]
                       (-> acc (assoc-in [:model :sensors :sources id :state] (:state expired))
                           (update :commands into (owned-commands (:model acc) id (get-in source [:state :session-id]) (:commands expired)))
-                          (update :events into (:events expired)))))
+                          (update :events into (device-events id (:events expired))))))
                   result (get-in result [:model :sensors :sources] {}))]
       (locking (:lock manager)
         (when-not (:closed? @(:state manager))
