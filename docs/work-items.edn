@@ -128,6 +128,26 @@
               "Compiled desktop 1440x1000, iPad 1024x768 and phone 390x844 controls: actual pointer/touch hold and drag passed; page errors empty"
               "docs/preview-navigation.md; Chromium SwiftShader, no physical GPU or Safari claim"]}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
+  {:id :runtime/effect-fault-isolation
+   :title "Isolate live-coded effect faults, recover revisions, and publish bounded diagnostics"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/runtime.clj" "afterglow/src/afterglow/runtime/engine.clj"
+           "afterglow/src/afterglow/runtime/faults.clj" "afterglow/test/afterglow/runtime/faults_test.clj"
+           "afterglow/test/afterglow/runtime/engine_test.clj" "afterglow/src/afterglow/control/model.clj"
+           "afterglow/test/afterglow/control/model_test.clj"
+           "tolglow/src/tolglow/studio/effect_faults.clj" "tolglow/test/tolglow/studio/effect_faults_test.clj"
+           "tolglow/src/tolglow/modulation.clj" "tolglow/test/tolglow/modulation_test.clj"
+           "tolglow/docs/effect-fault-isolation.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Healthy effects continue when another revision fails"
+                "Failed output/state/intents never publish; valid reload and explicit retry recover"
+                "Bounded portable diagnostics reach reactive subscriptions and asynchronous logs"
+                "Serial and bounded worker results agree, with actual host save/restore/restart evidence"]
+   :evidence ["Afterglow final parity: 316 tests / 3688 assertions passed, including deterministic fault replay and worker equivalence"
+              "Paired Tolglow final parity after current-master integration: 535 tests / 4501 assertions passed"
+              "Focused modulation plus actual host/Ring/renderer/logging: 22 tests / 176 assertions passed"
+              "Typed/ordinary output faults, zero-distance aim reload, healthy DMX continuity, reactive actions and full-show restore verified without physical output"
+              "docs/effect-fault-isolation.md; frontend fault inspector and physical qualification remain separate"]}
   {:id :web/push-preset-global-widgets
    :title "Show cue preset feedback and touched global controls on Push"
    :kind :implementation :status :done :owner nil
@@ -479,10 +499,6 @@
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
     "tolglow/bin/studio"
-    "afterglow/src/afterglow/control/model.clj"
-    "afterglow/test/afterglow/control/model_test.clj"
-    "afterglow/src/afterglow/runtime/engine.clj"
-    "afterglow/test/afterglow/runtime/engine_test.clj"
     "tolglow/src/tolglow/studio/connections.clj"
     "tolglow/src/tolglow/studio/output_scheduler.clj"
     "tolglow/test/tolglow/studio/output_scheduler_test.clj"

@@ -190,6 +190,31 @@
     (is (= 3/2 (:next-beat (controller restarted))))
     (is (= (first (random/next-random 23)) (:seed (controller changed))))))
 
+(deftest quarantined-cue-owners-stop-overrides-and-rejected-reloads-keep-the-last-good-config
+  (let [show (-> (with-owner (model) {:params [:level] :ranges {:level [0.7 0.7]}})
+                 (assoc-in [:instances "0:2" :reload-policy] :preserve-state))
+        active (modulation/advance nil show (frame 0))
+        compiler-for (fn [failed-version]
+                       (fn [definition]
+                         (if (= :modulator (:id definition))
+                           (fn [context]
+                             (when (= failed-version (:version definition)) (throw (ex-info "Bad owner" {})))
+                             context)
+                           (compiler/compile-effect definition))))
+        snapshot {:time-ms 0.0 :fixtures (get-in show [:rig :fixtures])}
+        failed (:model (engine/advance show snapshot (compiler-for 1)))
+        stopped (modulation/advance (:state active) failed (frame 0))
+        candidate (-> show (assoc-in [:registry :effects :modulator :version] 2)
+                           (assoc-in [:registry :effects :modulator :modulation :ranges :level] [0.3 0.3]))
+        rejected (:model (engine/advance candidate snapshot (compiler-for 2)))
+        retained (modulation/advance (:state active) rejected (frame 0))]
+    (is (get-in failed [:instances "0:2" :fault]))
+    (is (empty? (:overrides stopped)))
+    (is (empty? (get-in stopped [:state :controllers])))
+    (is (= 2 (get-in rejected [:instances "0:2" :reload-fault :effect-version])))
+    (is (= 0.7 (level retained)))
+    (is (= 1 (:owner-version (controller retained))))))
+
 (deftest save-and-restore-remap-identities-without-resetting-seeds-or-next-beats
   (let [show (with-owner (model) {:seed 41 :params [:level] :select {:instance-ids ["0:1"]}})
         original (modulation/advance nil show (frame 1/4))

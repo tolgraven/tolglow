@@ -27,6 +27,11 @@ application state, subscriptions, events and views belong in ClojureScript.
 - Tests exercise actual compiler/engine/render/command paths and local HTTP or
   injected transports. No physical lighting, audio input, provider request or
   MIDI activation is required to test the application.
+- Effect faults are per-instance model data, not whole-show stop commands.
+  Use engine rejection of renderer-attributed evaluations; never rerun healthy
+  effects to diagnose another effect. Only committed fault events enter the
+  bounded asynchronous logger. Retry uses :instance/retry; active fault identity
+  remaps on restore while historical events remain evidence.
 
 Track ownership and evidence in `docs/work-items.edn`. Run `bin/test pure` and
 `bin/test parity`; frontend and browser checks are separate documented gates.

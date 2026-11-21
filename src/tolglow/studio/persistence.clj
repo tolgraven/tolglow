@@ -402,7 +402,11 @@
                                        source (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
                                                 {:adapter :restore :epoch epoch})]]
-                             [id (-> instance (assoc :id id :source source) (dissoc :gesture-id))]))
+                             [id (-> (reduce (fn [entry field]
+                                               (if (get entry field)
+                                                 (update entry field #(assoc % :instance-id id :epoch epoch)) entry))
+                                             instance [:fault :reload-fault :retry-fault])
+                                     (assoc :id id :source source) (dissoc :gesture-id))]))
         runs (into {} (for [[id run] (:composition-runs saved)]
                         [id (assoc (remap-references run ids owners) :epoch epoch)]))
         tokens (into {} (for [[token instance-id] (:composition-tokens saved) :when (ids instance-id)]
