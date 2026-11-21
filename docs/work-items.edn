@@ -1,7 +1,14 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :foundation/behavior-inventory
+ [{:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :in-progress
+   :title "Inspect the event journal and DMX, and author event subscribers in Studio"
+   :owner "studio_debug_event_feed_subscriber_editor_and_dmx_monitor"
+   :paths ["tolglow/src/studio/tolglow/studio/debug.cljs" "tolglow/src/studio/tolglow/studio/debug_socket.cljs"
+           "tolglow/src/studio/tolglow/studio/subscriber_editor.cljs" "tolglow/resources/studio/debug.css"]
+   :depends-on [:foundation/tests] :evidence [] :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
+                                              "Inspect selected DMX universes and author real filtered, ordered subscriber actions"]}
+  {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
    :paths ["tolglow/docs/feature-parity-inventory.md"]
