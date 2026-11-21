@@ -17,3 +17,14 @@
     (is (= ["src" "src/shared" "../afterglow/src"] (:source-paths config)))
     (is (= ["resources" "../afterglow/resources"] (:resource-paths config)))
     (is (every? #(.isDirectory (io/file %)) (concat (:source-paths config) (:resource-paths config))))))
+
+(deftest source-tree-contains-clojure-and-local-documentation
+  (let [files (filter #(.isFile %) (file-seq (io/file "src")))
+        misplaced (remove #(re-find #"\.(clj|cljs|cljc|md)$" (.getName %)) files)]
+    (is (empty? misplaced) (str "Move assets, scripts and fixtures out of src/: " (mapv str misplaced)))))
+
+(deftest device-entry-points-are-classpath-resources
+  (doseq [asset ["push-display/worker.cjs" "ableton-live/tolglow-live-bridge.maxpat"
+                 "ableton-live/tolglow-bus-receive.maxpat" "ableton-live/tolglow-bus-send.maxpat"
+                 "ableton-live/live_api.js" "ableton-live/max_adapter.js" "ableton-live/node_bridge.js"]]
+    (is (some? (io/resource (str "devices/" asset))) asset)))

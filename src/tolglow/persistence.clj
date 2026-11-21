@@ -437,9 +437,8 @@
                       model [:ableton :audio :analysis])
         model (if-let [bridge (get-in model [:integrations :ableton])]
                 (assoc-in model [:integrations :ableton]
-                          (assoc bridge :held {} :recorded #{} :record-order []
-                                 :instances (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
-                                                         :when (ids old-id)] [(ids old-id) cue])))) model)
+                          (ableton/restore-bridge bridge (into {} (for [[old-id cue] (get-in saved [:integrations :ableton :instances])
+                                                                  :when (ids old-id)] [(ids old-id) cue])))) model)
         model (assoc model :control
                      (assoc (:control saved) :next-instance (count ids)
                             :next-order (max (get-in saved [:control :next-order])
