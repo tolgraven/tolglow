@@ -111,6 +111,7 @@
 (deftest actual-ring-state-deltas-follow-commands-and-show-restarts
   (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
         app (studio/handler runtime)
+        projections (get-in @(:observers runtime) [:studio :browser-projections])
         request (fn [query]
                   (let [response (app {:request-method :get :uri "/api/state" :query-string query})]
                     (is (= 200 (:status response)))
@@ -134,4 +135,4 @@
             (is (= "full" (get reset "kind")))
             (is (= 1 (get-in reset ["view" "epoch"]))))))
       (finally (show/stop! runtime)))
-    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status (get-in @(:observers runtime) [:studio :browser-projections]))))))
+    (is (= {:entries 0 :bytes 0 :closed? true} (projection/status projections)))))

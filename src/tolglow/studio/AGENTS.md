@@ -4,15 +4,15 @@ The application uses Ring on the JVM and re-frame/Reagent in `src/studio`.
 Keep HTML to the document mount. WebGL and Neovim have isolated interop engines;
 application state, subscriptions, events and views belong in ClojureScript.
 
-- `studio.clj` owns the immutable show model, command admission, frame commits,
-  resource lifetime and REPL facade. Workers return data. Never run device IO,
-  provider requests or subscriber callbacks inside `swap!` or effect workers.
+- `tolglow.studio` binds routes and browser streams to a configured
+  `tolglow.show`. The show owns command admission, frame commits and devices.
+  Return data from workers and acquire web resources through the web module.
 - `web.clj` is a portable Ring application with explicit service callbacks.
   Keep server adapters separate from routing and domain operations.
 - Beats (including fractions), bars and phrases are primary authoring units.
   Milliseconds remain explicit audio, physical and wall-time options. Do not
   turn musical durations into fixed millisecond deadlines at launch.
-- `persistence.clj` validates full schema-2 show files before publication. Restore
+- The persistence service validates full show files before publication. Restore
   captured effect state, transport position, registries, composition and auto
   ownership, settings and integration data. Remap active IDs and invalidate old
   epochs. A load must not advance effect state just to recreate the saved image.

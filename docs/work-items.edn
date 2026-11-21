@@ -12,8 +12,7 @@
                 "Optional Studio connects to the same show and shutdown unwinds acquired modules"]
    :evidence ["Leiningen application tests cover namespace registration, ordered startup/rollback, headless device and agent settings, Transit restore into a Ring server, and shutdown."
               "Fresh-process headless smoke advanced frames with the Ring, Reitit and Studio namespaces unloaded. Normal lein run read TOLGLOW_CONFIG and served the advancing show on its allocated port."]}
- {:id :render/calibrated-moving-head-shader
- {:id :integrations/live-audio-carrier-returns
+  {:id :integrations/live-audio-carrier-returns
    :title "Render parameter carriers and route isolated Live returns into owned lighting tails"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/integrations/audio_return.clj"

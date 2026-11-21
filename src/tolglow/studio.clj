@@ -15,8 +15,8 @@
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]))
 
-(defn bind! [runtime]
-  (show/attach-observer! runtime :studio
+(defn- bind! [runtime id]
+  (show/attach-observer! runtime id
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
             stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %))
@@ -32,7 +32,8 @@
 (defn browser-snapshot
   "Bound preview values. Delta clients receive versioned, exact-base envelopes;
   inspection requests can retrieve a complete or authoring-conditional view."
-  [runtime query]
+  ([runtime query] (browser-snapshot runtime query #(bind! runtime :studio)))
+  ([runtime query bindings!]
   (let [view (show/snapshot runtime)
         preview-ids (mapv :id (take 16 (get-in view [:rig :fixtures])))
         view (-> view (update-in [:output :values] select-keys preview-ids)
@@ -42,17 +43,17 @@
                       (= (str (:revision view)) (get query "revision")))]
     (cond
       (= "delta-v1" (get query "projection"))
-      (projection/project! (:browser-projections (bind! runtime)) view (get query "base"))
+      (projection/project! (:browser-projections (bindings!)) view (get query "base"))
       partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
-      :else view)))
+      :else view))))
 
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
-  [runtime]
-  (let [bindings (bind! runtime)]
-    (web/app {:snapshot! #(browser-snapshot runtime %)
+  ([runtime] (handler runtime (bind! runtime :studio)))
+  ([runtime bindings]
+   (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
             :state-stream! #(state-stream/response (:state-stream bindings) %)
@@ -114,8 +115,14 @@
   "Bind Studio to the selected show, returning the actual port (including port
   zero) and an idempotent shutdown function."
   [runtime {:keys [host port] :or {host "127.0.0.1" port 8500}}]
-  (let [server (jetty/run-jetty (handler runtime) {:host host :port port :join? false})]
-    ;; Streaming clients can remain connected for the lifetime of the show.
-    ;; Immediate connector shutdown lets the owner close their streams next.
-    (.setStopTimeout server 0)
-    {:host host :port (.getLocalPort (first (.getConnectors server))) :stop! #(.stop server)}))
+  (let [id (Object.)
+        bindings (bind! runtime id)]
+    (try
+      (let [server (jetty/run-jetty (handler runtime bindings) {:host host :port port :join? false})]
+        ;; Streaming clients can remain connected for the lifetime of the show.
+        (.setStopTimeout server 0)
+        {:host host :port (.getLocalPort (first (.getConnectors server)))
+         :stop! #(try (show/detach-observer! runtime id) (finally (.stop server)))})
+      (catch Throwable error
+        (show/detach-observer! runtime id)
+        (throw error)))))

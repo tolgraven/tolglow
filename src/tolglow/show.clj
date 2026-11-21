@@ -10,13 +10,11 @@
             [tolglow.studio.show-events :as show-events]
             [tolglow.studio.event-subscribers :as subscribers]
             [tolglow.studio.event-callbacks :as event-callbacks]
-
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
             [clojure.java.io :as io]
-
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
@@ -25,7 +23,6 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.studio.waveforms :as waveforms]
-
             [tolglow.automation.policy :as policy]
             [tolglow.studio.demo :as demo]
             [tolglow.studio.composition :as composition]
@@ -34,9 +31,6 @@
             [tolglow.studio.output-scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.effect-faults :as effect-faults]
-
-
-
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.repl-manager :as repl-manager]
@@ -128,6 +122,14 @@
         (let [observer (create!)]
           (swap! (:observers runtime) assoc id observer)
           observer))))
+
+(defn detach-observer!
+  "Remove a registered observer from future frame commits and close it once."
+  [runtime id]
+  (when-let [observer (locking (:lock runtime)
+                        (let [[before _] (swap-vals! (:observers runtime) dissoc id)]
+                          (get before id)))]
+    ((:close! observer))))
 
 (defn create-runtime
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
@@ -953,10 +955,10 @@
     ;; No cleanup waits while holding the owner lock: a closing device or agent
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
-      (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
+      (doseq [cleanup (concat (map :close! (vals (first (swap-vals! (:observers runtime) (constantly {})))))
+                             (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
-                              (fn [] (doseq [observer (vals @(:observers runtime))] ((:close! observer))))
                               #(output-scheduler/close! (:publisher runtime))
                               #(effect-faults/close! (:effect-logs runtime))
                               #(duplex/stop! (:audio-returns runtime))

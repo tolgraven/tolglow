@@ -116,3 +116,19 @@
       (is (= {:version 1} (get-in @(:state runtime) [:model :sensors :sources "watch" :config])))
       (finally (app/stop! runtime)))
     (is (= 1 @closed-clock @closed-audio))))
+
+
+(deftest failed-listener-releases-its-own-observer
+  (let [runtime (app/start! {:init {:components [:show] :modules []}
+                             :show {:workers 1 :workspace-options nil}})
+        listen! (requiring-resolve 'tolglow.studio/listen!)]
+    (try
+      (let [first-server (listen! runtime {:port 0})]
+        (try
+          (is (thrown? java.io.IOException (listen! runtime {:port (:port first-server)})))
+          (is (= 1 (count @(:observers runtime))))
+          (is (.contains (slurp (str "http://127.0.0.1:" (:port first-server) "/api/state")) (:id runtime)))
+          (finally ((:stop! first-server))))
+        (is (empty? @(:observers runtime)))
+        (is @(:running runtime)))
+      (finally (app/stop! runtime)))))
