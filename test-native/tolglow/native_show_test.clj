@@ -1,6 +1,7 @@
 (ns tolglow.native-show-test
   (:require [afterglow.render.gpu.expressions :as expressions]
             [afterglow.render.gpu.session :as gpu]
+            [afterglow.render.gpu.movement :as movement]
             [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
             [tolglow.compiler.batch :as batch]
@@ -35,16 +36,18 @@
 (defn- packed [bytes i]
   (+ (* 256 (bit-and 255 (nth bytes i))) (bit-and 255 (nth bytes (inc i)))))
 
-(defn- comparable-frames? [cpu gpu]
+(defn- comparable-frames?
+  ([cpu gpu] (comparable-frames? cpu gpu [5]))
+  ([cpu gpu axes]
   (and (= (set (keys cpu)) (set (keys gpu)))
        (every?
         (fn [[id {a 1}]]
-          (let [b (get-in gpu [id 1]) pan-starts (set (map #(+ 5 (* 12 %)) (range 8)))]
+          (let [b (get-in gpu [id 1]) motor-starts (set (for [fixture (range 8) axis axes] (+ axis (* 12 fixture))))]
             (and (= (count a) (count b) 512)
-                 (every? #(<= (abs (- (packed a %) (packed b %))) 1) pan-starts)
+                 (every? #(<= (abs (- (packed a %) (packed b %))) 1) motor-starts)
                  (every? #(= (get a %) (get b %))
-                         (remove (into pan-starts (map inc pan-starts)) (range 512))))))
-        cpu)))
+                         (remove (into motor-starts (map inc motor-starts)) (range 512))))))
+        cpu))))
 
 (deftest configured-show-owns-and-releases-native-session
   (let [runtime (app/start! {:init {:components [:show] :modules [] :post []}
@@ -111,7 +114,7 @@
 
 (deftest one-frame-budget-discards-late-output-across-show-restart
   (let [frames (atom {})
-        runtime (show/create-runtime {:compute-backend :native-gpu :gpu-budget-ms 200
+        runtime (show/create-runtime {:compute-backend :native-gpu :movement-backend :native-gpu :gpu-budget-ms 200
                                       :sink (capture frames) :workers 2})
         session (get-in runtime [:compute :session])
         entered (promise) release (promise) finished (promise)
@@ -130,6 +133,8 @@
           (is (= :published (deref tick 2000 :stalled)))
           (is (= 1 @draws) "The first wait consumes the GPU budget for all groups")
           (is (not (realized? finished)))
+          (is (= :timeout (get-in (show/snapshot runtime) [:status :movement :reason])))
+          (is (= 8 (get-in (show/snapshot runtime) [:status :movement :cpu-heads])))
           (is (>= (get-in (show/snapshot runtime) [:status :compute :deadline-fallbacks]) 2))
           (is (every? (complement :fault) (:instances (show/snapshot runtime))))
           (is (some pos? (map #(bit-and 255 %) (get (val (last (sort @frames))) 1)))))
@@ -146,3 +151,43 @@
                 3 java.util.concurrent.TimeUnit/SECONDS)
           (is (= after-restart @frames))))
       (finally (deliver release true) (show/stop! runtime)))))
+
+(deftest movement-is-independent-of-expression-backend-and-resolves-effect-opacity
+  (doseq [expressions [:cpu :native-gpu]]
+    (let [expected (atom {}) actual (atom {})
+          cpu (show/create-runtime {:sink (capture expected)})
+          show (show/create-runtime {:sink (capture actual) :compute-backend expressions
+                                     :movement-backend :native-gpu :gpu-budget-ms 5000})
+          defs [{:id :left :version 1 :targets [:head-1 :head-4]
+                 :outputs {:direction [0.25 0.5 1.0] :red 0.75}}
+                {:id :right :version 1 :targets [:head-1 :head-4]
+                 :outputs {:direction [1.0 0.5 0.25]}}]
+          commands (mapcat (fn [{:keys [id] :as definition}]
+                             [{:op :registry/publish :kind :effects :definition definition}
+                              {:op :cue/put :cue {:id id :effect-id id}}
+                              {:op :cue/launch :cue-id id}]) defs)]
+      (try
+        (doseq [runtime [cpu show]]
+          (let [replies (run-commands! runtime 0.0 commands)
+                top-id (:instance-id (last replies))]
+            (is (every? #(= :accepted (:status %)) replies))
+            (doseq [[tick alpha] [[25.0 0.0] [50.0 0.5] [75.0 1.0]]]
+              (is (= :accepted (:status (first (run-commands! runtime tick
+                                                [{:op :instance/opacity-set :instance-id top-id :value alpha}]))))))))
+        (is (= {:requested :native-gpu :backend :native-gpu :gpu-heads 2 :cpu-heads 0}
+               (get-in (show/snapshot show) [:status :movement])))
+        (is (= expressions (get-in (show/snapshot show) [:status :compute :active])))
+        (is (= 3 (count (set (map #(packed (get (val %) 1) 5) (rest (sort @actual)))))))
+        (is (comparable-frames? @expected @actual [5 7]))
+        (finally (show/stop! show) (show/stop! cpu))))))
+
+(deftest configured-movement-owner-is-closed-on-show-stop
+  (let [show (app/start! {:init {:components [:show] :modules [] :post []}
+                          :show {:movement-backend :native-gpu}})]
+    (is (= :native-gpu (get-in (show/snapshot show) [:status :movement :requested])))
+    (app/stop! show)
+    (let [probe [{:kind :assignments
+                  :assignments [{:target-id :head-1 :attribute :direction :value [0.25 0.5 1.0]}]}]
+          owner (get-in show [:compute :movement])
+          patch (:compiled @(:patch show))]
+      (is (= :closed (get-in (movement/resolve-contributions! owner patch probe) [:movement :reason]))))))
