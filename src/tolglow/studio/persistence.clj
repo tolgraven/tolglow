@@ -26,6 +26,7 @@
             [tolglow.studio.repl-manager :as repl-manager]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.routing :as routing]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
@@ -241,6 +242,8 @@
     (try (expressive/normalize-config (get-in model [:settings :expressive]))
          (catch clojure.lang.ExceptionInfo error
            (check-errors! (:errors (ex-data error)) [:settings :expressive]))))
+  (when (contains? (get-in model [:settings :output] {}) :pause-look)
+    (pause-look/normalize (get-in model [:settings :output :pause-look])))
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))
