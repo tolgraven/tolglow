@@ -1,12 +1,18 @@
 # Clock and Live integration boundary
 
-The new control clock is immutable data in `afterglow.control.clock`.
-`tolglow.studio.sync` owns explicit MIDI, Pro DJ Link, Ableton Link and companion Live bridge
-resources. Requiring either namespace, validating a configuration or restoring
-saved settings does not open a device, register a Beat Link listener or connect
-to Live. The studio supplies its logical `now-ms` clock when creating a manager;
-the default monotonic JVM clock is appropriate only when it also defines the
-host's logical time domain.
+The immutable control clock is in `afterglow.control.clock`. A per-show
+`afterglow.sync` manager owns the event queue, monotonic clock and resources
+opened by the MIDI, Beat Link and Ableton Link adapters. Protocol acquisition
+lives in `afterglow.sync.midi`, `afterglow.sync.beat-link` and
+`afterglow.sync.ableton-link`. Creating a manager and restoring its
+configuration leave these connections closed.
+
+`tolglow.integrations.live-sync/create-manager` adds a Live clip adapter to
+this manager. Its pairing and mapping definitions live in `live-sync-config`,
+the HTTP and outbound MIDI executor in `live-transport`, and the pure command
+and recording mappings in `tolglow.integrations.ableton`. These functions can
+be used from the REPL or a headless show. Studio binds host callbacks and
+supplies show time so capture and rendering share a time domain.
 
 These protocols are different:
 

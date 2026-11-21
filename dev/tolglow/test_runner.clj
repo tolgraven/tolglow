@@ -22,7 +22,7 @@
     tolglow.output-test tolglow.studio.output-options-test
     tolglow.studio.fixture-host-test tolglow.rig-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
-    tolglow.studio.sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
+    tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
