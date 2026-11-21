@@ -170,8 +170,13 @@
         updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db updated
      :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
-                                        [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
+                                        [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
+           (and (get-in db [:connections :visible?])
+                (or epoch-changed?
+                    (not (identical? (:connection-status presentation)
+                                     (get-in db [:server-presentation :connection-status])))))
+           (conj [:dispatch [:connections/pushed]])
            runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
            (or epoch-changed? (not (:settings-loaded? db)))
            (conj [:dispatch [:studio/settings-received (or (:settings show) {})]]))}))
@@ -196,8 +201,10 @@
           :accepted (-> (install-show db (:state received))
                         (update :db dissoc :awaiting-full?)
                         (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
-          :duplicate {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
-                      :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
+          :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
+                              :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
+                       (and (:awaiting-full? db) (get-in db [:connections :visible?]))
+                       (assoc :dispatch [:connections/pushed]))
           {:db (assoc db :awaiting-full? true)
            :studio/stream-reply [id {:op :resync}]})))))
 
@@ -205,7 +212,8 @@
   (fn [{:keys [db]} [_ session id reason]]
     (when (current-stream? db session id)
       {:db (assoc db :stream-id nil
-                  :connection {:connected? false :error (str "Reconnecting: " reason)})
+                  :connection {:connected? false :error (str "Reconnecting: " reason)}
+                  :connections (assoc (:connections db) :audio nil :sync nil))
        :dispatch [:studio/release-pointers]})))
 
 (rf/reg-event-fx :studio/toast

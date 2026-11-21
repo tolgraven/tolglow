@@ -238,9 +238,10 @@ and controller-to-parameter bounds. The selected clock reports waiting, stale,
 paused or locked state without selecting a nearby player automatically. Audio
 shows measured energy/timing and the host's consumed-event count.
 
-Connections owns a single status poll while mounted. Closing the view invalidates
-pending responses but preserves running host resources. Runtime/epoch replacement
-invalidates callbacks and status; portable configuration comes from the new show.
+Connections subscribes to sync and capture status on the acknowledged show
+socket while the page is visible. Leaving the page or hiding the document
+releases that interest. Port and mixer inventories support explicit refresh.
+Runtime and epoch changes invalidate callbacks and load the new configuration.
 Draft pairing/mapping edits survive ordinary status refreshes. Browser checks
 verified inert opening, clock source selection, actual saved pairing/mappings and
 reload restoration, explicit audio input preparation and a 390 px layout. No

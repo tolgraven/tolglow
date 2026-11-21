@@ -215,7 +215,8 @@
                 "Resolve direct links and browser history against the same named page routes as Ring"]
    :evidence ["docs/state-stream.md and docs/studio-transit.md"
               "Optimized Chromium received 136 patches, recovered a wrong base and forced disconnect, and sent 2 Transit commands. Passive Push opened zero show sockets."
-              "Reitit direct links, browser history and saved selection exercised in test/studio/navigation_browser.cjs"]}
+              "Reitit direct links, browser history and saved selection exercised in test/studio/navigation_browser.cjs"
+              "Connections sync and audio share one visible-page subscription. test/studio/connections_stream_browser.cjs checks navigation, reconnect and zero status GETs."]}
   {:id :native/apple-calibration-build-gate
    :title "Reconcile calibration with master and verify unsigned Apple targets on macOS CI"
    :kind :implementation :status :done :owner nil

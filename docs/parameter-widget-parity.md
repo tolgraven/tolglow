@@ -45,10 +45,10 @@ plus duration/sample-rate/source metadata and optional beat markers. Peaks are
 plotted at fixed −1…1 amplitude. Blue, amber and pale colors reflect measured band
 energy, inspired by DJ displays; this does not reproduce proprietary Rekordbox
 analysis. Missing capture data has an explicit empty state. Stopped capture is
-labelled as stopped. Mounting or polling a display never starts capture.
+labelled as stopped. Capture starts through an explicit device action.
 
-The web scope owns one abortable request and a bounded timer. Teardown, show
-replacement, process replacement, errors and stale responses are covered. The
+The web scope renders the bounded waveform from the visible Connections
+subscription. A closed socket clears its displayed trace until delivery resumes. The
 Push view is entirely passive: the host pushes snapshots synchronously, with no
 API polling, WebGL, editors, audio acquisition or lighting commands. Its eight
 encoder columns are preserved in both parameter and audio modes. The host bounds

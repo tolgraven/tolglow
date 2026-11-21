@@ -412,16 +412,19 @@
     (is (= 5 (get-in received [:db :ui :rig-draft :trusses 0 :length])))
     (is (nil? (:db replacement)))))
 
-(deftest opening-connections-reads-status-without-starting-resources
+(deftest opening-connections-subscribes-and-enumerates-devices-on-the-first-status
   (let [opened (transition base [:connections/open])
-        poll (transition (:db opened) [:connections/poll])
-        requests (map second (:fx poll))
-        early (transition (assoc (:db opened) :show nil) [:connections/poll])]
-    (is (= #{"/api/sync" "/api/audio" "/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
+        pushed (transition (assoc-in (:db opened) [:show :connection-status]
+                                     {:sync {:config connections/sync-defaults} :audio {:state "idle"}})
+                           [:connections/pushed])
+        refreshed (transition (:db pushed) [:connections/refresh-devices])
+        requests (map second (:fx refreshed))]
+    (is (= #{:db :studio/connections-interest} (set (keys opened))))
+    (is (:studio/connections-interest opened))
+    (is (= [:connections/refresh-devices] (:dispatch pushed)))
+    (is (= #{"/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
     (is (every? #(nil? (:body %)) requests))
-    (is (true? (get-in poll [:db :connections :polling?])))
-    (is (nil? (:fx (transition (:db poll) [:connections/poll]))))
-    (is (= [:connections/poll] (get-in early [:dispatch-later 0 :dispatch])))))
+    (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
 
 (deftest midi-selection-keeps-name-guards-until-explicit-reselection
   (let [form (-> connections/sync-defaults (assoc-in [:midi :enabled?] true)
@@ -460,16 +463,19 @@
     (is (= "Replacement" (:mixer-name (connections/audio-payload (:db selected)))))
     (is (= "/api/audio/start" (get-in (transition default [:connections/audio-start]) [:fx 0 1 :path])))))
 
-(deftest closed-connections-ignore-obsolete-polls-and-keep-new-form-values
+(deftest closed-connections-release-interest-and-drafts-survive-status-updates
   (let [db (assoc base :connections (assoc connections/defaults :visible? true))
         old-token (connections/token db)
         closed (transition db [:connections/close])
-        late (transition (:db closed) [:connections/loaded old-token :sync {:config connections/sync-defaults}])
+        late (transition (:db closed) [:connections/loaded old-token :ports []])
         edited (transition db [:connections/edit [:sync-form :live :endpoint] "http://localhost:9000/live"])
-        saved (transition (:db edited) [:connections/configured old-token :configure {:config connections/sync-defaults}])
-        prior-poll (transition (:db saved) [:connections/loaded old-token :sync {:config connections/sync-defaults}])]
+        data {:sync {:config connections/sync-defaults :clock {:status "manual"}}}
+        pushed (transition (assoc-in (:db edited) [:show :connection-status] data) [:connections/pushed])
+        saved (transition (:db pushed) [:connections/configured old-token :configure {:config connections/sync-defaults}])]
+    (is (false? (:studio/connections-interest closed)))
+    (is (= (:sync data) (get-in saved [:db :connections :sync])) "HTTP acknowledgements preserve authoritative status")
     (is (nil? (:db late)))
-    (is (= "http://localhost:9000/live" (get-in prior-poll [:db :connections :sync-form :live :endpoint])))
+    (is (= "http://localhost:9000/live" (get-in pushed [:db :connections :sync-form :live :endpoint])))
     (is (false? (get-in closed [:db :connections :visible?])))))
 
 (deftest connection-actions-carry-current-runtime-identity

@@ -122,17 +122,19 @@
 (rf/reg-sub :connections/state (fn [db _] (state db)))
 (rf/reg-event-fx :connections/open
   (fn [{:keys [db]} _]
-    {:db (update db :connections #(cond-> (assoc (merge defaults %) :visible? true :polling? false :devices-requested? false)
+    {:db (update db :connections #(cond-> (assoc (merge defaults %) :visible? true :devices-requested? false)
                                     (not (:sync-dirty? %)) (assoc :sync-form-loaded? false)
                                     (not (:audio-dirty? %)) (assoc :audio-form-loaded? false)))
-     :dispatch [:connections/poll]}))
-(rf/reg-event-db :connections/close
-  (fn [db _] (assoc db :connections (-> (state db) (assoc :visible? false :polling? false :pending #{}) (update :generation inc)))))
-(rf/reg-event-fx :connections/runtime-change
+     :studio/connections-interest true}))
+(rf/reg-event-fx :connections/close
   (fn [{:keys [db]} _]
+    {:db (update db :connections #(-> (merge defaults %) (assoc :visible? false :pending #{} :sync nil :audio nil)
+                                      (update :generation inc)))
+     :studio/connections-interest false}))
+(rf/reg-event-db :connections/runtime-change
+  (fn [db _]
     (let [s (state db)]
-      {:db (assoc db :connections (-> defaults (assoc :visible? (:visible? s) :generation (inc (:generation s)))))
-       :dispatch (when (:visible? s) [:connections/open])})))
+      (assoc db :connections (assoc defaults :visible? (:visible? s) :generation (inc (:generation s)))))))
 (rf/reg-event-db :connections/edit
   (fn [db [_ path value]]
     (cond-> (assoc-in db (into [:connections] path) value)
@@ -140,45 +142,39 @@
       (= :audio-form (first path)) (assoc-in [:connections :audio-dirty?] true))))
 (rf/reg-event-fx :connections/refresh-devices
   (fn [{:keys [db]} _]
-    {:fx [(req db :ports "/api/sync/ports" nil :connections/loaded)
-          (req db :inputs "/api/audio/inputs" nil :connections/loaded)]}))
-(rf/reg-event-fx :connections/poll
+    (when (:visible? (state db))
+      {:fx [(req db :ports "/api/sync/ports" nil :connections/loaded)
+            (req db :inputs "/api/audio/inputs" nil :connections/loaded)]})))
+(rf/reg-event-fx :connections/pushed
   (fn [{:keys [db]} _]
-    (when (and (:visible? (state db)) (not (:polling? (state db))))
-      (if-not (:show db)
-        {:dispatch-later [{:ms 100 :dispatch [:connections/poll]}]}
-        {:db (-> db (assoc-in [:connections :polling?] true) (assoc-in [:connections :devices-requested?] true)
-                   (assoc-in [:connections :poll-waiting] #{:sync :audio}))
-         :fx (cond-> [(req db :sync "/api/sync" nil :connections/loaded)
-                      (req db :audio "/api/audio" nil :connections/loaded)]
-               (not (:devices-requested? (state db)))
-               (conj (req db :ports "/api/sync/ports" nil :connections/loaded)
-                     (req db :inputs "/api/audio/inputs" nil :connections/loaded)))}))))
-(defn- poll-complete [db key]
-  (let [db (update-in db [:connections :poll-waiting] disj key)]
-    (if (and (#{:sync :audio} key) (empty? (get-in db [:connections :poll-waiting])))
-      {:db (assoc-in db [:connections :polling?] false)
-       :dispatch-later (when (:visible? (state db)) [{:ms 750 :dispatch [:connections/poll]}])}
-      {:db db})))
+    (let [s (state db)
+          {:keys [sync audio]} (get-in db [:show :connection-status])
+          config (:config sync)
+          initialize-sync? (and config (not (:sync-dirty? s))
+                                (or (not (:sync-form-loaded? s)) (not= config (get-in s [:sync :config]))))
+          initialize-audio? (and (:config audio) (not (:audio-dirty? s))
+                                 (or (not (:audio-form-loaded? s)) (not= (:config audio) (get-in s [:audio :config]))))
+          enumerate? (and sync (not (:devices-requested? s)))]
+      (when (:visible? s)
+        (cond-> {:db (update db :connections
+                       #(cond-> (assoc % :sync sync :audio audio)
+                          initialize-sync?
+                          (merge {:sync-form-loaded? true
+                                  :sync-form (reduce (fn [out k] (update out k (partial merge (get sync-defaults k))))
+                                                     (merge sync-defaults config) [:midi :beat-link :link :live])
+                                  :notes (mapping-rows config :mappings) :parameters (mapping-rows config :parameters)})
+                          initialize-audio? (assoc :audio-form (audio-form (:config audio)) :audio-form-loaded? true)
+                          enumerate? (assoc :devices-requested? true)))}
+          enumerate? (assoc :dispatch [:connections/refresh-devices]))))))
 (rf/reg-event-fx :connections/loaded
   (fn [{:keys [db]} [_ request-token key data]]
     (when (current? db request-token)
-      (let [s (state db)
-            db (-> db (assoc-in [:connections key] data) (update-in [:connections :errors] dissoc key))
-            db (cond-> db
-                 (and (= key :sync) (:config data) (not (:sync-dirty? s)) (not (:sync-form-loaded? s)))
-                 (update :connections merge {:sync-form-loaded? true
-                                             :sync-form (reduce (fn [out k] (assoc out k (merge (get sync-defaults k) (get-in data [:config k]))))
-                                                               (merge sync-defaults (:config data)) [:midi :beat-link :link :live])
-                                             :notes (mapping-rows (:config data) :mappings) :parameters (mapping-rows (:config data) :parameters)})
-                 (and (= key :audio) (:config data) (not (:audio-dirty? s)) (not (:audio-form-loaded? s)))
-                 (update :connections merge {:audio-form (audio-form (:config data)) :audio-form-loaded? true}))]
-        (poll-complete db key)))))
+      {:db (-> db (assoc-in [:connections key] data) (update-in [:connections :errors] dissoc key))})))
 (rf/reg-event-fx :connections/failed
   (fn [{:keys [db]} [_ request-token key error]]
     (when (current? db request-token)
-      (poll-complete (-> db (assoc-in [:connections :errors key] (str error))
-                        (update-in [:connections :pending] disj key)) key))))
+      {:db (-> db (assoc-in [:connections :errors key] (str error))
+               (update-in [:connections :pending] disj key))})))
 (rf/reg-event-fx :connections/configure
   (fn [{:keys [db]} [_ start?]]
     (try
@@ -188,7 +184,7 @@
       (catch :default error {:db (assoc-in db [:connections :errors :configure] (events/error-message error))}))))
 (defn configured [db request-token data]
   (when (current? db request-token)
-    {:db (-> db (assoc-in [:connections :sync] data) (assoc-in [:connections :sync-dirty?] false)
+    {:db (-> db (assoc-in [:connections :sync-dirty?] false)
                 (assoc-in [:connections :sync-form-loaded?] true)
                 (assoc-in [:connections :unmapped] (:unmapped data))
                 (assoc-in [:connections :notes] (mapping-rows (:config data) :mappings))
@@ -218,8 +214,7 @@
     (when (current? db request-token)
       {:db (-> db (update-in [:connections :pending] disj operation)
                  (cond-> (= operation :audio-start) (update :connections merge {:audio-dirty? false :audio-form-loaded? true})
-                   (false? (:accepted? result)) (assoc-in [:connections :errors operation] "The connection could not accept that action. Check its current status.")))
-       :dispatch [:connections/poll]})))
+                   (false? (:accepted? result)) (assoc-in [:connections :errors operation] "The connection could not accept that action. Check its current status.")))})))
 (rf/reg-event-fx :connections/audio-start
   (fn [{:keys [db]} _]
     (try {:db (update-in db [:connections :pending] (fnil conj #{}) :audio-start)

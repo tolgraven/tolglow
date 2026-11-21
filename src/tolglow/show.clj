@@ -197,7 +197,7 @@
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
-      :observers (atom {})
+      :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})

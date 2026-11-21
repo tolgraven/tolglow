@@ -1,5 +1,7 @@
 (ns tolglow.studio.state-stream-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [afterglow.sync :as sync]
+            [tolglow.connections :as connections]
+            [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :refer [wrap-params]]
             [tolglow.show :as show]
@@ -125,9 +127,9 @@
       (finally (stream/close! hub)))
     (is (= 503 (:status (stream/response hub http))))))
 
-(deftest repeated-publications-obey-40hz-and-identity-changes-reset-the-base
+(deftest repeated-publications-obey-the-configured-cadence-and-identity-changes-reset-the-base
   (let [sample-times (atom [])
-        hub (stream/create (fn [v] (swap! sample-times conj (System/nanoTime)) v) identity)
+        hub (stream/create (fn [v] (swap! sample-times conj (System/nanoTime)) v) identity {:frame-rate 20})
         server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
         initial {:show-id :main :runtime-id "studio" :epoch 0 :frame-number 0}]
     (try
@@ -142,7 +144,7 @@
               (acknowledge client frame)))
           ;; Measure projection on its owning worker; OS packet arrival times
           ;; can bunch together after a suspended client resumes.
-          (is (every? #(>= % 25000000) (map - (rest @sample-times) @sample-times)))
+          (is (every? #(>= % 50000000) (map - (rest @sample-times) @sample-times)))
           (stream/publish! hub (assoc initial :epoch 1))
           (let [frame (receive client)]
             (is (= :full (:kind frame)))
@@ -153,3 +155,105 @@
         (try (is (= (assoc initial :epoch 1) (:view (receive reconnected))))
              (finally (.abort ^WebSocket (:socket reconnected)))))
       (finally (stream/close! hub) (.stop server)))))
+
+(defn- silence? [client]
+  (nil? (.poll ^LinkedBlockingQueue (:messages client) 90 TimeUnit/MILLISECONDS)))
+
+(deftest connections-status-is-opt-in-and-follows-owner-changes-with-a-stationary-show
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        manager (connections/sync (:connections runtime))
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        observer (connect server "observer") tablet (connect server "tablet") phone (connect server "phone")]
+    (try
+      (doseq [client [observer tablet phone]]
+        (let [base (receive client)]
+          (is (not (contains? (:view base) :connection-status)))
+          (acknowledge client base)))
+      (doseq [client [tablet phone]] (send-control client {:op :connections :enabled? true}))
+      (let [left (receive tablet) right (receive phone)
+            base (:view left)]
+        (is (= :full (:kind left) (:kind right)))
+        (is (= (:token left) (:token right)))
+        (is (= :idle (get-in base [:connection-status :audio :state])))
+        (is (= :manual (get-in base [:connection-status :sync :config :selected-source])))
+        (acknowledge tablet left)
+        (sync/select-source! manager :ableton-link)
+        (let [change (receive tablet)]
+          (is (= :patch (:kind change)))
+          (is (= (:token left) (:base-token change)))
+          (is (= :ableton-link (get-in (apply-patch base change) [:connection-status :sync :clock :selected-source])))
+          (is (silence? observer))
+          (is (silence? phone))
+          ;; Dropping a scope while its patch is outstanding must discard that
+          ;; baseline. Even an eventual matching ACK cannot re-enable it.
+          (send-control tablet {:op :connections :enabled? false})
+          (acknowledge tablet change)
+          (let [plain (receive tablet)]
+            (is (= :full (:kind plain)))
+            (is (not (contains? (:view plain) :connection-status)))
+            (acknowledge tablet plain)))
+        (acknowledge phone right)
+        (let [latest (receive phone)]
+          (is (= (:token right) (:base-token latest)))
+          (send-control phone {:op :resync})
+          (let [full (receive phone)]
+            (is (= :full (:kind full)))
+            (is (= (apply-patch base latest) (:view full)))
+            (acknowledge phone full))))
+      (is (silence? tablet))
+      (send-control phone {:op :connections :enabled? false})
+      (is (not (contains? (:view (receive phone)) :connection-status)))
+      (is (empty? (.getWatches ^clojure.lang.IRef (:state manager))))
+      (finally
+        (doseq [client [observer tablet phone]] (.abort ^WebSocket (:socket client)))
+        (show/stop! runtime)
+        (.stop server)))))
+
+(deftest status-watch-rebinds-to-the-restored-owners
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        owner (:connections runtime) model (:model @(:state runtime))
+        retired (connections/sync owner) signals (atom 0)
+        detach! (connections/observe-status! owner #(swap! signals inc))]
+    (try
+      (connections/restore! owner (update model :epoch inc))
+      (let [count-at-restore @signals current (connections/sync owner)
+            snapshot (connections/status-at-commit owner)]
+        (is (pos? count-at-restore))
+        (is (empty? (.getWatches ^clojure.lang.IRef (:state retired))))
+        (is (nil? (snapshot {:model model})))
+        (is (= :idle (get-in (snapshot {:model (update model :epoch inc)}) [:audio :state])))
+        (sync/select-source! current :beat-link)
+        (is (> @signals count-at-restore))
+        (detach!)
+        (is (empty? (.getWatches ^clojure.lang.IRef (:state current)))))
+      (finally (detach!) (show/stop! runtime)))))
+
+(deftest capture-pushes-measured-waveform-without-a-render-tick
+  (let [samples (byte-array (take 960 (cycle [(byte 0) (byte 32)])))
+        input (java.io.ByteArrayInputStream. samples)
+        runtime (show/create-runtime {:workspace-options nil
+                                      :audio-options {:open-source! (fn [_] {:started-at-ms 0.0
+                                                                            :read! #(.read input %1 %2 %3)
+                                                                            :close! #(.close input)})}})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        client (connect server "waveform")]
+    (try
+      (acknowledge client (receive client))
+      (send-control client {:op :connections :enabled? true})
+      (let [base (receive client)]
+        (acknowledge client base)
+        (let [handle (connections/start-audio! (:connections runtime) {:default? true} {:events! identity})
+              result (deref (:result handle) 3000 ::timeout)]
+          (is (= :completed (:status result)) (str (:error result))))
+        (loop [old (:view base) remaining 4]
+          (let [message (receive client)
+                view (apply-patch old message)
+                audio (get-in view [:connection-status :audio])]
+            (acknowledge client message)
+            (if (and (pos? remaining) (not= :completed (:state audio)))
+              (recur view (dec remaining))
+              (do (is (= :completed (:state audio)))
+                  (is (= 480 (get-in audio [:waveform :sample-end])))
+                  (is (seq (get-in audio [:waveform :bins])))
+                  (is (= (:frame-number (:view base)) (:frame-number view))))))))
+      (finally (.abort ^WebSocket (:socket client)) (show/stop! runtime) (.stop server)))))
