@@ -75,6 +75,19 @@
    :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
               "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
               "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
+  {:id :render/physical-output-in-afterglow
+   :title "Own physical DMX publication and fixture protocol handling in Afterglow"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/output/artnet.clj" "afterglow/src/afterglow/output/ola.clj"
+           "afterglow/src/afterglow/output/scheduler.clj" "afterglow/src/afterglow/rdm/codec.clj"
+           "afterglow/src/afterglow/rdm/transport.clj"
+           "tolglow/src/tolglow/output.clj" "tolglow/src/tolglow/rig/rdm.clj"]
+   :depends-on [:render/frame-v1]
+   :acceptance ["Independent Afterglow clients can open OLA and direct Art-Net sinks and use the frame scheduler"
+                "RDM discovery and control use Afterglow codecs and transport"
+                "Tolglow startup, calibration, pause settings and saved device associations use those same APIs"]
+   :evidence ["Afterglow TCP and UDP loopback, cancellation, generated protobuf parity and frame scheduling tests"
+              "Leiningen passed 25 Tolglow startup, RDM, pause and calibration integration tests with 227 assertions"]}
   {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
@@ -112,6 +125,17 @@
               "Optimized build 150 files / zero warnings"
               "14 real Ring/session/browser workflows; desktop, iPad and phone layouts; no browser errors"
               "docs/expressive-mapping-ui.md; roadmap validator passed with 107 items; integrated master 9a70836"]}
+  {:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :done
+   :title "Inspect the event journal and DMX, and author event subscribers in Studio"
+   :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/debug.cljs" "tolglow/src/studio/tolglow/studio/debug_socket.cljs"
+           "tolglow/src/studio/tolglow/studio/subscriber_editor.cljs" "tolglow/resources/studio/debug.css"]
+   :depends-on [:foundation/tests]
+   :evidence ["docs/studio-debug.md, test/studio/debug_browser.cjs and test/studio/debug_subscribers_browser.cjs"
+              "162 CLJS tests / 875 assertions; optimized build 181 files, zero warnings"
+              "Live isolated Jetty/Chromium event stream, native binary DMX, subscriber CRUD, clock delivery, cross-tab push, exact musical intervals, tablet and phone viewport checks passed"]
+   :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
+                "Inspect selected DMX universes and author real filtered, ordered subscriber actions"]}
   {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
@@ -154,7 +178,7 @@
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/calibration" "tolglow/src/tolglow/rig/calibration.clj"
            "tolglow/test/tolglow/calibration_test.clj" "tolglow/native/iOS/RigCalibration"
-           "tolglow/src/tolglow/output/scheduler.clj" "tolglow/docs/rig-calibration.md"]
+           "afterglow/src/afterglow/output/scheduler.clj" "tolglow/docs/rig-calibration.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Depth observations and temporal identity require physical output receipts"
                 "Robust pose fit preserves patch IDs and exposes uncertainty before rig review"
@@ -673,7 +697,7 @@
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
     "tolglow/src/tolglow/connections.clj"
-    "tolglow/src/tolglow/output/scheduler.clj"
+    "afterglow/src/afterglow/output/scheduler.clj"
     "tolglow/test/tolglow/output/scheduler_test.clj"
     "tolglow/test/tolglow/studio/sensor_host_test.clj"],
    :acceptance

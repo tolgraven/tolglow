@@ -62,7 +62,7 @@ passing suites; final combined source/manifest counts remain the root's gate.
 
 | Active lane | Exclusive write boundary | Review gate |
 | --- | --- | --- |
-| Root studio integration | Host, Ring handlers and `output_scheduler.clj` | Parallel effect workers, deterministic model commits and independent serial physical output |
+| Root studio integration | Host, Ring handlers and Afterglow output scheduling | Parallel effect workers, deterministic model commits and independent serial physical output |
 | `room_renderer_fog_fixture_optics` | Entire Three scene, fixture optics and fog pipeline | Room-wide volume, finite lens aperture, depth/shadows and actual visual/mobile review |
 | `studio_push_touch_interface` | Re-frame Studio/Push widgets and browser checks | Live waveform parity, captured audio, compact concurrent effects and sensor/touch flows |
 | `audio_capture_waveform_projections` | Read-only waveform projection, PCM summaries and central tracking | Actual effective parameters and measured bounded audio, off the lighting deadline |

@@ -168,47 +168,54 @@
                                       (contains? event :note) (assoc :note (:note event)))) (:commands result))]
         (commands! manager run commands)))))
 
+(defn- receive-handoff! [manager run {:keys [mode envelope]}]
+  (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
+    (swap! (:state manager) assoc-in [:config :live :mode] mode)
+    (commands! manager run (:commands result))
+    (doseq [event (:events result)] (emit! manager run event))
+    (when (:live @(:resources run))
+      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode mode}))))
+
+(defn- receive-recording! [manager run {:keys [command ack]} at]
+  (let [{:keys [config recording]} @(:state manager)
+        {:keys [record-route poll-ms]} (:live config)
+        observed (recording-at recording (get command :time-ms at) (max 1500 (* 3 poll-ms)))
+        plan (bridge-step! manager #(ableton/record-command % command ack observed))]
+    (when (seq (if (= :midi record-route) (:midi plan) (:intents plan)))
+      (enqueue-io!
+       manager run
+       (fn []
+         (let [result (try (transport/execute-plan! @(:resources run) record-route plan observed command ack)
+                           (catch Exception error
+                             {:status :indeterminate :error (error-data error) :command-id (:command-id command)}))]
+           (queue! manager run {:type :live/executed :result result})))))))
+
+(defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms]}]
+  (when (and (= :executed (:status response)) (#{:inspect :configure-destination} op))
+    (if (= status-version @(:status-version run))
+      (process-status! manager run (:result response) time-ms round-trip-ms)
+      (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0))))
+  (when (= :place-in-arrangement op) (swap! (:state manager) assoc :last-execution response))
+  (if (= :inspect op)
+    (when-not (= :executed (:status response))
+      (swap! (:state manager) assoc :last-error (:error response)))
+    (emit! manager run (assoc response :type :live/execution :op op))))
+
 (defn- receive! [manager run event at]
-  (let [config (:config @(:state manager))]
-    (case (:type event)
-      :midi/control (midi-control! manager run (:event event))
-      :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
-                       (swap! (:status-version run) inc))
-      :live/midi (do (when-not (= :tolglow-feedback (get-in event [:event :origin]))
-                       (midi/observe-midi! manager run (:event event) :live :live-playback (get event :time-ms at)))
-                    (midi-control! manager run (:event event)))
-      :live/acknowledgement
-      (receive-ack! manager (:note event) (:ack event) (:envelope event))
-      :live/handoff
-      (let [result (bridge-step! manager #(ableton/handoff % (:mode event) (:envelope event)))]
-        (swap! (:state manager) assoc-in [:config :live :mode] (:mode event))
-        (commands! manager run (:commands result))
-        (doseq [event (:events result)] (emit! manager run event))
-        (when (:live @(:resources run)) (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (:mode event)})))
-      :record/command
-      (let [cmd (:command event) ack (:ack event) recording (recording-at (:recording @(:state manager))
-                                                                                       (get cmd :time-ms at) (max 1500 (* 3 (get-in config [:live :poll-ms]))))
-            plan (bridge-step! manager #(ableton/record-command % cmd ack recording))]
-        (when (seq (if (= :midi (get-in config [:live :record-route])) (:midi plan) (:intents plan)))
-          (enqueue-io! manager run
-                       (fn []
-                         (let [result (try (transport/execute-plan! @(:resources run) (get-in config [:live :record-route]) plan recording cmd ack)
-                                           (catch Exception error {:status :indeterminate :error (error-data error) :command-id (:command-id cmd)}))]
-                           (queue! manager run {:type :live/executed :result result}))))))
-      :live/executed (do (swap! (:state manager) assoc :last-execution (:result event))
-                         (emit! manager run (assoc (:result event) :type :live/execution)))
-      :live/response
-      (let [response (:response event)]
-        (when (= :executed (:status response))
-          (when (#{:inspect :configure-destination} (:op event))
-            (if (= (:status-version event) @(:status-version run))
-              (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))
-              (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0)))))
-        (when (= :place-in-arrangement (:op event)) (swap! (:state manager) assoc :last-execution response))
-        (when-not (= :inspect (:op event)) (emit! manager run (assoc response :type :live/execution :op (:op event))))
-        (when (and (= :inspect (:op event)) (not= :executed (:status response)))
-          (swap! (:state manager) assoc :last-error (:error response))))
-      (fail! :invalid-event "Unknown synchronization event"))))
+  (case (:type event)
+    :midi/control (midi-control! manager run (:event event))
+    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+                     (swap! (:status-version run) inc))
+    :live/midi (let [message (:event event)]
+                 (when-not (= :tolglow-feedback (:origin message))
+                   (midi/observe-midi! manager run message :live :live-playback (get event :time-ms at)))
+                 (midi-control! manager run message))
+    :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))
+    :live/handoff (receive-handoff! manager run event)
+    :record/command (receive-recording! manager run event at)
+    :live/executed (do (swap! (:state manager) assoc :last-execution (:result event))
+                       (emit! manager run (assoc (:result event) :type :live/execution)))
+    :live/response (receive-response! manager run event)))
 
 (defn- prepare-state [state phase]
   (when (and (= phase :start) (>= (count (:retired state)) 16))

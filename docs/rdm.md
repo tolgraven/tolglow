@@ -12,6 +12,8 @@ support RDM. DMX output support alone does not establish RDM support. Direct
 Art-Net RDM/ArtTod discovery remains a separate implementation task. Existing
 OLA and direct ArtDMX lighting sinks remain unchanged.
 
+Afterglow owns RPC framing and RDM commands in `afterglow.rdm.codec` and `afterglow.rdm.transport`. Tolglow manages jobs, show-epoch fencing and saved device associations in `tolglow.rig.rdm`.
+
 ## Workflow
 
 1. Set the OLA host/port and enable the session. Choose the RDM universe and run
