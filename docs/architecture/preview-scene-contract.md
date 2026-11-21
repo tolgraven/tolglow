@@ -122,3 +122,62 @@ sizes, shadow/fog budget and input responsiveness. Software Chromium rendering
 proves shader execution and images, not iPad frame rate or thermal behaviour.
 Physical mobile and desktop GPU performance are separate gates. Preserve the
 render-independent show-control deadline even if the preview reduces quality.
+
+## Display refresh and committed lighting
+
+The default **Follow show frames** presents each committed fixture output on
+arrival. Camera movement and the atmospheric pass use local display time. The
+mobile, desktop and high quality tiers request display callbacks up to 120 Hz.
+The low tier retains a 10 Hz budget for software rendering. Actual cadence
+depends on the display, GPU completion time, graphics settings and browser.
+Auto quality reduces target dimensions after repeated over-budget frames and
+recovers gradually with sustained headroom. The worker uses completed GPU work
+for this decision. The fallback uses CPU submission time. Manual quality keeps
+its configured resolution. The fog field keeps its bounded simulation timestep
+across display rates.
+Workers use display callbacks when supported and an elapsed-time deadline on
+browsers that only provide worker timers. A worker waits for the previous GPU
+frame and bitmap acknowledgement before scheduling another draw.
+
+**Smooth · one frame delay** blends the two latest consecutive committed frames
+over their timestamp difference, normally 25 ms. Only linear emitted RGB,
+dimmer, intensity and resolved pan/tilt travel can blend. Axis interpolation
+uses fixture calibration and the backend's chosen physical travel. Missing axes
+and half-turn jumps follow the latest resolved direction. Fixture functions,
+shutters, gobos, focus and zoom take their new value on the original frame.
+A shutter transition, tagged fixture cut, or active strobe snaps the fixture to its current result. The preview holds the latest
+sample when updates stall. A reconnect with a new runtime or epoch, rig edit,
+command revision, blackout transition, observed lifecycle cut or skipped frame
+starts a fresh pair. Authored steps on continuous parameters can still look
+smoother in this mode. Use **Follow show frames** to see their exact timing.
+
+The canvas consumes the acknowledged server projection. The worker receives the
+rig once per change and receives new output independently from camera input.
+Display callbacks perform graphics work locally. Tests exercise frame sampling,
+120/60 Hz clocks and worker/fallback rendering. Physical 120 Hz MacBook Pro and
+iPad Pro performance requires measurement on those devices.
+
+### Suspension and resume
+
+The canvas starts its graphics context after its first positive intersection
+with the viewport in a visible, focused window. Scrolling it completely out of
+view, hiding its tab, blurring the window or leaving the page stops the camera
+and display callbacks. Resizing or entering fullscreen still respects all four
+conditions. Show output and other Studio controls continue running.
+
+A suspended preview retains the latest show projection. The worker finishes a
+GPU frame already submitted and discards its bitmap if its visibility generation
+has expired. No further preview states, camera messages or frames are sent
+while suspended. Resume reapplies the current rig, latest fixture values and
+viewport, and resets the elapsed time for fog, camera and interpolation. Unmount
+disconnects viewport observation, event handlers, renderer and outstanding
+callbacks. Remount creates a fresh owner.
+
+The original tolglow-web preview paused its rendering loop at zero intersection
+and on component unmount. [Reference implementation](https://github.com/tolgraven/tolglow-web/blob/2b58843/src/cljs/tolglow_web/three.cljs#L560-L640).
+The combined activity signals have deterministic tests. The Chromium camera
+suite scrolls the real canvas, enters and exits fullscreen, checks that suspended
+input produces zero frames, and mounts a second hidden preview for both render
+paths. Its mixed-gate check dispatches window blur/focus events. The unit suite
+simulates tab visibility, window focus and page lifecycle changes. Physical
+macOS and iPadOS window switching and display refresh need device verification.
