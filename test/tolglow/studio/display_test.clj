@@ -67,6 +67,27 @@
     (is (map? (display/process-capture {:browser-executable "/configured/chromium"
                                       :worker-script "/missing/custom-worker.cjs"})))))
 
+(deftest closing-a-parent-that-exits-does-not-abandon-its-stubborn-child
+  ;; Inject only the OS process boundary to make parent/child exit order
+  ;; deterministic without deliberately leaving orphan processes in a test.
+  (let [child-alive? (atom true) parent-alive? (atom true) signals (atom [])
+        child (reify java.lang.ProcessHandle
+                (isAlive [_] @child-alive?)
+                (destroy [_] (swap! signals conj :term) true)
+                (destroyForcibly [_] (swap! signals conj :kill) (reset! child-alive? false) true))
+        parent-handle (reify java.lang.ProcessHandle
+                        (descendants [_] (.stream (java.util.Collections/singletonList child))))
+        parent (proxy [Process] []
+                 (toHandle [] parent-handle)
+                 (destroy [] (reset! parent-alive? false))
+                 (waitFor
+                   ([] 0)
+                   ([_ _] true)))]
+    (#'display/destroy-process! parent 100)
+    (is (false? @parent-alive?))
+    (is (false? @child-alive?))
+    (is (= [:term :kill] @signals))))
+
 (deftest packaged-production-worker-captures-with-explicit-module-and-cleans-its-file
   (let [source (slurp (io/resource "tolglow/integrations/display_bridge/worker.js"))]
     (with-packaged-worker source
@@ -225,6 +246,7 @@
           (is (= 960 (.getWidth ^BufferedImage ((:capture! capture) handle {:title "Test"}))))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"deadline" ((:capture! capture) handle {:stall true})))
           (is (false? (.isAlive ^Process (:process handle))))
+          (is (.isFile script) "An explicit worker remains caller-owned after capture failure")
           (is (thrown? clojure.lang.ExceptionInfo ((:capture! capture) handle {:title "After close"})))
           (finally ((:close! capture) handle))))
       (finally (io/delete-file script true)))))

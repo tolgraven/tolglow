@@ -34,9 +34,11 @@
       (doseq [^ProcessHandle child descendants] (.destroy child))
       (.destroy process)
       (when-not (wait!)
-        (doseq [^ProcessHandle child descendants] (when (.isAlive child) (.destroyForcibly child)))
         (.destroyForcibly process)
         (wait!))
+      ;; A Node parent may exit before a browser descendant obeys TERM. The
+      ;; parent's successful wait must not release our ownership of that child.
+      (doseq [^ProcessHandle child descendants] (when (.isAlive child) (.destroyForcibly child)))
       (finally (when @interrupted? (.interrupt (Thread/currentThread)))))))
 
 (defn- remove-script! [{:keys [^File script-file temporary-script?]}]

@@ -34,15 +34,21 @@ lighting output clock or the native display sink.
 
 ## Verification, 2026-11-21
 
-- Focused JVM display suite: **9 tests / 44 assertions**, passing. The actual
+- Focused JVM display suite: **10 tests / 48 assertions**, passing. The actual
   production worker is read through a `jar:` resource and run by Node; only its
   external browser is an injected process-boundary peer. Tests cover PNG
   capture, failed executable/browser startup, cancellation, inert construction,
-  cleanup and existing mailbox/native-sink behavior.
+  cleanup and existing mailbox/native-sink behavior. An OS-process boundary
+  fixture also verifies that a child ignoring termination is forcibly stopped
+  even when its parent exits promptly.
 - Node suite: **6 tests**, passing, including execution of an extracted worker
   with dependency resolution from a separate launch directory and an absolute
   override.
-- Complete pure JVM lane: **459 tests / 3,605 assertions**, passing.
+- Initial packaging checkpoint pure JVM lane: **459 tests / 3,605 assertions**,
+  passing. After the descendant-exit regression was added, the focused display
+  suite passed. A complete rerun reached 460 tests / 3,609 assertions but failed
+  the pre-existing workspace metadata-tampering test with `fatal: bad object
+  HEAD`; that separate workspace issue was reported to the coordinator.
 - `lein jar` completed; the application JAR contains the exact production
   worker bytes at the expected classpath resource name.
 - Actual Chromium capture: production worker through a real `jar:` resource,
