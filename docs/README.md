@@ -28,6 +28,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
+| [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |

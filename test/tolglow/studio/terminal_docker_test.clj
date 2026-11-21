@@ -3,9 +3,9 @@
   missing Docker/image is a failure, never silently skipped or a host-shell fallback."
   (:require [clojure.test :refer :all]
             [clojure.string :as str]
-            [tolglow.studio.workspace :as workspace]
-            [tolglow.studio.workspace-test :as fixtures]
-            [tolglow.studio.terminal :as terminal])
+            [tolglow.development.workspace :as workspace]
+            [tolglow.development.workspace-test :as fixtures]
+            [tolglow.development.terminal :as terminal])
   (:import [java.util Base64]
            [java.nio.charset StandardCharsets]
            [java.util.concurrent CountDownLatch TimeUnit]))

@@ -87,7 +87,7 @@ Art-Net™ Designed by and Copyright Artistic Licence.
 
 ## Connection ownership and failure behavior
 
-`tolglow.studio.output/open-sink!` accepts `{:ola {...}}`, `{:artnet {...}}`, or
+`tolglow.output/open-sink!` accepts `{:ola {...}}`, `{:artnet {...}}`, or
 neither. `open-ola!` and `open-artnet!` return
 `{:send! (fn [universes frame-number]) :close! (fn []) :description {...}}`.
 The host owns their lifetime. Output happens on the dedicated serial publication
@@ -120,7 +120,7 @@ OLA framing uses native byte order; communicating hosts must agree on endianness
 
 ## Verification and remaining hardware gate
 
-`tolglow.studio.output-test` exercises both real UDP and TCP loopback sockets,
+`tolglow.output-test` exercises both real UDP and TCP loopback sockets,
 universe/byte boundaries, source-buffer ownership, repeated source frames,
 idempotent close, frame validation before publication, failure retirement, and
 a non-reading TCP peer that forces the OLA write deadline. Injected transports

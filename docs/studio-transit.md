@@ -1,7 +1,7 @@
 # Studio Transit values
 
 The Studio codec uses Cognitect Transit JSON on Clojure and ClojureScript.
-`tolglow.studio.transit/encode` returns a UTF-8 JSON text message, and `decode`
+`tolglow.transit/encode` returns a UTF-8 JSON text message, and `decode`
 reconstructs the value. Each message has its own Transit cache. Keywords,
 strings, sets and vector keys can be used directly. For example, `:rig/spot`
 and `"rig/spot"` can occur as two keys in the same map.

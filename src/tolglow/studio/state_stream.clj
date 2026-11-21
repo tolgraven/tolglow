@@ -2,7 +2,7 @@
   "Push committed snapshots to Studio over Transit WebSockets."
   (:require [ring.websocket :as ws]
             [tolglow.studio.projection :as projection]
-            [tolglow.studio.transit :as transit])
+            [tolglow.transit :as transit])
   (:import [java.util UUID]
            [java.util.concurrent Semaphore]
            [java.util.concurrent.atomic AtomicReference]))

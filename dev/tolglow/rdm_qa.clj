@@ -3,7 +3,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [tolglow.studio :as studio]
-            [tolglow.studio.rdm-test :as peer]))
+            [tolglow.rig.rdm-test :as peer]))
 
 (defn -main [& [port connection-file]]
   (let [port (Long/parseLong (or port "8535"))

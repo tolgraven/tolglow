@@ -138,7 +138,7 @@ integration evidence rather than conclusions of those tests.
 
 ## Studio configuration, saved conversations and worker lifetime
 
-`tolglow.studio.agents/create-manager` owns bounded chat workers, conversation
+`tolglow.agents/create-manager` owns bounded chat workers, conversation
 history and runtime key objects. `configure!` validates provider/model/endpoint
 and limits without network access; `public-config` exposes settings/readiness,
 never raw credentials. Pass `:credential` or `:api-key` when changing a key, omit
@@ -325,14 +325,14 @@ guarantee, nor a comparison with another engine.
 
 ## Explicit studio audio capture
 
-`tolglow.studio.audio` owns the optional JavaSound input boundary. Requiring it,
+`tolglow.audio.capture` owns the optional JavaSound input boundary. Requiring it,
 creating a manager and calling `list-inputs` do not open a device. `start!` requires
 an explicit `:mixer-index` from the current enumeration or `:default? true`, then
 opens signed 16-bit mono/stereo PCM on one daemon capture worker. An optional
 `:mixer-name` rejects a stale index after device enumeration changes.
 
 ```clojure
-(require '[tolglow.studio.audio :as capture])
+(require '[tolglow.audio.capture :as capture])
 (let [manager (capture/create-manager)
       handle (capture/start! manager
                              {:mixer-index chosen-index :sample-rate 48000.0
