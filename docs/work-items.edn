@@ -1,7 +1,16 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :studio/committed-event-inspection
+ [{:id :application/configured-startup
+   :kind :implementation :status :in-progress :owner "configured-startup"
+   :title "Start a headless or web show from ordered Tolglow config modules"
+   :paths ["tolglow/src/tolglow/modules.clj" "tolglow/src/tolglow/application.clj" "tolglow/src/tolglow/show.clj"
+           "tolglow/test/tolglow/application_test.clj" "tolglow/docs/application-startup.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["A configured module runs once in original component/module/post order"
+                "A headless show advances real frames without a web server"
+                "Optional Studio connects to the same show and shutdown unwinds acquired modules"]}
+  {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
    :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"
