@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
@@ -73,7 +74,7 @@
      [:nav {:aria-label "Studio views"}
       (for [[view title icon n] [[:perform "Perform" "▦" "1"] [:compose "Compose" "▤" "2"]
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
-                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"]]]
+                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"] [:debug "Debug" "≋" "8"]]]
         ^{:key view}
         [:a.nav-item {:href (nav/href view) :class (when (= view (:view ui)) "selected") :data-view (name view)
                        :aria-current (when (= view (:view ui)) "page")}
@@ -688,7 +689,7 @@
     [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
    [:span.mobile-file-actions [button "mobile-export" "Export show ↗" [:studio/export] "text-button"]
     [:label#mobile-import.text-button.file-label {:html-for "import-show"} "Import show ↙"]]
-   [:span#shortcut-hint "B blackout · Space transport · 1–7 views"]])
+   [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
 (defn studio []
   (let [db @(rf/subscribe [:studio/db])
@@ -710,6 +711,7 @@
        (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
               [expressive/panel (:show db)]])
        (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
+       (when (= :debug (get-in db [:ui :view])) [debug/panel])
        [footer db]]]
      [cue-actions db] [prompt-dialog db] [repl/console-view]
      (when-let [toast (get-in db [:ui :toast])]

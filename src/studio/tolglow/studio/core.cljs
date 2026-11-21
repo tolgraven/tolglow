@@ -51,6 +51,7 @@
                  "5" (rf/dispatch [:studio/set-view :assistant])
                  "6" (rf/dispatch [:studio/set-view :connections])
                  "7" (rf/dispatch [:studio/set-view :develop])
+                 "8" (rf/dispatch [:studio/set-view :debug])
                  nil))))))
 
 (defn ^:export init! []
