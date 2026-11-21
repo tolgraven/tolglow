@@ -1982,6 +1982,15 @@
    :depends-on
    [:development/workspace-service-v1 :development/terminal-v1],
    :owner nil}
+  {:id :audio/band-and-bass-patch-sources
+   :title "Map live band levels and confident sub-bass pitch to cue parameters"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/bands.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Stream low/mid/high levels across PCM block boundaries and estimate monophonic bass in Hz"
+                "Apply a measured tone to an active effect parameter, close the pitch gate on silence"]
+   :evidence ["docs/audio-analysis.md"
+              "22 focused analysis + host routing tests, 226 assertions, including measured 41.2 Hz and 65 Hz and confidence gating"]}
   {:id :studio/transit-show-files
    :title "Save and restore complete show runs through the shared Transit codec"
    :kind :implementation :status :done :owner nil
