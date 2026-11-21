@@ -54,13 +54,18 @@ dark fixtures. This warms the actual shader layout before readiness, avoiding a
 new light-count program when a cue starts; zero RGB still emits exactly no light.
 Telemetry separates active emission count from allocated shadow slots.
 
-Rig coordinates remain metres, Y up. The old analytic preview's tilt convention
-was wrong: the real CPU renderer uses elevation 0 along +Z and -90 degrees down.
-`math.js` prioritizes world `direction`/`aim`, otherwise reverses the CPU servo
-calibration and fixture rotation. A checked-in oracle is captured by the actual
-`afterglow.render.frame/resolve-frame`, with geometry and servo round-trip tests.
-Regenerate it from the repo root with
-`clojure -M dev/tolglow/capture_preview_oracle.clj`.
+Rig coordinates are metres with Y up. The local beam points along +Z at 0°
+elevation. The bounded show projection includes `:pose` from Afterglow for
+each selected head with two committed servo channels. Its mechanical degrees
+retain the chosen wrap, and its world direction includes clamped travel and
+mount rotation. The yoke, lens, spotlight, shadow and fog follow this pose.
+Samples lacking both axes can still display an available world direction or aim.
+Optional interpolation uses the two mechanical angles and snaps across large
+end-stop reversals. Calibrated motion describes the command sent to the fixture;
+motor response and optical calibration depend on the actual hardware.
+
+Regenerate the CPU fixture oracle from the Tolglow root with
+`lein run -m clojure.main dev/tolglow/capture_preview_oracle.clj`.
 
 A finite aperture uses the same lens radius as the mesh (default .119m, optional
 `lens-radius-m`). The optical origin stays at the saved fixture position. A

@@ -78,3 +78,27 @@ test('worker without supported requestAnimationFrame uses positive cancellable d
   now=58; pending(); assert.equal(draws,1);
   clock.at(58, () => draws++); assert.equal(delay,1); clock.cancel(); assert.equal(pending,null);
 });
+
+test('pan sampled at the same requested bearing respects the committed end-stop reversal', () => {
+  const samples = new LightingSamples();
+  samples.setMode('interpolate');
+  const requested = {direction: [0,0,-1], 'pan-deg': 180, 'tilt-deg': 0};
+  const old = {...requested, pan: (180+270)/540, tilt: .5, pose: {'pan-deg': 180, 'tilt-deg': 0, direction: [0,0,-1]}};
+  const current = {...requested, pan: (-180+270)/540, tilt: .5, pose: {'pan-deg': -180, 'tilt-deg': 0, direction: [0,0,-1]}};
+  samples.accept(frame(1, old), rig, 100);
+  samples.accept(frame(2, current), rig, 125);
+  const middle = samples.values(fixtures, 137.5).head;
+  assert.equal(middle.pan, current.pan);
+  assert.equal(middle.pose, current.pose);
+});
+
+test('the interpolated pose drops the current endpoint direction and uses both mechanical angles', () => {
+  const samples = new LightingSamples();
+  samples.setMode('interpolate');
+  const make = (level, degrees) => ({channels:{pan:level, tilt:.5}, 'pan-deg':90, 'tilt-deg':90,
+    pose:{'pan-deg':degrees,'tilt-deg':0,direction:[0,0,1]}});
+  samples.accept(frame(1, make(.5, 0)), rig, 100);
+  samples.accept(frame(2, make(5/9, 30)), rig, 125);
+  const middle = samples.values(fixtures, 137.5).head;
+  assert.deepEqual(middle.pose, {'pan-deg':15,'tilt-deg':0});
+});

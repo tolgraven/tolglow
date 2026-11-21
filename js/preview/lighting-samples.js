@@ -1,6 +1,6 @@
 // Lighting time belongs to the show; arrival and display times share the local
 // monotonic clock. Hold the latest committed result when the pair is incomplete.
-import {axisDegrees} from './math.js';
+import {axisDegrees, servoValue} from './math.js';
 import {showIdentity} from './presentation.js';
 
 const EMPTY = Object.freeze({});
@@ -22,13 +22,15 @@ function between(previous, current, fixture, amount) {
   // Use the actuator travel selected by the backend. Spinning through the
   // pan end-stop is a visible discontinuity, even if the beam directions meet.
   const axes = ['pan', 'tilt'];
-  if (axes.every(axis => Number.isFinite(previous[axis]) && Number.isFinite(current[axis]) &&
+  if (axes.every(axis => servoValue(previous, axis) !== undefined && servoValue(current, axis) !== undefined &&
       Math.abs(axisDegrees(fixture, current, axis) - axisDegrees(fixture, previous, axis)) < 180)) {
     for (const axis of axes) {
-      result[axis] = mix(previous[axis], current[axis], amount);
+      result[axis] = mix(servoValue(previous, axis), servoValue(current, axis), amount);
       result[axis + '-deg'] = mix(axisDegrees(fixture, previous, axis), axisDegrees(fixture, current, axis), amount);
     }
-    // Read the in-between orientation from the calibrated mechanical axes.
+    // The committed pose is the latest endpoint; use the sampled mechanical
+    // angles to position the yoke and beam between those endpoints.
+    result.pose = {'pan-deg': result['pan-deg'], 'tilt-deg': result['tilt-deg']};
     delete result.direction;
     delete result.aim;
   }
