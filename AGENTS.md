@@ -12,6 +12,8 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - Tolglow owns authoring, registry/compiler, composition/policy, integrations and
   the new studio. The companion `tolgraven/afterglow` fork owns the shared
   runtime/control/render modules, device transports and legacy application.
+  Moving-head calibration, GLSL, GPU dispatch and readback belong in Afterglow.
+  Tolglow can measure a whole show through that API and owns the Studio scene.
   Keep independent repositories and preserve existing `tolmaster` work.
 - The full project has JVM application source under `src/tolglow/`, with
   `resources/`, `test/`, `dev/`, `bin/`, and a root `project.clj` application
