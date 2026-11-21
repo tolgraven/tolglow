@@ -6,7 +6,7 @@
             [ring.adapter.jetty :as jetty]
             [tolglow.bench-show :as bench]
             [tolglow.studio :as studio]
-            [tolglow.studio.transit :as transit])
+            [tolglow.transit :as transit])
   (:import [java.lang.management ManagementFactory]
            [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]

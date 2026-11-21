@@ -4,9 +4,9 @@
             [tolglow.clock :as clock]
             [tolglow.studio :as studio]
             [tolglow.integrations.analysis :as analysis]
-            [tolglow.studio.connections :as connections]
-            [tolglow.studio.persistence :as persistence]
-            [tolglow.studio.routing :as routing]
+            [tolglow.connections :as connections]
+            [tolglow.persistence :as persistence]
+            [tolglow.routing :as routing]
             [afterglow.sync.session :as session]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})

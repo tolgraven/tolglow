@@ -5,11 +5,11 @@
             [afterglow.render.frame :as render]
             [tolglow.calibration.geometry :as g]
             [tolglow.calibration.session :as scan]
-            [tolglow.studio.calibration :as host]
-            [tolglow.studio.persistence :as files]
+            [tolglow.rig.calibration :as host]
+            [tolglow.persistence :as files]
             [tolglow.studio :as studio]
-            [tolglow.studio.demo :as demo]
-            [tolglow.studio.output-scheduler :as scheduler]
+            [tolglow.demo :as demo]
+            [tolglow.output.scheduler :as scheduler]
             [tolglow.studio.web :as web]))
 
 (def fixture (assoc (first (demo/fixtures)) :position [0 0 0] :rotation-deg [180 25 -10]

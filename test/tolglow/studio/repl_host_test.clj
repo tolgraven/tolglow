@@ -4,7 +4,7 @@
             [clojure.string :as str]
             [ring.core.protocols :as protocols]
             [tolglow.studio :as studio]
-            [tolglow.studio.repl-manager :as repl-manager])
+            [tolglow.repl.sessions :as repl-manager])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream]))
 
 (defn- request [runtime path payload]

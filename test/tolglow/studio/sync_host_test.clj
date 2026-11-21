@@ -2,7 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
             [tolglow.studio :as studio]
-            [tolglow.studio.connections :as connections]
+            [tolglow.connections :as connections]
             [afterglow.sync :as sync]
             [afterglow.sync.session :as session]))
 

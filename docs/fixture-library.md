@@ -176,9 +176,9 @@ there is no silent truncation to fit that bound.
 
 ## API and implementation map
 
-- [studio/fixtures.clj](../src/tolglow/studio/fixtures.clj): immutable cache and
+- [studio/fixtures.clj](../src/tolglow/fixtures/definitions.clj): immutable cache and
   explicit provider calls; `search` is offline, `search-remote` is explicit.
-- [studio/fixture_service.clj](../src/tolglow/studio/fixture_service.clj):
+- [studio/fixture_service.clj](../src/tolglow/fixtures/library.clj):
   `create-manager`, `snapshot`, `search!`, `refresh!`, `fetch!`, `import!`,
   `export-state`, `validate-state`, `restore!` and `close!`; pure `import-file`
   and `instantiate`.
@@ -211,7 +211,7 @@ including fine bytes. An explicit footprint reserves every byte in the mode,
 including unused holes, so another fixture cannot overlap those holes. IDs may
 be plain strings or namespaced keywords; typed EDN preserves the distinction.
 
-[studio/rig.clj](../src/tolglow/studio/rig.clj) supplies shared validation for the
+[studio/rig.clj](../src/tolglow/rig.clj) supplies shared validation for the
 complete rig and saved shows. It preserves imported scene metadata, checks the
 actual fixture patch, and rejects nonportable values. Room dimensions must be
 positive finite metres when a room is supplied. Trusses have unique stable IDs,

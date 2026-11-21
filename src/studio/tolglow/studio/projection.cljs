@@ -1,7 +1,7 @@
 (ns tolglow.studio.projection
   "Apply exact-base transport deltas to an authoritative server projection.
   UI drafts belong above this layer and never become a patch base."
-  (:require [tolglow.studio.transit :as transit]))
+  (:require [tolglow.transit :as transit]))
 
 (def protocol "tolglow-state/2")
 

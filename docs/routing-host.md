@@ -1,6 +1,6 @@
 # Signal routing in the running studio
 
-The patch bay now runs in the actual owner frame, before parameter modulation and effect evaluation. `tolglow.studio.routing` captures input, calls the pure `tolglow.integrations.patch` graph, then submits resulting `:param/set` commands through the studio's common command reducer. The graph itself opens no devices. The owner still renders once and decides whether to send physical output.
+The patch bay now runs in the actual owner frame, before parameter modulation and effect evaluation. `tolglow.routing` captures input, calls the pure `tolglow.integrations.patch` graph, then submits resulting `:param/set` commands through the studio's common command reducer. The graph itself opens no devices. The owner still renders once and decides whether to send physical output.
 
 ## Admission and source discovery
 

@@ -2,7 +2,7 @@
   "Per-channel carrier and return assignments in the Studio signal patchbay."
   (:require [re-frame.core :as rf]
             [tolglow.studio.events :as events]
-            [tolglow.studio.transit :as wire]))
+            [tolglow.transit :as wire]))
 
 (def empty-config {:channels 2 :block-frames 1024 :sample-rate 48000 :lanes []})
 (defn- epoch [db] ((juxt :runtime-id :epoch) (:show db)))

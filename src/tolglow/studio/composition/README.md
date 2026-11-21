@@ -1,6 +1,6 @@
 # Studio composition bridge
 
-`tolglow.studio.composition` keeps the existing pure host API:
+`tolglow.composition` keeps the existing pure host API:
 
 ```clojure
 (save model definition)
@@ -62,7 +62,7 @@ are no-ops. Show epochs discard stale executions and tokens without sending end
 commands into the new show. Saving an edited definition leaves the active run's
 captured definition intact; restart explicitly to adopt it.
 
-`tolglow.studio.composition-test` covers normalization, validation, tempo changes,
+`tolglow.composition-test` covers normalization, validation, tempo changes,
 both pause modes, paused starts, owned release, restart isolation, and editing
 while running using the actual control model and effect runtime.
 
