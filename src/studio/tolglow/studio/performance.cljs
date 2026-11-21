@@ -167,7 +167,6 @@
       {:db (store db (cond-> (update (state db) :requests dissoc request-key)
                        (and (= operation "instance/opacity-set") (= serial (get-in (state db) [:opacity key :serial])))
                        (assoc-in [:opacity key :revision] (:revision ack))))
-       :dispatch [:studio/poll]
        :dispatch-later (when (and (= operation "instance/opacity-set") (get-in (state db) [:opacity key :scheduled?]))
                          [{:ms 65 :dispatch [:performance/flush-opacity token key]}])} {})))
 (rf/reg-event-fx :performance/failed

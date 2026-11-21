@@ -4,13 +4,15 @@
             [re-frame.core :as rf]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.state-socket]
+            [tolglow.studio.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
   "{:id :after-hours\n :version 1\n :name \"After hours\"\n :swatch \"#b981a3\"\n :duration {:beats 4}\n :envelope {:attack {:beats 0.125} :release {:beats 1}}\n :params {:level {:type :number :default 0.7 :bounds [0.0 1.0]}}\n :outputs {:color {:op :const :value [0.725 0.506 0.639]}\n           :dimmer {:op :param :key :level}}}")
 
 (defn initial-db [session]
-  {:session session :show nil :pointers {} :pending-params {} :drafts {} :polling? false
+  {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
    :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false :fog 0.3
         :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
@@ -64,14 +66,21 @@
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
                  (clj->js (cond-> {:method (if (some? body) "POST" "GET") :cache "no-store"
-                                  :signal (.-signal controller)}
-                           (some? body) (assoc :headers {"Content-Type" "application/json"}
-                                              :body (js/JSON.stringify (clj->js body))))))
+                                  :signal (.-signal controller)
+                                  :headers (cond-> {"Accept" "application/transit+json"}
+                                             (some? body) (assoc "Content-Type" "application/transit+json"
+                                                                 "X-Tolglow-Form" "studio-v1"))}
+                           (some? body) (assoc :body (transit/encode body)))))
         (.then (fn [response]
                  (-> (.text response)
                      (.then (fn [text]
-                              (let [data (try (js->clj (js/JSON.parse text) :keywordize-keys true)
-                                              (catch :default _ {:message text}))]
+                              (let [type (or (.get (.-headers response) "content-type") "")
+                                    data (cond
+                                           (str/includes? type "application/transit+json")
+                                           (projection/presentation (transit/decode text))
+                                           (str/includes? type "application/json")
+                                           (js->clj (js/JSON.parse text) :keywordize-keys true)
+                                           :else {:message text})]
                                 (if (or (not (.-ok response)) (= "rejected" (:status data)) (:error data))
                                   (throw (js/Error. (str (error-message data))))
                                   data)))))))
@@ -122,17 +131,6 @@
     (if (seq s) s "untitled")))
 
 (defn snapshot-order [show] (mapv #(get show % 0) [:epoch :revision :frame-number]))
-(defn merge-projection [current incoming]
-  (if (:partial? incoming)
-    (when (and current
-               (= (select-keys current [:runtime-id :epoch :revision])
-                  (select-keys incoming [:runtime-id :epoch :revision])))
-      (merge current (dissoc incoming :partial?)))
-    (dissoc incoming :partial?)))
-(defn state-url [db]
-  (str "/api/state?projection=delta-v1&session=" (js/encodeURIComponent (:session db))
-       (when-let [token (and (not (:force-full? db)) (get-in db [:server-projection :token]))]
-         (str "&base=" (js/encodeURIComponent token)))))
 (defn outstanding-drafts [drafts show]
   (into {} (filter (fn [[_ draft]]
                     (and (= (:epoch draft) (:epoch show))
@@ -152,65 +150,64 @@
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
 (rf/reg-event-fx :studio/initialize
-  (fn [_ [_ session]] {:db (initial-db session) :fx [[:dispatch [:studio/poll]] [:dispatch [:studio/settings-load]]]}))
-(rf/reg-event-fx :studio/poll
-  (fn [{:keys [db]} _]
-    (when-not (:polling? db)
-      {:db (assoc db :polling? true)
-       :studio/http {:path (state-url db)
-                     :on-success [:studio/state-response (get-in db [:server-projection :token])]
-                     :on-failure [:studio/poll-response-failed (get-in db [:server-projection :token])]}})))
-(rf/reg-cofx :studio/visibility
-  (fn [cofx _] (assoc cofx :hidden? (and (exists? js/document) (.-hidden js/document)))))
-(defn receive-state [{:keys [db hidden?]} incoming]
-  (let [delta? (contains? incoming :protocol)
-        received (when delta? (projection/receive (:server-projection db) incoming))
-        server (when (#{:accepted :duplicate} (:status received)) (:state received))
-        accepted (if delta? (:view server) (merge-projection (:show db) incoming))]
-    (if-let [show accepted]
-    (let [runtime-changed? (and (:show db) (not= (:runtime-id show) (get-in db [:show :runtime-id])))
-          old? (and (not runtime-changed?) (:snapshot-order db) (neg? (compare (snapshot-order show) (:snapshot-order db))))
-          show (if old? (:show db) show)
-          drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) show))
-          order (snapshot-order show)
-          show (apply-drafts show drafts)
-          page-id (get-in db [:ui :page-id])
-          selected (get-in db [:ui :selected-instance])
-          epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
-          updated (-> db (assoc :show show :snapshot-order order :drafts drafts :polling? false :force-full? false :connection {:connected? true}
-                               :server-projection (if old? (:server-projection db) server))
-                      (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
-          updated (if (some #(= selected (:id %)) (:instances show)) updated
-                    (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
-          updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
-      {:db updated
-       :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
-                                          [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
-                                          (notice "Show restarted; controls follow the new epoch."))
-             runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
-             (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
-             (conj [:dispatch [:studio/settings-received (:settings show)]]))
-       :dispatch-later [{:ms (if hidden? 1500 100) :dispatch [:studio/poll]}]})
-      {:db (assoc db :polling? false :force-full? true)
-       :dispatch-later [{:ms 20 :dispatch [:studio/poll]}]})))
-(rf/reg-event-fx :studio/state [(rf/inject-cofx :studio/visibility)]
-  (fn [cofx [_ incoming]] (receive-state cofx incoming)))
-(rf/reg-event-fx :studio/state-response [(rf/inject-cofx :studio/visibility)]
-  (fn [{:keys [db] :as cofx} [_ requested-token incoming]]
-    (if (= requested-token (get-in db [:server-projection :token]))
-      (receive-state cofx incoming)
-      {:db (assoc db :polling? false)
-       :dispatch-later [{:ms 100 :dispatch [:studio/poll]}]})))
-(rf/reg-event-fx :studio/poll-response-failed
-  (fn [{:keys [db]} [_ requested-token error]]
-    (when (= requested-token (get-in db [:server-projection :token]))
-      {:dispatch [:studio/poll-failed error]})))
-(rf/reg-event-fx :studio/poll-failed
-  (fn [{:keys [db]} [_ error]]
-    {:db (assoc db :polling? false :snapshot-order nil :drafts {} :pending-params {} :force-full? true
-                :connection {:connected? false :error (str "Reconnecting: " error)})
-     :dispatch [:studio/release-pointers]
-     :dispatch-later [{:ms 1000 :dispatch [:studio/poll]}]}))
+  (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
+
+(defn- install-show [db server]
+  (let [presentation (projection/presentation (:view server)
+                                              (get-in db [:server-projection :view]) (:server-presentation db))
+        runtime-changed? (and (:show db) (not= (:runtime-id presentation) (get-in db [:show :runtime-id])))
+        drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) presentation))
+        order (snapshot-order presentation)
+        show (apply-drafts presentation drafts)
+        page-id (get-in db [:ui :page-id])
+        selected (get-in db [:ui :selected-instance])
+        epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
+        updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
+                             :server-projection server :server-presentation presentation)
+                    (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
+        updated (if (some #(= selected (:id %)) (:instances show)) updated
+                  (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
+        updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
+    {:db updated
+     :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
+                                        [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
+                                        (notice "Show restarted; controls follow the new epoch."))
+           runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
+           (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
+           (conj [:dispatch [:studio/settings-received (:settings show)]]))}))
+
+(rf/reg-event-db :studio/stream-opening
+  (fn [db [_ session id]]
+    (if (= session (:session db))
+      (assoc db :stream-id id :awaiting-full? true)
+      db)))
+
+(defn- current-stream? [db session id]
+  (and (= session (:session db)) (some? id) (= id (:stream-id db))))
+
+(rf/reg-event-fx :studio/stream-frame
+  (fn [{:keys [db]} [_ session id envelope]]
+    (when (current-stream? db session id)
+      (let [current (:server-projection db)
+            received (if (and (:awaiting-full? db) (not= :full (:kind envelope)))
+                       {:status :resync}
+                       (projection/receive current envelope))]
+        (case (:status received)
+          :accepted (-> (install-show db (:state received))
+                        (update :db dissoc :awaiting-full?)
+                        (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
+          :duplicate {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
+                      :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
+          {:db (assoc db :awaiting-full? true)
+           :studio/stream-reply [id {:op :resync}]})))))
+
+(rf/reg-event-fx :studio/stream-closed
+  (fn [{:keys [db]} [_ session id reason]]
+    (when (current-stream? db session id)
+      {:db (assoc db :stream-id nil :pending-params {}
+                  :connection {:connected? false :error (str "Reconnecting: " reason)})
+       :dispatch [:studio/release-pointers]})))
+
 (rf/reg-event-fx :studio/toast
   (fn [{:keys [db]} [_ message error?]]
     {:db (assoc-in db [:ui :toast] {:message message :error? error?})
