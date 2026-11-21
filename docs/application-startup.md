@@ -38,7 +38,7 @@ checks the entire plan for duplicate IDs and missing enabled setup functions.
       (assoc :hz 40 :web-server false
              :clock-sync {:enabled true :selected-source :midi-clock
                           :midi {:enabled? true :input-index 2}}
-             :osc {:enabled true :address "127.0.0.1" :port-in 16010})
+             :sensor-osc {:enabled true :address "127.0.0.1" :port-in 16012})
       (update-in [:init :post] conj :opening)))
 
 (defn opening [context options]
@@ -68,7 +68,8 @@ take precedence.
 | `:cue-pages` | Installs `:definitions` in order. Each page has an ID and a map from grid coordinates to registered cue IDs. |
 | `:show-state` | Loads `:load-file` as a full Transit backup, runs `:actions` (command maps or zero-argument Clojure functions) in order and saves to `:save-file` during shutdown if configured. |
 | `:sensors` | Installs `:sources` keyed by device ID. Each entry has the source's portable `:config` and `:pairing`. |
-| `:osc` | Opens the sensor OSC receiver on `:address` and `:port-in`. Its actual bound port is in the module value. |
+| `:osc` | Connects a generic OSC controller on `:port-in`. Its `:mappings` maps paths to commands, including cue launches and parameter changes. Set `:address` and `:port-out` for an outbound peer. Call the module value’s `:send!` with a path and OSC arguments. |
+| `:sensor-osc` | Opens the paired sensor OSC receiver on `:address` and `:port-in`. Its actual bound port is in the module value. |
 | `:clock-sync` | Configures the show’s synchronization manager and opens the enabled sources. An original `{:type :midi :device "…"}` selects a unique JVM MIDI input by name. |
 | `:audio` | Starts PCM capture using the show audio manager and capture config. |
 | `:waveforms` | Publishes `:definitions` to the waveform registry before subsequent modules run. |

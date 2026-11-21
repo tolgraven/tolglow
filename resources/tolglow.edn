@@ -1,14 +1,15 @@
 {:description "Tolglow"
  :hz 40
  :init {:components [:show]
-        :modules [:fixtures :cue-pages :show-state :sensors :osc :clock-sync :audio :waveforms :expressive :agents :web-server]
+        :modules [:fixtures :cue-pages :show-state :sensors :sensor-osc :osc :clock-sync :audio :waveforms :expressive :agents :web-server]
         :post []}
  :web-server {:enabled true :host "127.0.0.1" :port 8500}
  :fixtures {:enabled false}
  :cue-pages {:enabled false}
  :show-state {:enabled false}
  :sensors {:enabled false}
- :osc {:enabled false :address "127.0.0.1" :port-in 16010}
+ :osc {:enabled false :address "127.0.0.1" :port-in 16010 :port-out 16011}
+ :sensor-osc {:enabled false :address "127.0.0.1" :port-in 16012}
  :clock-sync {:enabled false}
  :audio {:enabled false}
  :waveforms {:enabled false}
