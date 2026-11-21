@@ -7,10 +7,16 @@ export class RigOverlay {
   clear() {this.scene.traverse(o => {o.geometry?.dispose(); o.material?.dispose();}); this.scene.clear();}
   update(snapshot) {
     const editor = snapshot?.editor, selection = editor?.selection;
+    if (!editor) {if (this.key !== null) {this.clear(); this.key = null;} return;}
+    if (this.markerRig !== snapshot.rig) {
+      this.markerRig = snapshot.rig;
+      this.markers = (snapshot.rig?.fixtures || []).slice(0, 2048).map(f => f.position).filter(finitePoint);
+      this.key = null;
+    }
     const item = snapshot?.rig?.[selection?.kind]?.find(f => String(f.id) === String(selection.id));
-    const markers = (snapshot?.rig?.fixtures || []).slice(0, 2048).map(f => f.position).filter(finitePoint);
-    const key = JSON.stringify([editor, markers, item?.position, item?.['rotation-deg'], item?.length]);
-    if (key === this.key) return; this.key = key; this.clear(); if (!editor) return;
+    const markers = this.markers;
+    const key = JSON.stringify([editor, item?.position, item?.['rotation-deg'], item?.length]);
+    if (key === this.key) return; this.key = key; this.clear();
     const line = (points, color, opacity = 1) => {
       const geometry = new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(...p)));
       this.scene.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({color, transparent: opacity < 1, opacity, depthTest: false, toneMapped: false})));

@@ -14,6 +14,14 @@ the engine is specialized graphics interop. The JVM remains authoritative for
 fixtures, positions, orientation/calibration and committed emitted output. No
 second browser lighting engine may independently advance effects.
 
+Studio selects up to 128 emitting targets from the whole output patch. A sparse
+frame also supplies a small idle sample. A rotating solo can reach any patched ID
+across universes. The browser reserves geometry for the selected rig fixture and
+assigns up to 16 persistent spotlights to visible emitters. Its shadow slots keep
+their textures across cue changes. Camera tours and room fog use the allocated
+lights. Both Transit state pushes and Ring inspection use the same projection.
+The device-tier budgets and selection order are in `js/preview/README.md`.
+
 Where OffscreenCanvas workers are available, the one scene implementation runs
 in a worker. The main thread owns OrbitControls, visibility and bitmap display.
 Only one state message and one output bitmap may be in flight; intermediate
