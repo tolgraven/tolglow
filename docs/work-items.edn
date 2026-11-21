@@ -1,7 +1,24 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:evidence
+ [{:id :web/push-navigation-task-checks-v1
+   :title "Expose Push navigation and application task checks in shared Studio UI"
+   :kind :implementation :status :done :owner nil
+   :depends-on [:control/webview-display-v1 :development/workspace-service-v1]
+   :paths ["tolglow/src/studio/tolglow/studio/push_display.cljs"
+           "tolglow/src/studio/tolglow/studio/push_display_test.cljs"
+           "tolglow/resources/studio/push-display.css"
+           "tolglow/src/studio/tolglow/studio/application_agents.cljs"
+           "tolglow/src/studio/tolglow/studio/application_agents_test.cljs"
+           "tolglow/resources/studio/application-agents.css"
+           "tolglow/docs/parameter-widget-parity.md"]
+   :acceptance ["Passive Push renders actual bank, component, touched encoder and active effect navigation"
+                "Application chat shows actual checks and candidate state without implying activation"
+                "Optimized browser checks cover 960x160 Push and touch layouts"]
+   :evidence ["Frontend 135 tests / 713 assertions, optimized 147 files, zero warnings"
+              "Actual Chromium: 10 integrated workflows plus passive 960x160 Push navigation gate; errors empty"
+              "docs/parameter-widget-parity.md; no physical hardware/provider/Safari claim"]}
+  {:evidence
    ["Connections focused: 14 tests / 120 assertions passed"
     "Connections + full-show persistence: 33 tests / 285 assertions passed"
     "docs/show-files.md"],

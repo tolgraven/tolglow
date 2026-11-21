@@ -28,6 +28,23 @@
   (is (= 1 (widgets/proportion {:bounds [0 1]} 2)))
   (is (nil? (widgets/proportion {:bounds [1 1]} 1))))
 
+(deftest push-navigation-retains-authoritative-banks-and-touch-without-expanding-the-view
+  (let [bank {:index 1 :count 2 :total 10 :offset 8}
+        touch {:instance-id "effect-a" :param "color" :encoder 1 :component 0}
+        parameter {:id "color" :component 0 :component-label "hue"}
+        view (display/normalize-view {:parameter-bank bank :touched-parameter touch :fine? true
+                                      :active-effect-navigation {:index 9 :count 12 :offset 8}
+                                      :active-effects (mapv #(hash-map :id (str %)) (range 20))
+                                      :parameters [parameter]})]
+    (is (= "Params 9–10 / 10" (display/bank-label (:parameter-bank view))))
+    (is (= touch (:touched-parameter view)))
+    (is (= parameter (first (:parameters view))))
+    (is (= {:index 9 :count 12 :offset 8} (:active-effect-navigation view)))
+    (is (:fine? view))
+    (is (= 8 (count (:active-effects view))))
+    (is (nil? (display/bank-label {:index 0 :count 1 :total 8 :offset 0}))))
+  (is (nil? (display/bank-label nil))))
+
 (deftest explicit-audio-mode-keeps-the-actual-capture-projection
   (let [waveform {:bins [{:min -0.5 :max 0.4 :rms 0.2 :bands {:low 0.8}}] :sample-end 512}
         view (display/normalize-view {:display-mode "audio" :audio-waveform waveform
