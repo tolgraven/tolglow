@@ -204,7 +204,7 @@
 (rf/reg-event-fx :studio/stream-closed
   (fn [{:keys [db]} [_ session id reason]]
     (when (current-stream? db session id)
-      {:db (assoc db :stream-id nil :pending-params {}
+      {:db (assoc db :stream-id nil
                   :connection {:connected? false :error (str "Reconnecting: " reason)})
        :dispatch [:studio/release-pointers]})))
 

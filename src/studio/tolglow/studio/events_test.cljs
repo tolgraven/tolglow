@@ -237,6 +237,16 @@
     (is (= ["connected" {:op :resync}] (:studio/stream-reply result)))
     (is (nil? (:studio/http result)))))
 
+(deftest socket-loss-during-knob-debounce-preserves-the-scheduled-command
+  (let [opened (with-stream base)
+        edit (transition opened [:studio/param-set "7:9" :level 0.9])
+        queued (transition (:db edit) (:dispatch edit))
+        closed (transition (:db queued) [:studio/stream-closed (:session base) "connected" "lost"])
+        flushed (transition (:db closed) [:studio/flush-params])]
+    (is (= 0.9 (get-in closed [:db :drafts ["7:9" :level] :fields :value])))
+    (is (= 0.9 (get-in (first-command flushed) [:fields :value])))
+    (is (= 7 (:epoch (first-command flushed))))))
+
 (deftest saved-preferences-restore-only-supported-portable-fields
   (let [settings {:ui {:view "rig" :page-id "second" :launch-mode "held"
                        :provider-form {:credential "must-not-restore"} :definition {:source "replace"}}}
