@@ -313,7 +313,10 @@
               "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
               ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"
               "Subscriber correctness smoke: actual Jetty/JVM clients at 1k/10k pixels +8 movers, 0/4 fast +1 withheld ACK; model/intent/packet/preview and full reconstructed view parity passed"
-              "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
+              "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"
+              "PR60 merged1ddb060: same-runner exact-revision candidate/baseline/repeat workflow and subscriber allocation-recording windows; all regression and actual comparison jobs passed"
+              "44901945679 raw evidence retained under 2026-11-21-general-row-comparison: mixed10k+8 owner/worker allocation16.693→16.299/16.300MB; no timing claim, unfavorable controls retained"
+              "Reverse44903326748 passes all oracles and reproduces +1.199MB on unchanged baseline itself; new mixed16.300MB versus old16.694/17.892MB, so no deterministic pixel-only regression; Afterglow PR30 merged e0e2409, generic per-element scale boxing investigated separately"]}
   {:id :performance/animated-moving-heads
    :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
    :kind :implementation :status :done :owner nil
