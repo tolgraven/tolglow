@@ -127,13 +127,25 @@ show or opens hardware output.
 worklight, quality and expanded/fullscreen controls at desktop, iPad and phone
 viewports. It does not send lighting commands or claim physical touch-device
 performance. Captures and per-control dimensions go under `/tmp/studio-qa/preview-app`.
-The current source checkpoint passes all 17 preview tests, including real
+The current source checkpoint passes all 20 preview tests, including real
 WebGL2 execution, and the actual desktop/iPad/phone viewport control matrix.
 Expanded views pass for all three, desktop fullscreen passes, and every preview
 control measured at least 44px high. The software-GPU Auto profile was observed
 as `low` in all three contexts. Those tests do not establish integrated show
 input latency or physical mobile performance; the separate Studio owner checks
 cue/parameter responsiveness with the preview visible.
+
+Worker verification additionally exercises a real eight-light scene while a
+20ms UI callback continually supplies projections for ten seconds; state
+coalescing, an epoch change during an actual draw, bitmap ownership, resizing,
+disposal and an asynchronous worker startup exception all pass. In the latest
+isolated Chromium/SwiftShader run, 478 UI callbacks had a maximum gap of 45.6ms,
+and the renderer completed 58 frames while recovering to its 100ms software
+profile budget. First-frame shader compilation took 953ms; it did not leave a
+multi-second idle budget on subsequent frames. `workerFrameMs` includes bitmap
+transfer cost, separately reported as `bitmapTransferMs`; these CPU/driver
+measurements are not physical-GPU timer queries. Evidence is in
+`/tmp/studio-qa/worker-test-final.log` and `/tmp/studio-qa/preview-worker-app/`.
 
 Visual acceptance remains open. The revised room is materially more detailed
 than the analytic box prototype, but thick plume billow detail, current mobile/
