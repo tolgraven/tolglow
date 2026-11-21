@@ -26,11 +26,14 @@
 (defn sources [table]
   (when-not (and (map? table) (<= (count table) max-parameters))
     (throw (ex-info "A Live connection supports 64 observed parameters" {:sync/error :invalid-live-parameters})))
-  (into {} (map (fn [[id data]]
-                  (let [id (wire-id id)]
-                    (when-not (valid-id? id)
-                      (throw (ex-info "Use a short unique parameter source name" {:sync/error :invalid-live-parameter-id})))
-                    [id (descriptor data)])) table)))
+  (let [result (into {} (map (fn [[id data]]
+                               (let [id (wire-id id)]
+                                 (when-not (valid-id? id)
+                                   (throw (ex-info "Use a short unique parameter source name" {:sync/error :invalid-live-parameter-id})))
+                                 [id (descriptor data)])) table))]
+    (when (not= (count result) (count table))
+      (throw (ex-info "Live parameter source names must be distinct" {:sync/error :duplicate-live-parameter})))
+    result))
 
 (defn observation
   "Admit the current declared address and range only. Receipt time belongs to

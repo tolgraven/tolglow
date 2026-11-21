@@ -3,11 +3,14 @@
  :items
  [{:id :integration/live-observed-parameters
    :title "Learn Live device and mixer automation as named patchbay sources"
-   :kind :implementation :status :in-progress :owner "live-parameter-observations"
-   :paths ["tolglow/src/tolglow/integrations/live_parameters.clj"]
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/live_parameters.clj"
+           "tolglow/resources/devices/ableton-live/parameter_observers.js"
+           "tolglow/test/js/ableton-live/parameter_observers.test.js"]
    :depends-on [:integration/live-bridge-assets-v1]
    :acceptance ["Observe actual DeviceParameter.value on change" "Keep stable nested-rack paths, native ranges and names in saved show settings" "Disarm replaced or renamed sources and release all observer subscriptions"]
-   :evidence []}
+   :evidence ["The behavioral Max host learned a nested Rack parameter, routed its native value through Ring and the patchbay to the running cue, verified its saved descriptor and released subscriptions on forget."
+              "resources/devices/ableton-live/README.md"]}
   {:id :application/configured-startup
    :kind :implementation :status :done :owner nil
    :title "Start a headless or web show from ordered Tolglow config modules"
