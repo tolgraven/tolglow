@@ -1,19 +1,19 @@
 # Starting a Tolglow show
 
-Run `clojure -M:run` or `lein run` from the project root. Both read the ordered
+Run `lein run` from the project root. It reads the ordered
 configuration in [resources/tolglow.edn](../resources/tolglow.edn). The supplied
 configuration starts a 40 Hz preview show and serves Studio on loopback port
 8500. Physical output and device acquisition use explicit settings.
 
 ```sh
-clojure -M:run --headless true
-clojure -M:run --config ./club.edn
-clojure -M:run --config my.venue/friday --port 8600
+lein run --headless true
+lein run --config ./club.edn
+lein run --config my.venue/friday --port 8600
 ```
 
 `--config` accepts one EDN map or a qualified Clojure Var containing a map.
 Set `TOLGLOW_CONFIG` to the same path or Var to select the venue whenever
-`lein run`, `clojure -M:run` or zero-argument `app/start!` launches. An
+`lein run` or zero-argument `app/start!` launches. An
 explicit `--config` takes precedence. The installed project can therefore use its own fixtures, registry, functions
 and setup modules from code. CLI overrides apply only to flags supplied. The
 same entry point accepts `--output ola`, the OLA and Art-Net address options,

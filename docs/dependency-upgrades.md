@@ -1,7 +1,7 @@
 # Dependency upgrades — 2026-11-21
 
 Both repositories now pin **Clojure 1.12.7**. The development image and CI use
-**Clojure CLI 1.12.7.1681**. Clojure 1.13 is an alpha release and was not selected.
+**Leiningen 2.13.1**. Clojure 1.13 is an alpha release and was not selected.
 Release versions were queried from Maven Central, Clojars, npm, upstream GitHub
 releases and Docker registry manifests; this is not a memory-based version list.
 
@@ -184,18 +184,20 @@ lighting/controller/mobile-device qualification or a provider-backed agent run.
 ## Complete Tolglow project
 
 The repository is a standard Clojure project: `src/tolglow/`, `test/`,
-`resources/`, `dev/`, `deps.edn` and root `project.clj`. The Lein manifest loads
-`dev/tolglow/build_manifest.clj`, which derives direct Studio versions from
-`deps.edn` and complete fork dependencies from the sibling Afterglow manifest.
+`resources/`, `dev/` and canonical root `project.clj`. The Lein manifest loads
+`dev/tolglow/build_manifest.clj`, which merges explicit Studio versions with
+complete fork dependencies from the sibling Afterglow manifest.
 The fork manifest is read as data with reader evaluation disabled; its plugins
 and startup hooks are not executed. Source/resource paths point to the declared
 local fork, so an old installed Afterglow jar cannot silently take precedence.
 
 `lein deps`, `lein run --port 8500`, `lein test-pure`, `lein test-parity` and
 `lein uberjar` are supported entry points. Plain `lein test` excludes the explicit
-Docker suite; hardware and container gates are never silently selected. The CLI
-and Lein builds share canonical dependency data rather than separate version
-lists. The manifest regression checks actual paired source directories, version
+Docker suite; hardware and container gates are never silently selected. Frontend
+and benchmark entry points use the `:cljs` and `:benchmark` Lein profiles. The
+frontend pins Closure Compiler v20261021 from shadow-cljs 3.5.14's POM to avoid
+Lein's nearest-dependency resolution choosing an incompatible version.
+The manifest regression checks actual paired source directories, version
 precedence, classpath completeness and absence of a shadowing fork artifact.
 
 The executable uberjar was built and launched from `/tmp` (outside the source

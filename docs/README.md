@@ -4,6 +4,8 @@ Use the [repository map](../README.md#repository-map) to find the Clojure show
 runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
 and native companions.
 
+The canonical `project.clj` owns dependencies and Leiningen build profiles.
+
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,
 CPU fixture rendering, integration primitives, and a web studio. The existing

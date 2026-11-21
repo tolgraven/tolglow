@@ -1,7 +1,27 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :fixtures/patch-groups
+ [{:id :build/leiningen-canonical-workflows
+   :title "Use one Leiningen project for backend, frontend, tests and profiling"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"
+           "tolglow/dev/tolglow/build_manifest.clj" "tolglow/dev/parity_deps.clj"
+           "tolglow/test/tolglow/build_manifest_test.clj" "tolglow/bin/test"
+           "tolglow/bin/studio" "tolglow/bin/profile-mover-shader"
+           "tolglow/.github/workflows/tests.yml"
+           "tolglow/.github/scripts/install-lein" "tolglow/dev/container/Dockerfile"
+           "tolglow/test/tolglow/studio/terminal_docker_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Canonical project merges explicit dependency overrides with read-only fork manifest data"
+                "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
+                "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
+                "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
+   :evidence ["Lein :cljs final integrated185tests/994assertions and optimized185files/zero warnings passed locally"
+              "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
+              "Plain lein test after sync lifecycle integration:591/4896 passed on Java21; final sync/manifest23/272 and actual profile-master/subscriber capture-oracle smoke passed; final OSC pin integration rechecked in CI"
+              "Exact e77fce7 CI44898916324 passed all Java17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
+  {:id :fixtures/patch-groups
    :title "Normalize named patch lists and fixture-builder heads before installation"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/fixtures/patch.clj" "tolglow/src/tolglow/fixtures/heads.clj"
@@ -687,7 +707,6 @@
     "tolglow/src/tolglow/demo.clj"
     "tolglow/test/tolglow/studio_test.clj"
     "tolglow/test/tolglow/studio/web_test.clj"
-    "tolglow/bin/studio"
     "tolglow/src/tolglow/connections.clj"
     "afterglow/src/afterglow/output/scheduler.clj"
     "tolglow/test/tolglow/output/scheduler_test.clj"

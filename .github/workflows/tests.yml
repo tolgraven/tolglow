@@ -31,24 +31,25 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '26'
-      - uses: DeLaGuardo/setup-clojure@13.7.0
-        with:
-          cli: 1.12.7.1681
+      - name: Install the verified Leiningen release
+        working-directory: tolglow
+        run: .github/scripts/install-lein
       - name: Cache verified Maven dependencies
         uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.m2/repository
             !~/.m2/repository/**/*.lastUpdated
-          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'tolglow/project.clj', 'afterglow/deps.edn', 'afterglow/project.clj') }}
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
           restore-keys: maven-${{ runner.os }}-
       - name: Run explicit test lane
         working-directory: tolglow
-        run: ./bin/test "${{ matrix.suite }}"
+        run: |
+          if [[ "${{ matrix.suite }}" == pure ]]; then lein test-pure; else lein test; fi
       - name: Validate work tracking
         if: matrix.suite == 'pure'
         working-directory: tolglow
-        run: clojure -M:check-roadmap
+        run: lein check-roadmap
   studio:
     runs-on: ubuntu-latest
     steps:
@@ -69,33 +70,17 @@ jobs:
           node-version: '26'
           cache: npm
           cache-dependency-path: tolglow/package-lock.json
-      - uses: DeLaGuardo/setup-clojure@13.7.0
-        with:
-          cli: 1.12.7.1681
+      - name: Install the verified Leiningen release
+        working-directory: tolglow
+        run: .github/scripts/install-lein
       - name: Cache verified Maven dependencies
         uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.m2/repository
             !~/.m2/repository/**/*.lastUpdated
-          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'tolglow/project.clj', 'afterglow/deps.edn', 'afterglow/project.clj') }}
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
           restore-keys: maven-${{ runner.os }}-
-      - name: Install the verified Leiningen release
-        shell: bash
-        run: |
-          lein_dir="$RUNNER_TEMP/tolglow-lein"
-          mkdir -p "$lein_dir"
-          curl --fail --location --retry 3 \
-            https://github.com/technomancy/leiningen/releases/download/2.13.1/leiningen-2.13.1-standalone.jar \
-            --output "$lein_dir/lein.jar"
-          printf '2e4c36cbaef717d0fa589a1f95e4c526a1cb6c35b48dc92e6dbb30d6f8595b5c  %s\n' "$lein_dir/lein.jar" | sha256sum --check -
-          cat > "$lein_dir/lein" <<'LEIN'
-          #!/usr/bin/env bash
-          exec java -cp "$TOLGLOW_LEIN_JAR" clojure.main -m leiningen.core.main "$@"
-          LEIN
-          chmod +x "$lein_dir/lein"
-          printf 'TOLGLOW_LEIN_JAR=%s\n' "$lein_dir/lein.jar" >> "$GITHUB_ENV"
-          printf '%s\n' "$lein_dir" >> "$GITHUB_PATH"
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
@@ -122,6 +107,42 @@ jobs:
       - name: Test the browser display bridge
         working-directory: tolglow
         run: node --test test/js/push-display/*.test.cjs
+
+  development-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: tolglow
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: 3fb4255a1e7af591bc45cb2873f551da359538ea
+          path: afterglow
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26'
+      - name: Install the verified Leiningen release
+        working-directory: tolglow
+        run: .github/scripts/install-lein
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
+          restore-keys: maven-${{ runner.os }}-
+      - name: Build the actual development image
+        working-directory: tolglow
+        run: docker build -t tolglow-dev:ci -f dev/container/Dockerfile dev/container
+      - name: Exercise owned worktrees, PTY and Lein inside containers
+        working-directory: tolglow
+        env:
+          TOLGLOW_DEV_TEST_IMAGE: tolglow-dev:ci
+        run: lein test :docker
 
   native-changes:
     runs-on: ubuntu-latest

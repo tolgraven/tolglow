@@ -1,22 +1,20 @@
 (ns tolglow.build-manifest-test
   (:require [clojure.test :refer [deftest is]]
-            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [tolglow.build-manifest :as manifest]))
 
-(deftest complete-project-uses-canonical-versions-and-the-paired-source
-  (let [config (manifest/manifest ".")
-        deps (edn/read-string (slurp "deps.edn"))
-        versions (into {} (map (fn [[id version]] [id version])) (:dependencies config))]
-    (is (= (get-in deps [:deps 'org.clojure/clojure :mvn/version]) (versions 'org.clojure/clojure)))
-    (is (= (get-in deps [:deps 'ring/ring-core :mvn/version]) (versions 'ring/ring-core)))
-    (is (string? (versions 'nrepl/nrepl)))
+(deftest lein-uses-the-paired-sources-and-merges-direct-overrides
+  (let [deps (manifest/dependencies '[[org.clojure/clojure "test-version"]
+                                    [commons-codec/commons-codec "codec-override"]])
+        versions (into {} (map (juxt first second)) deps)]
+    (is (= "test-version" (versions 'org.clojure/clojure)))
+    (is (= "codec-override" (versions 'commons-codec/commons-codec)))
+    (is (not (contains? versions 'commons-codec)))
+    (is (not-any? #(contains? versions %) '[afterglow tolgraven/afterglow]))
     (is (string? (versions 'org.jogamp.java3d/java3d-core)))
-    (is (not (contains? versions 'tolgraven/afterglow)))
-    (is (= (count versions) (count (:dependencies config))))
-    (is (= ["src" "src/shared" "../afterglow/src"] (:source-paths config)))
-    (is (= ["resources" "../afterglow/resources"] (:resource-paths config)))
-    (is (every? #(.isDirectory (io/file %)) (concat (:source-paths config) (:resource-paths config))))))
+    (is (= (count deps) (count versions)))
+    (is (.isFile (io/file (manifest/fork-source "src/afterglow/show.clj"))))
+    (is (.isDirectory (io/file (manifest/fork-source "resources"))))))
 
 (deftest source-tree-contains-clojure-and-local-documentation
   (let [files (filter #(.isFile %) (file-seq (io/file "src")))
