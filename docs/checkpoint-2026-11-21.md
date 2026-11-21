@@ -40,6 +40,14 @@ unsupported or hangs; calls were attempted for PRs, do not spend time retrying.
 
 ## Latest requirements still needing implementation
 
+Final paused WIP checkpoints (all agents stopped): expressive UI `dc4b317`
+(14 real Ring/captured-device browser workflows also passed); 3D editor
+`10e1292` (full browser gate still pending); RDM `71e80d7`; Afterglow effect
+isolation `35451ce`; Tolglow isolation host `af3306b`; renderer attribution
+`fb678c9`. Isolation focused tests36/198 passed, but aggregate Afterglow pure
+still has8 failures to investigate; do not assume all are obsolete assertions.
+Host tests remain unrun after syntax fixes. Read each worktree's RESUME.md.
+
 **Existing names and fixture authoring forms:** preserve Tolglow/Afterglow
 terminology and basic data structures. In `config/patches`, group maps use
 `:universe`/`:offset`, or `:start-universe`, `:type`, and `:list`. Repeated
