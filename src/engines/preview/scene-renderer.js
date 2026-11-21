@@ -13,11 +13,15 @@ import {clamp, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDeg
 import {VolumetricFog} from './fog.js';
 import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.js';
 
+import {PreviewActivity} from './preview-activity.js';
+import {DisplayClock} from './display-clock.js';
+import {LightingSamples} from './lighting-samples.js';
+
 const TIERS = {
   low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fog: 'phone'},
-  mobile: {dpr: 1, maxPixels: 500000, shadows: 2, shadowSize: 512, fps: 24, fixtures: 32},
-  desktop: {dpr: 1.5, maxPixels: 1500000, shadows: 4, shadowSize: 1024, fps: 30, fixtures: 64},
-  high: {dpr: 1.75, maxPixels: 2800000, shadows: 4, shadowSize: 2048, fps: 30, fixtures: 128},
+  mobile: {dpr: 1, maxPixels: 500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32},
+  desktop: {dpr: 1.5, maxPixels: 1500000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 64},
+  high: {dpr: 1.75, maxPixels: 2800000, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128},
 };
 const DOWN = new THREE.Vector3(0, -1, 0);
 const MAX_LIGHTS = 16;
@@ -25,33 +29,37 @@ const MAX_LIGHTS = 16;
 /** One lifecycle-owned graphics engine. The JVM owns all lighting output. */
 export class SceneRenderer {
   constructor(canvas, status, platform = {}) {
-    this.platform = platform;
+    this.platform = platform; this.displayClock = new DisplayClock(); this.lighting = new LightingSamples();
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.ready = false; this.disposed = false;
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.qualityChoice = 'auto';
-    this.fogAmount = .3; this.workLight = .12; this.visible = true; this.lost = false;
-    this.lastFrame = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
+    this.fogAmount = .3; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
+    this.lastFrame = 0; this.renderScale = 1; this.scaleChangedAt = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
     this.abort = new AbortController(); this.reducedMotion = platform.worker
       ? {matches: Boolean(platform.reducedMotion)} : matchMedia('(prefers-reduced-motion: reduce)');
     this.whenReady = new Promise(resolve => { this.resolveReady = resolve; });
     this.setStatus('Building venue and lighting shaders…');
-    try { this.initialize(); } catch (error) { this.fail(error); return; }
+    this.camera = new THREE.PerspectiveCamera(49, 1, .08, 100);
+    this.controls = platform.worker
+      ? {target: new THREE.Vector3(), update: () => this.camera.lookAt(this.controls.target), dispose() {}, touches: {}}
+      : cameraControls(this.camera, this.canvas);
+    this.setCamera('audience');
+    if (platform.worker) {try {this.initialize();} catch (error) {this.fail(error); return;}}
     if (!platform.worker) {
       this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
-      this.intersectionObserver = new IntersectionObserver(entries => { this.visible = entries.some(entry => entry.isIntersecting); this.lastFrame = 0; }); this.intersectionObserver.observe(canvas);
+      this.activity = new PreviewActivity(canvas, active => this.changeActivity(active));
     }
     const signal = this.abort.signal;
     canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); this.lost = true; this.ready = false; this.setStatus('Graphics context lost · waiting for recovery'); }, {signal});
     canvas.addEventListener('webglcontextrestored', () => {
-      try { this.refreshEnvironment(); this.fog?.upload(); this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…'); }
+      try {this.restorePending = true; if (this.visible) {this.restoreContext(); this.scheduleFrame(0);}}
       catch (error) { this.fail(error); }
     }, {signal});
     if (!platform.worker) {
       this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
         room: () => this.room, snapshot: () => this.snapshot,
-        active: () => !this.paused && !this.disposed && !document.hidden && this.visible && !!canvas.getClientRects().length,
+        active: () => this.visible && !this.paused && !this.disposed,
         reducedMotion: () => this.reducedMotion.matches});
-      document.addEventListener('visibilitychange', () => { this.lastFrame = 0; }, {signal});
       this.reducedMotion.addEventListener('change', () => this.navigation.notify(), {signal});
     }
     if (platform.autoStart !== false) this.scheduleFrame(0);
@@ -75,10 +83,6 @@ export class SceneRenderer {
       throw new Error(`Preview shader rejected: ${String(text).slice(0, 500)}`);
     };
     this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(.0015, .002, .003);
-    this.camera = new THREE.PerspectiveCamera(49, 1, .08, 100);
-    this.controls = this.platform.worker
-      ? {target: new THREE.Vector3(), update: () => this.camera.lookAt(this.controls.target), dispose() {}, touches: {}}
-      : cameraControls(this.camera, this.canvas);
     this.materials = createMaterials();
     this.apertureUniform = {value: new Float32Array(MAX_LIGHTS)};
     for (const material of Object.values(this.materials)) finiteApertureMaterial(material, this.apertureUniform);
@@ -97,7 +101,7 @@ export class SceneRenderer {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .28, .4, 1.1); this.composer.addPass(this.bloom);
     this.outputPass = new OutputPass(); this.composer.addPass(this.outputPass);
     this.rebuild({room: {width: 12, height: 5, depth: 10}, fixtures: [], trusses: []});
-    this.setCamera('audience'); this.resize();
+    this.resize();
   }
   refreshEnvironment() {
     this.environmentTarget?.dispose();
@@ -113,11 +117,17 @@ export class SceneRenderer {
     if (this.ready) this.updateStatus();
   }
   setFog(value) { this.fogAmount = clamp(Number(value) || 0, 0, 1); this.fog?.setAmount(this.fogAmount); }
-  burst(options) { this.fog?.burst(options); this.fogAnimationUntil = this.clock + 8; }
+  burst(options) { if (!this.visible) return false; this.fog?.burst(options); this.fogAnimationUntil = this.clock + 8; }
   setQuality(value = 'auto') {
     if (!['auto', ...Object.keys(TIERS)].includes(value)) throw new Error('Unknown preview quality');
-    this.qualityChoice = value; const next = value === 'auto' ? this.autoQuality() : value;
-    if (next === this.quality) return;
+    const choiceChanged = this.qualityChoice !== value;
+    if (choiceChanged) {
+      this.renderScale = 1; this.overBudget = this.underBudget = 0;
+      this.scaleChangedAt = performance.now();
+    }
+    this.qualityChoice = value; if (!this.visible || !this.renderer) return;
+    const next = value === 'auto' ? this.autoQuality() : value;
+    if (next === this.quality) {if (choiceChanged) this.resize(); return;}
     const previousFog = this.fog, nextFog = new VolumetricFog(this.renderer, {quality: TIERS[next].fog || next});
     if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
     else nextFog.setRoom(this.room);
@@ -131,13 +141,25 @@ export class SceneRenderer {
     if (this.snapshot) this.update(this.snapshot, true);
     this.resize();
   }
-  update(snapshot, force = false) {
-    if (!snapshot || this.disposed || !this.renderer) return;
+  setLightingMode(mode) {
+    if (mode === this.lighting.mode) return;
+    this.lighting.setMode(mode);
+    if (this.visible && this.renderer && this.snapshot) this.applyLighting(this.snapshot.output?.values || {});
+  }
+  update(snapshot, force = false, receivedAt = performance.now()) {
+    if (!snapshot || this.disposed) return;
+    if (!this.visible || !this.renderer) {this.snapshot = snapshot; return;}
     this.snapshot = snapshot; const rig = snapshot.rig || {};
-    const key = structuralKey(rig);
+    const key = rig === this.lastRig ? this.key : structuralKey(rig);
+    this.lastRig = rig;
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
-    const output = snapshot.output?.values || {};
+    this.lighting.accept(snapshot, rig, receivedAt);
     const currentFixtures = new Map((rig.fixtures || []).slice(0, this.options.fixtures).map(f => [String(f.id), f]));
+    for (const entry of this.fixtures) entry.fixture = currentFixtures.get(entry.id) || entry.fixture;
+    if (!this.lighting.previous) this.applyLighting(this.lighting.values(this.fixtures, receivedAt));
+  }
+  applyLighting(output) {
+    this.displayedValues = output;
     const illuminated = entry => Math.max(...emittedColor(output[entry.id] || {})) > .00001;
     // Keep shader light/shadow counts stable across blackout and cue launches.
     // Zero-colour slots emit no light. Prefer active lights for the fixed shadow
@@ -150,7 +172,6 @@ export class SceneRenderer {
     this.activeLights = 0;
     this.lightEntries = [];
     for (const entry of this.fixtures) {
-      entry.fixture = currentFixtures.get(entry.id) || entry.fixture;
       const resolved = output[entry.id] || {}, direction = fixtureDirection(entry.fixture, resolved), rgb = emittedColor(resolved);
       const world = new THREE.Quaternion().setFromUnitVectors(DOWN, new THREE.Vector3(...direction));
       entry.head.quaternion.copy(entry.root.quaternion).invert().multiply(world);
@@ -217,12 +238,29 @@ export class SceneRenderer {
     this.totalFixtureCount = (rig.fixtures || []).length;
     this.lightEntries = [];
   }
+  measureLoad(elapsed, now) {
+    // Shader compilation is a one-time cost. Use consecutive warm samples and
+    // hysteresis so the targets do not resize on every display callback.
+    if (this.qualityChoice !== 'auto' || this.draws < 2 || !this.visible) return;
+    const budget = 1000 / this.options.fps;
+    this.overBudget = elapsed > budget * 1.35 ? (this.overBudget || 0) + 1 : 0;
+    this.underBudget = elapsed < budget * .65 ? (this.underBudget || 0) + 1 : 0;
+    if (now - this.scaleChangedAt < 1000) return;
+    let scale = this.renderScale;
+    if (this.overBudget >= 2) scale = Math.max(.5, Math.min(scale * .85, scale * Math.sqrt(budget / elapsed)));
+    else if (this.underBudget >= 60) scale = Math.min(1, scale + .1);
+    if (scale !== this.renderScale) {
+      this.renderScale = scale; this.scaleChangedAt = now; this.overBudget = this.underBudget = 0;
+      this.resizePending = true;
+    }
+  }
   resize() {
-    if (!this.renderer || this.disposed) return;
+    if (!this.visible || !this.renderer || this.disposed) return;
+    this.resizePending = false;
     const bounds = this.platform.worker ? this.platform.viewport : this.canvas.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     const pixelRatio = this.platform.worker ? bounds.pixelRatio : devicePixelRatio;
-    const dpr = Math.min(pixelRatio || 1, this.options.dpr, Math.sqrt(this.options.maxPixels / (bounds.width * bounds.height)));
+    const dpr = this.renderScale * Math.min(pixelRatio || 1, this.options.dpr, Math.sqrt(this.options.maxPixels / (bounds.width * bounds.height)));
     const width = Math.max(1, Math.round(bounds.width * dpr)), height = Math.max(1, Math.round(bounds.height * dpr));
     this.camera.aspect = bounds.width / bounds.height; this.camera.updateProjectionMatrix();
     if (width === this.width && height === this.height) return;
@@ -248,34 +286,48 @@ export class SceneRenderer {
     this.navigation?.setMode('orbit');
     this.controls.target.copy(entry.root.position); this.camera.position.copy(entry.root.position).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
   }
-  scheduleFrame(delay) {
-    clearTimeout(this.frameTimer); globalThis.cancelAnimationFrame?.(this.frame);
-    if (this.disposed || this.paused) return;
-    this.nextFrameAt = performance.now() + delay;
-    this.frameTimer = setTimeout(() => {
-      this.frame = globalThis.requestAnimationFrame ? requestAnimationFrame(time => this.animate(time)) : setTimeout(() => this.animate(performance.now()), 0);
-    }, delay);
+  changeActivity(active) {
+    this.visible = active; this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
+    this.displayClock.cancel(); this.navigation?.refreshActivity();
+    if (!active || this.disposed || this.error) return;
+    try {
+      if (!this.renderer) this.initialize();
+      if (this.restorePending) this.restoreContext();
+      this.setQuality(this.qualityChoice);
+      if (this.snapshot) this.update(this.snapshot);
+      this.resize(); this.scheduleFrame(0);
+    } catch (error) {this.fail(error);}
   }
-  pause() { this.paused = true; this.navigation?.clearInput(); clearTimeout(this.frameTimer); globalThis.cancelAnimationFrame?.(this.frame); }
-  resume() { if (!this.disposed) {this.paused = false; this.lastFrame = 0; this.scheduleFrame(0);} }
+  restoreContext() {
+    this.restorePending = false; this.refreshEnvironment(); this.fog?.upload();
+    this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…');
+  }
+  scheduleFrame(delay) {
+    if (this.disposed || this.paused || !this.visible || this.lost || this.platform.autoStart === false) return;
+    this.nextFrameAt = performance.now() + delay;
+    this.displayClock.at(this.nextFrameAt, time => this.animate(time));
+  }
+  pause() {this.paused = true; this.navigation?.refreshActivity(); this.lighting.previous = null; this.displayClock.cancel();}
+  resume() {if (!this.disposed) {this.paused = false; this.navigation?.refreshActivity(); this.lastFrame = 0; this.scheduleFrame(0);}}
   animate(time) {
-    if (this.disposed || this.paused) return;
-    if (this.lost || (this.platform.worker ? this.platform.hidden : document.hidden)
-        || !this.visible || (!this.platform.worker && !this.canvas.getClientRects().length)) {
-      this.lastFrame = 0; this.scheduleFrame(250); return;
-    }
+    if (this.disposed || this.paused || !this.visible || this.lost) return;
     const dt = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0;
     this.lastFrame = time; this.clock += dt;
     try {
-      this.draw(dt);
+      this.draw(dt); this.measureLoad(this.lastCPU, performance.now());
       // The idle budget starts at completion, not at the previous RAF timestamp.
       // Even a very slow driver must yield a real input-processing window.
-      this.scheduleFrame(Math.max(0, this.frameInterval - this.lastCPU));
+      this.scheduleFrame(Math.max(0, time + this.frameInterval - performance.now()));
     } catch (error) { this.fail(error); }
   }
   draw(dt = 0) {
-    if (this.disposed || this.lost || !this.renderer) return false;
+    if (this.disposed || this.lost || !this.visible || !this.renderer) return false;
+    if (this.resizePending) this.resize();
     const started = performance.now(); if (this.platform.worker) this.controls.update();
+    if (this.lighting.latest) {
+      const values = this.lighting.values(this.fixtures, started);
+      if (values !== this.displayedValues) this.applyLighting(values);
+    }
     const simulate = !this.reducedMotion.matches || this.clock < this.fogAnimationUntil;
     // Both preview worklights illuminate airborne material: the sky hemisphere
     // alone made dense water droplets unnaturally blue/dark against the warm
@@ -295,7 +347,9 @@ export class SceneRenderer {
     const previous = this.frameInterval || nominal;
     // The worker computes its budget after the GPU completion fence; command
     // submission time alone cannot establish render throughput.
-    if (!this.platform.worker) this.frameInterval = Math.max(nominal, this.lastCPU * (this.softwareRenderer ? 4 : 1.5), previous * .95);
+    if (!this.platform.worker) {
+      this.frameInterval = Math.max(nominal, this.lastCPU * (this.softwareRenderer ? 4 : 1.5), previous * .95);
+    }
     if (!this.ready) { this.ready = true; this.resolveReady?.(true); }
     this.updateStatus();
   }
@@ -305,9 +359,9 @@ export class SceneRenderer {
       this.setStatus(`${automatic} · ${this.renderedShadows || 0} shadows · ${this.workLight ? 'work light' : 'dark show'}${capped}`);
   }
   getTelemetry() {
-    return {ready: this.ready, failed: this.error || null, renderer: `Three.js r${THREE.REVISION}`, quality: this.quality,
+    return {lightingMode: this.lighting.mode, targetRefreshHz: this.options.fps, ready: this.ready, failed: this.error || null, renderer: `Three.js r${THREE.REVISION}`, quality: this.quality,
       deviceRenderer: this.deviceRenderer, softwareRenderer: this.softwareRenderer,
-      pixels: [this.width, this.height], frameCPUms: this.lastCPU, frameIntervalMs: this.frameInterval,
+      pixels: [this.width, this.height], renderScale: this.renderScale, frameCPUms: this.lastCPU, frameIntervalMs: this.frameInterval,
       idleBudgetMs: Math.max(0, this.frameInterval - this.lastCPU), nextFrameAt: this.nextFrameAt, frames: this.draws,
       geometryCount: this.renderer?.info.memory.geometries || 0, textureCount: this.renderer?.info.memory.textures || 0,
       programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
@@ -324,7 +378,7 @@ export class SceneRenderer {
   }
   dispose() {
     if (this.disposed) return; this.disposed = true; this.ready = false;
-    this.pause(); this.abort.abort(); this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect();
+    this.pause(); this.abort.abort(); this.resizeObserver?.disconnect(); this.activity?.dispose();
     this.navigation?.dispose(); this.controls?.dispose(); this.fog?.dispose();
     for (const entry of this.fixtures) { entry.dispose(); entry.light?.dispose(); }
     if (this.content) disposeGeometry(this.content);

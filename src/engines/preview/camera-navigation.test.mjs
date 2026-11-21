@@ -94,11 +94,45 @@ test('real camera input, active-light tour and editor suspension agree in worker
       assert.deepEqual(hidden.pose, hidden.after); assert.equal(hidden.held, 0);
       const resize = await page.evaluate(() => {engine.canvas.style.width = '320px'; engine.resize(); return engine.camera.aspect;});
       assert.equal(resize, 2);
+      // Actual scrolling drives IntersectionObserver, independently of window
+      // focus. No snapshots cross the worker boundary during suspension.
+      await page.evaluate(() => {
+        document.body.style.height = '300vh'; window.scrollTo(0, document.body.scrollHeight);
+      });
+      await page.waitForFunction(() => !engine.visible && !engine.rendering);
+      const idle = await page.evaluate(async () => {
+        const frames = engine.getTelemetry().frames, sequence = engine.channel?.sequence;
+        for (let n = 2; n <= 20; n++) engine.update({...snapshot, 'frame-number': n});
+        const drew = await engine.draw();
+        window.dispatchEvent(new Event('blur'));
+        window.scrollTo(0, 0); await nextFrames(5);
+        return {frames, current: engine.getTelemetry().frames, sequence, currentSequence: engine.channel?.sequence,
+          navigationPending: engine.navigation.frame, visible: engine.visible, drew};
+      });
+      assert.equal(idle.frames, idle.current); assert.equal(idle.sequence, idle.currentSequence);
+      assert.equal(idle.navigationPending, null); assert.equal(idle.visible, false); assert.equal(idle.drew, false);
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await page.waitForFunction(() => engine.getTelemetry().frameNumber === 20);
+      await page.evaluate(() => engine.canvas.requestFullscreen());
+      await page.waitForFunction(() => document.fullscreenElement && engine.visible);
+      await page.evaluate(() => document.exitFullscreen());
+      await page.waitForFunction(() => !document.fullscreenElement && engine.visible);
       const cleanup = await page.evaluate(async () => {
         engine.moveCamera('forward', true); const navigator = engine.navigation; engine.dispose();
         const pose = position(); await nextFrames(); return {pose, after: position(), disposed: navigator.disposed, held: navigator.buttons.size};
       });
       assert.deepEqual(cleanup.pose, cleanup.after); assert.equal(cleanup.held, 0); assert.ok(cleanup.disposed);
+      // A second owner can mount offscreen without initializing WebGL or
+      // starting a camera loop. Full initialization waits for intersection.
+      const dormant = await page.evaluate(async worker => {
+        const canvas = document.createElement('canvas'); canvas.style.display = 'none'; document.body.append(canvas);
+        const renderer = new RoomPreview(canvas, null, {worker}); renderer.update(snapshot);
+        await nextFrames(3); const telemetry = renderer.getTelemetry();
+        const result = {visible: renderer.visible, gpu: !!renderer.renderer, sent: renderer.channel?.sequence || 0,
+          navigationPending: renderer.navigation.frame, draws: telemetry.frames || 0, draw: await renderer.draw()};
+        renderer.dispose(); return result;
+      }, worker);
+      assert.deepEqual(dormant, {visible: false, gpu: false, sent: 0, navigationPending: null, draws: 0, draw: false});
       assert.deepEqual(errors, []); await page.close();
     }
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
