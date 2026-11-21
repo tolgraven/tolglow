@@ -111,6 +111,8 @@
   ([] (create-runtime {}))
   ([{:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (or model (demo/model))
+         _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
+             (throw (ex-info "Effect log sink must be callable" {})))
          _ (rig/validate-rig (:rig model))
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
@@ -123,7 +125,9 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (merge {:trusted-source? true} (:reactive-options options)))))
-         _ (when-not (:reactive model) (reactive-clock/register! (connections/reactive owned)))
+         _ (when-not (:reactive model)
+             (reactive-clock/register! (connections/reactive owned))
+             (effect-faults/register! (connections/reactive owned)))
          worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create
@@ -140,7 +144,7 @@
                       (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime {:id (str (UUID/randomUUID))
-      :effect-logs (effect-faults/create (select-keys options [:log!]))
+      :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink

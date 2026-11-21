@@ -52,7 +52,7 @@
 (deftest actual-compiler-workers-ring-and-output-continue-around-a-broken-effect
   (let [logged (promise) output (atom []) owner-thread (.getName (Thread/currentThread))
         runtime (studio/create-runtime {:model (show) :workspace-options nil
-                                        :log! #(deliver logged {:event % :thread (.getName (Thread/currentThread))})
+                                        :effect-log! #(deliver logged {:event % :thread (.getName (Thread/currentThread))})
                                         :sink {:send! (fn [universes frame] (swap! output conj [frame (vec (get universes 1))]))}})]
     (try
       (register-watcher! runtime)
@@ -62,6 +62,7 @@
             previous (second (last @output))]
         (is (= :evaluate (get-in @(:state runtime) [:model :instances bad :fault :stage])))
         (is (= :unstable (get-in failed [:effect-events :events 0 :effect-id])))
+        (is (= :unstable (:effect-id (first @(reactive/subscribe (studio/reactions runtime) [:runtime/effect-events])))))
         (is (= :effect/failed (get-in (deref logged 3000 ::timeout) [:event :type])))
         (is (not= owner-thread (:thread @logged)))
         (studio/tick! runtime 500)
@@ -73,11 +74,11 @@
         (is (= "accepted" (:status (post! runtime {:op "instance/retry" :instance-id bad} 500))))
         (is (nil? (get-in @(:state runtime) [:model :instances bad :fault])))
         (is (= :effect/recovered (-> (studio/snapshot runtime) :effect-events :events last :type)))
-        (is (= 0.4 (get-in (studio/snapshot runtime) [:output :values :head-1 :dimmer]))))
+        (is (= 0.4 (get-in (studio/snapshot runtime) [:output :values :head-1 :intensity]))))
       (finally (studio/stop! runtime)))))
 
 (deftest full-show-restore-preserves-quarantine-and-remaps-active-diagnostics
-  (let [runtime (studio/create-runtime {:model (show) :workspace-options nil :log! (fn [_])})]
+  (let [runtime (studio/create-runtime {:model (show) :workspace-options nil :effect-log! (fn [_])})]
     (try
       (let [bad (:instance-id (apply! runtime {:op :cue/launch :cue-id :unstable} 0))
             saved (studio/export-show runtime)
@@ -88,6 +89,7 @@
           (is (not= bad (:id new)))
           (is (= (:id new) (get-in new [:fault :instance-id])))
           (is (= 1 (get-in new [:fault :epoch])))
+          (is (contains? @(reactive/subscribe (studio/reactions runtime) [:runtime/effect-faults]) (:id new)))
           (studio/tick! runtime 30)
           (is (= 1 (get-in (studio/snapshot runtime) [:effect-events :event-sequence])))
           (is (nil? (get-in (studio/snapshot runtime) [:status :error])))
@@ -107,3 +109,60 @@
         (deliver release true)
         (faults/close! logger)
         (is (.isShutdown ^ThreadPoolExecutor (:pool logger)))))))
+
+(defn- with-effect [model effect]
+  (-> model
+      (assoc-in [:registry :effects (:id effect)] effect)
+      (assoc-in [:registry :cues (:id effect)] {:id (:id effect) :version 1 :effect-id (:id effect)
+                                               :priority 20 :reload-policy :preserve-state})))
+
+(defn- submit-operation! [runtime type payload t]
+  (let [reply (studio/submit! runtime type payload)]
+    (studio/tick! runtime t)
+    (deref reply 2000 ::timeout)))
+
+(deftest renderer-rejects-one-bad-aim-and-hot-reload-recovers-the-last-good-revision
+  (let [position (:position (first (demo/fixtures)))
+        effect {:id :aim-code :version 1 :params {} :targets [:head-1]
+                :outputs {:aim {:op :const :value [0.0 0.0 0.0]}}}
+        runtime (studio/create-runtime {:model (with-effect (demo/model) effect)
+                                        :workspace-options nil :effect-log! (fn [_])})]
+    (try
+      (apply! runtime {:op :cue/launch :cue-id :breathe} 0)
+      (let [id (:instance-id (apply! runtime {:op :cue/launch :cue-id :aim-code} 0))
+            bad (assoc-in (assoc effect :version 2) [:outputs :aim :value] position)]
+        (is (= :accepted (:status (submit-operation! runtime :definition {:kind :effects :definition bad} 100))))
+        (is (= 1 (get-in @(:state runtime) [:model :instances id :effect-version])))
+        (is (= :output (get-in @(:state runtime) [:model :instances id :reload-fault :stage])))
+        (is (nil? (get-in (studio/snapshot runtime) [:status :error])))
+        (is (pos? (get-in (studio/snapshot runtime) [:output :values :head-1 :intensity])))
+        (studio/tick! runtime 200)
+        (is (= [0.0 0.0 0.0] (get-in (studio/snapshot runtime) [:output :values :head-1 :aim])))
+        (is (= 1 (get-in (studio/snapshot runtime) [:effect-events :event-sequence])))
+        (is (= :accepted (:status (submit-operation! runtime :definition
+                                                     {:kind :effects :definition (assoc effect :version 3)} 300))))
+        (is (= 3 (get-in @(:state runtime) [:model :instances id :effect-version])))
+        (is (nil? (get-in @(:state runtime) [:model :instances id :reload-fault])))
+        (is (= :effect/recovered (-> (studio/snapshot runtime) :effect-events :events last :type))))
+      (finally (studio/stop! runtime)))))
+
+(deftest actual-typed-output-failures-do-not-hide-the-healthy-lighting
+  (doseq [[model effect]
+          [[(update-in (demo/model) [:rig :fixtures 0] assoc :channels {:dimmer 1} :rgbw-policy :none)
+            {:id :unsupported-color :version 1 :params {} :targets [:head-1]
+             :outputs {:color {:op :const :value [1.0 0.2 0.1]}}}]
+           [(demo/model)
+            {:id :overflow :version 1 :params {} :targets [:head-1]
+             :outputs [{:attribute :dimmer :blend :add :value {:op :const :value 0.8}}]}]]]
+    (let [runtime (studio/create-runtime {:model (with-effect model effect)
+                                          :workspace-options nil :effect-log! (fn [_])})]
+      (try
+        (apply! runtime {:op :cue/launch :cue-id :breathe} 0.0)
+        (let [id (:instance-id (apply! runtime {:op :cue/launch :cue-id (:id effect)} 500.0))]
+          (is (= :output (get-in @(:state runtime) [:model :instances id :fault :stage])))
+          (is (nil? (get-in (studio/snapshot runtime) [:status :error])))
+          (is (pos? (get-in (studio/snapshot runtime) [:output :values :head-1 :intensity])))
+          (studio/tick! runtime 700.0)
+          (is (= 1 (get-in (studio/snapshot runtime) [:effect-events :event-sequence])))
+          (is (= 2 (count (:instances (studio/snapshot runtime))))))
+        (finally (studio/stop! runtime))))))

@@ -1,10 +1,31 @@
 (ns tolglow.studio.effect-faults
   "Owned asynchronous diagnostics and renderer-attributed effect isolation."
-  (:require [afterglow.runtime.engine :as engine])
+  (:require [afterglow.runtime.engine :as engine]
+            [afterglow.runtime.faults :as runtime-faults]
+            [afterglow.reactive :as reactive])
   (:import [java.util.concurrent ArrayBlockingQueue ThreadPoolExecutor ThreadPoolExecutor$AbortPolicy
             TimeUnit ThreadFactory RejectedExecutionException]
            [java.util.concurrent.atomic AtomicLong]
            [java.util.logging Logger Level]))
+
+(defn effect-events [context _]
+  (get-in @(:db context) [:variables :runtime :events] []))
+
+(defn effect-faults [context _]
+  (into {} (keep (fn [[id instance]]
+                   (when (or (:fault instance) (:reload-fault instance))
+                     [id (select-keys instance [:effect-id :effect-version :cue-id :fault :reload-fault])]))
+                 (:instances @(:db context)))))
+
+(defn register!
+  "Portable subscriptions for show-specific event handlers and REPL reactions."
+  [system]
+  (doseq [[id handler name] [[:runtime/effect-events effect-events "effect-events"]
+                             [:runtime/effect-faults effect-faults "effect-faults"]]]
+    (reactive/reg-sub! system id handler
+                       {:id id :kind :sub
+                        :implementation {:type :var :symbol (str "tolglow.studio.effect-faults/" name)}}))
+  system)
 
 (defn resolve-output
   "Resolve once on the healthy path. A renderer-attributed effect failure removes
@@ -40,7 +61,9 @@
       (.execute ^ThreadPoolExecutor (:pool owner)
                 ^Runnable (fn []
                             (try ((:log! owner) event)
-                                 (catch Exception _ (.incrementAndGet ^AtomicLong (:failed owner))))))
+                                 (catch Throwable error
+                                   (when-not (runtime-faults/recoverable? error) (throw error))
+                                   (.incrementAndGet ^AtomicLong (:failed owner))))))
       (catch RejectedExecutionException _ (.incrementAndGet ^AtomicLong (:dropped owner)))))
   nil)
 
