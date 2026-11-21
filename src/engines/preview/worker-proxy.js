@@ -1,3 +1,4 @@
+import {RigEditorInput} from './editor.js';
 import * as THREE from 'three';
 import {SceneRenderer} from './scene-renderer.js';
 import {cameraControls, cameraPreset} from './camera.js';
@@ -138,6 +139,7 @@ export class WorkerRoomPreview {
   update(snapshot) {
     if (this.fallback) return this.fallback.update(snapshot);
     if (!snapshot || this.disposed) return;
+    this.editorInput ||= new RigEditorInput(this); this.editorInput.update(snapshot);
     const nextIdentity = showIdentity(snapshot);
     if (this.identity !== nextIdentity) {
       this.identity = nextIdentity; this._ready = false;
@@ -211,6 +213,7 @@ export class WorkerRoomPreview {
       navigation: this.getNavigationState(), camera: this.camera.position.toArray(), target: this.controls.target.toArray()};
   }
   stopProxy() {
+    this.editorInput?.dispose(); this.editorInput = null;
     clearTimeout(this.startupTimer); this.navigation?.dispose(); this.abort.abort();
     this.resizeObserver?.disconnect(); this.activity?.dispose(); this.controls.dispose(); this.channel?.close();
     this.worker?.terminate(); this.worker = null;

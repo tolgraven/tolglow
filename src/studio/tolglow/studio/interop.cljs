@@ -78,6 +78,9 @@
      (fn [this]
        (let [root (aget this "root")]
          (aset this "alive" true)
+         (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (.-detail %) :keywordize-keys true)])]
+           (aset this "rig-editor-handler" handler)
+           (.addEventListener (.querySelector root "canvas") "tolglow-editor" handler))
          (let [handler #(rf/dispatch [:studio/preview-resize])]
            (aset this "fullscreen-handler" handler)
            (.addEventListener js/document "fullscreenchange" handler)
@@ -112,7 +115,9 @@
          (.removeEventListener js/document "webkitfullscreenchange" handler))
        (when-let [engine (aget this "engine")]
          (js-invoke engine "dispose")
-         (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview))))
+         (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview)))
+       (when-let [handler (aget this "rig-editor-handler")]
+         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler)))
      :reagent-render
      (fn [show]
        (let [this (r/current-component)]
