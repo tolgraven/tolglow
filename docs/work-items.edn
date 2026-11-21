@@ -1,12 +1,16 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :in-progress
+ [{:id :web/event-debugger-and-subscriber-editor :kind :implementation :status :done
    :title "Inspect the event journal and DMX, and author event subscribers in Studio"
-   :owner "studio_debug_event_feed_subscriber_editor_and_dmx_monitor"
+   :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/debug.cljs" "tolglow/src/studio/tolglow/studio/debug_socket.cljs"
            "tolglow/src/studio/tolglow/studio/subscriber_editor.cljs" "tolglow/resources/studio/debug.css"]
-   :depends-on [:foundation/tests] :evidence [] :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
+    :depends-on [:foundation/tests]
+   :evidence ["docs/studio-debug.md, test/studio/debug_browser.cjs and test/studio/debug_subscribers_browser.cjs"
+              "162 CLJS tests / 875 assertions; optimized build 181 files, zero warnings"
+              "Live isolated Jetty/Chromium event stream, native binary DMX, subscriber CRUD, clock delivery, cross-tab push, exact musical intervals, tablet and phone viewport checks passed"]
+   :acceptance ["A routed, touch-friendly debug page consumes the live Transit tap with bounded history and recovery"
                                               "Inspect selected DMX universes and author real filtered, ordered subscriber actions"]}
   {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
