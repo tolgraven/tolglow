@@ -1,11 +1,31 @@
 # Rendering, acceleration, and simulation
 
-Status: measurement plan and proposed architecture. No speedup, GPU backend,
-physical fog simulation, or mobile performance result is claimed by this document.
-The [functional runtime proposal](functional-runtime.md) defines model ownership,
-assignment ordering, identity, and reload rules used here.
+## Current implementation
 
-## Current path and likely costs
+Afterglow owns the calibrated moving-head shader, fixture and target buffer
+layouts, GPU dispatch and readback. A headless JVM host can run the same GLSL
+as WebGL2. Both implementations accept world-space aim points and direction
+vectors, preserve the pan from the last accepted frame and report targets
+outside a fixture’s limits. Tolglow supplies authored effects and rig maps.
+Its integration workload compares Afterglow’s answers against the packed DMX
+universes. Studio owns the shaders that draw the room, surfaces and fog.
+[Afterglow solver and JVM example](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/moving-head-shaders.md)
+· [Whole-show measurement](../moving-head-shader.md)
+
+Afterglow can also compile a map of expressions for color, aim, focus or other
+named fields into a single transform-feedback program. Each fixture gets an
+independent record with typed field offsets. A 2,048-position WebGL run compared
+14,336 arithmetic components with the CPU and matched them exactly. This workload
+used exactly representable inputs and outputs. Trigonometric precision varies by
+driver. The shipping CPU renderer remains the default for physical output.
+[Expression interface](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/numeric-shader-fields.md)
+
+The remaining targets include physical GPU timing on live-show hardware,
+complete frame deadlines including readback and transfer, and wider fixture
+and device qualification. The functional runtime defines assignment ordering,
+identity and reload rules. [Functional runtime](functional-runtime.md)
+
+## Original show path and profiling hypotheses
 
 At afterglow fork `16b0b4cac70433e4118038dfbfd304e22d1d9018`,
 [`show/send-frame`](https://github.com/tolgraven/afterglow/blob/16b0b4cac70433e4118038dfbfd304e22d1d9018/src/afterglow/show.clj)
@@ -226,8 +246,8 @@ GLSL. Keep a shared IR, not a promise that one generated shader runs everywhere.
 
 The authoritative lighting loop runs on the show host. A browser tab may be
 throttled, suspended, disconnected, or lose its graphics context; an iPad preview
-cannot be a required link in live Art-Net output. A host GPU backend may use a
-native API and remain independent of the web renderer. The browser can reuse IR
+cannot be a required link in live Art-Net output. The JVM shader solver uses
+a private native OpenGL context on the host. The browser can reuse IR
 for local previews and editor feedback, while the host remains authoritative.
 
 Asynchronous readback can hide stalls but often adds a frame of latency. Every
