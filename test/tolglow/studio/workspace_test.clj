@@ -17,9 +17,11 @@
     (Files/createDirectory (.resolve root "src") attrs)
     (spit (str (.resolve root "src/core.clj")) "(ns fixture.core)\n(def value 1)\n")
     (spit (str (.resolve root ".gitignore")) "ignored/\n")
+    ;; Otherwise repositories created within one second can have identical
+    ;; initial commits and accidentally hide cross-repository Git redirection.
     (command! root ["git" "init" "--initial-branch=main"])
     (command! root ["git" "add" "."])
-    (command! root ["git" "-c" "user.name=Workspace test" "-c" "user.email=workspace@example.invalid" "commit" "-m" "Initial test fixture"])
+    (command! root ["git" "-c" "user.name=Workspace test" "-c" "user.email=workspace@example.invalid" "commit" "-m" (str "Initial test fixture " name)])
     root))
 (defn delete-tree! [^Path root]
   (when (Files/exists root (make-array LinkOption 0))
@@ -251,21 +253,71 @@
         (is (Files/exists (.resolve ^Path (:parent manager) "cancel/tolglow") (make-array LinkOption 0)))))))
 
 (deftest captured-git-metadata-is-not-redirected-by-terminal-edits
-  (with-workspace {}
-    (fn [{:keys [manager second]}]
+  (with-workspace {:runner (fn [_] {:exit-code 0 :output "Checked owned files"})}
+    (fn [{:keys [manager first second] :as fixture}]
       (workspace/create! manager {:id "metadata"})
       (let [paths (workspace/runtime-paths manager "metadata")
-            repo (get-in paths [:repositories :tolglow])]
+            repo (get-in paths [:repositories :tolglow])
+            before (workspace/fingerprint manager "metadata")]
+        (is (not= (:output (command! first ["git" "rev-parse" "HEAD"]))
+                  (:output (command! second ["git" "rev-parse" "HEAD"]))))
         (is (= "metadata" (:workspace-id paths)))
         (is (str/includes? (:git-dir repo) "/.git/worktrees/"))
         (is (nil? (get-in (workspace/status manager "metadata") [:repositories :tolglow :git-dir])))
         (spit (str (:path repo) "/.git") (str "gitdir: " second "/.git\n"))
         (spit (str (:git-dir repo) "/commondir") (str second "/.git\n"))
+        (is (= before (workspace/fingerprint manager "metadata")))
         (let [file (workspace/read-file manager "metadata" :tolglow "src/core.clj")]
           (workspace/write-file! manager "metadata" :tolglow "src/core.clj" {:expected-hash (:hash file) :content "owned version"}))
         (is (str/includes? (get-in (workspace/diff manager "metadata") [:repositories :tolglow :diff]) "+owned version"))
         (is (= repo (get-in (workspace/runtime-paths manager "metadata") [:repositories :tolglow])))
-        (is (= 2 (count (workspace/fingerprint manager "metadata"))))))))
+        (is (not= before (workspace/fingerprint manager "metadata")))
+        (is (= :passed (:status (deref (:result (workspace/check! manager "metadata" :unit)) 5000 nil)))))
+      (workspace/close! manager)
+      (let [restored (replacement-manager fixture)]
+        (try
+          (is (= {:recovered 1} (workspace/recover! restored)))
+          (is (str/includes? (get-in (workspace/diff restored "metadata") [:repositories :tolglow :diff]) "+owned version"))
+          (finally (workspace/close! restored)))))))
+
+(deftest captured-git-reads-follow-current-owned-head-and-index
+  (with-workspace {}
+    (fn [{:keys [manager second]}]
+      (workspace/create! manager {:id "current"})
+      (let [repo (get-in (workspace/runtime-paths manager "current") [:repositories :tolglow])
+            root (:path repo)]
+        (spit (str root "/committed.txt") "committed in owned branch")
+        (command! root ["git" "add" "committed.txt"])
+        (command! root ["git" "-c" "user.name=Test" "-c" "user.email=test@example.invalid" "commit" "-m" "Owned commit"])
+        (spit (str root "/staged.txt") "owned staged change")
+        (command! root ["git" "add" "staged.txt"])
+        (command! root ["git" "update-index" "--split-index"])
+        (let [before (workspace/fingerprint manager "current")]
+          (spit (str root "/.git") (str "gitdir: " second "/.git\n"))
+          (spit (str (:git-dir repo) "/commondir") (str second "/.git\n"))
+          (let [{:keys [diff status]} (get-in (workspace/diff manager "current") [:repositories :tolglow])]
+            (is (str/includes? diff "+owned staged change"))
+            (is (not (str/includes? diff "committed in owned branch")))
+            (is (str/includes? status "A  staged.txt")))
+          (is (= before (workspace/fingerprint manager "current"))))))))
+
+(deftest private-git-read-views-are-cleaned-after-success-failure-and-cancellation
+  (with-workspace {}
+    (fn [{:keys [manager]}]
+      (workspace/create! manager {:id "cleanup"})
+      (let [original workspace/run-trusted-process! views (atom [])]
+        (doseq [failure [nil (ex-info "Injected process failure" {}) (InterruptedException. "Injected cancellation")]]
+          (with-redefs [workspace/run-trusted-process!
+                        (fn [request]
+                          (when-let [view (get-in request [:environment "GIT_DIR"])]
+                            (swap! views conj (java.nio.file.Paths/get view (make-array String 0)))
+                            (is (Files/isDirectory (last @views) (make-array LinkOption 0))))
+                          (if failure (throw failure) (original request)))]
+            (if failure
+              (is (identical? failure (try (workspace/diff manager "cleanup") (catch Throwable error error))))
+              (is (= "cleanup" (:workspace-id (workspace/diff manager "cleanup")))))))
+        (is (seq @views))
+        (is (every? #(not (Files/exists ^Path % (make-array LinkOption 0))) @views))))))
 
 (deftest metadata-discovery-failure-removes-every-newly-owned-worktree
   (with-workspace {}
