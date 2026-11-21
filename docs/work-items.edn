@@ -5,7 +5,8 @@
    :title "Reconcile calibration with master and verify unsigned Apple targets on macOS CI"
    :kind :implementation :status :in-progress :owner "ios_lidar_fixture_identification_and_pose_calibration"
    :paths ["tolglow/.github/workflows/tests.yml" "tolglow/native/iOS/RigCalibration"
-           "tolglow/native/Tests/check_macos.sh" "tolglow/docs/rig-calibration.md"]
+           "tolglow/native/Tests/check_macos.sh" "tolglow/native/watchOS/TolglowWatchApp.swift"
+           "tolglow/docs/rig-calibration.md"]
    :depends-on [:native/lidar-rig-calibration-v1]
    :acceptance ["Preserve both master integration and saved-model calibration disarming before thaw"
                 "Build shared Swift tests and unsigned iOS/watchOS targets on a compatible macOS host"
