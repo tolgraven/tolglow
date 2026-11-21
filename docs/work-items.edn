@@ -260,8 +260,7 @@
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_movers.clj" "tolglow/dev/tolglow/bench_movers_reference.clj"
            "afterglow/dev/afterglow/bench_movement_reference.clj" "afterglow/dev/AGENTS.md"
-           "tolglow/bin/profile-movers" "tolglow/.github/workflows/performance.yml"
-           "tolglow/docs/performance-profiling.md"]
+           "tolglow/bin/profile-movers"]
    :depends-on [:foundation/tests]
    :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
                 "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"

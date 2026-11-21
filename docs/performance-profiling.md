@@ -113,7 +113,7 @@ oracle additionally checks full model, intents, packets and preview. Frame
 checksums and alpha combinations remain in the report.
 
 Separate lanes measure direct serial execution, bounded workers and actual
-Studio ticks. Studio timing includes command enqueue/admission, the normal
+headless show ticks. Host timing includes command enqueue/admission, the normal
 frame pipeline, reactive publication and captured ArtDMX encoding. All-head
 reference projection happens outside its timer. The advancing pipeline lane
 includes all-head projection and preserves prior compact movement history.

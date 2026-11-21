@@ -239,7 +239,7 @@
                                            :failure {:message (.getMessage error)
                                                      :details (select-keys (ex-data error)
                                                                [:frame-index :alphas :beat :fixture :field :expected :actual
-                                                                :status :typed? :workers])}}))) (:heads opts))}]
+                                                                :status :typed? :workers :model-equal? :intents-equal? :preview-equal?])}}))) (:heads opts))}]
       (if-let [path (:output opts)]
         (do (io/make-parents path)
             (with-open [writer (io/writer path)] (binding [*out* writer pprint/*print-right-margin* 220] (pprint/pprint report)))
