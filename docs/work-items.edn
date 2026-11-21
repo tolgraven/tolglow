@@ -1,7 +1,18 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :development/git-metadata-isolation
+ [{:id :performance/master-mixed-rig-profiling
+   :title "Profile complete mixed rigs on master and optimize measured hot paths"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Repeatable scalar-oracle-checked 100/1000/10000-pixel and moving-head workloads"
+                "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
+                "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
+   :evidence []}
+  {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/workspace.clj"
