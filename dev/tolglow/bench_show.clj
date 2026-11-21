@@ -6,8 +6,8 @@
             [afterglow.render.frame :as render]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
+            [afterglow.output.artnet :as artnet]
             [tolglow.show :as show]
-            [tolglow.output :as output]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
@@ -87,7 +87,7 @@
 (defn capture-sink []
   (let [latest (volatile! [])]
     {:latest latest :description {:type :artdmx-capture :network false}
-     :send! (fn [universes _] (vreset! latest (mapv (fn [[u b]] (output/artdmx-packet u 1 b)) (sort-by key universes))))
+     :send! (fn [universes _] (vreset! latest (mapv (fn [[u b]] (artnet/artdmx-packet u 1 b)) (sort-by key universes))))
      :close! (fn [])}))
 
 (defn- approximately= [a b]
