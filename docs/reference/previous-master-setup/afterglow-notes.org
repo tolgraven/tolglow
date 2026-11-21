@@ -1,0 +1,36 @@
+cleanup midi:
+why sep fns for note/cc etc? roll into one
+same in show midi helpers:
+change to general versions like add-midi-callback
+
+examples:
+play on repl fidelity:
+      refer stuff! (? see below)
+      bind long fn names to shorter
+
+general:
+- shorter names
+avoid repetition in ns+fn naming? choices:
+      dimmer-effect (through :refer)
+      fx/dimmer-effect
+      fx/dimmer
+third one best by far imo - for clarity, completions, avoiding refers...
+* flexibility in making a clean break and fixing that shit now since no one is really using it...
+
+- frontend
+afterglow should be usable to some extent with zero clojure knowledge
+  parser to read config file of fixture patch data etc, uses general cue page builders to create entire mapping
+  more helpers for writing fixture defs
+
+  80-90% of work already done - some further polish and afterglow could be usable *BOTH* as a framework and as an app
+  - go all the way and package as .app etc
+    - possibly spin off as sep project. Glow?
+
+  - should drive popularity _QUICK_ mainly on user-end
+      - this should attract developers as well
+
+  - more work on bindings (midi/OSC etc) and render loop hooks
+    - viable direction likely more a controller of more appropriate effect generators
+    - perfect master hw controller for eg. resolume + bunch of lights
+      whether actually running lights self or simply controlling another app
+    -
