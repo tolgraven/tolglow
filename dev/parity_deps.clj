@@ -21,6 +21,5 @@
   (prn (cond-> {:deps deps
                 :mvn/repos (into {} (map (fn [[id url]] [id {:url url}]))
                                  (:repositories project))}
-         source-root (assoc :paths ["." "resources" "test" "dev"
-                                    (str source-root "/src")
-                                    (str source-root "/resources")]))))
+         source-root (assoc :paths ["src" "resources" "test" "dev"])
+         source-root (assoc-in [:deps 'tolgraven/afterglow] {:local/root source-root}))))

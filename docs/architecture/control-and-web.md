@@ -29,9 +29,9 @@ The following table describes the inspected historical Afterglow revision
 | `afterglow/resources/public/js/show_updates.js` | jQuery/Bootstrap, polling 50 ms after successful responses, mouse-down/up cue interaction, context menu with delete | Mobile input, local editing state, reconnect behavior and rendering cadence need explicit redesign. |
 | `afterglow/src/afterglow/web/routes/visualizer.clj` | Four-light cap, movement-history-derived color/aim, comments noting omitted dimmer behavior | A new simulator must consume actual resolved output and a shared rig model; the current view is not a photometric reference. |
 | `afterglow/src/afterglow/web/routes/web_repl.clj` | Session-bound Clojure evaluation via `do-eval` | Existing REPL functionality is an administrative execution surface, not a declarative command schema. Keep the distinction explicit. |
-| `tolglow/tolglow/osc.clj` | Direct show changes and callback registration; `receiver` currently prints and calls its function with `1 2`, while the actual handler registration is reader-discarded | Characterize and repair this separately; do not describe OSC receiving as a verified working generic adapter. |
-| `tolglow/tolglow/sequencer.clj` | `secue` and `secudfx` are empty experimental functions | The proposed editor and sequence execution model are new work. |
-| `tolglow/tolglow/live.clj` | Experiments in live effect code | This is not Ableton Live integration. |
+| `tolglow/src/tolglow/osc.clj` | Direct show changes and callback registration; `receiver` currently prints and calls its function with `1 2`, while the actual handler registration is reader-discarded | Characterize and repair this separately; do not describe OSC receiving as a verified working generic adapter. |
+| `tolglow/src/tolglow/sequencer.clj` | `secue` and `secudfx` are empty experimental functions | The proposed editor and sequence execution model are new work. |
+| `tolglow/src/tolglow/live.clj` | Experiments in live effect code | This is not Ableton Live integration. |
 
 ## Ownership and public boundaries
 

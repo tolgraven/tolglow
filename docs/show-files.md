@@ -157,6 +157,9 @@ Agent state and fixture cache use `:integrations :agents` and `:fixtures`.
 Capture uses `:integrations :audio-capture` with `{:version 1 :config ...
 :capture-wanted? boolean}`; separate audio parameter-routing settings under
 `:integrations :audio`, Ableton links and Beat Link settings remain intact.
+Sync exports `:integrations :sync {:version 1 :config ... :wanted? boolean}`.
+Preparing/restoring this data opens no transport; the host explicitly resumes a
+wanted sync connection after clock rebase. Retired callbacks are generation-gated.
 
 The host stages a restore with `prepare-restore`, which validates data, creates
 replacement managers and resolves permitted reactive handlers. Invalid data or
@@ -196,16 +199,16 @@ Custom tagged readers were explicitly tested and never invoked while validating
 saved source. API tests use real compiler/registry/patch and integration
 validators. Final host-suite counts belong in [testing](testing.md).
 
-The connections suite passed **14 tests / 120 assertions**; running it together
-with persistence passed **33 tests / 285 assertions**. This covers inert
+The connections suite including sync passed **16 tests / 158 assertions**. This covers inert
 construction, local reference resolution without secret export, complete show
 roundtrip, rejected restores, concurrent/stale candidate commits, cleanup
 failure isolation, preserved reactive state, interrupted chats and synthetic PCM
 capture restarting with a new origin. Transport tests use injected providers and
 PCM sources; no physical capture or external provider account was used.
 
-Root host tests additionally need to prove atomic model/output snapshot capture,
-load-time clock rebasing, no extra effect step, session cancellation/recreation,
-provider credential-reference resolution and user-visible connection outcomes.
+The resource-host suite passed **12 tests / 80 assertions**, covering model/output
+restoration, no extra effect step, clock rebase, stale/pending candidates, device
+open races and Unicode atomic file replacement. Real connection outcomes remain
+a separate physical/provider gate.
 No pure serializer test establishes physical device reconnection or successful
 external-provider authentication.

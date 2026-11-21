@@ -2,7 +2,9 @@
   (:require [clojure.test :as test]))
 
 (def pure-tests
-  '[tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.compiler-test tolglow.compiler.batch-test
+  '[tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
+    tolglow.clock-test tolglow.system-controls-test
+    tolglow.compiler-test tolglow.compiler.batch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
     tolglow.composition.response-test
@@ -17,7 +19,13 @@
     tolglow.studio.fixtures-test tolglow.studio.fixture-service-test
     tolglow.studio.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-test tolglow.studio.fixture-host-test tolglow.studio.rig-test
-    tolglow.studio.sync-test tolglow.studio.sync-host-test])
+    tolglow.studio.sync-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
+    tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
+    tolglow.studio.repl-test tolglow.studio.repl-manager-test tolglow.studio.repl-host-test
+    tolglow.studio.workspace-test tolglow.studio.development-test tolglow.studio.restart-host-test
+    tolglow.studio.terminal-test tolglow.studio.sensors-test tolglow.studio.sensor-osc-test
+    tolglow.studio.sensor-host-test tolglow.studio.output-scheduler-test
+    tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test])
 
 (def suites
   {"pure" pure-tests

@@ -14,7 +14,24 @@
         :burst (js-invoke engine "burst")
         :reset (js-invoke engine "resetCamera")
         :resize (js-invoke engine "resize")
+        :worklight (when (fn? (aget engine "setWorkLight")) (js-invoke engine "setWorkLight" value))
+        :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
+        :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
+        :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))
         nil))))
+(rf/reg-fx :studio/preview-fullscreen
+  (fn [_]
+    (when-let [panel (.getElementById js/document "preview-panel")]
+      (let [active (or (.-fullscreenElement js/document) (aget js/document "webkitFullscreenElement"))
+            target (if (= active panel) js/document panel)
+            method (if (= active panel)
+                     (if (fn? (aget js/document "exitFullscreen")) "exitFullscreen" "webkitExitFullscreen")
+                     (if (fn? (aget panel "requestFullscreen")) "requestFullscreen" "webkitRequestFullscreen"))]
+        (if (fn? (aget target method))
+          (-> (js/Promise.resolve (js-invoke target method))
+              (.then #(rf/dispatch [:studio/preview-resize]))
+              (.catch #(rf/dispatch [:studio/toast (message %) true])))
+          (rf/dispatch [:studio/toast "Fullscreen is unavailable in this browser. Expand the preview instead." true]))))))
 (rf/reg-fx :studio/nvim-source
   (fn [source]
     (when-let [engine (:neovim @engines)]
@@ -40,6 +57,10 @@
      (fn [this]
        (let [root (aget this "root")]
          (aset this "alive" true)
+         (let [handler #(rf/dispatch [:studio/preview-resize])]
+           (aset this "fullscreen-handler" handler)
+           (.addEventListener js/document "fullscreenchange" handler)
+           (.addEventListener js/document "webkitfullscreenchange" handler))
          (-> (js-invoke js/globalThis "tolglowLoadEngine" "preview")
              (.then (fn [module]
                       (when (aget this "alive")
@@ -48,15 +69,19 @@
                                                                (.querySelector root "#preview-status")])]
                           (aset this "engine" engine)
                           (swap! engines assoc :preview engine)
-                          (js-invoke engine "update" (clj->js (second (r/argv this))))))))
+                          (when-let [show (second (r/argv this))] (js-invoke engine "update" (clj->js show)))
+                          (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"])])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
      :component-did-update
      (fn [this _]
        (when-let [engine (aget this "engine")]
-         (js-invoke engine "update" (clj->js (second (r/argv this))))))
+         (when-let [show (second (r/argv this))] (js-invoke engine "update" (clj->js show)))))
      :component-will-unmount
      (fn [this]
        (aset this "alive" false)
+       (when-let [handler (aget this "fullscreen-handler")]
+         (.removeEventListener js/document "fullscreenchange" handler)
+         (.removeEventListener js/document "webkitfullscreenchange" handler))
        (when-let [engine (aget this "engine")]
          (js-invoke engine "dispose")
          (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview))))

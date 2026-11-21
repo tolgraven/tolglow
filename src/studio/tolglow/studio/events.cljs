@@ -1,7 +1,8 @@
 (ns tolglow.studio.events
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
-            [re-frame.core :as rf]))
+            [re-frame.core :as rf]
+            [tolglow.studio.parameter-widgets :as widgets]))
 
 (def initial-source
   "{:id :after-hours\n :version 1\n :name \"After hours\"\n :swatch \"#b981a3\"\n :duration {:beats 4}\n :envelope {:attack {:beats 0.125} :release {:beats 1}}\n :params {:level {:type :number :default 0.7 :bounds [0.0 1.0]}}\n :outputs {:color {:op :const :value [0.725 0.506 0.639]}\n           :dimmer {:op :param :key :level}}}")
@@ -10,6 +11,7 @@
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :polling? false
    :connection {:connected? false :error "Connecting to the studio…"}
    :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false :fog 0.3
+        :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
         :definition-search "" :assign-cue "" :toast nil :action-cell nil :clipboard nil :prompt nil
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
         :definition {:kind "effects" :source initial-source :version 1 :engine :textarea :mode :source
@@ -33,6 +35,9 @@
     "/api/fixtures/publish" "/api/fixtures/patch"
     "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff"
     "/api/audio/start" "/api/audio/stop"
+    "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
+    "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
+    "/api/patch/save" "/api/patch/enabled"
     "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
 (defn guard-request [db request]
   (if (and (:body request) (guarded-paths (:path request)))
@@ -46,7 +51,8 @@
              (let [db (get-in context [:coeffects :db])]
                (update context :effects
                  (fn [effects]
-                   (cond-> (if (nil? (:fx effects)) (dissoc effects :fx) effects)
+                   (cond-> (reduce (fn [out key] (if (nil? (get out key)) (dissoc out key) out))
+                                  effects [:fx :dispatch :dispatch-n :dispatch-later])
                      (:studio/http effects) (update :studio/http #(guard-request db %))
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
@@ -175,8 +181,9 @@
           updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
       {:db updated
        :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
-                                          [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:modulation/runtime-change]]
+                                          [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:audio-scope/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
                                           (notice "Show restarted; controls follow the new epoch."))
+             runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
              (and (contains? show :settings) (or epoch-changed? (not (:settings-loaded? db))))
              (conj [:dispatch [:studio/settings-received (:settings show)]]))
        :dispatch-later [{:ms (if hidden? 1500 100) :dispatch [:studio/poll]}]})
@@ -207,7 +214,7 @@
   (let [prefs (:ui settings) raw-view (:view prefs)
         view (when (or (string? raw-view) (keyword? raw-view)) (keyword raw-view))]
     (cond-> (assoc db :settings-loaded? true :settings-supported? true)
-      (contains? #{:perform :compose :rig :library :assistant :connections} view) (assoc-in [:ui :view] view)
+      (contains? #{:perform :compose :rig :library :assistant :connections :develop} view) (assoc-in [:ui :view] view)
       (string? (:page-id prefs)) (assoc-in [:ui :page-id] (:page-id prefs))
       (contains? #{"toggle" "held" "one-shot"} (:launch-mode prefs)) (assoc-in [:ui :launch-mode] (:launch-mode prefs)))))
 (rf/reg-event-fx :studio/settings-received
@@ -324,6 +331,11 @@
              (draft [instance-id param] "param/set" {:instance-id instance-id :param (wire-id param) :value value}))
      :dispatch [:studio/queue-param [instance-id param] "param/set" {:instance-id instance-id :param (wire-id param) :value value}]})
 (rf/reg-event-fx :studio/param-set set-param-fx)
+(rf/reg-event-fx :studio/param-key
+  (fn [{:keys [db] :as cofx} [_ instance-id param schema key]]
+    (let [current (some #(when (= instance-id (:id %)) (get-in % [:params param])) (get-in db [:show :instances]))]
+      (when-let [next (and (number? current) (widgets/keyboard-value schema current key))]
+        (set-param-fx cofx [:studio/param-set instance-id param next])))))
 (rf/reg-event-fx :studio/param-component
   (fn [{:keys [db] :as cofx} [_ instance-id param index value]]
     (let [instance (some #(when (= (:id %) instance-id) %) (get-in db [:show :instances]))
@@ -361,6 +373,15 @@
         cells (cond-> cells cue-id (conj {:x x :y y :cue-id cue-id}))]
     (command db "page/put" {:page (assoc page :cells cells)})))
 (rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
+(rf/reg-fx :studio/focus-instance
+  (fn [id]
+    (js/requestAnimationFrame
+      (fn [] (js/requestAnimationFrame
+               (fn []
+                 (when-let [card (.querySelector js/document (str "[data-live-instance=\"" (.escape js/CSS (str id)) "\"]"))]
+                   (.scrollIntoView card #js {:behavior "smooth" :block "nearest"})
+                   (when-let [control (.querySelector card "button,input,select")]
+                     (.focus control #js {:preventScroll true})))))))))
 (rf/reg-event-fx :studio/cue-action [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ action]]
     (let [cell (get-in db [:ui :action-cell]) cue (cue db (:cue-id cell))
@@ -368,7 +389,10 @@
       (case action
         :launch {:db closed :dispatch [:studio/launch (:id cue) "one-shot"]}
         :inspect (if-let [instance (first (active db (:id cue)))]
-                   {:db (assoc-in closed [:ui :selected-instance] (:id instance))}
+                   {:db (-> closed (assoc-in [:ui :selected-instance] (:id instance))
+                            (assoc-in [:ui :performance-section] "live")
+                            (assoc-in [:ui :performance :expanded (:id instance)] true))
+                    :studio/focus-instance (:id instance)}
                    {:db closed :dispatch [:studio/launch (:id cue) "toggle"]})
         :copy {:db (assoc-in closed [:ui :clipboard] cue) :fx [(notice "Cue copied. Choose an empty cell to paste.")]}
         :paste (let [copied (assoc (get-in db [:ui :clipboard]) :id (str (get-in db [:ui :clipboard :id]) "-copy-" unique)
@@ -412,6 +436,10 @@
            (:params cue) (:params slot))))
 (rf/reg-event-db :studio/slot-param
   (fn [db [_ index parameter value]] (assoc-in db [:ui :composition :slots index :params parameter] value)))
+(rf/reg-event-db :studio/slot-param-key
+  (fn [db [_ index parameter schema key]]
+    (if-let [next (widgets/keyboard-value schema (get (slot-parameters db index) parameter) key)]
+      (assoc-in db [:ui :composition :slots index :params parameter] next) db)))
 (rf/reg-event-db :studio/slot-param-component
   (fn [db [_ index parameter component value]]
     (assoc-in db [:ui :composition :slots index :params parameter]
@@ -649,7 +677,26 @@
   (fn [_ [_ source]] {:studio/http {:path "/api/import" :body {:source source} :on-success [:studio/imported]}}))
 (rf/reg-event-fx :studio/imported
   (fn [{:keys [db]} _] {:db (assoc-in db [:ui :rig-dirty?] false) :dispatch [:studio/toast "Show imported."]}))
+(rf/reg-event-fx :studio/preview-ready
+  (fn [{:keys [db]} [_ supported?]]
+    {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
+     :fx (into [[:studio/preview [:fog (get-in db [:ui :fog] 0.3)]]]
+               (when supported? (mapv (fn [[key value]] [:studio/preview [key value]])
+                                      (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
+(rf/reg-event-fx :studio/preview-setting
+  (fn [{:keys [db]} [_ key value]]
+    (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
+                           :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
+                           :camera (contains? #{"audience" "overview"} value) false)]
+      (when valid? {:db (assoc-in db [:ui :preview-settings key] value) :studio/preview [key value]}))))
+(rf/reg-event-fx :studio/preview-expand
+  (fn [{:keys [db]} _] {:db (update-in db [:ui :preview-expanded?] not)
+                        :dispatch-later [{:ms 30 :dispatch [:studio/preview-resize]}]}))
+(rf/reg-event-fx :studio/preview-fullscreen (fn [_ _] {:studio/preview-fullscreen true}))
 (rf/reg-event-fx :studio/preview-fog
   (fn [{:keys [db]} [_ value]] {:db (assoc-in db [:ui :fog] value) :studio/preview [:fog value]}))
-(doseq [[event action] [[:studio/preview-burst :burst] [:studio/preview-reset :reset] [:studio/preview-resize :resize]]]
+(rf/reg-event-fx :studio/preview-reset
+  (fn [{:keys [db]} _]
+    {:db (assoc-in db [:ui :preview-settings :camera] "audience") :studio/preview [:reset nil]}))
+(doseq [[event action] [[:studio/preview-burst :burst] [:studio/preview-resize :resize]]]
   (rf/reg-event-fx event (fn [_ [_ value]] {:studio/preview [action value]})))

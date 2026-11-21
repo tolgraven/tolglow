@@ -3,6 +3,12 @@
 Surveyed 2026-11-21 from clean public default branches. No existing local
 checkout, build configuration or AGENTS.md was present in the workspace.
 
+This is the historical survey of the listed revisions, not the current project
+layout or delivery status. The application now has `src/tolglow/`, `resources/`,
+`test/`, `dev/`, `bin/`, root manifests and the separate `src/studio/` frontend.
+See [the architecture index](README.md) and [work ledger](work-items.edn) for
+the current implementation; original behavior remains a feature-parity reference.
+
 | Repository | Branch | Survey baseline |
 | --- | --- | --- |
 | tolgraven/tolglow | effects | `01146ece7731ec06aa1ee6409342373096c8e0dc` |

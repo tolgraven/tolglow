@@ -40,3 +40,19 @@ Test staged restore failure/cleanup and stale callbacks using actual resource
 owners with injected transports. Link/AbleSet/Live dual-host claims require
 explicit selected-source, disconnect and single-output-authority checks; a
 loopback protocol test alone does not prove the external host.
+
+Development workspace requirements are in
+[the workspace specification](../docs/product/development-workspace.md). Keep live show
+authoring separate from branch/worktree application edits. A Quake/Bruvbox REPL,
+Neovim repository/scratch workflow, agent diffs/watchers, target-specific reload
+with last-good revert, and Docker/zsh terminal need actual execution and lifecycle
+evidence. Capture portable locals explicitly; do not serialize opaque closures.
+Keep manual, after-turn and preview reload policies visible and scoped.
+
+Sensor and deadline contracts are in [sensors](../docs/sensors.md) and
+[output presentation](../docs/output-presentation.md). Keep sensor model state separate
+from owned credentials/sockets and require explicit fresh-session output arming.
+Completed lighting packets retain original physical timestamps; presentation
+never advances effect state. Fade only declared linear emission controls and
+preserve discrete channels/coarse-fine semantics. Scene/fog visual work has one
+owner; backend projection and shared frontend widgets have separate claims.

@@ -9,7 +9,7 @@
    :param-mode "all" :selected-params [] :ranges {} :mode "glide" :curve "smoothstep"
    :distribution "uniform" :seed "1" :max-change ""
    :cue-id "parameter-motion" :cue-name "Parameter motion"
-   :pending {} :errors {} :notice nil :widgets {} :generation 0})
+   :pending {} :errors {} :notice nil :widgets {} :generation 0 :expanded? false})
 (defn- wire [value] (events/wire-id value))
 (defn- state [db] (merge defaults (get-in db [:ui :modulation])))
 (defn- store [db s] (assoc-in db [:ui :modulation] s))
@@ -306,10 +306,16 @@
 (defn panel [_db]
   (let [{s :form :keys [show playing? manual-holds]} @(rf/subscribe [:modulation/state])
         busy? (boolean (get-in s [:pending :global]))]
-    [:section.panel.modulation-panel {:aria-label "Musical parameter modulation"}
-     [:div.panel-top [:span.section-label "PARAMETER MOTION"]
-      [:span.small.muted (if (false? playing?) "Transport paused" "Musical clock")]]
-     [:div.modulation-body
+    [:section.panel.modulation-panel {:role "region" :aria-label "Musical parameter modulation"}
+     [:button.panel-top.modulation-disclosure {:type "button" :aria-expanded (:expanded? s)
+                                               :aria-controls "modulation-panel-body"
+                                               :on-click #(set-form! :expanded? (not (:expanded? s)))}
+      [:span.section-label "PARAMETER MOTION"]
+      [:span.small.muted (str (count (get-in show [:modulation :controllers])) " running · "
+                             (if (false? playing?) "Transport paused" "Musical clock") " · "
+                             (if (:expanded? s) "−" "+"))]]
+     (when (:expanded? s)
+       [:div#modulation-panel-body.modulation-body
       [:h2 "Let selected parameters evolve"]
       [:p.small.muted "Make a new seeded choice on each musical interval, or glide between choices. Your manual values remain available."]
       [status-message s :global]
@@ -348,7 +354,7 @@
            ^{:key (str instance-id "/" param)}
            [:div.modulation-hold-row [:span (str instance-id " · " param)]
             [:span.small.muted (if until-beat (str "Until beat " (display until-beat)) "Until resumed")]
-            [:button.button {:type "button" :on-click #(rf/dispatch [:modulation/resume instance-id param])} "Resume"]])])]]))
+            [:button.button {:type "button" :on-click #(rf/dispatch [:modulation/resume instance-id param])} "Resume"]])])])]))
 
 (defn parameter-widget [instance-id parameter schema _value]
   (when instance-id

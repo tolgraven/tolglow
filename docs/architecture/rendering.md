@@ -38,8 +38,8 @@ but an allocation-friendly collection helper alone does not establish that the
 whole rendering path is fast.
 
 Tolglow has experimental Quil/Processing graphics and PixelFlow work in
-[`viz.cljc`](../../tolglow/viz.cljc) and
-[`graphics/`](../../tolglow/graphics/). Afterglow already serves a WebGL preview
+[`viz.cljc`](../../src/tolglow/viz.cljc) and
+[`graphics/`](../../src/tolglow/graphics). Afterglow already serves a WebGL preview
 using a templated
 [`fragment.glsl`](https://github.com/tolgraven/afterglow/blob/16b0b4cac70433e4118038dfbfd304e22d1d9018/resources/templates/fragment.glsl),
 with a configured light cap and polling every 50 ms in the

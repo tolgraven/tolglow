@@ -1,10 +1,22 @@
 # Testing and compatibility gates
 
-Use Java 17 or 21 and Clojure CLI (developed with 1.11.1.1435). Both projects pin
-Clojure **1.11.4**. Keep the modified repositories as siblings: new Tolglow code
+Both project manifests now pin Clojure **1.12.7**. CI is configured for Java
+17/21/25 and Clojure CLI **1.12.7.1681**; local observed evidence below names the
+JVM actually used. Keep the modified repositories as siblings: new Tolglow code
 uses the companion Afterglow control/runtime/render modules in both lanes.
 `AFTERGLOW_ROOT` overrides the parity dependency helper's path; the standard
 Tolglow `deps.edn` local dependency points to `../afterglow`.
+
+JVM source is under `src/tolglow/`, with `src` and `resources` on the application
+classpath. Focused test commands add `test` and `dev`, not the repository root.
+The full root `project.clj` is maintained alongside the CLI manifest. Frontend
+source remains under `src/studio/` and uses its separate build configuration.
+
+The waveform/display gate after the source-layout migration passed **17 tests /
+118 assertions** on the local Java 21/Clojure 1.12.7 runtime. It covers real Ring
+parameter edits, compiler-equivalent signal samples, measured injected PCM,
+bounded caches/history and off-deadline Push refresh without a new model view.
+Actual browser fixture capture and physical-device checks remain separate.
 
 ```sh
 cd /path/to/afterglow
@@ -63,6 +75,22 @@ the columns or add a focused result to an integrated run containing it.
 | Rig + persistence | 24 | 217 | Full patch footprints, portable room/truss validation and existing show files |
 | Fixture host | 3 | 59 | Actual Ring/runtime fixture publication/patch flow |
 | Frontend source | 28 | 124 | re-frame/Reagent source tests; optimized build 129 files / 0 warnings |
+| System/category controls and existing core gates | 81 | 612 | Reflection-checked reducer, engine, views, ordinary/typed opacity and pause |
+| Actual compiler/system integration | 2 | 33 | Real scalar/batch compiler, private clock, AR and DMX |
+| X-Touch adapter | 10 | 138 | Verified-reference bytes and injected multi-unit lifecycle |
+| Typed modulation | 16 | 122 | Musical RNG/holds/categories, real published cue/compiler/engine |
+| Effect recipes | 8 | 153 | Scalar/typed musical/spatial recipes and hot reload |
+| Registered signals | 8 | 105 | Waveform versions, selectors/bindings, derivatives and DMX parity |
+| Typed patch kernel | 16 | 118 | Saved progress, exact ownership, musical seek and routing |
+| Latest frontend source checkpoint | 100 | 538 | Optimized release142 files /0 warnings; subsequent source remains separately tested |
+| Afterglow parity checkpoint | 247 | 2808 | Root verified at3b7528008191f6c479b6cc2422b27237460ae600, includes system/X-Touch/replay |
+| Tolglow parity checkpoint | 411 | 3294 | Restart owner final integrated run accepted by root; later sensor/publisher work separate |
+| Latest Afterglow parity | 269 | 2943 | Root gate includes pure sensor and deadline policy; host publisher gate separate |
+| Sensor core | 11 | 71 | Pure calibration, filters, musical hysteresis, holds and middleware |
+| Sensor service/OSC/connections | 31 | 239 | Real wire/owned loopback, token lifecycle, staged restoration and bounded queue |
+| Output presentation policy | 11 | 64 | Actual renderer, delayed/reversed completions, coarse/fine and emission-only fallback |
+| Workspace/terminal | 19 | 139 | Actual Git10/77, pure terminal3/17, explicit real Docker6/45 |
+| Native protocol fixture | 4 | 10 | Actual Clojure decoder/owned UDP; Swift/Xcode build unavailable |
 
 All listed checkpoints passed with zero failures/errors. Focused agent results
 were reported by the module owner; the integrated checkpoints were run by the
@@ -72,16 +100,16 @@ historical and no longer describes the current suites.
 ### Final integrated verification
 
 The integrator owns final combined counts and source revisions. The checkpoint
-results below are observed, but later sync/replay/Connections UI changes still
-need their selected runs; pending results must not be inferred from older gates.
+results below are observed, but later system controls, replay schema, routing and
+workspace changes still need their selected runs; pending results must not be inferred from older gates.
 
 | Gate | Current final-run state |
 | --- | --- |
-| Afterglow pure and parity | Root pure 158 / 2030 passed; final paired revision/parity run to record |
-| Tolglow pure and parity | Root pure 244 / 1780 passed before final host/sync additions; final combined/parity runs to record |
-| Frontend production build | Re-frame release129 files / 0 warnings and source 28 / 124 passed; subsequent Connections UI has its own gate |
-| Browser interaction | Restarted-server 9 session + 6 authoring workflows passed with 0 console/page errors; physical Safari and later Connections view pending |
-| Work ledger and documentation links | Validate after final ownership/status updates |
+| Afterglow pure and parity | Root parity269 /2943 passed including sensor/presentation; publisher host has separate gate |
+| Tolglow pure and parity | Parity411 /3294 passed after restart; subsequent host/sensor/deadline changes require final combined gate |
+| Frontend production build | Re-frame release142 files /0 warnings and source100 /538 passed; newer sensor/scene widgets have separate gates |
+| Browser interaction | Actual9 session+6 authoring,6 Connections,6 modulation,9 REPL,4 patchbay,3 waveform flows passed; physical Safari remains separate |
+| Work ledger and documentation links | 94 items validated:58done,29planned,7active; rerun after further changes |
 
 CI defines Java 17/21 lanes, but hosted CI and local Java 17 execution have not
 been observed here. Cross-repository CI must check out the reviewed new
@@ -170,3 +198,12 @@ Keep known defects visible and add behavioral regressions before fixes. Test
 against independently specified outputs rather than mirrored implementation.
 Device and visual acceptance still require physical Push captures, real iPad
 Safari/phone interaction and measured performance under preview/output load.
+
+### System-control replay transition
+
+The earlier expanded run reached209 tests/2460 assertions with one replay
+metadata mismatch. The replay owner independently compared all36 input steps:
+output digests, selected instance behavior, acknowledgements/intents and fixed
+DMX bytes were unchanged. Only after that comparison was the recording refreshed.
+The later root parity247 tests/2808 assertions passed at3b752800. This resolves
+the earlier checkpoint; it does not authorize blind golden-output replacement.

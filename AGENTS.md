@@ -13,7 +13,9 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
   the new studio. The companion `tolgraven/afterglow` fork owns the shared
   runtime/control/render modules, device transports and legacy application.
   Keep independent repositories and preserve existing `tolmaster` work.
-- JVM application source is under `tolglow/`; the repo root is on the classpath.
+- The full project has JVM application source under `src/tolglow/`, with
+  `resources/`, `test/`, `dev/`, `bin/`, and a root `project.clj` application
+  manifest. `src/` is the JVM classpath source root; the repository root is not.
   The new browser source is under `src/studio/`. `deps.edn` now supports the
   application and tests, including a local `../afterglow` dependency. Both test
   lanes consume new fork APIs; the old default-master pin is not sufficient.
@@ -82,3 +84,19 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 Nested AGENTS.md files add local rules. Link central contracts instead of
 copying schemas into multiple diverging documents.
+
+Development workspace requirements are in
+[the workspace specification](docs/product/development-workspace.md). Keep live show
+authoring separate from branch/worktree application edits. A Quake/Bruvbox REPL,
+Neovim repository/scratch workflow, agent diffs/watchers, target-specific reload
+with last-good revert, and Docker/zsh terminal need actual execution and lifecycle
+evidence. Capture portable locals explicitly; do not serialize opaque closures.
+Keep manual, after-turn and preview reload policies visible and scoped.
+
+Sensor and deadline contracts are in [sensors](docs/sensors.md) and
+[output presentation](docs/output-presentation.md). Keep sensor model state separate
+from owned credentials/sockets and require explicit fresh-session output arming.
+Completed lighting packets retain original physical timestamps; presentation
+never advances effect state. Fade only declared linear emission controls and
+preserve discrete channels/coarse-fine semantics. Scene/fog visual work has one
+owner; backend projection and shared frontend widgets have separate claims.

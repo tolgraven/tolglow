@@ -10,7 +10,11 @@
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.modulation :as modulation]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.waveform :as waveform]
+            [tolglow.studio.repl :as repl]
+            [tolglow.studio.performance :as performance]
+            [tolglow.studio.workspace :as workspace]))
 
 (defn- send! [event] (rf/dispatch event))
 ;; Controlled values must reach app-db before React restores the input after
@@ -64,7 +68,7 @@
      [:nav {:aria-label "Studio views"}
       (for [[view title icon n] [[:perform "Perform" "▦" "1"] [:compose "Compose" "▤" "2"]
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
-                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"]]]
+                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"]]]
         ^{:key view}
         [:button.nav-item {:class (when (= view (:view ui)) "selected") :data-view (name view)
                            :aria-current (when (= view (:view ui)) "page")
@@ -105,6 +109,8 @@
       [:input#master {:type "range" :min 0 :max 1 :step 0.01 :value master
                       :aria-label "Master intensity" :on-change #(when-let [value (number-value %)] (input! [:studio/master value]))}]
       [:output#master-value (str (js/Math.round (* 100 master)) "%")]]
+     [:button#open-repl.icon-button.repl-open {:aria-label "Open Clojure REPL" :title "Clojure REPL · Ctrl+`"
+                                              :on-click #(send! [:repl/toggle])} ">_"]
      [:button#blackout.blackout {:aria-pressed (boolean (:blackout? show))
                                 :on-click #(send! [:studio/command "blackout/set" {:value (not (:blackout? show))}])}
       [:span {:aria-hidden true} "●"] " Blackout"]]))
@@ -178,7 +184,8 @@
 
 (defn- cue-grid [db]
   (let [show (:show db) ui (:ui db) pages (:pages show)
-        page (or (find-id pages (:page-id ui)) (first pages))]
+        page (or (find-id pages (:page-id ui)) (first pages))
+        rows (performance/visible-cue-rows page (or (:edit? ui) (:full-grid? ui)))]
     [:section.cue-panel.panel {:aria-label "Cue performance grid"}
      [:div.panel-top
       [:div#page-tabs.page-tabs {:aria-label "Cue pages"}
@@ -193,23 +200,30 @@
                                 :aria-pressed (= mode (:launch-mode ui))
                                 :on-click #(send! [:studio/set-launch mode])} title])]
       [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"]]
-     [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight by eight cue grid"}
-      (for [y (range 8) x (range 8)] ^{:key (str x "/" y)} [cue-cell db page x y])]
+     [:div.cue-grid-scroll
+      [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight-column cue grid"}
+      (for [y (range rows) x (range 8)] ^{:key (str x "/" y)} [cue-cell db page x y])]]
      [:div.grid-footer [:span#gesture-hint (cond (:edit? ui) "Choose a cell to edit its actions."
                                                (= "held" (:launch-mode ui)) "Hold a cue to play it. Release to fade it out."
                                                :else "Tap to play. Long-press for cue actions.")]
+      [:button.text-button {:type "button" :aria-pressed (boolean (or (:edit? ui) (:full-grid? ui))) :disabled (boolean (:edit? ui))
+                           :on-click #(set-ui! [:full-grid?] (not (:full-grid? ui)))}
+       (cond (:edit? ui) "64 slots while editing" (= rows 8) "Compact grid" :else "All 64 slots")]
       [button "end-all" "Release all ↘" [:studio/end-all] "text-button"]]]))
 
-(defn- parameter-control [instance parameter schema & [handlers]]
+(defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
         choices (:choices schema)
-        type (if (seq choices) "choice" (:type schema "number"))
+        type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
+        overlay (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter]))
         bounds (:bounds schema) title (or (:name schema) (label parameter))]
     [:div.param-row {:data-param (name parameter)}
      [:label [:span title] [:output (if (vector? value) (str/join ", " (map numeric-label value)) (widgets/value-label schema value))]]
      (case type
+       "waveform" [waveform/picker (:id instance) parameter schema value change!
+                   {:params (:params instance) :live? (nil? handlers)}]
        "choice" (let [selected (or (first (keep-indexed #(when (= value (:value %2)) %1) choices)) 0)]
                   [:select {:aria-label title :value selected :on-change #(change! (:value (get choices (js/parseInt (input-value %) 10))))}
                    (for [[index choice] (map-indexed vector choices)]
@@ -230,39 +244,47 @@
                                  :aria-label (str title " component " (inc index))
                                  :on-change #(when-let [n (number-value %)]
                                                (component! index n))}])]
-       [number-input {:type (if bounds "range" "number") :aria-label title :value (or value 0)
-                :min (first bounds) :max (second bounds)
-                :step (if (= "integer" type) 1 (if bounds (/ (- (second bounds) (first bounds)) 1000) "any"))
-                :on-change #(when-let [n (number-value %)] (change! n))}])
-     (when-not handlers [modulation/parameter-widget (:id instance) parameter schema value])]))
-
-(defn- inspector [db]
-  (let [show (:show db) instances (:instances show)
-        selected (or (find-id instances (get-in db [:ui :selected-instance])) (first instances))
-        cue (find-id (:cues show) (:cue-id selected))
-        definition (or (:definition selected) (find-id (:effects show) (:effect-id selected)))]
-    [:section.inspector.panel {:aria-label "Active effect inspector"}
-     [:div.panel-top [:span.section-label "IN THE MIX"] [:span#active-count.count (str (count instances) " active")]]
-     [:div#active-tabs.active-tabs
-      (for [instance instances :let [cue (find-id (:cues show) (:cue-id instance))]]
-        ^{:key (:id instance)} [:button.active-tab {:class (when (= (:id instance) (:id selected)) "selected")
-                                                   :style (color-style cue)
-                                                   :on-click #(set-ui! [:selected-instance] (:id instance))} (display-name cue)])]
-     [:div#inspector-body.inspector-body
-      (if selected
-        [:<> [:div.inspector-heading [:div [:h3 (display-name cue)] [:p (str (:phase selected) " · " (:effect-id selected))]]
-              [button nil "Release ↘" [:studio/command "instance/end" {:instance-id (:id selected)}] "text-button"]]
-         [widgets/category-tags (:categories definition) (:category-colors show)]
-         (for [[parameter schema] (:params definition)] ^{:key (str (:id selected) "/" parameter)} [parameter-control selected parameter schema])
-         (when (empty? (:params definition)) [:p.small.muted "This effect has no adjustable parameters."])]
-        [:div.empty-state [:span.empty-symbol "◌"] [:strong "Start with a spark."]
-         [:p "Launch a cue to shape its parameters here."]])]]))
+       (if (widgets/numeric-range schema)
+         [:div.parameter-number-layout
+          [widgets/rotary-control schema (or value 0) change!
+           {:name (str title " rotary") :base-value value :effective-value overlay
+            :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
+          [:div.parameter-number-fields
+           [number-input {:type "range" :aria-label title :value (or value 0)
+                          :min (first bounds) :max (second bounds)
+                          :step (if (= "integer" type) 1 (/ (- (second bounds) (first bounds)) 1000))
+                          :on-change #(when-let [n (number-value %)] (change! n))}]
+           (when-not (:compact? options)
+             [number-input {:class "numeric-exact" :type "number" :aria-label (str title " exact value") :value (or value 0)
+                            :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")
+                            :on-change #(when-let [n (number-value %)] (change! n))}])]]
+         [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
+                        :on-change #(when-let [n (number-value %)] (change! n))}]))
+     (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
 
 (defn- preview-panel [db]
-  [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"}
+  [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
+                                              :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
-    [:span.preview-badge "3D LIVE"]]
+    [:div.preview-size-controls
+     [:button.text-button {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
+                            :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
+     [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
+                            :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
    [interop/preview (:show db)]
+   (when (get-in db [:ui :preview-controls?])
+     [:div.preview-settings
+      [:label "Work light"
+       [:input {:type "range" :min 0 :max 1 :step 0.01 :aria-label "Preview work light"
+                 :value (get-in db [:ui :preview-settings :worklight] 0.12)
+                 :on-change #(when-let [value (number-value %)] (input! [:studio/preview-setting :worklight value]))}]]
+      [:select {:aria-label "Preview quality" :value (get-in db [:ui :preview-settings :quality] "auto")
+                 :on-change #(input! [:studio/preview-setting :quality (input-value %)])}
+       [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
+       [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
+      [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
+                 :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
+       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])
    [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere " [:span.muted "preview"]]
     [:input#fog-density {:type "range" :aria-label "Preview fog density" :min 0 :max 1 :step 0.01
                          :value (get-in db [:ui :fog] 0.3)
@@ -328,10 +350,21 @@
       [:p.small.muted "Attack and release share one unit. Release fades to zero and holds there; remove the envelope to restore the unaffected parameters."]]]))
 
 (defn- perform-view [db]
-  [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))}
-   [heading "YOUR LIVE CANVAS" "Make room for a little magic." "Layer a color. Find a rhythm. Follow the feeling."
-    [:div.live-chip [:span] "LIVE SESSION"]]
-   [:div.performance-layout [cue-grid db] [:div.performance-side [preview-panel db] [inspector db] [auto-panel db] [response-panel db] [modulation/panel db]]]])
+  (let [section (get-in db [:ui :performance-section] "cues")
+        count-active (count (get-in db [:show :instances]))]
+    [:section#view-perform.view {:hidden (not= :perform (get-in db [:ui :view]))
+                                :data-section section}
+     [:div.perform-heading [:h1 "Perform"]
+      [:span.small.muted (str count-active " running")]
+      [:div.perform-section-tabs {:role "group" :aria-label "Performance sections"}
+       (for [[id title] [["cues" "Cues"] ["live" (str "Live · " count-active)] ["room" "Room"]]]
+         ^{:key id} [:button {:type "button" :aria-pressed (= id section)
+                              :on-click #(set-ui! [:performance-section] id)} title])]]
+     [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
+      [:div.performance-launch [cue-grid db]]
+      [:div.performance-live [performance/board db parameter-control]]
+      [:div.performance-room [preview-panel db]]
+      [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 
 (defn- slot-parameter-editor [db index slot]
   (let [cue (find-id (get-in db [:show :cues]) (:cue-id slot))
@@ -345,6 +378,7 @@
           ^{:key parameter}
           [parameter-control instance parameter (assoc schema :name (str "Step " (inc index) " · " (or (:name schema) (label parameter))))
            {:change #(input! [:studio/slot-param index parameter %])
+            :key-change #(input! [:studio/slot-param-key index parameter schema %])
             :component #(input! [:studio/slot-param-component index parameter %1 %2])}])
         [button nil "Reset to cue defaults" [:studio/slot-params-reset index] "text-button"]]
        [:p.small.muted "This cue has no adjustable parameters."])]))
@@ -642,7 +676,7 @@
     [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
    [:span.mobile-file-actions [button "mobile-export" "Export show ↗" [:studio/export] "text-button"]
     [:label#mobile-import.text-button.file-label {:html-for "import-show"} "Import show ↙"]]
-   [:span#shortcut-hint "B blackout · Space transport · 1–6 views"]])
+   [:span#shortcut-hint "B blackout · Space transport · 1–7 views"]])
 
 (defn studio []
   (let [db @(rf/subscribe [:studio/db])
@@ -662,7 +696,8 @@
        [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
        [chat/panel db]
        (when (= :connections (get-in db [:ui :view])) [connections/panel {:show (select-keys (:show db) [:cues :transport])}])
+       (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
        [footer db]]]
-     [cue-actions db] [prompt-dialog db]
+     [cue-actions db] [prompt-dialog db] [repl/console-view]
      (when-let [toast (get-in db [:ui :toast])]
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))

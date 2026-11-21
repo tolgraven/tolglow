@@ -30,8 +30,8 @@ engine retires them.
   ID referencing the same effect, with independent cue parameter defaults.
 * Shift+F10 or the context menu key opens cell actions. Arrow keys navigate the
   grid. Enter/Space activate a focused pad, including keyboard-held release.
-  Outside editors, **B** toggles blackout, **Space** transport, and **1–4** switch
-  views (**5** opens Assistant). All inputs have labels; a skip link reaches the main controls.
+  Outside editors, **B** toggles blackout, **Space** transport, and **1–7** switch
+  views (Assistant, Connections and Develop are 5, 6 and 7). All inputs have labels; a skip link reaches the main controls.
 * Inspector controls follow captured effect parameter schemas: bounded numbers
   use sliders, integers use integral steps, booleans checkboxes, enums selects,
   RGB(A) colors a color input that retains alpha and vectors component inputs.
@@ -281,6 +281,94 @@ In this software-rendered Chromium environment, 60 capture frames measured a
 median 66.8 ms and p95 73.8 ms (14.79 fps); this is local transport evidence, not
 physical Push USB throughput or a performance guarantee.
 
+## JVM console and editor lifecycle
+
+The console button and Ctrl+backtick open a Quake-style drawer. Its Pop out action
+opens `/repl?session-id=...`, sharing the named JVM session while keeping each
+window's draft, stream token and editor instance separate. The standalone route
+loads session snapshots without starting ordinary show polling or graphics.
+Opening or restoring a session never evaluates source.
+
+Evaluation uses the direct SSE endpoint and preserves session/runtime/epoch/run
+identity on every callback. The transcript bounds history to 100 requests and
+300 events per request; the JVM separately bounds source, printed values and
+stdout. Persisted history restores source and final result/error. The current
+window also retains streamed output when later history polls arrive. Closing the
+drawer detaches its stream and polling; interruption is a separate explicit
+cooperative request, not a hard-kill guarantee.
+
+Accessible text and actual Neovim WASM share explicit buffer, selection and
+current-form evaluation. Selection reads the live Neovim buffer and visual marks;
+character and line selections account for UTF-8 byte columns. Block selections
+are not treated as contiguous source. The current-form helper finds balanced
+collections/strings around the caret while skipping line comments and character
+literals; the JVM reader remains authoritative. Ctrl/Command+Enter evaluates a
+selection or buffer, Shift adds current-form selection, and Ctrl/Command+Space
+requests completion. Completion and documentation query already loaded JVM vars
+without evaluating draft source. Named scratch buffers are saved explicitly.
+
+Neovim workers and observers belong to the mounted console editor and stop on
+unmount. Switching back to accessible text first reads its actual buffer. The
+shared editor engine accepts a filename and optional cursor position; the
+existing definition editor retains its original behavior. The generated WASM
+artifacts are unchanged.
+
+## Phone motion input
+
+Connections includes an explicitly paired browser motion panel using the pinned
+`@capacitor/motion` 8.0.1 adapter. Pairing creates a server source, then saves an
+unarmed preview mapping. “Enable motion” requests browser motion/orientation
+permission directly from the click; neither opening the view nor restoring a
+show requests access. The stable browser device ID is local storage metadata.
+The pairing credential lives only in an owned in-memory resource, never app-db,
+portable preferences, snapshots or exported shows. A refreshed browser must pair
+again before acquiring sensors.
+
+Actual acceleration, rotation-rate and intrinsic orientation channels are
+normalized to m/s², rad/s and radians. Null, nonfinite and unavailable axes remain
+absent. Samples coalesce to at most 20 HTTP requests per second with only one in
+flight; axes older than 250 ms are omitted. A silent desktop shows “no sensor
+readings received”, with arming unavailable. This wrapper supplies neither
+sensor fusion nor an absolute world pose.
+
+Calibration records a disarmed resting position. The code-free mapping captures
+a current numeric parameter's actual schema and maps ±0.7 radians of tilt into
+its declared bounds. An optional accent cue uses a musical one-shot and cooldown.
+Advanced EDN exposes the shared conditioning/gesture schema. Arming is a separate
+operation tied to the observed acquisition session. Late arm acknowledgements
+are disarmed if that session has stopped. Leaving Connections, hiding the page,
+page exit and runtime replacement remove only this owner's listeners, abort its
+request and request disarm; the server also expires dropped input ownership.
+The explicit native OSC receiver controls do not start a socket automatically.
+See [the sensor contract](sensors.md) for transport and native Watch limits.
+
+The optimized bundle passed nine actual-browser workflows against the local
+Ring/owner service: inert opening, unarmed pairing, silent-device handling,
+typed mapping publication, normalized sample admission, calibrated control,
+explicit stop, view-exit cleanup, and 820/390 px layouts with 44 px actions. The
+motion-input workflows used explicitly labeled software `DeviceMotionEvent` and
+`DeviceOrientationEvent` fixtures delivered through the real Capacitor adapter;
+they do not establish physical phone availability, Safari permission behavior,
+or conducting latency. No OSC receiver was opened. Console/page errors were
+empty. The recorded production build compiled 145 files with zero warnings.
+
+
+## Development workspace evidence
+
+The Develop view opens paired Git worktrees and edits their files separately
+from live effect definitions. Executed browser checks verified creation, exact
+hash saves, actual Neovim editing, preservation of an externally changed file and
+an unsaved draft, explicit conflict resolution, and paired diffs. The integrated
+xterm controls an actual owned Docker PTY; opening, input and explicit shutdown
+were exercised. The fixed-check fingerprint originally rejected the repository's
+large documentation assets; the backend now streams hashes with a larger bounded
+budget, and the integrated rerun remains a separate gate.
+
+The development workspace manager catalog is currently **ephemeral** across
+process restart. Existing worktree files remain on disk, but a fresh process does
+not recover the catalog; saving/restoring a show does not currently repair this.
+This is a known lifecycle gap, not a completed persistent development environment.
+
 ## Build, verification and remaining evidence
 
 Install pinned npm dependencies with `npm ci`, then run `npm run studio:build`
@@ -288,7 +376,7 @@ for the production Shadow CLJS bundle or `npm run studio:dev` for live compilati
 The `:cljs` Clojure CLI alias supplies Reagent/re-frame/Shadow dependencies. The
 compiled bundle is served at `/studio/js/main.js`; generated files are not source.
 
-`npm run studio:test` currently runs 44 tests and 220 assertions against the actual
+The recorded sensor integration checkpoint of `npm run studio:test` runs 120 tests and 644 assertions against the actual
 registered re-frame handlers and interceptors, with effects left unapplied.
 Coverage includes held acknowledgement races, independent pointers, page-exit
 cleanup, optimistic parameter writes, musical durations, expected versions,
@@ -297,7 +385,12 @@ stale chat/history responses, typed fixture mapping and obsolete fixture-service
 responses after show replacement, composition overrides, and graphical rig
 pointer ownership and save acknowledgements that arrive after newer rig edits.
 Additional cases cover inert Connections lifecycle and port guards, typed mapping
-payloads, audio selection, modulation ranges/tokens and passive display snapshots.
+payloads, audio selection, modulation ranges/tokens, passive display snapshots,
+patch routing drafts, waveform sampling controls, and REPL history/session guards
+and form selection. Nine optimized-bundle console workflows passed against the real
+JVM service, including streamed output, shared popup/session history, cooperative
+interruption and actual Neovim WASM editing. These tests do not establish native
+iPad keyboard or Safari behavior.
 The last test build had zero warnings.
 
 Optimized-bundle browser checks observed real cue launches and parameter changes

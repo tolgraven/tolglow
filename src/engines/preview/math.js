@@ -1,0 +1,48 @@
+// Pure projection of committed renderer output. No effect clocks or interpolation.
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const radians = d => d * Math.PI / 180;
+const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+export function normalize(v) {
+  const n = Math.hypot(...v);
+  return n > 1e-9 ? v.map(x => x / n) : [0, -1, 0];
+}
+export function axisDegrees(fixture, output, axis) {
+  if (Number.isFinite(output[`${axis}-deg`])) return output[`${axis}-deg`];
+  const value = Number.isFinite(output[axis]) ? output[axis] : 0;
+  const calibration = fixture.calibration?.[axis];
+  if (Array.isArray(calibration) && calibration.length === 2 && calibration[1] !== 0)
+    return (value * 255 - calibration[0]) / calibration[1] * 180;
+  const lo = calibration?.['min-deg'] ?? (axis === 'pan' ? -180 : -90);
+  const hi = calibration?.['max-deg'] ?? (axis === 'pan' ? 180 : 90);
+  return lo + value * (hi - lo);
+}
+export function rotateFixture(v, degrees = [0, 0, 0]) {
+  let [x, y, z] = v;
+  for (let axis = 0; axis < 3; axis++) {
+    const angle = radians(Number(degrees[axis]) || 0), c = Math.cos(angle), s = Math.sin(angle);
+    if (axis === 0) [y, z] = [y * c - z * s, y * s + z * c];
+    if (axis === 1) [x, z] = [x * c + z * s, -x * s + z * c];
+    if (axis === 2) [x, y] = [x * c - y * s, x * s + y * c];
+  }
+  return [x, y, z];
+}
+export function fixtureDirection(fixture, output = {}) {
+  if (vector(output.direction) && Math.hypot(...output.direction) > 1e-9) return normalize(output.direction);
+  if (vector(output.aim) && vector(fixture.position)) return normalize(output.aim.map((v, i) => v - fixture.position[i]));
+  const pan = radians(axisDegrees(fixture, output, 'pan'));
+  const tilt = radians(axisDegrees(fixture, output, 'tilt'));
+  // CPU resolve-geometry convention: elevation0=+Z, elevation-90=down.
+  return normalize(rotateFixture([Math.sin(pan) * Math.cos(tilt), Math.sin(tilt), Math.cos(pan) * Math.cos(tilt)], fixture['rotation-deg']));
+}
+export function emittedColor(output = {}) {
+  return vector(output['emitted-color']) ? output['emitted-color'].map(v => clamp(v, 0, 8)) : [0, 0, 0];
+}
+export function beamAngle(fixture, output = {}) {
+  const range = fixture['zoom-range-deg'];
+  const zoom = clamp(Number(output.zoom) || 0, 0, 1);
+  const full = Array.isArray(range) && range.length === 2 ? range[0] + zoom * (range[1] - range[0]) : (fixture['beam-angle'] || 12) + zoom * 34;
+  return clamp(radians(full / 2), .012, Math.PI * .42);
+}
+export function structuralKey(rig) {
+  return JSON.stringify({room: rig?.room, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, position: f.position, rotation: f['rotation-deg'], type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: rig?.trusses || []});
+}

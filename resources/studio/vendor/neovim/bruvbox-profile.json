@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "theme": "bruvbox",
+  "source": {
+    "repository": "https://github.com/tolgraven/bruvbox",
+    "base-commit": "bfb60742ba37a7ec967dece0007f55f18fe15e00",
+    "local-modifications": true
+  },
+  "reference-checkout": "9daaea09577d9c7b80519e5c309583faf789c855",
+  "files": [
+    {
+      "path": "bruvbox/colors/bruvbox.vim",
+      "sha256": "518f954b2a0d62874caee7859a9708743272676410439d87fcba2ae652491e9b"
+    },
+    {
+      "path": "bruvbox/autoload/bruvbox.vim",
+      "sha256": "257bf96ebb7475e4dbf3bd50d5c29f0e7b3509efaed5b6e5cb2d6a625f93ed29"
+    },
+    {
+      "path": "bruvbox/README.md",
+      "sha256": "bbf8b6b073b568db6231a3fde6a0e669e073ec3992d4f9cee7e7e55c07f8e9ad"
+    }
+  ]
+}

@@ -25,6 +25,13 @@
                 :instances [{:id "7:9" :cue-id "ember" :phase "running" :params {:level 0.7}}]}))
 (defn first-command [effects] (second (first (:fx effects))))
 
+(deftest rapid-rotary-keypresses-use-current-app-db-instead-of-a-stale-rendered-value
+  (let [schema {:type "number" :bounds [0 1]}
+        initial (assoc-in base [:show :instances 0 :params :level] 0)
+        updated (reduce (fn [state _] (:db (transition state [:studio/param-key "7:9" :level schema "PageUp"]))) initial (range 7))]
+    (is (< (js/Math.abs (- 0.7 (get-in updated [:show :instances 0 :params :level]))) 0.000001))
+    (is (< (js/Math.abs (- 0.7 (get-in updated [:drafts ["7:9" :level] :fields :value]))) 0.000001))))
+
 (deftest released-before-acknowledgement-ends-exact-instance
   (let [db (assoc-in base [:ui :launch-mode] "held")
         down (transition db [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}])
@@ -408,3 +415,31 @@
     (is (= "beat-link" (get-in source [:db :connections :sync-form :selected-source])))
     (is (= "/api/sync/configure" (get-in configure [:fx 0 1 :path])))
     (is (nil? (:dispatch configure)))))
+
+(deftest preview-settings-stay-local-bounded-and-replay-after-engine-mount
+  (let [changed (transition base [:studio/preview-setting :worklight 0.4])
+        invalid (transition base [:studio/preview-setting :worklight 2])
+        mounted (transition (:db changed) [:studio/preview-ready true])]
+    (is (= 0.4 (get-in changed [:db :ui :preview-settings :worklight])))
+    (is (= [:worklight 0.4] (:studio/preview changed)))
+    (is (nil? (:studio/http changed)))
+    (is (nil? (:db invalid)))
+    (is (some #{[:studio/preview [:worklight 0.4]]} (:fx mounted)))
+    (is (true? (get-in mounted [:db :ui :preview-controls?])))))
+
+(deftest reset-camera-updates-the-selector-and-the-engine-together
+  (let [result (transition (assoc-in base [:ui :preview-settings :camera] "overview") [:studio/preview-reset])]
+    (is (= "audience" (get-in result [:db :ui :preview-settings :camera])))
+    (is (= [:reset nil] (:studio/preview result)))))
+
+(deftest inspect-reveals-the-requested-live-card-without-changing-launch-mode
+  (let [db (-> base
+               (assoc-in [:show :cues] [{:id "ember" :effect-id "ember"}])
+               (assoc-in [:show :instances] [{:id "7:12" :cue-id "ember"}])
+               (assoc-in [:ui :action-cell] {:cue-id "ember"})
+               (assoc-in [:ui :launch-mode] "held"))
+        result (transition db [:studio/cue-action :inspect])]
+    (is (= "live" (get-in result [:db :ui :performance-section])))
+    (is (true? (get-in result [:db :ui :performance :expanded "7:12"])))
+    (is (= "held" (get-in result [:db :ui :launch-mode])))
+    (is (= "7:12" (:studio/focus-instance result)))))

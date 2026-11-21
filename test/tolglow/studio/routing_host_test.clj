@@ -1,0 +1,232 @@
+(ns tolglow.studio.routing-host-test
+  (:require [clojure.test :refer [deftest is]]
+            [afterglow.control.model :as control]
+            [tolglow.clock :as clock]
+            [tolglow.studio :as studio]
+            [tolglow.studio.connections :as connections]
+            [tolglow.studio.persistence :as persistence]
+            [tolglow.studio.routing :as routing]
+            [tolglow.studio.sync :as sync]))
+
+(def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
+(def effect {:id :wash :version 1 :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}}
+             :duration {:beats 4} :release-duration {:beats 2}
+             :outputs {:dimmer {:op :param :key :level} :color {:op :const :value [1.0 0.0 0.0]}}})
+(defn model []
+  (control/new-show {:rig {:fixtures [head]}
+                     :registry {:effects {:wash effect} :cues {:wash {:id :wash :version 1 :effect-id :wash}}}}))
+(def source-id "midi/midi-clock/ch/1/note/60")
+(defn spec
+  ([] (spec source-id :midi [0 127]))
+  ([source kind source-range]
+   {:version 1 :id :patch :revision 1
+    :sources {source {:kind kind :range source-range :timeout {:beats 16}}}
+    :destinations {:level {:cue-id :wash :param :level :range [0.0 1.0] :base 0.0 :combine :max}}
+    :routes [{:id :input :source source :destination :level}]}))
+(defn apply-at! [runtime type payload time]
+  (let [receipt (studio/submit! runtime type payload)]
+    (studio/tick! runtime time)
+    (deref receipt 1000 ::missing)))
+(defn prepare! [runtime specification]
+  (is (= :accepted (:status (apply-at! runtime :patch-save {:source (pr-str specification)} 0))))
+  (is (false? (get-in (studio/snapshot runtime) [:patch :enabled?])))
+  (is (= :accepted (:status (apply-at! runtime :patch-enabled {:enabled? true} 0))))
+  (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :wash} 0)))
+(defn observation [id value time]
+  {:type :sync/observation
+   :observation {:source-id source-id :event-id id :value value :gate? (pos? value)
+                 :confidence 1.0 :observed-at-ms time :kind :midi :origin :midi-input}})
+(defn capture-fixture []
+  (let [opened (promise)
+        runtime (studio/create-runtime
+                  {:model (model)
+                   :sync-options {:midi-factory (fn [_ _]
+                                                  {:open! (fn [receive!] (deliver opened receive!) :captured)
+                                                   :close! (fn [_])})}})]
+    (studio/sync-action! runtime :configure {:midi {:enabled? true :input-index 0}})
+    (studio/sync-action! runtime :start {})
+    {:runtime runtime :receive! (deref opened 2000 nil)
+     :manager (connections/sync (:connections runtime))}))
+
+(deftest real-midi-observations-use-owner-clock-and-common-command-reducer
+  (let [{:keys [runtime receive! manager]} (capture-fixture)]
+    (try
+      (let [id (prepare! runtime (spec))]
+        (receive! {:type :midi/message :source-id :midi-clock :time-ms 20.0 :bytes [0x90 60 127]})
+        (is (sync/flush! manager))
+        (studio/tick! runtime 100.0)
+        (let [model (:model @(:state runtime))
+              observed (get-in model [:routing :state :sources source-id])
+              commands (map #(get-in model [:control :history % :command]) (get-in model [:control :history-order]))]
+          (is (= 1.0 (get-in model [:instances id :params :level])))
+          (is (= 1.0 (first (get-in (studio/snapshot runtime) [:output :values :head :emitted-color]))))
+          (is (= 20.0 (:observed-at-ms observed)))
+          (is (= 100.0 (get-in observed [:clock :time-ms])))
+          (is (= 0.2 (get-in observed [:clock :beat])))
+          (is (= (:epoch model) (:epoch observed)))
+          (is (some #(= :patch (get-in % [:source :type])) commands))
+          (is (= [0 127] (get-in (studio/snapshot runtime) [:patch :sources 0 :range]))))
+        (receive! {:type :midi/message :source-id :midi-clock :time-ms 120.0 :bytes [0x80 60 0]})
+        (is (sync/flush! manager))
+        (studio/tick! runtime 200.0)
+        (is (= 0.0 (get-in @(:state runtime) [:model :instances id :params :level])))
+        (is (empty? (get-in @(:state runtime) [:model :routing :pending]))))
+      (finally (studio/stop! runtime)))))
+
+(deftest actual-audio-features-create-ports-without-human-override-holds
+  (let [runtime (studio/create-runtime {:model (model)})]
+    (try
+      (let [id (prepare! runtime (spec "audio/rms" :audio [0.0 1.0]))
+            callbacks (studio/audio-callbacks runtime)]
+        (apply-at! runtime :modulation-start {:id :pulse :seed 4 :every {:beats 1}
+                                             :select {:instance-ids [id]} :params [:level]
+                                             :ranges {:level [0.1 0.2]}} 0)
+        ((:features! callbacks) {:time-ms 40.0 :rms 0.65 :peak 0.9 :kick-rms 0.2 :energy-envelope 0.3
+                                :confidence 0.8 :capture {:run-id "capture-1"}})
+        (studio/tick! runtime 100.0)
+        (let [model (:model @(:state runtime))]
+          (is (= 0.65 (get-in model [:instances id :params :level])))
+          (is (= 4 (count (get-in (studio/snapshot runtime) [:patch :sources]))))
+          (is (empty? (get-in model [:modulation :holds])))
+          (is (<= 0.1 (get-in (studio/snapshot runtime) [:modulation :overrides id :level]) 0.2))
+          (is (= 40.0 (get-in model [:routing :state :sources "audio/rms" :observed-at-ms]))))
+        ((:features! callbacks) {:time-ms 40.0 :rms 0.1})
+        (studio/tick! runtime 150.0)
+        (is (= 0.65 (get-in @(:state runtime) [:model :instances id :params :level]))))
+      (finally (studio/stop! runtime)))))
+
+(deftest transient-gate-release-and-show-restore-retain-captured-ownership
+  (let [runtime (studio/create-runtime {:model (model)})]
+    (try
+      (let [specification (assoc-in (spec) [:routes 0 :envelope] {:attack {:beats 0} :release {:beats 2}})
+            id (prepare! runtime specification)
+            callbacks (studio/sync-callbacks runtime)]
+        ((:events! callbacks) (observation "on" 127 10))
+        ((:events! callbacks) (observation "off" 0 20))
+        (studio/tick! runtime 100.0)
+        (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
+        (studio/tick! runtime 350.0)
+        (is (= 0.75 (get-in @(:state runtime) [:model :instances id :params :level])))
+        (let [saved (studio/export-show runtime)
+              before (get-in saved [:model :routing :state :routes :input])]
+          (is (= :accepted (:status (apply-at! runtime :import {:source (pr-str saved)} 350.0))))
+          (let [new-id (:id (first (:instances (studio/snapshot runtime))))
+                restored (get-in @(:state runtime) [:model :routing :state :routes :input])]
+            (is (not= id new-id))
+            (is (= new-id (:instance-id restored)))
+            (is (= (dissoc before :instance-id) (dissoc restored :instance-id)))
+            (is (nil? ((:events! callbacks) (observation "stale" 127 350))))
+            (studio/tick! runtime 600.0)
+            (is (= 0.5 (get-in @(:state runtime) [:model :instances new-id :params :level])))
+            (is (= [{:destination-id :level :instance-id new-id :value 0.5}]
+                   (get-in (studio/snapshot runtime) [:patch :values]))))))
+      (finally (studio/stop! runtime)))))
+
+(deftest invalid-graphs-are-atomic-and-reenable-requires-fresh-input
+  (let [runtime (studio/create-runtime {:model (model)})]
+    (try
+      (let [id (prepare! runtime (spec)) callbacks (studio/sync-callbacks runtime)]
+        ((:events! callbacks) (observation "on" 127 1))
+        (studio/tick! runtime 50)
+        (let [saved (get-in @(:state runtime) [:model :routing :spec])]
+          (doseq [invalid [(assoc-in (spec) [:destinations :level :range] [-1 1])
+                           (assoc-in (spec) [:destinations :level :param] :missing)
+                           (assoc-in (spec) [:routes 0 :invert?] true)]]
+            (is (= :rejected (:status (apply-at! runtime :patch-save {:source (pr-str invalid)} 50))))
+            (is (= saved (get-in @(:state runtime) [:model :routing :spec])))))
+        (is (= :accepted (:status (apply-at! runtime :patch-enabled {:enabled? false} 50))))
+        ((:events! callbacks) (observation "disabled" 10 60))
+        (studio/tick! runtime 100)
+        (apply-at! runtime :patch-enabled {:enabled? true} 100)
+        (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
+        (is (empty? (get-in @(:state runtime) [:model :routing :state :sources])))
+        ((:events! callbacks) (observation "fresh" 64 110))
+        (studio/tick! runtime 150)
+        (is (= (/ 64.0 127) (get-in @(:state runtime) [:model :instances id :params :level]))))
+      (finally (studio/stop! runtime)))))
+
+(deftest rejected-command-retries-and-historical-queued-input-survives-loop
+  (let [prepared (-> (model) (routing/save (spec) 0) (routing/set-enabled true 0))
+        launched (:model (control/apply-command prepared {:op :cue/launch :cue-id :wash :command-id "launch"
+                                                          :show-id (:show-id prepared) :epoch 0 :time-ms 0 :source :test}))
+        captured (routing/admit-sync (assoc-in launched [:transport :beat] 7.8) [(observation "pending" 127 10)])
+        rebased (clock/rebase (assoc-in captured [:transport :beat] 8.0) {:beat 0.0 :time-ms 1000.0})
+        restored (persistence/thaw (model) (persistence/freeze rebased))
+        rejected (routing/advance restored 1000.0 (fn [m _ _] {:model m :ack {:status :rejected :code :busy}}))
+        retried (routing/advance rejected 1000.0)
+        id (first (keys (:instances retried)))]
+    (is (< (get-in restored [:routing :pending 0 :clock :beat]) 0))
+    (is (= [source-id "pending"] (first (get-in rejected [:routing :state :receipts]))))
+    (is (empty? (get-in rejected [:routing :state :last-values])))
+    (is (some #(= :command-rejected (:code %)) (get-in rejected [:routing :diagnostics])))
+    (is (= 1.0 (get-in retried [:instances id :params :level])))
+    (is (= 1.0 (get-in retried [:routing :state :last-values [:level id]])))
+    (is (= 10 (get-in retried [:routing :state :sources source-id :observed-at-ms])))))
+
+(deftest learned-ports-are-bounded-without-configured-output
+  (let [events (mapv (fn [i] (assoc-in (observation (str i) i i) [:observation :source-id] (str "source/" i)))
+                     (range (+ routing/max-ports 10)))
+        captured (routing/admit-sync (model) events)]
+    (is (= routing/max-ports (count (get-in captured [:routing :ports]))))
+    (is (not (contains? (get-in captured [:routing :ports]) "source/0")))
+    (is (contains? (get-in captured [:routing :ports]) "source/137"))
+    (is (empty? (get-in captured [:routing :pending])))
+    (is (empty? (get-in (routing/advance captured 1000) [:control :history])))
+    (is (= (:routing captured) (routing/validate-state (:routing captured))))))
+
+(deftest routing-admission-is-bounded-and-saved-queues-rebase-and-remap
+  (let [prepared (-> (model) (routing/save (spec) 0) (routing/set-enabled true 0)
+                  (assoc :transport {:beat 8.0 :time-ms 1000.0 :bpm 120 :playing? true}))
+        observations (mapv #(observation (str %) 127 1) (range (inc routing/max-pending)))
+        captured (routing/admit-sync prepared observations)
+        rebased (clock/rebase captured {:beat 0.0 :time-ms 1000.0})
+        saved (persistence/freeze rebased)
+        restored (persistence/thaw (model) saved)]
+    (is (= routing/max-pending (count (get-in captured [:routing :pending]))))
+    (is (= :input-overflow (get-in captured [:routing :diagnostics 0 :code])))
+    (is (= 0.0 (get-in rebased [:routing :pending 0 :clock :beat])))
+    (is (= 1 (get-in rebased [:routing :pending 0 :observed-at-ms])))
+    (is (= 0.0 (get-in rebased [:routing :ports source-id :clock :beat])))
+    (is (= (:epoch restored) (get-in restored [:routing :pending 0 :epoch])))
+    (is (= (get-in captured [:routing :pending 0 :event-id]) (get-in restored [:routing :pending 0 :event-id])))
+    (doseq [bad [(assoc-in (:routing captured) [:pending 0 :epoch] 99)
+                 (assoc-in (:routing captured) [:ports source-id :value] Double/NaN)
+                 (assoc-in (:routing captured) [:diagnostics] [(fn [])])]]
+      (is (thrown? clojure.lang.ExceptionInfo (routing/validate-state bad))))))
+
+(deftest source-switch-and-repeated-midi-seeks-preserve-local-progress-once
+  (let [{:keys [runtime receive! manager]} (capture-fixture)]
+    (try
+      (let [specification (assoc-in (spec) [:routes 0 :envelope] {:attack {:beats 2} :release {:beats 2}})
+            _ (prepare! runtime specification)
+            id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :wash
+                                                          :launch {:mode :one-shot}} 0))]
+        ((:events! (studio/sync-callbacks runtime)) (observation "on" 127 10))
+        (studio/tick! runtime 100.0)
+        (studio/tick! runtime 600.0)
+        (let [before (:model @(:state runtime))
+              started (get-in before [:instances id :started-at-beat])
+              value (get-in before [:instances id :params :level])]
+          (is (= 0.5 value))
+          (receive! {:type :midi/message :source-id :midi-clock :time-ms 600.0 :bytes [0xf2 0 0]})
+          (is (sync/flush! manager))
+          (studio/sync-action! runtime :source {:source-id :midi-clock})
+          (studio/tick! runtime 600.0)
+          (let [shifted (:model @(:state runtime))]
+            (is (= 0.0 (get-in shifted [:transport :beat])))
+            (is (= (- started 1.2) (get-in shifted [:instances id :started-at-beat])))
+            (is (= value (get-in shifted [:instances id :params :level])))
+            (is (nil? (get-in @(:state runtime) [:status :error]))))
+          (receive! {:type :midi/message :source-id :midi-clock :time-ms 650.0 :bytes [0xf2 16 0]})
+          (is (sync/flush! manager))
+          (studio/tick! runtime 650.0)
+          (let [forward (:model @(:state runtime))]
+            (is (= 4.0 (get-in forward [:transport :beat])))
+            (is (= value (get-in forward [:instances id :params :level])))
+            (is (= 2.8 (get-in forward [:instances id :duration-timer :started-at])))
+            (studio/tick! runtime 700.0)
+            (is (= (get-in forward [:instances id :duration-timer])
+                   (get-in @(:state runtime) [:model :instances id :duration-timer])))
+            (is (= :running (get-in @(:state runtime) [:model :instances id :phase])))
+            (is (= 10 (get-in @(:state runtime) [:model :routing :state :sources source-id :observed-at-ms]))))))
+      (finally (studio/stop! runtime)))))

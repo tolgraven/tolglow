@@ -1,0 +1,7 @@
+Core/.build/
+Core/.swiftpm/
+*.xcodeproj/
+DerivedData/
+iOS/Info.plist
+watchOS/Info.plist
+.DS_Store

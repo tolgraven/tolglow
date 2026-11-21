@@ -91,3 +91,20 @@ so compare the paired workloads rather than dividing unrelated stage timings.
 They still exclude whole-host scheduling, network delivery and contention from
 the live UI/simulator. The maximum exceeds a 25 ms budget; this is not a guaranteed
 40 Hz production-show claim. Captured packets were not sent to physical fixtures.
+
+## Sensor library and output-presentation evidence
+
+[Sensor package smoke](2026-11-21-sensor-library-smoke.json) records three actual
+Capacitor Motion8.0.1 assertions with an injected EventTarget; it proves neither
+physical sensor access nor browser permission behavior.
+
+[Presentation report](2026-11-21-presentation.edn) and its [exact harness](presentation-bench.clj)
+cover100 universes/12,800 RGBW fixtures. [Output policy](../output-presentation.md)
+explains immutable packet ownership, per-stage allocation/timings and excluded
+engine/scheduling/network costs. No physical fixture output was sent.
+
+[Captured waveform report](2026-11-21-audio-waveform.edn) and
+[harness](audio-waveform-bench.clj) measure bounded PCM summary plus immutable
+view construction at 48 kHz in 480-sample blocks, with 256 retained columns.
+Median/p99 were 0.080/0.284 ms; the complete capture/analyzer/display pipelines
+were excluded. This establishes only the cost of the new summary stage.

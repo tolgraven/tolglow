@@ -8,7 +8,8 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.fixture-service :as fixtures]
             [tolglow.studio.persistence :as persistence]
-            [tolglow.studio.sync :as synchronization])
+            [tolglow.studio.sync :as synchronization]
+            [tolglow.studio.sensors :as sensors])
   (:import [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -378,4 +379,30 @@
         (is (identical? manager (connections/sync conn)))
         (is (= before (connections/export-state conn))))
       (is (zero? @opened))
+      (finally (connections/close! conn)))))
+
+(deftest sensor-pairings-share-the-vault-and-staged-resources-retire-inertly
+  (let [secret (atom nil) calls (atom [])
+        reference "credential-00000000-0000-0000-0000-000000000007"
+        store {:put! (fn [value] (reset! secret value) reference)
+               :get! (fn [ref] (swap! calls conj ref) @secret) :delete! (fn [_] (reset! secret nil))}
+        conn (connections/create (show) {:credential-store store :sensor-options {:now-ms (constantly 0)}})
+        original (connections/sensors conn)]
+    (try
+      (is (= [] @calls))
+      (is (nil? (:udp (sensors/status original))))
+      (let [pair (sensors/pair! original "phone")
+            configured (:model (sensors/configure (show) "phone" {:version 1 :channels []} (:pairing pair)))
+            prepared (connections/prepare-restore conn configured)
+            retired (connections/commit-restore! conn prepared)
+            replacement (connections/sensors conn)]
+        (is (not (identical? original replacement)))
+        (is (= [reference] @calls))
+        (is (false? (get-in (sensors/status replacement) [:devices "phone" :armed?])))
+        (is (= (:sensors configured) (:sensors (connections/export-state conn configured))))
+        (is (not (.contains (pr-str (connections/export-state conn configured)) @secret)))
+        (connections/retire! retired)
+        (is (:closed? (sensors/status original)))
+        (connections/close! conn)
+        (is (:closed? (sensors/status replacement))))
       (finally (connections/close! conn)))))

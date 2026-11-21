@@ -17,11 +17,11 @@ modules now implement the following narrower milestones:
 | Milestone | Working behavior | Remaining broader gate |
 | --- | --- | --- |
 | Control model | Typed commands, source identity, bounded duplicate receipts, epochs/revisions, captured definitions, pure bindings/views and codecs | Complete adapter and human-performance parity |
-| Runtime | Explicit instance state, deterministic frame reduction, timed release/reload policies, bounded executor | Whole-show recorded replay, complete effect-family migration and production I/O publication |
+| Runtime | Explicit state, bounded workers, deterministic replay corpus, private-clock pause, independent AR and opacity | Representative complete-show replay, full effect-family migration and production I/O qualification |
 | Device sessions | Composable Push 2 adapter, injected MIDI/display IO, lifecycle/hold cleanup, generic MIDI/OSC/sensor/REPL sessions | Physical Push 2 checks; native Push 3 protocol/display work |
 | Authoring | Validated registry/compiler, tweens/envelopes, macro/sequence primitives, response middleware, seeded constrained random and emission-aware policy | Complete editors, stepped fades, richer seek/catch-up and creative show planning |
 | CPU rendering | Ordered attributes, normalized RGBW/dimmer, basic calibrated aiming, patch validation/coarse-fine packing, typed CPU/GLSL expressions | Broader fixture photometry/calibration and end-to-end deadline evidence |
-| Integrations | Fixture normalization, Live/audio primitives, streaming provider parsing, loopback HTTP, scripted agent tool dispatch | Actual Live-side bridge, audio routing, external providers and full fixture format coverage |
+| Integrations | Fixture library, sync/session boundary, Live bridge source assets, typed patch kernel, provider sessions | Actual Max/Live execution, audio/peer qualification, external providers and broader fixture formats |
 | Studio | Re-frame/Reagent frontend, Ring/Jetty API and SSE, Neovim WASM authoring, touch/keyboard controls, fixture/rig editors | Physical mobile/device validation, richer editors and production sessions |
 | Show files/resources | Complete model/output persistence, staged resource commit/retirement, agent history/credential refs, fixture cache, reactive state, guarded audio/sync intent | Real provider/peer reconnection and complete pairing UX |
 | GPU experiment | Actual float shader dispatch, asynchronous PBO/fence readback, CPU oracle comparison | Physical GPU measurements, JVM transport and complete output-pipeline integration |
@@ -44,13 +44,13 @@ in the shared host. Browser app-db contains projections and interaction state,
 not a second cue lifecycle implementation. JS is appropriate for specialized
 Neovim WASM and WebGL engines behind owned interop lifecycles.
 
-The re-frame application now has a clean optimized production build and **28
-frontend tests / 124 assertions**. Actual restarted-server browser checks passed
-nine session and six authoring workflows without console/page errors. They
-include real WASM Neovim edits/publish, typed macro slot overrides, pointer and
-keyboard rig manipulation, fixture creation/import/patch/removal, and truss
-settings reaching WebGL uniforms. These are browser/emulated-device checks,
-not physical iPad Safari or hardware throughput claims.
+The re-frame application has a clean optimized production build. The latest
+combined frontend source checkpoint passed **100 tests / 538 assertions**; the
+last reported release before subsequent modules compiled 142 files with zero
+warnings. Actual browser gates include nine session and six authoring workflows,
+six connection configuration flows, six modulation flows, nine actual REPL,
+four patchbay and three waveform flows, with no console errors in those runs. Physical iPad Safari and newer workspace modules remain
+separate gates; do not infer their verification from desktop emulation.
 
 The Ring host now commits model and resource restoration together, publishes
 saved output without an extra effect step, rebases logical time, and disposes
@@ -62,12 +62,13 @@ passing suites; final combined source/manifest counts remain the root's gate.
 
 | Active lane | Exclusive write boundary | Review gate |
 | --- | --- | --- |
-| Root studio host | Exact host/handler/output/demo/test paths in ledger | Sync clock/record callbacks, routes, restored connection outcomes, final integrated runs |
-| Connections UI | Named re-frame state/views and specialized UI files | Sync/audio configuration, selected-clock status, fresh browser interactions |
-| Sync boundary | `studio/sync.clj`, `afterglow/control/clock.clj` and tests | Explicit selected source, stale clock behavior, injected MIDI/Beat Link/Live lifecycle |
-| Runtime replay | `afterglow/runtime/replay.clj`, tests and replay document | Captured initial state/clock/commands, deterministic serial/worker output verification |
-| Push 3 research | New source-grounded profile/codecs only if verified | Official capabilities and captured protocol; no inferred Push 2 compatibility |
-| Documentation | Central docs, guidance and retained benchmark evidence | Accurate scoped status, valid ledger and local links |
+| Root studio integration | Host, Ring handlers and `output_scheduler.clj` | Parallel effect workers, deterministic model commits and independent serial physical output |
+| `room_renderer_fog_fixture_optics` | Entire Three scene, fixture optics and fog pipeline | Room-wide volume, finite lens aperture, depth/shadows and actual visual/mobile review |
+| `studio_push_touch_interface` | Re-frame Studio/Push widgets and browser checks | Live waveform parity, captured audio, compact concurrent effects and sensor/touch flows |
+| `audio_capture_waveform_projections` | Read-only waveform projection, PCM summaries and central tracking | Actual effective parameters and measured bounded audio, off the lighting deadline |
+| `application_agents_isolated_code_changes` | Fresh branch agent service and its tests | Bounded CLI streaming, exact diffs/checks, explicit reload policy |
+| `development_terminal_reliability_feature_parity` | Docker lifecycle, workspace recovery and control parity audit | Delayed-create cleanup, durable catalog and identified original feature gaps |
+| `dependency_upgrades_clojure_jvm_frontend` | Verified dependency pins and migration changes | Current stable Clojure/JVM/frontend versions, paired tests and production build |
 
 The ledger contains exact paths and current owners. Completed agents are not
 background services; update the ledger when assigning further work. Coordinate
@@ -140,3 +141,20 @@ and a sharing website for artifacts/shows/Live arrangements. These requirements
 supplement all earlier goals. Typed modulation, waveform/signal work, expressive
 protocols and verified X-Touch implementation have separate owners and evidence;
 the broader workflows remain planned until their acceptance criteria pass.
+
+## Integrated development workspace
+
+The [development-workspace specification](product/development-workspace.md) adds
+a Quake-style Bruvbox REPL, completions/documentation, repository-wide Neovim and
+scratch-form evaluation with explicit captured locals. Show-authoring agents and
+branch-isolated Codex/Claude application work use separate contexts, with actual
+diffs, watcher summaries and task status. Manual/after-turn/preview-instance
+reload policies must cover each supported target and preserve a last-good revert.
+A real Docker/zsh terminal is an independent lifecycle milestone. Narrow REPL
+backend tests do not complete these browser/workspace workflows.
+
+The completed pure [output policy](output-presentation.md) retains original compute
+timestamps, rejects stale frames and offers direct, emission fade and one-buffer
+interpolation modes. Its measured costs do not establish scheduler/network deadlines.
+[Sensors](sensors.md) documents the implemented context middleware, owned OSC input
+and supported browser/Apple APIs; native source remains pending Apple build/hardware.

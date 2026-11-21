@@ -4,6 +4,9 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.patchbay :as patchbay]
+            [tolglow.studio.sensors :as sensors]
+            [tolglow.studio.audio-scope :as audio-scope]
             [tolglow.studio.events :as events]))
 
 (def sync-defaults
@@ -251,6 +254,77 @@
 
 (defn- value-text [value & [digits]]
   (cond (nil? value) "—" (number? value) (.toFixed value (or digits 0)) :else (str value)))
+(declare status-chip)
+
+(defn output-payload [db]
+  (let [form (merge {:mode "direct" :fade-ms 100 :latency-ms 25}
+                    (get-in db [:show :settings :output :presentation])
+                    (get-in db [:connections :output-form]))
+        mode (:mode form) fade (finite! (:fade-ms form) "Fade duration")
+        latency (finite! (:latency-ms form) "Buffer latency")]
+    (when-not (and (contains? #{"direct" "hold-fade" "buffered-interpolation"} mode)
+                   (pos? fade) (<= 0 latency (* 2 (:period-ms form 25))))
+      (throw (js/Error. "Choose an output mode, a positive fade, and at most two frames of latency.")))
+    (assoc form :fade-ms fade :latency-ms latency)))
+(rf/reg-event-fx :connections/save-output
+  (fn [{:keys [db]} _]
+    (try
+      {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :output)
+                (update-in [:connections :errors] dissoc :output))
+       :fx [(req db :output "/api/settings" {:scope "output" :values {:presentation (output-payload db)}} :connections/settings-saved)]}
+      (catch :default error {:db (assoc-in db [:connections :errors :output] (events/error-message error))}))))
+(rf/reg-event-fx :connections/push-mode
+  (fn [{:keys [db]} [_ mode]]
+    (when (contains? #{"parameters" "audio"} mode)
+      {:db (update-in db [:connections :pending] (fnil conj #{}) :push-display)
+       :fx [(req db :push-display "/api/settings"
+                 {:scope "controllers" :values {:push-display (assoc (get-in db [:show :settings :controllers :push-display] {}) :mode mode)}}
+                 :connections/settings-saved)]})))
+(rf/reg-event-fx :connections/settings-saved
+  (fn [{:keys [db]} [_ request-token key _ack]]
+    (when (current? db request-token)
+      {:db (-> db (update-in [:connections :pending] disj key) (update-in [:connections :errors] dissoc key))
+       :dispatch [:studio/poll]})))
+
+(defn- output-panel [db s]
+  (let [form (merge {:mode "direct" :fade-ms 100 :latency-ms 25}
+                    (get-in db [:show :settings :output :presentation]) (:output-form s))
+        state (get-in db [:show :status :output-scheduler])
+        pending? (contains? (:pending s) :output)
+        mode (:mode form)]
+    [:section.panel.output-connection
+     [:div.panel-top [:span.section-label "FRAME DELIVERY"]
+      [status-chip (:scheduled? state) (if (:scheduled? state) "Independent output clock" "Manual output")]]
+     [:div.form-body
+      [:label "When rendering falls behind"
+       [:select#output-mode {:value mode :disabled pending? :on-change #(edit! [:output-form :mode] (text %))}
+        [:option {:value "direct"} "Hold the last frame"]
+        [:option {:value "hold-fade"} "Gently fade the last frame"]
+        [:option {:value "buffered-interpolation"} "Buffer and interpolate"]]]
+      [:p.small.muted
+       (case mode "hold-fade" "After a missed frame, fade emitted light while the next frame finishes. Fixture movement and discrete controls hold."
+                  "buffered-interpolation" "Play a little behind the render clock and blend completed frames. If a frame is late, fade the held light output."
+                  "Send completed frames in order and keep the last one unchanged during a delay.")]
+      (when (not= mode "direct")
+        [:div.form-row
+         [:label "Fallback fade · ms" [:input#output-fade {:type "number" :min 1 :step 1 :value (:fade-ms form) :disabled pending?
+                                                          :on-change #(edit! [:output-form :fade-ms] (text %))}]]
+         (when (= mode "buffered-interpolation")
+           [:label "Buffer latency · ms" [:input#output-latency {:type "number" :min 0 :max (* 2 (:period-ms form 25)) :step 1
+                                                                :value (:latency-ms form) :disabled pending?
+                                                                :on-change #(edit! [:output-form :latency-ms] (text %))}]])])
+      [:button#output-save.button {:type "button" :disabled pending? :on-click #(rf/dispatch [:connections/save-output])} "Apply output mode"]
+      [:p.small.muted "These are physical output deadlines. Cue, envelope and sequence timing remains musical."]
+      (when-let [last (:last state)]
+        [:p.small.muted (cond (:blackout? last) "Blackout is active."
+                              (:waiting? last) "Waiting for a completed frame."
+                              (:fallback? last) "Fallback active while rendering catches up."
+                              :else "Completed frames are arriving.")])
+      [:label "Push display view"
+       [:select#push-display-mode {:value (get-in db [:show :settings :controllers :push-display :mode] "parameters")
+                                   :disabled (contains? (:pending s) :push-display)
+                                   :on-change #(rf/dispatch [:connections/push-mode (text %)])}
+        [:option {:value "parameters"} "Effect parameters"] [:option {:value "audio"} "Captured audio + encoder values"]]]]]))
 (defn- field [s path title & [attrs]]
   [:label title [:input (merge {:type "text" :value (get-in s path "") :on-change #(edit! path (text %))} attrs)]])
 (defn- checkbox [s path title disabled?]
@@ -411,6 +485,7 @@
        [:button#audio-stop.button {:type "button" :disabled (or (not running?) pending?)
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
       [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
+      [audio-scope/panel]
       [:div.connection-metrics
        [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
        [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]
@@ -440,7 +515,9 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s]]]))
+      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [output-panel db s]]
+     [sensors/panel db]
+     [patchbay/panel db]]))
 (def panel
   (r/create-class
     {:display-name "Connections"

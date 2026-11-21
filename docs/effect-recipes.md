@@ -1,6 +1,6 @@
 # Composable Clojure effect recipes
 
-[tolglow.effects](../tolglow/effects.clj) is a small authoring API over the existing
+[tolglow.effects](../src/tolglow/effects.clj) is a small authoring API over the existing
 portable expression DSL. Its functions build data; they do not read a clock,
 mutate effect state, open devices or introduce another execution engine. The
 returned maps use the same registry, compiler, frame loop, save files and live

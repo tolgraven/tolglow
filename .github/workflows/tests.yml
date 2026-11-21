@@ -5,25 +5,25 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        java: ['17', '21']
+        java: ['17', '21', '25']
         suite: [pure, parity]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           path: tolglow
       - name: Check out the paired Afterglow implementation
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 8ebee7fd2fb00c115a2c4c575c04e427801f544a
+          ref: 1dcce88fa071c4c9c3c5a999f293ff8e18f6c34e
           path: afterglow
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6.3.0
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-      - uses: DeLaGuardo/setup-clojure@13.0
+      - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
-          cli: 1.11.1.1435
+          cli: 1.12.7.1681
       - name: Run explicit test lane
         working-directory: tolglow
         run: ./bin/test "${{ matrix.suite }}"
@@ -34,26 +34,27 @@ jobs:
   studio:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           path: tolglow
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 8ebee7fd2fb00c115a2c4c575c04e427801f544a
+          ref: 1dcce88fa071c4c9c3c5a999f293ff8e18f6c34e
           path: afterglow
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6.3.0
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: '22'
+          node-version: '26'
           cache: npm
           cache-dependency-path: tolglow/package-lock.json
-      - uses: DeLaGuardo/setup-clojure@13.0
+      - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
-          cli: 1.11.1.1435
+          cli: 1.12.7.1681
+          lein: 2.13.1
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
@@ -62,6 +63,14 @@ jobs:
         run: |
           npm run studio:test
           npm run studio:build
+      - name: Test and package the complete Leiningen project
+        working-directory: tolglow
+        run: |
+          lein test-parity
+          lein uberjar
       - name: Test the Live bridge boundaries
         working-directory: tolglow
-        run: node --test tolglow/integrations/live_bridge/test/*.test.js
+        run: node --test src/tolglow/integrations/live_bridge/test/*.test.js
+      - name: Test the browser display bridge
+        working-directory: tolglow
+        run: node --test src/tolglow/integrations/display_bridge/*.test.js

@@ -115,7 +115,7 @@ mapped offsets beyond the declared footprint fail before publication.
 From the Tolglow checkout with the paired Afterglow checkout available:
 
 ```sh
-clojure -J-Xmx768m -Sdeps '{:paths ["." "resources" "dev"]}' \
+clojure -J-Xmx768m -Sdeps '{:paths ["src" "resources" "dev"]}' \
   -M -m tolglow.bench-pipeline \
   --heads 1000,10000 --warmup 60 --samples 200
 ```

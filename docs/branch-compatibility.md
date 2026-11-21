@@ -21,8 +21,10 @@ with 81 assertions. See [compatibility repairs](compatibility-progress.md) and
 This establishes a reproducible source/dependency direction for continued
 migration. It does not identify unshared user-local edits, validate a physical
 rig, prove DJ Link compatibility or replace whole-show replay. New modules and
-repairs after the merge are recorded as working-tree changes until their final
-integration commits are made.
+repairs were subsequently checkpointed: functional controls/devices at`ccb9768`,
+then system/X-Touch/replay at`3b7528008191f6c479b6cc2422b27237460ae600` with
+247 parity tests/2808 assertions passing. Later sensors/presentation and active
+preview work remain separately verified working-tree changes.
 
 ## Historical source audit
 

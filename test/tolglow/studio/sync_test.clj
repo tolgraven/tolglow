@@ -316,6 +316,30 @@
           (is (sync/flush! manager)) (is (= 2 (count @commands)))))
       (finally (sync/close! manager)))))
 
+(deftest captured-midi-emits-typed-patch-observations-without-needing-cue-mappings
+  (let [events (atom []) commands (atom [])
+        manager (sync/create-manager {:now-ms (constantly 20) :config {:midi {:control? false}}})]
+    (try
+      (sync/start! manager (callbacks commands events))
+      (send-midi! manager 10 [0x91 60 100])
+      (send-midi! manager 11 [0x91 60 0])
+      (send-midi! manager 12 [0xb2 74 127])
+      (sync/ingest! manager {:type :live/midi :event {:type :cc :channel 1 :controller 1 :value 63}})
+      (sync/ingest! manager {:type :live/midi :event {:type :note-on :channel 1 :note 60 :velocity 100 :origin :tolglow-feedback}})
+      (is (sync/flush! manager))
+      (let [observations (mapv :observation (filter #(= :sync/observation (:type %)) @events))]
+        (is (= ["midi/midi-clock/ch/2/note/60" "midi/midi-clock/ch/2/note/60" "midi/midi-clock/ch/3/cc/74"
+                "live/ableton-live/ch/1/cc/1"] (mapv :source-id observations)))
+        (is (= [100 0 127 63] (mapv :value observations)))
+        (is (= [true false true true] (mapv :gate? observations)))
+        (is (= [10 11 12 20] (mapv :observed-at-ms observations)))
+        (is (= [:midi-input :midi-input :midi-input :live-playback] (mapv :origin observations)))
+        (is (= 4 (count (set (map :event-id observations)))))
+        (is (= {:transport :midi :source-id :midi-clock :channel 2 :signal :velocity :note 60} (:port (first observations))))
+        (is (every? #(and (not (contains? % :clock)) (not (contains? % :epoch))) observations)))
+      (is (empty? @commands))
+      (finally (sync/close! manager)))))
+
 (deftest open-failure-cleans-prior-resources-and-can-be-retried
   (let [closed (atom 0) attempts (atom 0)
         manager (sync/create-manager {:config {:beat-link {:enabled? true} :midi {:enabled? true :input-index 0}}
@@ -348,8 +372,8 @@
       (is (false? (get-in (sync/clock-at manager 100) [:clock :playing?])))
       ;; The overflow callback runs before dequeueing the old backlog. Wait for
       ;; a barrier using its queue directly so test admission cannot add a loss.
-      (let [barrier (promise) queue (:queue (:active @(:state manager)))]
-        (is (.offer queue {:type :barrier :promise barrier} 1000 TimeUnit/MILLISECONDS))
+      (let [barrier (promise) run (:active @(:state manager)) queue (:queue run)]
+        (is (.offer queue {:type :barrier :promise barrier ::sync/generation @(:binding-generation run)} 1000 TimeUnit/MILLISECONDS))
         (is (true? (deref barrier 1000 false))))
       (send-midi! manager 100 [0xfa]) (send-midi! manager 100 [0xf8]) (is (sync/flush! manager))
       (is (true? (get-in (sync/clock-at manager 100) [:clock :playing?])))

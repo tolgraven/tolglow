@@ -5,16 +5,18 @@
             [tolglow.studio.subs]
             [tolglow.studio.interop]
             [tolglow.studio.views :as views]
-            [tolglow.studio.push-display :as push-display]))
+            [tolglow.studio.push-display :as push-display]
+            [tolglow.studio.repl :as repl]))
 
 (defonce root (atom nil))
 (defonce listeners (atom []))
 
+(defn repl-popup? [] (= "/repl" (.-pathname js/location)))
 (defn device-display? [] (= "/push-display" (.-pathname js/location)))
 
 (defn mount! []
   (when-not @root (reset! root (rdom/create-root (.getElementById js/document "app"))))
-  (rdom/render @root (if (device-display?) [push-display/component] [views/studio])))
+  (rdom/render @root (cond (device-display?) [push-display/component] (repl-popup?) [repl/console-view] :else [views/studio])))
 
 (defn- listen! [target event handler]
   (.addEventListener target event handler)
@@ -24,13 +26,15 @@
   (doseq [[target event handler] @listeners] (.removeEventListener target event handler))
   (reset! listeners [])
   (listen! js/window "blur" #(rf/dispatch [:studio/release-pointers]))
-  (listen! js/window "pagehide" #(do (rf/dispatch-sync [:studio/release-pointers true]) (rf/dispatch-sync [:chat/cancel])))
+  (listen! js/window "pagehide" #(do (rf/dispatch-sync [:studio/release-pointers true]) (rf/dispatch-sync [:chat/cancel]) (rf/dispatch-sync [:repl/close])))
   (listen! js/document "visibilitychange" #(when (.-hidden js/document) (rf/dispatch [:studio/release-pointers true])))
   (listen! js/window "keyup" (fn [event]
                                (when (contains? #{" " "Enter"} (.-key event))
                                  (rf/dispatch [:studio/gesture-cancel "keyboard"]))))
   (listen! js/document "keydown"
            (fn [event]
+             (if (and (not (.-defaultPrevented event)) (or (.-ctrlKey event) (.-metaKey event)) (= "`" (.-key event)))
+               (do (.preventDefault event) (rf/dispatch [:repl/toggle]))
              (when-not (or (.-defaultPrevented event) (.-repeat event) (.-ctrlKey event) (.-metaKey event) (.-altKey event)
                            (.closest (.-target event) "input,textarea,select,[contenteditable=true],.cue-cell,#neovim-host")
                            (.querySelector js/document "dialog[open]"))
@@ -43,13 +47,15 @@
                  "4" (rf/dispatch [:studio/set-view :library])
                  "5" (rf/dispatch [:studio/set-view :assistant])
                  "6" (rf/dispatch [:studio/set-view :connections])
-                 nil)))))
+                 "7" (rf/dispatch [:studio/set-view :develop])
+                 nil))))))
 
 (defn ^:export init! []
-  (if (device-display?)
-    (do (.add (.-classList (.-body js/document)) "push-display-page")
+  (cond
+    (device-display?) (do (.add (.-classList (.-body js/document)) "push-display-page")
         (push-display/install-api!)
         (rf/dispatch-sync [:push-display/update {}]))
-    (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
+    (repl-popup?) (rf/dispatch-sync [:repl/open true (or (.get (js/URLSearchParams. (.-search js/location)) "session-id") "main")])
+    :else (do (rf/dispatch-sync [:studio/initialize (str (random-uuid))])
         (install-listeners!)))
   (mount!))

@@ -1,0 +1,49 @@
+/* Authentic Bruvbox dark palette, not a renamed Gruvbox palette.
+   tolgraven/bruvbox colors/bruvbox.vim, MIT/X11. See vendor/neovim/bruvbox/NOTICE.md.
+   Token mapping follows tolgraven-reference's modules/highlight/theme.cljs. */
+:root {
+  --bruvbox-bg: #262525;
+  --bruvbox-bg-hard: #191818;
+  --bruvbox-bg-hard2: #232222;
+  --bruvbox-bg-medium: #2a292b;
+  --bruvbox-bg1: #3a393d;
+  --bruvbox-bg2: #46494c;
+  --bruvbox-bg3: #605c57;
+  --bruvbox-fg: #f0e3ba;
+  --bruvbox-symbol: #faecc9;
+  --bruvbox-identifier: #d5c4a1;
+  --bruvbox-comment: #908682;
+  --bruvbox-red: #d18479;
+  --bruvbox-green: #b4b88d;
+  --bruvbox-yellow: #dabd7a;
+  --bruvbox-type: #d9c894;
+  --bruvbox-blue: #7692ab;
+  --bruvbox-keyword: #80a0b3;
+  --bruvbox-purple: #bd979d;
+  --bruvbox-aqua: #91b8a4;
+  --bruvbox-orange: #cca687;
+  --bruvbox-function: #dba184;
+  --bruvbox-addition: #1f281c;
+  --bruvbox-deletion: #281913;
+  --bruvbox-warning-bg: #2f2b19;
+  --bruvbox-info-bg: #172533;
+}
+/* Scope development surfaces; live show controls retain their own palette. */
+#repl-console, .workspace-view, .docker-terminal {
+  --line: var(--bruvbox-bg2);
+  --border: var(--bruvbox-bg2);
+  --text: var(--bruvbox-fg);
+  --muted: var(--bruvbox-comment);
+  --accent: var(--bruvbox-green);
+  --danger: var(--bruvbox-red);
+  color: var(--bruvbox-fg);
+}
+.workspace-view .panel { background: var(--bruvbox-bg); }
+#repl-console .button, .workspace-view .button, .docker-terminal .button {
+  background: var(--bruvbox-bg1); border-color: var(--bruvbox-bg2); color: var(--bruvbox-fg);
+}
+#repl-console select, #repl-console .repl-session-row input,
+.workspace-view input, .workspace-view select {
+  background: var(--bruvbox-bg-hard2); border-color: var(--bruvbox-bg2); color: var(--bruvbox-fg);
+}
+#repl-console ::selection, .workspace-view ::selection { background: var(--bruvbox-bg2); color: var(--bruvbox-fg); }

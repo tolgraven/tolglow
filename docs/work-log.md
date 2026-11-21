@@ -1,5 +1,104 @@
 # Work log
 
+## 2026-11-21 — Descriptive owners and actual waveform projections
+
+The active workstreams now use descriptive agent names. A single
+`room_renderer_fog_fixture_optics` owner handles the entire scene/fog/optics
+pipeline; there is no second graphics agent. `studio_push_touch_interface`
+owns the combined UI, while `audio_capture_waveform_projections` owns the
+read-only backend data. Dependency upgrades, application agents and terminal
+reliability each have separate claims. The ledger validates 96 items with
+58 completed milestones, 29 planned and 9 active; these counts are scope labels,
+not a claim that the product is complete.
+
+Live signal previews now resolve captured instance definitions and current
+effective parameter bindings through the actual numeric IR. Captured PCM
+produces measured, bounded peak/RMS/frequency columns and authoritative beat/bar
+markers. The Push capture worker receives those projections off the lighting
+deadline. Initial combined waveform/audio/display gate passed 27 tests and
+193 assertions, followed by a focused 11-test/86-assertion gate including actual
+Ring parameter edits, compact audio, captured-clock bindings and the new source
+layout under `src/tolglow/`.
+The final waveform/display gate passed 17 tests /118 assertions, adding continuous
+off-deadline projection when no new model view is submitted and preserving the
+existing transport lifecycle tests. These focused and aggregate counts overlap.
+Further browser and complete host/device wiring remains separately
+tracked in [waveform projections](waveform-projections.md).
+
+The isolated PCM summary stage measured median/p99 0.080/0.284 ms for 480-sample
+48 kHz blocks, including the immutable 256-column view. Decode, existing analysis,
+capture and display/HTTP costs were excluded. Root renamed the independent
+physical sender to `output-scheduler`: parallel effect workers remain separate
+from the deterministic model coordinator and serial network sender.
+
+## 2026-11-21 — Verified sensors, output policy and workspace checkpoint
+
+The latest root Afterglow parity gate passed **269 tests /2943 assertions**,
+including sensors and the pure output policy. The earlier checkpoint **247 /2808** was
+committed at`3b7528008191f6c479b6cc2422b27237460ae600`. The earlier replay mismatch
+below was resolved only after independent comparison of all36 inputs confirmed
+unchanged output/selected instance semantics. Tolglow's later restart-owner
+parity run passed **411 /3294**; subsequent source still needs root's final gate.
+
+Sensor middleware passed **11 /71**; actual OSC/service/connections **31 /239**.
+The maintained Capacitor Motion8.0.1 package passed three smoke assertions. Native
+source passed real host protocol/loopback **4 /10** and six static checks; Apple
+build/physical Watch/iPhone tests remain unavailable. [Sensors](sensors.md)
+records source revisions, SI axes, permissions, explicit arming and ownership.
+
+The pure [output policy](output-presentation.md) passed **11 /64**, with direct
+mode default, timestamp-preserving late frames, bounded history and fixture-aware
+fallback. At100 universes, fade median/p99 were1.251/2.000ms; interpolation
+1.720/3.457ms, maximum13.65ms. Host publisher integration remains separate; these
+stage measurements are not a40Hz whole-show guarantee.
+
+Workspace/terminal tests passed **19 /139**, including actual Git and Docker/PTY.
+REPL backend passed **34 /264**, Ring host **2 /19**, and nine real browser REPL
+flows. Patchbay four and waveform three browser flows also passed without console
+errors. Frontend source checkpoint **100 /538**, optimized142 files/0warnings,
+precedes newer sensor/scene work. Bruvbox uses the actual pinned theme and a real
+WASM verification, not a similarly named palette. Automatic application-coding
+agents and preview/reload activation remain separate incomplete workflows.
+
+Clock/routing and restart ownership are implemented. One renderer owner now owns the new Three scene and shaped
+fog work, with no shared visual polishing: initial screenshots did not meet visual acceptance, despite
+math/SwiftShader checks. There is no AAA, mobile GPU or physical optics claim.
+The ledger validates **94 items:58done,29planned,7active**; scoped module completion
+does not close the original broad product roadmap.
+
+## 2026-11-21 — Performance and development-workspace follow-up
+
+The shared instance/category control gate passed **81 tests / 612 assertions**
+with reflection checks; real scalar/batch compiler integration passed **2 / 33**.
+[System controls](system-controls.md) document private-clock pause, live manual
+input response, independent musical AR, zero-opacity write suppression and alpha
+compositing across rich/dense/typed/geometry rendering. The full Afterglow pure
+checkpoint then ran 209 tests / 2460 assertions with zero failures and one replay
+fixture mismatch caused by newly persisted system bookkeeping. That run was not green; the later verified comparison and passing parity checkpoint above supersede it.
+
+Other latest owner-reported scoped gates: X-Touch codec/session **10 / 138**;
+modulation **16 / 122**; effect recipes **8 / 153**; registered signals **8 / 105**;
+typed patch kernel **16 / 118**; patch editor component **12 / 54**; system-control
+UI component **9 / 81**. The latest combined frontend source suite passed
+**78 / 434**, with zero warnings; newer performance/REPL browser flows still need
+actual verification. Earlier browser gates include six Connections and six
+modulation workflows. An actual 960×160 re-frame display capture ran 60 samples,
+median 66.8 ms / p95 73.8 ms (14.79 fps) in software Chromium; its JVM boundary
+passed five tests / 29 assertions plus five Node tests. This is not physical USB
+performance or a 60 fps display claim.
+
+The [development-workspace specification](product/development-workspace.md)
+records the Quake/Bruvbox REPL, repository-wide Neovim and scratch forms, captured
+locals, branch-isolated Codex/Claude application work, diffs/watchers, scoped
+manual/after-turn/preview reload, last-good rollback and real Docker/zsh terminal.
+JVM REPL and isolated-worktree service are independent active lanes. Phone motion
+and native Watch conducting research/core middleware are now a separate active
+lane; sensor permissions, gesture availability and physical verification must be
+reported from actual supported APIs.
+
+The ledger checkpoint validates **85 items: 50 done, 29 planned, 6 in progress**.
+Broad product requirements remain open where only a kernel or component is done.
+
 ## 2026-11-21 — Current implementation checkpoint
 
 The product stack is now **ClojureScript/re-frame/Reagent with Ring/Jetty**.

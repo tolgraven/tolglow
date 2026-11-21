@@ -25,3 +25,14 @@ Coordinate event/db contracts between `events.cljs`, `views.cljs` and
 gesture acknowledgements/cancellations. See `docs/studio-ui.md` and
 `resources/studio/AGENTS.md`. Build with `npm run studio:build`, then browser-test
 actual semantic operations against the local captured-output Ring application.
+
+The passive `/push-display` route must never initialize show polling, WebGL,
+editors or physical resources. Keep its synchronous snapshot API and 960×160
+layout bounded. REPL snapshots/history never trigger evaluation; capture the
+clicked source immediately and keep later typing intact. Stream callbacks belong
+to one request/session/runtime; closing a view must not masquerade as a hard
+interrupt. Workspace drafts retain exact baseline hashes and stay separate from
+live files. Terminal identity follows the process runtime, not the show epoch.
+Every editor/terminal listener, worker, observer and stream needs an explicit
+owner and teardown path. Render actual hardware capability and data availability;
+never turn an absent sensor or port into a synthetic live reading.

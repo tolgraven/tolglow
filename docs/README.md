@@ -1,5 +1,11 @@
 # Tolglow / Afterglow architecture program
 
+Tolglow is a complete application project. JVM namespaces live under
+`src/tolglow/`; resources, tests, development support and commands live under
+`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` and `deps.edn`
+describe application/build entry points. Browser application source remains
+`src/studio/`, and specialized rendering engines remain `src/engines/`.
+
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,
 CPU fixture rendering, integration primitives, and a web studio. The existing
@@ -36,12 +42,30 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Original stage baseline](benchmark-baseline.md) | Legacy assignment/packing measurement and exclusions |
 | [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |
 | [Controls and web](architecture/control-and-web.md) | Shared semantics, devices, touch UI and editors |
+| [Output deadlines](output-presentation.md) | Immutable completed frames, fixture-aware fade/interpolation and measured policy costs |
+| [Phone and Watch sensors](sensors.md) | Maintained browser library, supported Apple APIs, pure middleware and owned OSC service |
+| [Web REPL](web-repl.md) | Actual JVM sessions, streaming completion and captured locals |
+| [Isolated workspaces](dev-workspaces.md) | Real paired Git worktrees, confined file editing and checks |
+| [Docker terminal](terminal.md) | Actual PTY/container lifecycle and tested limits |
+| [Restart ownership](show-restart.md) | Execution reset and in-place input callback renewal |
+| [Scene contract](architecture/preview-scene-contract.md) | Shared fixture/rig optics and active visual acceptance |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
 | [Reactive REPL](reactive.md) | Durable subscriptions, ratoms, watchers and queued actions |
 | [Fixture library](fixture-library.md) | Verified format coverage, search, validation and rig workflow |
 | [Studio UI](studio-ui.md) | Frontend implementation and browser verification |
 | [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |
+| [System controls](system-controls.md) | Instance/category pause, opacity and independent musical AR |
+| [Modulation](modulation.md) | Seeded typed modulation, targeting and holds |
+| [Effect recipes](effect-recipes.md) | Declarative musical/spatial construction helpers |
+| [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
+| [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
+| [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
+| [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
+| [Sync](sync-progress.md) | Selected clock and explicit MIDI/Beat Link/Live sessions |
+| [Runtime replay](runtime-replay.md) | Checked-in command/frame recording and deterministic output gate |
+| [Live routing](live-routing.md) | Typed musical patch graph, source research and host limits |
+| [Development workspace](product/development-workspace.md) | Popup REPL, source/scratch editing, agent branches, reload and Docker terminal |
 | [Show authoring](product/show-authoring.md) | Definitions, sequences, envelopes, randomization and auto show |
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
@@ -51,8 +75,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 Tests run actual production functions and dependencies, using capture sinks and
 injected transports at external boundaries. A passed narrow milestone does not
 complete its broader roadmap item. Source-derived Push 2 tests are not physical
-device verification. Push 3 currently has only explicitly configured generic
-MIDI bindings; native display and standalone support are unverified. A Live-side bridge asset package and sync resource boundary are implemented,
+device verification. Push 3 has an explicitly captured User Mode subset and standard MPE profiles;
+native display, standalone and physical verification remain separate. A Live-side bridge asset package and sync resource boundary are implemented,
 while execution inside Max/Live, real provider accounts, physical audio routing
 and AAA simulator fidelity remain separate work. The trainable robot duck is retained as later research;
 its exact product and SDK are still unconfirmed.
