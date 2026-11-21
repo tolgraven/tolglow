@@ -61,7 +61,7 @@ module.exports = { run, sampleView };
 if (require.main === module) {
   const [url, executablePath, outputDirectory, flag] = process.argv.slice(2);
   if (!url || !executablePath || !outputDirectory) {
-    process.stderr.write("Usage: node benchmark.js URL CHROMIUM_EXECUTABLE OUTPUT_DIRECTORY [--no-sandbox]\n");
+    process.stderr.write("Usage: node dev/push-display/benchmark.cjs URL CHROMIUM_EXECUTABLE OUTPUT_DIRECTORY [--no-sandbox]\n");
     process.exitCode = 2;
   } else run({ url, executablePath, outputDirectory, noSandbox: flag === "--no-sandbox" })
     .then(result => process.stdout.write(JSON.stringify(result, null, 2) + "\n"))
