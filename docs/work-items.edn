@@ -31,6 +31,26 @@
               "Full Tolglow parity against merged Afterglow f951313: 480 tests / 3737 assertions passed"
               "Malformed saved values failed the new regression tests before the fix"
               "docs/show-files.md"]}
+  {:id :preview/camera-navigation-v1
+   :title "Explore the rig with keyboard and touch and follow active fixtures automatically"
+   :kind :implementation :status :in-progress :owner "preview_wasd_mouse_navigation_and_active_fixture_tour"
+   :paths ["tolglow/src/engines/preview/camera-navigation.js"
+           "tolglow/src/engines/preview/camera-navigation.test.js"
+           "tolglow/src/engines/preview/camera-navigation.test.mjs"
+           "tolglow/src/studio/tolglow/studio/camera_controls.cljs"
+           "tolglow/src/studio/tolglow/studio/camera_controls_test.cljs"
+           "tolglow/resources/studio/camera-navigation.css"
+           "tolglow/docs/preview-navigation.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["One camera owner exposes the same navigation API for worker and fallback"
+                "WASD, drag look, accessible touch controls and manual tour takeover work in Chromium"
+                "Tours follow actual lit fixtures with bounded motion and pause during editing or reduced motion"
+                "Typing, blur, visibility and disposal do not leave held movement active"]
+   :evidence ["Shared constructor, preview control and interop hunks coordinated with rig editor owner"
+              "Frontend 138 tests / 730 assertions passed; optimized release 148 files, zero warnings"
+              "Three pure camera planner tests and actual Chromium worker/fallback input lifecycle gate passed"
+              "Compiled desktop 1440x1000, iPad 1024x768 and phone 390x844 controls: actual pointer/touch hold and drag passed; page errors empty"
+              "docs/preview-navigation.md; Chromium SwiftShader, no physical GPU or Safari claim"]}
   {:id :development/git-metadata-isolation
    :title "Isolate owned Git reads from mutable worktree metadata pointers"
    :kind :implementation :status :done :owner nil

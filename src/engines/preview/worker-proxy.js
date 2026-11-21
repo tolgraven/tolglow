@@ -1,7 +1,8 @@
 import {RigEditorInput} from './editor.js';
 import * as THREE from 'three';
 import {SceneRenderer} from './scene-renderer.js';
-import {cameraControls, cameraPreset, cameraKey} from './camera.js';
+import {cameraControls, cameraPreset} from './camera.js';
+import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
 import {clamp} from './math.js';
@@ -26,23 +27,17 @@ export class WorkerRoomPreview {
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)'); this.coarsePointer = matchMedia('(pointer: coarse)');
     const signal = this.abort.signal;
     document.addEventListener('visibilitychange', () => this.sendState(), {signal});
-    this.reducedMotion.addEventListener('change', () => this.sendState(), {signal});
+    this.reducedMotion.addEventListener('change', () => {this.navigation?.notify(); this.sendState();}, {signal});
     this.coarsePointer.addEventListener('change', () => this.sendState(), {signal});
-    canvas.addEventListener('keydown', event => {
-      if (cameraKey(this.camera, this.controls, this.room, event.key)) {
-        event.preventDefault(); if (event.key === 'Home') this.cameraName = 'audience'; this.sendState();
-      }
-    }, {signal});
+    this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
+      room: () => this.room, snapshot: () => this.snapshot,
+      active: () => !this.paused && !this.disposed && !document.hidden && this.visible && !!canvas.getClientRects().length,
+      reducedMotion: () => this.reducedMotion.matches, changed: () => this.sendState()});
+    this.navigation.subscribe(state => this.navigationCallback?.(state));
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
     this.intersectionObserver = new IntersectionObserver(entries => {
       this.visible = entries.some(entry => entry.isIntersecting); this.sendState();
     }); this.intersectionObserver.observe(canvas);
-    const animateControls = () => {
-      if (this.disposed || this.fallback) return;
-      if (!document.hidden && this.visible) this.controls.update();
-      this.controlFrame = requestAnimationFrame(animateControls);
-    };
-    this.controlFrame = requestAnimationFrame(animateControls);
     this.setStatus('Starting background room renderer…');
     try {
       const createWorker = options.workerFactory || (url => new Worker(url, {type: 'module', name: 'tolglow-room-preview'}));
@@ -65,6 +60,7 @@ export class WorkerRoomPreview {
   sendState() {
     if (this.disposed || this.fallback || !this.channel) return;
     const bounds = this.canvas.getBoundingClientRect();
+    this.camera.aspect = Math.max(1, bounds.width) / Math.max(1, bounds.height); this.camera.updateProjectionMatrix();
     this.channel.offer({snapshot: this.snapshot, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
       hidden: document.hidden, visible: this.visible && !!this.canvas.getClientRects().length, paused: this.paused,
       reducedMotion: this.reducedMotion.matches, coarsePointer: this.coarsePointer.matches,
@@ -147,17 +143,28 @@ export class WorkerRoomPreview {
   }
   setCamera(name) {
     if (this.fallback) {this.fallback.setCamera(name); this.cameraName = name; return;}
+    this.navigation.setMode('orbit');
     cameraPreset(this.camera, this.controls, this.room, name); this.cameraName = name; this.sendState();
   }
   resetCamera() {this.setCamera('audience');}
+  setNavigationMode(mode) {if (this.fallback) return this.fallback.setNavigationMode(mode); this.navigation.setMode(mode);}
+  setNavigationSpeed(speed) {if (this.fallback) return this.fallback.setNavigationSpeed(speed); this.navigation.setSpeed(speed);}
+  setInteractionActive(active) {if (this.fallback) return this.fallback.setInteractionActive(active); this.navigation.setInteractionActive(active);}
+  moveCamera(direction, pressed) {if (this.fallback) return this.fallback.moveCamera(direction, pressed); this.navigation.move(direction, pressed);}
+  getNavigationState() {return this.fallback ? this.fallback.getNavigationState() : this.navigation.state();}
+  onNavigationChange(callback) {
+    this.navigationCallback = callback; callback(this.getNavigationState());
+    return () => {if (this.navigationCallback === callback) this.navigationCallback = null;};
+  }
   focusFixture(id) {
     if (this.fallback) return this.fallback.focusFixture(id);
     const fixture = this.snapshot?.rig?.fixtures?.find(entry => String(entry.id) === String(id));
     if (!fixture?.position) return false;
+    this.navigation.setMode('orbit');
     this.controls.target.fromArray(fixture.position); this.camera.position.fromArray(fixture.position).add(new THREE.Vector3(1.3, .5, 2));
     this.controls.update(); this.cameraName = 'fixture'; this.sendState(); return true;
   }
-  pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.sendState();}
+  pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.navigation.clearInput(); this.sendState();}
   resume() {this.paused = false; if (this.fallback) return this.fallback.resume(); this.sendState();}
   draw() {
     if (this.disposed || this.error) return Promise.resolve(false);
@@ -170,17 +177,18 @@ export class WorkerRoomPreview {
     if (this.fallback) return {...this.fallback.getTelemetry(), thread: 'main', fallbackReason: this.fallbackReason};
     return {...this.telemetry, ready: this.ready, failed: this.error || null, thread: 'worker', rendering: this.rendering,
       pendingState: !!this.channel?.pending, inFlightState: this.channel?.inFlight, coalescedStates: this.channel?.coalesced || 0,
-      discardedFrames: this.discardedFrames, visible: this.visible, hidden: document.hidden, paused: this.paused};
+      discardedFrames: this.discardedFrames, visible: this.visible, hidden: document.hidden, paused: this.paused,
+      navigation: this.getNavigationState(), camera: this.camera.position.toArray(), target: this.controls.target.toArray()};
   }
   stopProxy() {
-    clearTimeout(this.startupTimer); cancelAnimationFrame(this.controlFrame); this.abort.abort();
-    this.editorInput?.dispose(); this.editorInput = null;
+    clearTimeout(this.startupTimer); this.editorInput?.dispose(); this.editorInput = null;
+    this.navigation?.dispose(); this.abort.abort();
     this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect(); this.controls.dispose(); this.channel?.close();
     this.worker?.terminate(); this.worker = null;
   }
   fail(error) {
     if (this.disposed || this.fallback) return;
-    this.stopProxy(); this.rendering = false;
+    const navigation = this.navigation?.state(); this.stopProxy(); this.rendering = false;
     const reason = String(error?.message || error);
     if (!this.presenter && !this.startedRendering) {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
@@ -188,6 +196,11 @@ export class WorkerRoomPreview {
       this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogAmount);
       if (this.snapshot) this.fallback.update(this.snapshot);
       this.fallback.camera.position.copy(this.camera.position); this.fallback.controls.target.copy(this.controls.target); this.fallback.controls.update();
+      if (navigation) {
+        this.fallback.setNavigationMode(navigation.mode); this.fallback.setNavigationSpeed(navigation.speed);
+        this.fallback.setInteractionActive(navigation.interacting);
+      }
+      this.fallback.onNavigationChange(state => this.navigationCallback?.(state));
       if (this.paused) this.fallback.pause();
       this.fallback.whenReady.then(this.resolveReady);
     } else {

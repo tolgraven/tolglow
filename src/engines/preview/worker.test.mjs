@@ -104,14 +104,21 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
       const calls = [], getContext = canvas.getContext.bind(canvas); canvas.getContext = (...args) => {calls.push(args[0]); return getContext(...args);};
       const url = URL.createObjectURL(new Blob([`throw new Error('deliberate startup failure');`], {type: 'text/javascript'}));
       const renderer = new RoomPreview(canvas, document.querySelector('#status'), {workerFactory: () => new Worker(url)});
+      renderer.setNavigationMode('walk'); renderer.setNavigationSpeed(3); renderer.setInteractionActive(true);
+      const navigationStates = [], unsubscribe = renderer.onNavigationChange(state => navigationStates.push(state));
       renderer.update(snapshot); await renderer.whenReady; URL.revokeObjectURL(url);
-      const telemetry = renderer.getTelemetry(); renderer.dispose();
-      return {telemetry, calls, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await renderer.draw()};
+      const telemetry = renderer.getTelemetry(), navigation = renderer.getNavigationState();
+      unsubscribe(); renderer.dispose();
+      return {telemetry, navigation, observed: navigationStates.at(-1), navigationDisposed: renderer.fallback.navigation.disposed,
+        calls, ownerRemoved: !canvas.tolglowPreview, drawAfterDispose: await renderer.draw()};
     });
     assert.equal(fallback.telemetry.thread, 'main'); assert.equal(fallback.telemetry.ready, true);
     assert.match(fallback.telemetry.fallbackReason, /deliberate startup failure/);
     assert.equal(fallback.calls[0], 'webgl2'); assert.equal(fallback.ownerRemoved, true);
     assert.equal(fallback.drawAfterDispose, false);
+    assert.equal(fallback.navigation.mode, 'walk'); assert.equal(fallback.navigation.speed, 3);
+    assert.equal(fallback.navigation.interacting, true); assert.equal(fallback.navigationDisposed, true);
+    assert.deepEqual(fallback.observed, fallback.navigation);
     assert.deepEqual(errors, []);
     t.diagnostic(JSON.stringify({scope: 'Chromium SwiftShader, not physical GPU/Safari', first, heartbeat, fenced, resized, fallback}));
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}
