@@ -83,3 +83,37 @@ median allocation and **0/120** samples above 25 ms. Pipeline p99 was **22.54 ms
 maximum **26.77 ms**. This independently demonstrates the whole CPU workload on
 that runner; it is not a hardware-matched speedup comparison to the local reports
 or a guarantee including physical output, scheduling, browser or simulator costs.
+
+## Connected subscriber run
+
+[Run 44894919836](https://github.com/tolgraven/tolglow/actions/runs/44894919836)
+passed the complete core and actual WebSocket matrices. The
+[raw subscriber report](2026-11-21-subscribers-ci.edn) is retained unchanged.
+Artifact `14702819333` contained both reports and logs; its verified SHA-256 is
+`85d919d92bd808bc4f7976509f4e2b53dc85e5c464dbf46c6ecd1c0b4d2bd326`.
+Clean sources were Tolglow `fee424ffe41786adcfca9b8383da9977b2b56583` and
+Afterglow `36abc94562329d8cb6c62c8916629b3e62fe2a21`.
+
+Java 21.0.13/Clojure 1.12.7, 768 MiB heap, four available processors, AMD EPYC 9V74;
+40 warmup and 120 measured frames, two effect workers and 25 ms pacing:
+
+| Pixels + movers | Fast clients (+1 withheld ACK when connected) | Host p50 / p95 / p99 ms | Frames >25ms | Whole-JVM MB/tick |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 +8 | 0 | 2.70 /3.93 /4.35 | 0 | 1.91 |
+| 1,000 +8 | 1 | 2.56 /3.70 /4.36 | 0 | 2.46 |
+| 1,000 +8 | 4 | 2.63 /4.22 /4.39 | 0 | 3.30 |
+| 10,000 +8 | 0 | 15.84 /19.06 /28.50 | 4 | 14.88 |
+| 10,000 +8 | 1 | 17.47 /21.89 /26.12 | 2 | 15.45 |
+| 10,000 +8 | 4 | 16.98 /19.04 /21.68 | 0 | 16.25 |
+
+The four fast clients in the 10,000-pixel case each reconstructed 117/120 frames,
+about 38.88 deliveries/s, with three coalesced frames and commit-to-apply p99 near
+26 ms. Typical payloads were 3.6 KB. The stalled client received exactly one initial
+snapshot until ACK, then reached the latest frame in 24.55 ms. All model, packet,
+preview and reconstructed-view checks passed.
+
+The production snapshot exposes only 16 targets' live output, while retaining all
+rig definitions (initial 10,000-pixel hydration about 1.37 MB). These results do not
+measure full-pixel live preview or a browser. Allocation includes JVM clients,
+oracle checks and instrumentation. Fixed run order and differing tails do not
+establish that adding clients improves performance; retain the complete data.

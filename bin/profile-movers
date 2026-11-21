@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+afterglow_profile_root=$(cd "${AFTERGLOW_ROOT:-../afterglow}" && pwd)
+profile_deps=$(python3 -c 'import json,sys; print("{:aliases {:profile-movers {:extra-paths [\"dev\"]}} :deps {tolgraven/afterglow {:local/root " + json.dumps(sys.argv[1]) + "}}}")' "$afterglow_profile_root")
+export AFTERGLOW_ROOT="$afterglow_profile_root"
+exec clojure -J-Xms768m -J-Xmx768m -Sdeps "$profile_deps" -M:profile-movers -m tolglow.bench-movers "$@"

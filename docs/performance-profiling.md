@@ -81,6 +81,46 @@ every pixel's live state. Browser JavaScript/re-frame, rendering, remote network
 latency and physical output are excluded. The retained delivery observations
 describe JVM loopback subscribers, not measured iPad performance.
 
+## Rotated moving heads and layered fades
+
+`bin/profile-movers` constructs 64 or 128 independently placed and rotated RGBW
+moving heads. Twenty-four real effects divide them into eight groups and three
+competing priorities. Every head follows a distinct world-space target derived
+from its placement and the captured musical beat. Effects launch in reverse
+priority order, so launch order and worker completion cannot silently replace
+the required priority order.
+
+```sh
+AFTERGLOW_ROOT=../afterglow-performance bin/profile-movers \
+  --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
+  --output /tmp/movers.edn
+```
+
+The layers affect aim, color, white, dimmer, focus and zoom. Repeated opacity
+sequences include exact zero and one, rising and falling intermediate values,
+all layers off and simultaneous mixtures. Each frame checks all heads, including
+every target beyond the first 16. An independent matrix implementation converts
+the blended world-space target into local pan/tilt, chooses calibrated pan wraps
+using prior state, and verifies every coarse/fine and emitter channel byte,
+including universe crossings. Its arithmetic and known-axis checks do not call
+the renderer's private geometry functions. A scalar compiler/general-renderer
+oracle additionally checks full model, intents, packets and preview. Frame
+checksums and alpha combinations remain in the report.
+
+Separate lanes measure direct serial execution, bounded workers and actual
+Studio ticks. Studio timing includes command enqueue/admission, the normal
+frame pipeline, reactive publication and captured ArtDMX encoding. All-head
+reference projection happens outside its timer. The advancing pipeline lane
+includes all-head projection and preserves prior compact movement history.
+
+A separate diagnostic pass instruments the renderer's geometry and per-fixture
+packing boundaries, exposing aiming, remaining fixture packing/preview work and
+render reduction/dispatch. Its nested per-fixture timers add overhead; use the
+uninstrumented lanes for CPU frame-budget counts. Allocation includes result
+extraction; GC includes checks outside frame timers. These measurements do not
+include scheduler jitter, network delivery, a browser/GPU or physical fixtures,
+and they do not prove real-time output deadlines.
+
 ## Keeping master under observation
 
 The `Master show performance evidence` workflow runs on master pushes affecting
@@ -91,6 +131,9 @@ calls the implementation on master; it contains no benchmark or application copy
 There is only one scheduled trigger. If the default branch moves to master, move
 that trigger there too and remove the old copy.
 
+Profiler changes also run on pull requests, measuring that exact PR head in an
+independent runner before merge. These jobs retain the same oracle gates and
+artifact-only timings and do not share a concurrency group with master runs.
 Push runs check out the exact pushed master SHA. Scheduled/reusable/manual runs
 check out master, even though the caller's event SHA may belong to effects. Each
 run resolves both checkouts

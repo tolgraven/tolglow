@@ -105,6 +105,18 @@
               ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"
               "Subscriber correctness smoke: actual Jetty/JVM clients at 1k/10k pixels +8 movers, 0/4 fast +1 withheld ACK; model/intent/packet/preview and full reconstructed view parity passed"
               "Connected matrix records live projection coverage, hydration, delivery latency/coalescing, whole-JVM allocation and host duration separately; excludes browser rendering and physical output"]}
+  {:id :performance/animated-moving-heads
+   :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_movers.clj" "tolglow/dev/tolglow/bench_movers_reference.clj"
+           "tolglow/bin/profile-movers" "tolglow/.github/workflows/performance.yml"
+           "tolglow/docs/performance-profiling.md"]
+   :depends-on [:performance/master-mixed-rig-profiling]
+   :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
+                "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
+                "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
+   :evidence ["Implementation in progress; timing evidence pending full oracle checks"]}
   {:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
    :kind :implementation :status :done :owner nil
