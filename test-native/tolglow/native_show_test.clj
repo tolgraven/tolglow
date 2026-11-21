@@ -49,10 +49,11 @@
 
 (deftest configured-show-owns-and-releases-native-session
   (let [runtime (app/start! {:init {:components [:show] :modules [] :post []}
-                             :hz 40 :show {:enabled true :compute-backend :native-gpu}})
+                             :hz 80 :show {:enabled true :compute-backend :native-gpu}})
         session (get-in runtime [:compute :session])]
     (try
       (is (= :native-gpu (get-in (show/snapshot runtime) [:status :compute :active])))
+      (is (= 6 (get-in (show/snapshot runtime) [:status :compute :gpu-budget-ms])))
       (is (string? (:renderer (gpu/status session))))
       (finally (app/stop! runtime)))
     (is (:closed? (gpu/status session)))
