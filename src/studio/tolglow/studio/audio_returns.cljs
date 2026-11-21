@@ -1,7 +1,8 @@
 (ns tolglow.studio.audio-returns
   "Per-channel carrier and return assignments in the Studio signal patchbay."
   (:require [re-frame.core :as rf]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.transit :as wire]))
 
 (def empty-config {:channels 2 :block-frames 1024 :sample-rate 48000 :lanes []})
 (defn- epoch [db] ((juxt :runtime-id :epoch) (:show db)))
@@ -44,9 +45,10 @@
           partial? (= action :mixers)]
       {:db (assoc db :audio-returns {identity (assoc (state db) :request request :error nil)})
        :studio/http (cond-> {:path (str "/api/audio/returns/" (name action))
+                             :typed? (= action :configure)
                              :on-success [:audio-returns/result identity request action config true]
                              :on-failure [:audio-returns/result identity request action config false]}
-                      (not partial?) (assoc :body (cond-> metadata (= action :configure) (assoc :source (pr-str config)))))})))
+                      (not partial?) (assoc :body (cond-> metadata (= action :configure) (assoc :config config))))})))
 (rf/reg-event-db :audio-returns/result
   (fn [db [_ identity request action submitted success? reply]]
     (if (or (not= (epoch db) identity) (not= request (:request (state db)))) db
@@ -63,10 +65,11 @@
     [:option {:value ""} "Choose…"]
     (for [[id title] options] ^{:key (events/wire-id id)} [:option {:value (events/wire-id id)} title])]])
 (defn- edit [path value] (rf/dispatch [:audio-returns/edit path value]))
-(defn- numeric [label value min max path]
-  [:label [:span label] [:input {:type "number" :min min :max max :step "any" :value (or value "")
+(defn- numeric-input [label value min max change!]
+  [:label [:span label] [:input {:type "number" :min min :max max :step "any" :value (if (wire/fraction? value) (wire/fraction-value value) (or value ""))
                                   :on-change #(let [n (.. % -target -valueAsNumber)]
-                                                (when (js/Number.isFinite n) (edit path n)))}]])
+                                                (when (js/Number.isFinite n) (change! n)))}]])
+(defn- numeric [label value min max path] [numeric-input label value min max #(edit path %)])
 (defn- endpoint [lane index cues side]
   (let [dry? (= side :dry) cue-key (if dry? :dry-cue :wet-cue) param-key (if dry? :dry-param :wet-param)
         path [:lanes index] cue (get lane cue-key) select-cue #(do (edit (conj path cue-key) %)
@@ -95,7 +98,9 @@
       [:button.button {:disabled busy? :on-click #(request! :mixers)} "List audio mixers"]
       [mixer-field "Carrier output" :output-mixer config (:mixers local) true]
       [mixer-field "Processed input" :input-mixer config (:mixers local) false]
-      [numeric "Device channels" (:channels config) 1 64 [:channels]]]
+      [numeric "Device channels" (:channels config) 1 64 [:channels]]
+      [select-field "Sample rate" (:sample-rate config) (map #(vector % (str % " Hz")) (sort (conj #{44100 48000 88200 96000} (:sample-rate config)))) #(edit [:sample-rate] %)]
+      [select-field "Block size" (:block-frames config) (map #(vector % (str % " samples")) (sort (conj #{256 512 1024 2048 4096} (:block-frames config)))) #(edit [:block-frames] %)]]
      (when (and (contains? local :mixers) (empty? (:mixers local))) [:p.small "No audio mixers available on the Studio host."])
      (for [[i lane] (map-indexed vector lanes)]
        ^{:key (:id lane)}
@@ -107,12 +112,15 @@
           #(edit [:lanes i :feature] %)]
          [select-field "Response curve" (:curve lane :linear) [[:linear "Linear"] [:smoothstep "Smooth"] [:ease-in "Ease in"] [:ease-out "Ease out"]]
           #(edit [:lanes i :curve] %)]
-         [numeric "Tail (beats)" (get-in lane [:max-tail :beats]) 0.03125 256 [:lanes i :max-tail :beats]]]
+         (let [[unit value] (first (:max-tail lane {:beats 8})) path [:lanes i :max-tail]]
+           [:<> [numeric-input "Tail duration" value 0.001 120000 #(edit path {unit %})]
+            [select-field "Tail unit" unit [[:beats "Beats"] [:bars "Bars"] [:phrases "Phrases"] [:ms "Milliseconds"]]
+             #(edit path {% value})]])]
         [:button.text-button {:on-click #(rf/dispatch [:audio-returns/lanes :remove i])} "Remove lane"]])
      [:div.patch-actions
       [:button.text-button {:disabled (>= (count lanes) (min 32 (:channels config))) :on-click #(rf/dispatch [:audio-returns/lanes :add])} "+ Add audio lane"]
-      [:button.button {:disabled (or busy? (empty? lanes) (nil? (:draft local))) :on-click #(request! :configure)} "Save audio routing"]
-      [:button.button {:disabled (or busy? (and (not running?) (or (:draft local) (not saved?))))
+      [:button.button {:disabled (or busy? (nil? (:draft local))) :on-click #(request! :configure)} "Save audio routing"]
+      [:button.button {:disabled (or busy? (and (not running?) (or (:draft local) (empty? lanes) (not saved?))))
                        :on-click #(request! (if running? :stop :start))}
        (if running? "Disconnect audio" "Connect audio")]]
      (when-let [message (or (:error local) (:error status))] [:p.error {:role "alert"} message])

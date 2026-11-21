@@ -245,7 +245,7 @@
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))
-  (when-let [config (get-in model [:settings :audio-returns])] (audio-return/validate-config model config))
+  (when-let [config (get-in model [:settings :audio-returns])] (audio-return/validate-config nil config))
   (check-errors! (rig/errors (:rig model)) [:rig])
   (let [transport (:transport model)]
     (check! (and (registry/finite-number? (:bpm transport)) (<= 1 (:bpm transport) 1000)

@@ -4,8 +4,7 @@
             [afterglow.time :as time]
             [clojure.set :as set]
             [tolglow.composition.tween :as tween]
-            [tolglow.integrations.audio :as dsp]
-            [tolglow.studio.routing :as routing]))
+            [tolglow.integrations.audio :as dsp]))
 
 (defn- require! [ok message]
   (when-not ok (throw (ex-info message {:integration :audio-return}))))
@@ -34,7 +33,7 @@
                    (integer? sample-rate) (<= 8000 sample-rate 96000)
                    (integer? block-frames) (<= 256 block-frames 4096)
                    (every? #(and (string? %) (<= 1 (count %) 160)) [input-mixer output-mixer])
-                   (vector? lanes) (<= 1 (count lanes) 32)
+                   (vector? lanes) (<= (count lanes) 32)
                    (unique? (map :id lanes)) (unique? (map :send-channel lanes))
                    (unique? (map :return-channel lanes))
                    (or (not= input-mixer output-mixer)
@@ -55,7 +54,7 @@
                                       (vector? frequency-range) (= 2 (count frequency-range))
                                       (every? time/finite-number? frequency-range)
                                       (< 0 (first frequency-range) (last frequency-range) (/ sample-rate 2))
-                                      (<= (/ (* 2.1 sample-rate) (first frequency-range)) block-frames)
+                                      (<= (/ (* 2.25 sample-rate) (first frequency-range)) block-frames)
                                       (every? time/finite-number? [amplitude confidence-min level-floor silence-hold-ms max-tail-ms])
                                       (< 0 amplitude) (<= amplitude 1) (<= 0 confidence-min 1)
                                       (< 0 level-floor (/ amplitude (Math/sqrt 2)))
@@ -65,16 +64,17 @@
                                       (pos? (-> max-tail first val)))
                                  "Invalid carrier lane geometry, analysis window, thresholds or tail duration")]
                  (tween/curve curve 0.5)
-                 (assoc lane :dry-bounds (:bounds (schema model dry-cue dry-param))
-                             :wet-schema (select-keys (schema model wet-cue wet-param) [:bounds :type]))))
+                 (require! (every? #(or (keyword? %) (and (string? %) (<= 1 (count %) 128)))
+                                   [dry-cue dry-param wet-cue wet-param]) "Cue and parameter IDs are required")
+                 (cond-> lane model (assoc :dry-bounds (:bounds (schema model dry-cue dry-param))
+                                           :wet-schema (select-keys (schema model wet-cue wet-param) [:bounds :type])))))
              lanes))))
 
-(defn dry-instance [model cue-id]
-  (reduce (fn [selected instance]
-            (if (and (= cue-id (:cue-id instance)) (= :running (:phase instance))
-                     (not= :audio-return (get-in instance [:source :adapter]))
-                     (> (:order instance) (:order selected -1)))
-              instance selected)) nil (vals (:instances model))))
+(defn dry-instances [model]
+  (reduce (fn [indexed {:keys [cue-id order] :as instance}]
+            (if (and (= :running (:phase instance)) (not= :audio-return (get-in instance [:source :adapter]))
+                     (> order (get-in indexed [cue-id :order] -1)))
+              (assoc indexed cue-id instance) indexed)) {} (vals (:instances model))))
 
 (defn- options [lane sample-rate]
   {:sample-rate sample-rate :frequency-range (:frequency-range lane)
@@ -84,9 +84,8 @@
 (defn render-dry
   "The writer owns oscillator continuity. Fade the final block on source release.
   A new activation receives a new identity even when it plays the same note."
-  [model lane previous drained-id sample-rate sample-count]
-  (let [instance (dry-instance model (:dry-cue lane))
-        prior-binding (:binding previous)
+  [instance lane previous drained-id sample-rate sample-count]
+  (let [prior-binding (:binding previous)
         waiting? (and prior-binding (not= prior-binding (:id instance)) (not= prior-binding drained-id))
         value (when-not waiting? (get-in instance [:params (:dry-param lane)]))
         value (when (time/finite-number? value) value)
@@ -114,13 +113,18 @@
                    (when starting?
                      (dsp/new-tail {:show-id (:show-id model) :epoch (:epoch model)
                                     :instance-id old-id :param (:dry-param lane)}
-                                   sample-time-ms {:bounds (:dry-bounds lane) :max-tail-ms (:max-tail-ms lane)
+                                   (min sample-time-ms (:released-at-ms dry sample-time-ms)) {:bounds (:dry-bounds lane) :max-tail-ms (:max-tail-ms lane)
                                                    :silence-hold-ms (:silence-hold-ms lane)
                                                    :noise-floor (:level-floor lane) :confidence-min (:confidence-min lane)}))))
         timer (when tail (or (:timer previous) (time/start (:max-tail lane) clock)))
         opts (cond-> (options lane sample-rate)
                (:value dry) (assoc :reference-frequency (dsp/value->frequency (:value dry) (options lane sample-rate))))
-        features (dsp/analyze-block samples opts)
+        ;; Search beyond both endpoint frequencies so YIN can find a local
+        ;; minimum around the lowest and highest valid carrier pitches.
+        [f-low f-high] (:frequency-range opts)
+        features (dsp/analyze-block samples (assoc opts :frequency-range [(* 0.9 f-low)
+                                                                           (min (* 0.499 sample-rate) (* 1.1 f-high))]))
+        features (assoc features :value (when-let [p (:pitch-hz features)] (dsp/frequency->value p opts)))
         tail-result (when tail (dsp/advance-tail tail features sample-time-ms (select-keys model [:show-id :epoch])))
         active? (and id (or dry-id (and (:active? tail-result)
                                         (not (:done? (time/sample timer clock))))))
@@ -147,7 +151,7 @@
 (defn- command [model command time-ms session]
   (control/apply-command model (merge {:show-id (:show-id model) :epoch (:epoch model)
                                        :source {:adapter :audio-return :session-id session}
-                                       :command-id (str session "/" (:epoch model) "/" (:revision model) "/" (name (:op command)))
+                                       :command-id (pr-str [session (:epoch model) (:revision model) command])
                                        :time-ms time-ms} command)))
 
 (defn- remove-voice [model lane-id time-ms]
@@ -210,18 +214,20 @@
 (defn advance
   "Consume the latest analyzed windows at the frame boundary. An unplugged or
   stopped stream expires its own output on the next frame after the lease."
-  [model {:keys [session config settings packet]} time-ms]
-  (let [{:keys [windows fresh? observed-at-ms]} packet
+  ([model input time-ms] (advance model input time-ms (fn [m _] m)))
+  ([model {:keys [session config settings packet]} time-ms admit-observations]
+   (let [{:keys [windows fresh? observed-at-ms]} packet
         valid? (and session (= settings (get-in model [:settings :audio-returns]))
                     (= (:epoch model) (:epoch packet)) (= (:show-id model) (:show-id packet))
                     (number? observed-at-ms) (<= (- time-ms observed-at-ms) 500))
-        model (if valid? model (disarm model))]
+        model (if valid? model (disarm model))
+        active (when valid? (dry-instances model))]
     (if-not valid? model
       (reduce (fn [m lane]
                 (let [window (get windows (:id lane))
                       m (if (and fresh? window)
-                          (routing/admit-sync m (observations lane window session observed-at-ms)) m)]
-                  (let [current-id (:id (dry-instance m (:dry-cue lane)))]
+                          (admit-observations m (observations lane window session observed-at-ms)) m)]
+                  (let [current-id (get-in active [(:dry-cue lane) :id])]
                     (update-voice m lane (when (or (nil? current-id) (= current-id (:source-id window))) window)
                                   session time-ms))))
-              model (:lanes config)))))
+              model (:lanes config))))))

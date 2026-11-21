@@ -102,13 +102,17 @@
             (fn []
               (loop [states {}]
                 (when (active?)
-                  (let [model (current-model) out (byte-array size)
+                  (let [inputs (returns/dry-instances (current-model)) out (byte-array size)
                         next-states
                         (reduce (fn [acc lane]
                                   (let [id (:id lane)
-                                        block (returns/render-dry model lane (get states id) (get @drained id) sample-rate block-frames)]
+                                        block (returns/render-dry (get inputs (:dry-cue lane)) lane (get states id) (get @drained id) sample-rate block-frames)]
                                     (encode-channel! out (:samples block) channels (:send-channel lane))
-                                    (assoc acc id (:state block)))) {} lanes)]
+                                    (let [state (:state block)]
+                                      (assoc acc id (cond-> state
+                                                      (and (:binding state) (nil? (:source-id state)))
+                                                      (assoc :released-at-ms
+                                                             (or (get-in states [id :released-at-ms]) (now-ms)))))))) {} lanes)]
                     (transfer! (:write! io) out)
                     (reset! sent next-states)
                     (recur next-states))))))
@@ -131,7 +135,7 @@
                       results (mapv (fn [lane]
                                       (let [id (:id lane) pcm (decode-channel bytes channels (:return-channel lane))]
                                         [id (returns/analyze-return model lane (get states id) (get dry id) pcm sample-rate
-                                                                    (* 1000.0 (/ (* sequence block-frames) sample-rate)))])) lanes)
+                                                                    observed-at-ms)])) lanes)
                       packet (merge identity
                                     {:observed-at-ms observed-at-ms :fresh? true
                                      :windows (into {} (map (fn [[id r]] [id (assoc (:window r) :sequence sequence)])) results)})]
@@ -147,6 +151,7 @@
 
 (defn start! [manager model current-model now-ms open!]
   (let [config (returns/validate-config model (get-in model [:settings :audio-returns]))
+        _ (when (empty? (:lanes config)) (throw (ex-info "Add an audio lane before connecting" {})))
         identity (select-keys model [:epoch :show-id])
         settings (get-in model [:settings :audio-returns])
         session (str (UUID/randomUUID)) endpoint (atom nil)

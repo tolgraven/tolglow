@@ -452,7 +452,7 @@
                                                                     :reload-policy :preserve-state}}} time-ms)]
       (update cue-result :ack assoc :effect-id id :cue-id id))
     :audio-return-configure
-    (apply-message model {:type :settings :payload {:scope :audio-returns :values (web/read-edn (:source payload))}} time-ms runtime)
+    (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
     :settings
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
@@ -761,7 +761,7 @@
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms)
-                                     (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms)
+                                     (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})

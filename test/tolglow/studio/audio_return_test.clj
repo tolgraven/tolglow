@@ -140,7 +140,7 @@
   (let [m (show) lane (first (:lanes (returns/validate-config m config)))
         activation (fn [id level] {:id id :cue-id :dry :order 1 :phase :running :params {:level level}})
         encode (fn [id level prev drained]
-                 (returns/render-dry (assoc m :instances {id (activation id level)}) lane prev drained 8000 256))
+                 (returns/render-dry (activation id level) lane prev drained 8000 256))
         first (encode "a" 0.4 nil nil)
         ramp (encode "b" 0.8 (:state first) nil)
         waiting (encode "b" 0.8 (:state ramp) nil)
@@ -183,3 +183,24 @@
     (is (empty? (:instances (returns/advance wet sample 650.0))))
     (is (empty? (:instances (returns/advance wet (update-in sample [:packet :epoch] inc) 120.0))))
     (is (empty? (:instances (returns/advance wet (assoc sample :settings nil) 120.0))))))
+
+(deftest extreme-parameter-values-remain-detectable-and-deleted-definitions-can-be-saved
+  (let [m (show) lane (first (:lanes (returns/validate-config m config)))]
+    (doseq [value [0.0 1.0]]
+      (let [instance {:id "captured" :params {:level value}}
+            first (returns/render-dry instance lane nil nil 8000 512)
+            dry (returns/render-dry instance lane (:state first) nil 8000 512)
+            features (:window (returns/analyze-return m lane nil (:state dry) (:samples dry) 8000 64))]
+        (is (number? (:value features)))
+        (is (< (Math/abs (- value (:value features))) 0.02))))
+    (let [unresolved (update-in m [:registry :cues] dissoc :dry)]
+      (is (= config (get-in (persistence/freeze unresolved) [:model :settings :audio-returns])))
+      (is (thrown? Exception (returns/validate-config unresolved config))))))
+
+(deftest a-stalled-capture-cannot-revive-an-overdue-release
+  (let [m (show) lane (first (:lanes (returns/validate-config m config)))
+        tone (double-array (map #(Math/sin (* 2 Math/PI 350 (/ % 8000))) (range 512)))
+        dry {:source-id nil :binding "dead-source" :released-at-ms 50.0 :value 0.5}
+        result (returns/analyze-return m lane {:source-id "dead-source"} dry tone 8000 20000.0)]
+    (is (= "dead-source" (get-in result [:state :retired-id])))
+    (is (nil? (get-in result [:window :value])))))
