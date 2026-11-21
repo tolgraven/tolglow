@@ -69,10 +69,44 @@
       (is (= (:done? ((scalar definition) ctx)) (:done? ((typed definition) ctx)))))
     (is (= {:level 0.8} (get-in input [:instance :params])))))
 
+(deftest world-space-fields-share-a-batch-with-color-and-focus
+  (let [rig (mapv #(assoc % :rotation-deg [12 -41 9]
+                            :calibration {:tilt {:min-deg -43 :max-deg 71}})
+                  fixtures)
+        target {:op :vec3 :args [{:op :position :axis :x} -2.5 5.25]}
+        definition {:id :spot :version 1
+                    :outputs [{:attribute :direction :value [-1.0 1.5 -2.0]}
+                              {:attribute :color :value [0.25 0.5 0.75]}
+                              {:attribute :focus :value 0.625}
+                              {:attribute :aim :value target :targets [:b :c]}]}
+        step (batch/compile-effect definition rig)
+        ctx (assoc-in (context definition) [:frame :fixtures] rig)
+        scalar (compiler/compile-effect definition)
+        typed-blocks (blocks (step ctx))
+        scalar-blocks (blocks (scalar ctx))]
+    (is (= :batch (:backend (meta step))))
+    (is (= [:batch :batch] (mapv :kind typed-blocks)))
+    (is (= #{:direction :color :focus} (set (keys (get-in typed-blocks [0 :batch :outputs])))))
+    (is (= [:b :c] (get-in typed-blocks [1 :batch :target-ids])))
+    (doseq [opacity [1.0 0.5 0.0]
+            :let [opts {:compact-values? true :previous-values {:b {:pan 0.96}}}
+                  lower {:kind :assignments :assignments
+                         (mapv #(hash-map :target-id (:id %) :attribute :aim :value [-4.0 1.0 -3.0]) rig)}
+                  weight (fn [block]
+                           (case (:kind block)
+                             :batch (assoc-in block [:batch :opacity] opacity)
+                             :assignments (update block :assignments
+                                            #(mapv (fn [a] (assoc a :opacity opacity)) %))))
+                  render-blocks #(render/resolve-contributions rig (into [lower] (map weight) %) opts)
+                  expected (render-blocks scalar-blocks) actual (render-blocks typed-blocks)]]
+      (is (= (frame-bytes expected) (frame-bytes actual)))
+      (is (= (:values expected) (:values actual)))
+      (is (= (render/project-compact (:compact expected) [0 1 2])
+             (render/project-compact (:compact actual) [0 1 2]))))))
+
 (deftest explicit-fallbacks-and-invalid-expressions
   (doseq [[definition reason]
-          [[{:id :aim :version 1 :targets [:a] :outputs {:aim [0 2 3] :focus 0.4}} :geometry]
-           [{:id :tween :version 1 :outputs {:dimmer {:op :tween :spec {:keyframes [{:at-ms 0 :value 0}
+          [[{:id :tween :version 1 :outputs {:dimmer {:op :tween :spec {:keyframes [{:at-ms 0 :value 0}
                                                                                        {:at-ms 1000 :value 1}]}}}} :tween]]]
     (let [compiled (batch/compile-effect definition fixtures)]
       (is (= :ordinary (:backend (meta compiled))))

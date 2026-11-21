@@ -1614,7 +1614,7 @@
     "tolglow/docs/effect-recipes.md"],
    :acceptance
    ["Musical sin/triangle/saw/pulse and spatial wave recipes"
-    "Preserve ordered targets/blends and geometry fallback"
+    "Preserve ordered targets/blends and actual pan/tilt output for geometric effects"
     "Schema axes/categories/modifiers survive publication and hot reload"],
    :title
    "Provide declarative effect and musical waveform construction helpers",

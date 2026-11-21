@@ -46,6 +46,10 @@
       (fail! (conj path :args) "Expression args must be a vector"))
     :else expression))
 
+(def geometry-attributes
+  "World positions and directions accept signed coordinates outside the unit interval."
+  #{:aim :direction})
+
 (defn- compile-output [schemas i output]
   (let [path [:outputs i :value]
         value (:value output)
@@ -64,7 +68,7 @@
                  (ir/expression-type expression))
           expected (if (#{:color :aim :direction} (:attribute output)) :vec3 :number)]
       (when-not (= expected type) (fail! path (str "Output needs " (name expected) " values"))))
-    (when (and (#{:aim :direction} (:attribute output))
+    (when (and (geometry-attributes (:attribute output))
                (not= :replace (:blend output :replace)))
       (fail! [:outputs i :blend] "Geometry assignments require replace blending"))
     (assoc output :blend (:blend output :replace) :frame-only? tween? :expression expression
@@ -73,7 +77,7 @@
 
 (defn- normalized-output? [attribute value]
   (cond
-    (#{:aim :direction} attribute)
+    (geometry-attributes attribute)
     (and (vector? value) (= 3 (count value)) (every? registry/finite-number? value))
     (= attribute :color)
     (and (vector? value) (= 3 (count value))
