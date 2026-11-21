@@ -1,12 +1,15 @@
 import {SceneRenderer} from './scene-renderer.js';
 
 let engine, canvas, stateId = 0, actionThrough = 0, frameId = 0, pendingFrame = null;
-let state, timer, stopped = false, lastDraw = 0, renderOnce = false, rendering = false, deferredState = null;
+let state, stopped = false, lastDraw = 0, renderOnce = false, rendering = false, deferredState = null;
 const send = value => postMessage(value);
-const visible = () => state && !state.hidden && state.visible && !state.paused;
+let active = false, generation = 0;
+const canDraw = () => active && state?.generation === generation && (!state.paused || renderOnce);
 function schedule(delay = 0) {
-  clearTimeout(timer); timer = null;
-  if (!stopped && !rendering && !pendingFrame && engine && (visible() || renderOnce)) timer = setTimeout(render, delay);
+  if (!engine) return;
+  engine.displayClock.cancel();
+  if (!stopped && !rendering && !pendingFrame && canDraw())
+    engine.displayClock.at(performance.now() + delay, render);
 }
 async function completeGpuFrame(gl) {
   const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), started = performance.now();
@@ -24,12 +27,11 @@ async function completeGpuFrame(gl) {
   } finally {gl.deleteSync(fence);}
 }
 async function render() {
-  timer = null;
-  if (stopped || rendering || pendingFrame || !engine || (!visible() && !renderOnce)) return;
+  if (stopped || rendering || pendingFrame || !engine || !canDraw()) return;
   if (engine.lost) {schedule(250); return;}
   rendering = true;
   try {
-    const started = performance.now(), previousInterval = engine.frameInterval;
+    const started = performance.now(), previousInterval = engine.frameInterval, drawingGeneration = generation;
     send({type: 'render-start', frameId: frameId + 1, stateId});
     const dt = lastDraw ? Math.min(.1, (started - lastDraw) / 1000) : 0;
     lastDraw = started; engine.clock += dt; engine.draw(dt); renderOnce = false;
@@ -38,6 +40,7 @@ async function render() {
     // completion, otherwise the worker can saturate the browser compositor's
     // command queue while its own JS timings misleadingly remain fast.
     if (!await completeGpuFrame(engine.renderer.getContext())) return;
+    if (!active || drawingGeneration !== generation) {send({type: 'render-retired'}); return;}
     engine.lastGPUWait = performance.now() - submitted;
     const bitmapStarted = performance.now(), bitmap = canvas.transferToImageBitmap(); pendingFrame = ++frameId;
     const completed = performance.now();
@@ -45,31 +48,42 @@ async function render() {
     const nominal = 1000 / engine.options.fps;
     engine.frameInterval = Math.max(nominal,
       Math.min(engine.lastWorkerFrame * (engine.softwareRenderer ? 2 : 1.5), previousInterval * 1.5), previousInterval * .5);
-    postMessage({type: 'frame', frameId, stateId, actionThrough, bitmap,
-      showId: engine.snapshot?.['show-id'], epoch: engine.snapshot?.epoch,
+    postMessage({type: 'frame', frameId, stateId, actionThrough, generation, bitmap,
+      runtimeId: engine.snapshot?.['runtime-id'], showId: engine.snapshot?.['show-id'], epoch: engine.snapshot?.epoch,
       telemetry: {...engine.getTelemetry(), workerFrameMs: engine.lastWorkerFrame, gpuCompletionWaitMs: engine.lastGPUWait,
         idleBudgetMs: Math.max(0, engine.frameInterval - engine.lastWorkerFrame), bitmapTransferMs: engine.lastBitmapTransfer}}, [bitmap]);
   } catch (error) {stopped = true; send({type: 'error', message: String(error?.message || error)});}
   finally {
     rendering = false;
     if (!stopped && deferredState) {const message = deferredState; deferredState = null; applyState(message);}
-    if (!stopped && !pendingFrame && !timer) schedule(250);
+    if (!stopped && !pendingFrame && !engine.displayClock.pending) schedule(250);
   }
 }
 function applyState(message) {
   if (message.id <= stateId || stopped) return;
-  stateId = message.id; state = message.state;
+  stateId = message.id;
+  if (!active || message.state.generation !== generation) {
+    send({type: 'state-ack', id: stateId, actionThrough}); return;
+  }
+  state = message.state;
   if (!engine) {
     canvas = new OffscreenCanvas(1, 1);
-    const status = {set textContent(text) {send({type: 'status', text});}, get textContent() {return '';}};
+    let lastStatus = '';
+    const status = {set textContent(text) {lastStatus = text; send({type: 'status', text});}, get textContent() {return lastStatus;}};
     engine = new SceneRenderer(canvas, status, {worker: true, autoStart: false,
-      viewport: state.viewport, hidden: state.hidden, coarsePointer: state.coarsePointer, reducedMotion: state.reducedMotion});
+      viewport: state.viewport, coarsePointer: state.coarsePointer, reducedMotion: state.reducedMotion});
     if (engine.error) throw new Error(engine.error);
   }
-  engine.platform.viewport = state.viewport; engine.platform.hidden = state.hidden;
-  engine.visible = state.visible; engine.reducedMotion.matches = state.reducedMotion;
+  engine.platform.viewport = state.viewport; engine.visible = true;
+  if (engine.restorePending) engine.restoreContext();
+  engine.reducedMotion.matches = state.reducedMotion;
   engine.setQuality(state.quality); engine.setWorkLight(state.workLight); engine.setFog(state.fog);
-  if (state.snapshot) engine.update(state.snapshot);
+  engine.setLightingMode(state.lightingMode);
+  if (state.snapshot) {
+    const snapshot = state.snapshot;
+    if (!snapshot.rig && engine.snapshot) snapshot.rig = engine.snapshot.rig;
+    engine.update(snapshot, false, state.receivedAt - performance.timeOrigin);
+  }
   engine.camera.position.fromArray(state.camera.position); engine.controls.target.fromArray(state.camera.target);
   engine.camera.up.fromArray(state.camera.up); engine.camera.fov = state.camera.fov;
   engine.cameraName = state.camera.name; engine.controls.update(); engine.resize();
@@ -79,12 +93,19 @@ function applyState(message) {
     actionThrough = action.id;
   }
   send({type: 'state-ack', id: stateId, actionThrough});
-  if (timer === null || timer === undefined) schedule();
+  if (state.paused) {lastDraw = 0; engine.lighting.previous = null;}
+  if (!engine.displayClock.pending || state.paused) schedule();
 }
 self.onmessage = event => {
   try {
     const message = event.data;
-    if (message.type === 'state') {
+    if (message.type === 'activity') {
+      active = message.active; generation = message.generation; renderOnce = false; lastDraw = 0;
+      if (engine) {
+        engine.visible = active; engine.platform.hidden = !active;
+        engine.displayClock.cancel(); engine.lighting.latest = engine.lighting.previous = null;
+      }
+    } else if (message.type === 'state') {
       // One upstream message is in flight, so this slot stays bounded while a
       // GPU fence is pending. Ack only after applying the complete projection.
       if (rendering) deferredState = message;
@@ -92,8 +113,10 @@ self.onmessage = event => {
     }
     else if (message.type === 'frame-ack' && message.frameId === pendingFrame) {
       pendingFrame = null;
-      schedule(Math.max(0, engine.frameInterval - engine.lastWorkerFrame));
-    } else if (message.type === 'dispose') {stopped = true; clearTimeout(timer); engine?.dispose(); close();}
+      if (canDraw()) engine.measureLoad(engine.lastWorkerFrame, performance.now());
+      const delay = engine.softwareRenderer ? engine.frameInterval : Math.max(0, lastDraw + engine.frameInterval - performance.now());
+      schedule(delay);
+    } else if (message.type === 'dispose') {stopped = true; engine?.dispose(); close();}
   } catch (error) {stopped = true; send({type: 'error', message: String(error?.message || error)});}
 };
 send({type: 'ready'});

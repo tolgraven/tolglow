@@ -1,10 +1,16 @@
 # Native iPhone and Apple Watch foundation
 
-This is source for an iOS 18 / watchOS 11 SwiftUI client and a shared pure Swift
-package. It is **not an Apple build or physical-device verification**. This Linux
-workspace has no Swift, Xcode or signing toolchain; the XCTest suite is included
-but has not been executed here. The source provides a concrete first slice, not
-feature parity with the re-frame studio.
+This is an iOS 18 / watchOS 11 SwiftUI client and a shared pure Swift package.
+[macOS CI](https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227)
+verified **seven Swift tests and unsigned iOS/watchOS simulator builds** with
+Xcode 16.4 / Swift 6.1.2. Simulator app launch and physical-device behavior remain
+unverified. This is an initial native implementation; full parity with the
+re-frame studio remains ongoing work.
+
+The **Scan rig** tab captures tap-assisted ARKit/LiDAR observations, identifies
+settled calibration patterns through actual output receipts and submits reviewed
+fixture-placement proposals. See [rig calibration](../docs/rig-calibration.md)
+for alignment, explicit output arming, numerical constraints and hardware gates.
 
 The iPhone has a cue grid using the real Ring `/api/state` and `/api/command`
 contracts, persistent cue launch/release by exact instance ID, master and blackout.
@@ -59,7 +65,7 @@ needed, and keep `WKCompanionAppBundleIdentifier` and the Watch bundle-ID prefix
 consistent. Build `TolglowPhone` for the paired physical iPhone and Watch. The
 `TolglowWatch` scheme also builds the Watch target. Generated projects, generated
 Info.plists, DerivedData and Swift build caches are ignored. The `project.yml`
-contains the motion/local-network permission strings; it does not include signing
+contains the motion/local-network/camera permission strings; it does not include signing
 credentials, a fabricated binary, or background privileges.
 
 The iOS studio URL defaults to `http://tolglow.local:8500`; this is configurable.
@@ -146,7 +152,7 @@ lighting frame owner.
 
 - Foundation XCTest source exercises JSON/OSC round trips, malformed/nonfinite
   samples, token attachment, relative quaternion calibration, bounded mappings,
-  and coalescing/gesture ordering. **Not run: Swift is unavailable here.**
+  and coalescing/gesture ordering. **Seven tests passed on macOS CI.**
 - The checked-in protocol fixture and source/build-manifest checks can be run with
   `python3 Tests/check_contract.py`. This validates data and static contract
   invariants; it does not execute Swift or replace an Apple build.
@@ -157,8 +163,9 @@ lighting frame owner.
 - Static Python checks: **6 tests passed**.
 - Swift source syntax was additionally parsed with tree-sitter for both platform
   branches. This is not Swift type checking, SDK availability or actor validation.
-- Required Mac gates: `swift test`, XcodeGen, both Xcode builds, simulator launch,
-  real device permission prompts and pairing, foreground motion latency/battery,
+- `swift test`, XcodeGen and both unsigned Xcode simulator builds passed on
+  Xcode 16.4. Remaining gates include simulator launch, real device permission
+  prompts and pairing, foreground motion latency/battery,
   primary-action Double Tap, disconnection/scene cleanup, host admission and
   exact cue/parameter behavior. The host sensor service and rich native mapping
   UI are independently tracked work; no source artifact proves their deployment.

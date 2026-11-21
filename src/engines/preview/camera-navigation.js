@@ -60,11 +60,21 @@ export class CameraNavigator {
     canvas.addEventListener('pointermove', event => this.pointerMove(event), {signal, capture: true});
     for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => this.pointerUp(event), {signal, capture: true});
     canvas.addEventListener('wheel', () => {if (this.mode === 'tour') this.setMode('orbit');}, {signal, capture: true});
-    const animate = now => {
-      if (this.disposed) return;
-      this.tick(now); this.frame = requestAnimationFrame(animate);
+    this.animate = now => {
+      this.frame = null;
+      if (this.disposed || !this.active()) return;
+      this.tick(now); this.refreshActivity();
     };
-    this.frame = requestAnimationFrame(animate);
+    this.refreshActivity();
+  }
+  refreshActivity() {
+    if (this.disposed || !this.active()) {
+      if (this.frame != null) cancelAnimationFrame(this.frame);
+      this.frame = null; this.lastTime = null; this.clearInput(); this.controls.enabled = false;
+    } else if (this.frame == null) {
+      this.controls.enabled = this.mode === 'orbit' && !this.interacting;
+      this.frame = requestAnimationFrame(this.animate);
+    }
   }
   state() {
     return {mode: this.mode, speed: this.speed, interacting: this.interacting,
