@@ -8,8 +8,12 @@
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
-                          :cue :effect :swatch :category-colors :display-mode :audio-waveform
+                          :cue :effect :swatch :category-colors :display-mode :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
+        (assoc :preset (when (map? (:preset view))
+                         (select-keys (:preset view) [:saved? :changed? :record? :action]))
+               :touched-control (when (map? (:touched-control view))
+                                  (select-keys (:touched-control view) [:target :editable?])))
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
@@ -36,6 +40,53 @@
 (defn bank-label [{:keys [offset total count]}]
   (when (and (number? count) (> count 1) (number? offset) (number? total) (pos? total))
     (str "Params " (inc offset) "–" (min (+ offset 8) total) " / " total)))
+
+(defn preset-model [view]
+  (when (and (:cue view) (map? (:preset view)))
+    (let [{:keys [saved? changed? record? action]} (:preset view)
+          clear? (contains? #{:clear "clear"} action)]
+      {:state (cond changed? :changed saved? :saved :else :default)
+       :label (cond changed? "Edited" saved? "Saved" :else "Default")
+       :hint (when (and record? (:instance-id view))
+               (if clear? "Clear preset · top button" "Save preset · top button"))
+       :action (when (and record? (:instance-id view)) (if clear? :clear :save))})))
+
+(defn global-control-model [view]
+  (let [{:keys [target editable?]} (:touched-control view)
+        master? (contains? #{:master "master"} target)
+        tempo? (contains? #{:tempo "tempo"} target)]
+    (when (or master? tempo?)
+      {:target (if master? :master :tempo)
+       :label (if master? "Master" "Tempo")
+       :value (if master? (when (widgets/finite? (:master view)) (* 100 (:master view))) (:bpm view))
+       :schema {:type :number :bounds (if master? [0 100] [20 200]) :unit (if master? "%" "BPM")}
+       :locked? (false? editable?)})))
+
+(defn- preset-feedback [view]
+  (when-let [{:keys [state label hint action]} (preset-model view)]
+    [:div.push-preset {:data-state (name state) :data-action (some-> action name)
+                      :aria-label (str "Cue parameters: " label (when hint (str ". " hint)))
+                      :title (or hint (case state :changed "Current parameters differ from cue defaults"
+                                                :saved "Saved cue parameters" "Authored cue defaults"))}
+     [:span.push-preset-dot] [:span label]
+     (when hint [:span.push-preset-action hint])]))
+
+(defn- global-control [model]
+  (let [{:keys [target label schema value locked?]} model
+        [low high] (:bounds schema)
+        amount (widgets/proportion schema value)]
+    [:section.push-global-control {:data-target (name target) :class (when locked? "locked")
+                                   :aria-label (str label ", " (widgets/number-label value) " " (:unit schema)
+                                                    ", range " low " to " high
+                                                    (when locked? ", controlled by external sync"))}
+     [:div.push-global-dial [widgets/rotary schema value {}]]
+     [:div.push-global-readout
+      [:span.push-global-name label]
+      [:strong (widgets/number-label value) [:small (:unit schema)]]]
+     [:div.push-global-scale
+      [:div.push-global-endpoints [:span (widgets/number-label low)] [:span (widgets/number-label high)]]
+      [:div.push-global-track [:i {:style {:width (str (* 100 (or amount 0)) "%")}}]]
+      [:span.push-global-hint (if locked? "External sync · locked" "Encoder + touch strip")]]]))
 
 (defn- navigation [view]
   (let [{:keys [index count offset]} (:active-effect-navigation view)]
@@ -67,17 +118,22 @@
 
 (defn display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
-        active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))]
-    [:main#push-display {:style {"--push-accent" accent} :aria-label "Push lighting display" :class (when audio? "audio-mode")}
+        active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
+        global (global-control-model view)]
+    [:main#push-display {:style {"--push-accent" accent} :aria-label "Push lighting display"
+                        :class (str (when audio? "audio-mode ") (when global "global-control-active"))}
      [:header.push-heading
       [:span.push-brand (or (:title view) "Tolglow")]
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
       [navigation view]
-      [widgets/category-tags (:categories effect) (:category-colors view)]
-      [envelope effect]
-      [:span.push-tempo (widgets/number-label (:bpm view)) [:small " BPM"]]
-      [:span.push-master (str (widgets/number-label (when (widgets/finite? (:master view)) (* 100 (:master view)))) "%")]
+      [preset-feedback view]
+      (if global
+        [global-control global]
+        [:<> [widgets/category-tags (:categories effect) (:category-colors view)]
+         [envelope effect]
+         [:span.push-tempo (widgets/number-label (:bpm view)) [:small " BPM"]]
+         [:span.push-master (str (widgets/number-label (when (widgets/finite? (:master view)) (* 100 (:master view)))) "%")]])
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (if audio?
