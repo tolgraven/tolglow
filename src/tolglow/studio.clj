@@ -17,6 +17,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
+            [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
@@ -39,6 +40,8 @@
             [tolglow.studio.sensor-osc :as sensor-osc]
             [tolglow.studio.fixture-service :as fixture-service]
             [tolglow.studio.rig :as rig]
+            [tolglow.studio.calibration :as calibration]
+            [tolglow.calibration.session :as calibration-session]
             [tolglow.studio.audio :as audio]
             [tolglow.studio.sync :as sync]
             [tolglow.studio.routing :as routing]
@@ -110,7 +113,7 @@
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
   ([] (create-runtime {}))
   ([{:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (or model (demo/model))
+   (let [model (calibration/disarm-restored (or model (demo/model)))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (rig/validate-rig (:rig model))
@@ -142,6 +145,7 @@
                               (throw error)))
            publisher (output-scheduler/create
                       (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
+                        (:send! sink) (assoc :receipt-capacity 256)
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime {:id (str (UUID/randomUUID))
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
@@ -236,6 +240,8 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :calibration (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
+                                              (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :sensor-configure
     {:model (apply-sensor-result
              (sensors/configure model (:device-id payload)
@@ -366,6 +372,27 @@
     {:model (-> model (update :modulation #(modulation/release-hold (or % (modulation/new-state))
                                                                   (:instance-id payload) (:params payload)))
                 (update :revision inc)) :ack {:status :accepted}}
+    :aim-path
+    (let [definition (aim-paths/definition model payload)
+          id (:id definition)
+          requested-cue-id (:cue-id payload id)
+          wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
+          previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
+                         (vals (get-in model [:registry :cues])))
+          cue-id (:id previous requested-cue-id)
+          _ (when (and previous (not= id (:effect-id previous)))
+              (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
+          _ (compiler/compile-effect definition)
+          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
+          _ (when (= :rejected (get-in published [:ack :status]))
+              (throw (ex-info "Cannot publish aim path" (:ack published))))
+          cue (merge previous {:id cue-id :effect-id id :name (:name definition)
+                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+          result (apply-message (:model published)
+                                {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
+      (when (= :rejected (get-in result [:ack :status]))
+        (throw (ex-info "Cannot publish aim path cue" (:ack result))))
+      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
@@ -642,7 +669,9 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(consume-sync! runtime (consume-audio! runtime (source-clock-model runtime (:model before) time-ms))) [] false nil] messages)
+                  [(calibration/advance
+                    (consume-sync! runtime (consume-audio! runtime (source-clock-model runtime (:model before) time-ms)))
+                    (output-scheduler/drain-receipts! (:publisher runtime)) ((:now-ms (:publisher runtime)))) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
@@ -664,6 +693,8 @@
                                                                  (patch! runtime (get-in model [:rig :fixtures]))
                                                                  (get-in model [:settings :output :presentation] {})
                                                                  (or (:blackout? model) (zero? (:master model)))))
+                 presentation-token (cond-> presentation-token
+                                      presentation-token (assoc :calibration (calibration/marker model)))
                  started (System/nanoTime)
                  next-state
                  (if restored?
@@ -738,11 +769,24 @@
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
-                               restored (persistence/thaw before document)
+                               calibration-armed? (get-in document (into [:model] (conj calibration-session/artifact-path :armed?)))
+                               ;; Strip scoped ownership before thaw rekeys instance sources.
+                               document (update document :model calibration/disarm-restored)
+                               restored-before (persistence/thaw before document)
+                               restored (calibration/disarm-restored restored-before)
                                prepared (connections/prepare-restore (:connections runtime) restored)]
                            (vreset! candidate prepared)
-                           {:model restored :frame-output (:frame-output document) :candidate prepared})
-                         (dissoc payload :runtime-id :expected-epoch))
+                           {:model restored :frame-output (when-not calibration-armed? (:frame-output document)) :candidate prepared})
+                         (if (= :calibration type)
+                           (do
+                             (when (= :solved (:op payload)) (throw (ex-info "Solve results must be computed by the host" {})))
+                             (if (= :solve (:op payload))
+                               (let [scan (calibration/current before)]
+                                 (when (:armed? scan) (throw (ex-info "Cancel/finish output before fitting a stable capture" {})))
+                                 (assoc payload :op :solved :expected-evidence-revision (:evidence-revision scan)
+                                        :result (calibration-session/solve scan (calibration/resolve-fixture-ids before (:verified-axis-fixture-ids payload)))))
+                               (dissoc payload :runtime-id :expected-epoch)))
+                           (dissoc payload :runtime-id :expected-epoch)))
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (.offer ^LinkedBlockingQueue (:queue runtime)
@@ -1109,6 +1153,15 @@
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(export-show runtime)
+            :calibration! #(let [model (:model @(:state runtime))]
+                             {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)
+                              :physical-now-ms ((:now-ms (:publisher runtime)))
+                              :output-capable? (boolean (and (:independent-output? runtime) (get-in runtime [:sink :send!])))
+                              :fixtures (mapv (fn [f] (select-keys f [:id :name :calibration :position :rotation-deg])) (get-in model [:rig :fixtures]))
+                              :session (when-let [scan (calibration/current model)]
+                                         (-> scan (dissoc :observations :receipts :base-rig :original-rig)
+                                             (assoc :observation-count (count (:observations scan))
+                                                    :receipt-count (count (:receipts scan)))))})
             :submit! #(submit! runtime %1 %2)
             :heartbeat! #(heartbeat! runtime %)
             :provider-get! #(agents/public-config (agent-manager runtime))

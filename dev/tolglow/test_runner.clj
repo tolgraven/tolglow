@@ -3,7 +3,7 @@
 
 (def pure-tests
   '[tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
-    tolglow.clock-test tolglow.system-controls-test
+    tolglow.clock-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.compiler-test tolglow.compiler.batch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
@@ -14,7 +14,7 @@
     tolglow.integrations.agent-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
-    tolglow.studio-test tolglow.studio.effect-faults-test tolglow.studio.web-test tolglow.studio.composition-test tolglow.studio.agents-test
+    tolglow.calibration-test tolglow.studio-test tolglow.studio.effect-faults-test tolglow.studio.web-test tolglow.studio.composition-test tolglow.studio.agents-test
     tolglow.studio.persistence-test tolglow.studio.expressive-test tolglow.studio.audio-test tolglow.studio.credentials-test
     tolglow.studio.fixtures-test tolglow.studio.fixture-service-test
     tolglow.studio.connections-test tolglow.studio.connections-host-test
