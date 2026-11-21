@@ -317,7 +317,7 @@
   (-> (routes services)
       wrap-same-origin
       wrap-params
-      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript"}})
+      (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript" "mjs" "text/javascript"}})
       wrap-errors
       wrap-response-format
       wrap-isolation))

@@ -45,7 +45,7 @@
   {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
-   :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
+   :paths ["afterglow/resources/gpu/mover-aim.vert" "afterglow/resources/gpu/mover-aim.mjs" "tolglow/dev/gpu/mover-shader.mjs"
            "tolglow/dev/gpu/profile-movers.cjs" "tolglow/dev/tolglow/mover_oracle.clj"
            "tolglow/bin/profile-mover-shader" "tolglow/docs/moving-head-shader.md"]
    :depends-on [:render/gpu-experiment-v1]
@@ -1170,7 +1170,7 @@
     "docs/benchmarks/2026-11-21-webgl2-swiftshader.json"
     "docs/gpu-experiment.md; no physical GPU or end-to-end acceleration claim"],
    :paths
-   ["tolglow/resources/gpu/compute.js"
+   ["afterglow/resources/gpu/compute.js"
     "tolglow/resources/gpu/test.html"
     "tolglow/docs/gpu-experiment.md"],
    :acceptance
