@@ -102,7 +102,7 @@ from `(sync/validate-config {})` rather than copied into another implementation.
 ## Live control, recording and connection ownership
 
 The companion source assets and installation steps live in
-[`live_bridge/README.md`](../src/tolglow/integrations/live_bridge/README.md). It is a
+[`ableton-live/README.md`](../resources/devices/ableton-live/README.md). It is a
 Max for Live device source patch, not a fabricated `.amxd` binary. It must be
 opened and saved in an actual licensed Max/Live installation. The current
 dictionary-call codec for Live's note editing APIs still needs actual-host
@@ -132,8 +132,8 @@ rather than discarding ownership silently.
 
 After publishing a control receipt, the host calls
 `record! manager stamped-command acknowledgement`. Recording requires fresh,
-armed, writable Live recording state. Automation additionally requires automation
-arming. Echo origins and duplicate command receipts are suppressed. Musical cue
+armed, writable Live recording state. The native CC route also checks automation
+arming. Parameter velocity lanes use ordinary MIDI note recording. Echo origins and duplicate command receipts are suppressed. Musical cue
 launch durations remain beats/bars/phrases; clip time is supplied by Live. Clip
 loop position and absolute song beat are distinct so held-note lengths survive
 loop wraparound.
@@ -142,8 +142,10 @@ Exactly one recording route is selected:
 
 - `:bridge`: actual companion acknowledgements for Clip note editing. Launch
   uses a short provisional note, then end adjusts its exact note ID using the
-  activation identity and absolute song time. Unsupported automation edits must
-  be rejected by the companion, not presented as completed.
+  activation identity and absolute song time. Timed launches include their
+  beat length. Scalar parameter samples occupy separate editable velocity lanes.
+  Connections can pair either a Session slot or an Arrangement clip and place
+  finished clips at a chosen song beat.
 - `:midi`: sends actual note/CC bytes to the configured MIDI output. This reports
   delivery only; MIDI transmission cannot prove that Live recorded a clip.
 

@@ -22,7 +22,10 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - The studio frontend is **ClojureScript with re-frame and Reagent**. The backend
   is **Ring**, with a separate Jetty server adapter. Keep domain transitions in
   the common model; re-frame app-db owns client projections/interaction state.
-  Specialized WebGL/Neovim WASM JS engines belong behind explicit interop.
+  Keep `src/` for Clojure, ClojureScript, shared CLJC code and local documentation.
+  Author the Three.js engine in `js/preview/`. Public assets and executable device
+  resources belong under `resources/`. Use `test/js/` for renderer and device
+  JavaScript tests and `dev/` for executable QA and profiling tools.
 - `core` and `live` now have headless require/reload tests. Read source before
   importing unfamiliar scratch/graphics namespaces. `live/start-demo!`, rig
   activation, physical device discovery and output are explicit operations,

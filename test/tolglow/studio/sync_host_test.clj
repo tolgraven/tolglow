@@ -116,3 +116,68 @@
                                (show/audio-action! runtime operation payload))))
         (is (not (realized? opened))))
       (finally (show/stop! runtime)))))
+
+(defn- await-live [check]
+  (let [deadline (+ (System/nanoTime) 5000000000)]
+    (loop []
+      (if-let [ready (check)] ready
+          (if (< (System/nanoTime) deadline) (do (Thread/sleep 15) (recur))
+              (throw (ex-info "Timed out waiting for Live bridge" {})))))))
+
+(deftest recorded-and-edited-midi-clip-plays-through-real-loopback-bridge
+  (let [runtime (show/create-runtime)
+        server (ring.adapter.jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        callback (str "http://127.0.0.1:" (.getLocalPort (first (.getConnectors server))) "/api/live")
+        child (.start (doto (ProcessBuilder. ^java.util.List
+                                             ["node" "test/js/ableton-live/behavioral_host.js" callback])
+                         (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
+        manager (connections/sync (:connections runtime))]
+    (try
+      (with-open [out (clojure.java.io/writer (.getOutputStream child))
+                  in (clojure.java.io/reader (.getInputStream child))]
+        (let [receive! (fn [] (await-live #(.ready in)) (json/read-str (.readLine in) :key-fn keyword))
+              host! (fn [msg] (.write out (str (json/write-str msg) "\n")) (.flush out) (receive!))
+              {port :port} (receive!)
+              config (:config (show/sync-action! runtime :configure
+                               {:config {:live {:enabled? true :endpoint (str "http://127.0.0.1:" port "/live")
+                                                :pairing {:track-index 0 :clip-slot-index 0}}} :page-id :main}))
+              pitch (first (for [[note m] (get-in config [:live :mappings]) :when (= :ember (:cue-id m))] note))
+              lane (some #(when (= [:ember :level] ((juxt :cue-id :param) %)) (:lane-note %))
+                         (vals (get-in config [:live :parameters])))
+              act! (fn [command] (let [reply (show/submit! runtime command)] (show/tick! runtime) @reply))]
+          (is (every? integer? [pitch lane]))
+          (show/sync-action! runtime :start {})
+          (await-live #(get-in (sync/status manager) [:recording :destination-id]))
+          (let [launch (act! {:op :cue/launch :cue-id :ember :launch {:mode :held :params {:level 0.2}}})
+                id (:instance-id launch)]
+            (is (= :accepted (:status launch)))
+            (is (= :accepted (:status (act! {:op :param/set :instance-id id :param :level :value 0.9}))))
+            (is (= :accepted (:status (act! {:op :instance/end :instance-id id}))))
+            (let [notes (await-live #(let [n (host! {:notes true})] (when (= 3 (count n)) n)))]
+              (is (= [26 114] (mapv :velocity (filter #(= lane (:pitch %)) notes))))
+              (is (= pitch (:pitch (first notes)))))
+            (host! {:finish true})
+            (is (:edited (host! {:edit true :pitch lane :velocity 64 :beat 1})))
+            (is (:accepted? (show/sync-action! runtime :arrange {:request-id "place-1" :song-beat 32})))
+            (let [placed (await-live #(let [n (host! {:notes true :arrangement true})] (when (= 3 (count n)) n)))]
+              (is (= 1 (:start_time (first (filter #(= lane (:pitch %)) placed))))))
+            (host! {:edit true :pitch lane :velocity 1 :beat 0})
+            (is (:accepted? (host! {:play true :pitch pitch :arrangement true})))
+            (is (:accepted? (host! {:play true :pitch lane :arrangement true})))
+            (is (sync/flush! manager))
+            (show/tick! runtime)
+            (is (sync/flush! manager))
+            (show/tick! runtime)
+            (let [instance (last (sort-by :order (vals (get-in @(:state runtime) [:model :instances]))))]
+              (is (= :ember (:cue-id instance)))
+              (is (= 0.5 (get-in instance [:params :level])))
+              (is (:accepted? (host! {:play true :pitch pitch :release true :arrangement true})))
+              (is (sync/flush! manager))
+              (show/tick! runtime)
+              (is (= :releasing (get-in @(:state runtime) [:model :instances (:id instance) :phase]))))
+            (is (= 3 (count (host! {:notes true})))))))
+      (finally
+        (show/stop! runtime)
+        (.stop server)
+        (.destroyForcibly child)
+        (.waitFor child 2 java.util.concurrent.TimeUnit/SECONDS)))))

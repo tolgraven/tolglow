@@ -1,10 +1,8 @@
 # Tolglow / Afterglow architecture program
 
-Tolglow is a complete application project. JVM namespaces live under
-`src/tolglow/`; resources, tests, development support and commands live under
-`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` and `deps.edn`
-describe application/build entry points. Browser application source remains
-`src/studio/`, and specialized rendering engines remain `src/engines/`.
+Use the [repository map](../README.md#repository-map) to find the Clojure show
+runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
+and native companions.
 
 The working tree now contains executable v1 modules: an explicit-state runtime,
 shared commands and device sessions, declarative authoring and composition,

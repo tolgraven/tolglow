@@ -6,7 +6,7 @@ options but does not resolve resources, create files, or start processes.
 Calling `:open!` resolves the bundled worker. A file resource runs in place; a
 JAR resource is copied to a private temporary `.cjs` file owned by that opening.
 
-The worker is included at `tolglow/integrations/display_bridge/worker.js` on the
+The worker is included at `devices/push-display/worker.cjs` on the
 classpath. There is no alternate packaged implementation. Each successful
 opening owns its Node process, IPC executor and, when needed, extracted file.
 Close, startup failure, capture failure and interrupted startup retire those
