@@ -898,22 +898,29 @@
     (when-let [device (get @(:devices runtime) id)]
       (try (devices/close! device) (finally (swap! (:devices runtime) dissoc id))))))
 
+(defn- capture-show [runtime format-show]
+  ;; Model/output come from one commit. Serialize after releasing the frame
+  ;; owner so that large pixel runs can keep rendering during a download.
+  (let [[model output] (locking (:lock runtime)
+                         (let [{:keys [model output]} @(:state runtime)]
+                           [(merge model (connections/export-state (:connections runtime) model)) output]))]
+    (format-show model (render/portable-frame output))))
+
 (defn export-show
   "Freeze the full domain state and last output from one committed snapshot."
   [runtime]
-  (locking (:lock runtime)
-    (let [{:keys [model output]} @(:state runtime)
-          model (merge model (connections/export-state (:connections runtime) model))]
-      (persistence/freeze model (render/portable-frame output)))))
+  (capture-show runtime persistence/freeze))
+
+(defn- export-show-source [runtime] (capture-show runtime persistence/write-string))
 
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
   [runtime path]
   (let [file (.getAbsoluteFile (io/file path))
-        text (pr-str (export-show runtime))]
+        text (export-show-source runtime)]
     (io/make-parents file)
     (let [temporary (java.nio.file.Files/createTempFile
-                     (.toPath (.getParentFile file)) ".tolglow-show-" ".edn"
+                     (.toPath (.getParentFile file)) ".tolglow-show-" ".transit"
                      (make-array java.nio.file.attribute.FileAttribute 0))]
       (try
         (with-open [stream (java.io.FileOutputStream. (.toFile temporary))]
@@ -1144,7 +1151,7 @@
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
-            :export! #(export-show runtime)
+            :export! #(export-show-source runtime)
             :calibration! #(let [model (:model @(:state runtime))]
                              {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)
                               :physical-now-ms ((:now-ms (:publisher runtime)))

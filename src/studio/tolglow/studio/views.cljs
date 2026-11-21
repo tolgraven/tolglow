@@ -83,7 +83,7 @@
        (if (= "art-net" (get-in db [:show :status :output :type])) "Art-Net output enabled" "Local studio · preview")]
       [button "export-show" "Export show ↗" [:studio/export] "text-button"]
       [:label.text-button.file-label {:html-for "import-show"} "Import show ↙"]
-      [:input#import-show {:type "file" :accept ".edn,text/plain" :hidden true
+      [:input#import-show {:type "file" :accept ".transit,.edn,application/transit+json" :hidden true
                            :on-change (fn [event]
                                         (when-let [file (aget (.. event -target -files) 0)]
                                           (send! [:studio/import-file file]))
