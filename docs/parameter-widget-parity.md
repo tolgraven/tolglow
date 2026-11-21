@@ -15,7 +15,7 @@ advances an oscillator, opens a device, or creates synthetic readings.
 | Boolean | Explicit switch and On/Off label | Rendering verified; physical controller behavior has its own lane |
 | Color/vector/range | Swatch, bounded component tracks and range endpoints | Push shows the component controlled by its encoder; richer web component pickers remain open |
 | Generated waveform | Always-visible compact result plus slope, angular velocity, jagginess, cycles and sample detail | Actual Ring preview changes when another live parameter changes; 513-sample detail and selector verified |
-| Push generated waveform | Shared sparkline consumes supplied `:preview-samples` | Passive rendering verified; backend projection tests are separate from physical display evidence |
+| Push generated waveform | Shared sparkline consumes supplied `:preview-samples` | Actual JVM helper → Node → Chromium → PNG capture changes the pulse shape after a live parameter command |
 | Captured audio | Actual peak windows, fixed amplitude, low/mid/high energy colors and supplied beat/bar markers | Timed signed-16 PCM source exercised the production capture/analyzer pipeline, web scope and Push layout |
 | Push audio mode | Full-width audio scope with eight compact encoder value columns | Actual 960×160 browser screenshot; capture data supplied from the real audio endpoint |
 | Push navigation | Parameter-bank range, active-effect position/dots, fine mode, touched encoder and selected component | Bounded projection and optimized passive rendering verified; no device commands originate in the view |
@@ -81,9 +81,20 @@ snapshot replacement, exact 960×160 geometry and absence of API/graphics/editor
 activity. The six-instance performance board passed eight workflows, including
 independent controls, musical release, category actions and complete-grid access.
 
+An additional actual `studio/push-browser-display` run submitted a real
+`push/display-view` once, then changed pulse width from 0.25 to 0.75 through the
+runtime command queue and tick. The generated waveform changed in the resulting
+960×160 PNG. Switching the model's display setting to audio refreshed the same
+view with live captured PCM, without another submission. The JVM/Node/Chromium
+worker produced 23 captures with one submitted view and no dropped submissions;
+this short correctness run is not a throughput benchmark. All owned resources
+closed at the end. Physical USB output was replaced with an image capture sink.
+
 Session evidence is under `/tmp/studio-qa/`: `integrated-ui-results.json`,
 `push-navigation-results.json`, `performance-board-results.json`, their images,
-and the build/test logs. These temporary harnesses are session evidence, not
+`push-helper-capture.log`, `push-helper-live-first.png`,
+`push-helper-live-changed.png`, `push-helper-audio-later.png`, and the build/test
+logs. These temporary harnesses are session evidence, not
 checked-in CI browser tests. Preview rendering was hidden for the control gates
 so they do not establish graphics/control latency; the renderer worker has its
 own integration gate. Chromium viewport emulation does not establish iPad Safari,

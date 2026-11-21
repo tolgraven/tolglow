@@ -17,6 +17,7 @@
                 "Optimized browser checks cover 960x160 Push and touch layouts"]
    :evidence ["Frontend 135 tests / 713 assertions, optimized 147 files, zero warnings"
               "Actual Chromium: 10 integrated workflows plus passive 960x160 Push navigation gate; errors empty"
+              "Actual JVM push-browser-display: one view, 23 PNG captures, live pulse command and ongoing PCM refresh; no USB output"
               "docs/parameter-widget-parity.md; no physical hardware/provider/Safari claim"]}
   {:evidence
    ["Connections focused: 14 tests / 120 assertions passed"
