@@ -23,6 +23,7 @@
             [tolglow.compiler.batch :as batch]
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.live-parameters :as live-params]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
@@ -1225,7 +1226,7 @@
                        config (if map? (update config :live ableton/map-page (:registry model) page) config)]
                    (cond-> (sync/configure! manager config)
                      map? (assoc :unmapped (ableton/unmapped-fields (:live config) (:registry model) page))))
-      (:learn-parameter :forget-parameter) {:accepted? (sync/edit-observed-parameter! manager operation (:id payload))}
+      (:learn-parameter :forget-parameter) {:accepted? (sync/edit-observed-parameter! manager operation (live-params/wire-id (:id payload)))}
       :arrange {:accepted? (sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
       :start (do (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
                  (sync/status manager))

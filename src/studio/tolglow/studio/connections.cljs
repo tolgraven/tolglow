@@ -540,6 +540,8 @@
           [:button.button {:type "button" :disabled (not (re-matches #"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}" (:parameter-source-name s "")))
                            :on-click #(rf/dispatch [:connections/action :learn-parameter (:parameter-source-name s)])}
            "Learn selected parameter"]]
+         (for [{:keys [id reason]} (get-in s [:sync :parameter-watch :skipped])]
+           ^{:key id} [:p.connection-error {:role "status"} (str (events/wire-id id) " · " reason)])
          (for [[id spec] (sort-by (comp str key) (get-in s [:sync :config :live :observed-parameters]))]
            ^{:key id} [:div.form-row
                        [:span (str (events/wire-id id) " · " (:track-name spec) " / " (:device-name spec) " / " (:name spec))]

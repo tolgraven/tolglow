@@ -125,7 +125,7 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
   function forward(event) {
     if (!server && event && event.kind === "status") return Promise.resolve({ "not-forwarded": "bridge-stopped" });
     if (!server) return Promise.reject(new Error("Start the bridge before forwarding Live input"));
-    if (!event || !["midi", "status", "handoff"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
+    if (!event || !["midi", "status", "handoff", "parameter", "parameter-error"].includes(event.kind)) return Promise.reject(new Error("Unknown Live callback kind"));
     if (!syncSessionId && event.kind === "status") return Promise.resolve({ "not-forwarded": "awaiting-sync-handshake" });
     if (!syncSessionId) return Promise.reject(new Error("A successful inspect sync handshake is required before forwarding Live input"));
     // Capture ownership now. Queued callbacks are never rebound to a newer run.
@@ -136,6 +136,13 @@ function createBridge({ sendToMax, log = () => {}, timeoutMs = 3000, maxBody = 6
       if (event.kind === "status") {
         const index = events.findIndex(item => item.body.kind === "status" && item.body["sync-session-id"] === syncSessionId);
         if (index >= 0) { const old = events[index]; events[index] = { body, resolve, reject }; old.resolve({ coalesced: true }); return; }
+      }
+      const last = events[events.length - 1];
+      if (event.kind === "parameter" && last && last.body.kind === "parameter" &&
+          last.body["sync-session-id"] === syncSessionId && last.body.sample.id === body.sample.id) {
+        events[events.length - 1] = {body, resolve, reject};
+        last.resolve({coalesced: true});
+        return;
       }
       if (events.length >= 128) return reject(new Error("Studio event queue is full; reconnect and release held lighting instances"));
       events.push({ body, resolve, reject }); pump();

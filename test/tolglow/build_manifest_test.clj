@@ -26,5 +26,5 @@
 (deftest device-entry-points-are-classpath-resources
   (doseq [asset ["push-display/worker.cjs" "ableton-live/tolglow-live-bridge.maxpat"
                  "ableton-live/tolglow-bus-receive.maxpat" "ableton-live/tolglow-bus-send.maxpat"
-                 "ableton-live/live_api.js" "ableton-live/max_adapter.js" "ableton-live/node_bridge.js"]]
+                 "ableton-live/live_api.js" "ableton-live/max_adapter.js" "ableton-live/parameter_observers.js" "ableton-live/node_bridge.js"]]
     (is (some? (io/resource (str "devices/" asset))) asset)))

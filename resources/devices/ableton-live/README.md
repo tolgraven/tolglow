@@ -15,12 +15,12 @@ steps.
    existing Drum Rack. Open the blank effect in Max.
 3. Open `tolglow-live-bridge.maxpat` in Max. Copy its patcher contents into the
    Max MIDI Effect's editing window, replacing that blank patch's objects.
-4. Keep `live_api.js`, `max_adapter.js` and `node_bridge.js` together beside the
+4. Keep `live_api.js`, `parameter_observers.js`, `max_adapter.js` and `node_bridge.js` together beside the
    saved device, and include this folder in the device/project search path.
    `max_adapter.js` includes `live_api.js`; Node uses a relative `require` of it.
 5. Save the actual Max for Live device from that Live-connected editing window
    as an `.amxd`. Use Max's dependency collection/device freezing workflow when
-   packaging it, then verify all three scripts resolve from the packaged copy.
+   packaging it, then verify all four scripts resolve from the packaged copy.
    Merely renaming the JSON `.maxpat` to `.amxd` does not compile a device.
 6. Create or choose an existing MIDI clip on the track. Enter the **zero-based**
    track, clip-slot and Drum Rack device indices and click **Pair destination**.
@@ -131,6 +131,35 @@ addresses the latest running activation for parameter editing. Simultaneous
 independently edited voices of the same cue need separate cue mappings.
 Clip note dictionaries use the track's routed MIDI channel.
 
+## Follow automation in an existing Live Set
+
+Select a device parameter, fader, pan control or send on a regular Live track.
+Nested Rack devices work too. In Studio, connect the bridge and open **Live
+automation sources**. Give the source a stable name such as `filter-cutoff`
+and choose **Learn selected parameter**. In Lighting mode its native value
+appears in the patchbay as `live/ableton-live/parameter/filter-cutoff`. Pick
+that source, choose a cue parameter and set its range, response and envelope.
+
+Studio saves the source name, canonical Live path, track/device/parameter
+names, quantization and range. Reconnecting binds a fresh Live observer. An
+unavailable or changed path is reported in the watcher receipt. A rename or
+replacement retires the active subscription. Use **Forget**, select the correct
+control and learn it again. Switching to Live mode suspends output. Returning
+to Lighting mode publishes current values.
+
+The observer follows changes exposed through `DeviceParameter.value` and
+`automation_state` in Session or Arrangement. Relative clip modulation or
+a plug-in's internal modulation may affect audio without changing that exposed
+value. To compose a dedicated Session modulation lane in Live 12, put **CC
+Control** before the bridge on the lighting MIDI track, assign one of its
+twelve customizable dials a free CC, then map that CC to a cue parameter or
+patchbay source. Draw or automate the dial in the clip and the bridge receives
+the resulting MIDI CC. Existing instrument clips can feed a separate monitored
+lighting track. For sound changes only available after processing, use an audio
+return. [CC Control](https://www.ableton.com/en/manual/live-midi-effect-reference/#cc-control)
+[DeviceParameter](https://docs.cycling74.com/apiref/lom/deviceparameter/)
+[Live clip envelopes](https://www.ableton.com/en/manual/clip-envelopes/)
+
 ## HTTP and IPC protocol
 
 The Node side accepts `POST /live`, `Content-Type: application/json`, on its
@@ -151,6 +180,8 @@ most 32 pending Max executions.
 | `inspect` | `{"expected-bridge-id":"tolglow-m4l","sync-session-id":"studio-run-uuid"}` establishes callback ownership after Max acknowledges |
 | `configure-destination` | Track index plus exactly one of `clip-slot-index` or `arrangement-index`, optional Rack index and expected names |
 | `record-event` | Existing protocol-v1 `live/record-event` intent, optionally augmented with `song-beat` and `instance-id` |
+| `describe-selected-parameter` | Read the selected control and its durable address |
+| `watch-parameters` | `{"sources":{...}}` replaces the observed source set |
 | `place-in-arrangement` | `{"destination-id":"clip:42","song-beat":32}` |
 | `pad-page` | `{"pads":[...],"clip-color":16711680}`; clip color optional |
 | `handoff` | `{"mode":"lighting"}` or `{"mode":"live"}` |

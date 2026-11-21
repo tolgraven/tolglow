@@ -1289,6 +1289,11 @@
         "implicit": 1
       },
       {
+        "name": "parameter_observers.js",
+        "type": "TEXT",
+        "implicit": 1
+      },
+      {
         "name": "node_bridge.js",
         "type": "TEXT",
         "implicit": 1

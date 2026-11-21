@@ -5,15 +5,51 @@ autowatch = 1;
 inlets = 1;
 outlets = 2; // 0: messages to node.script, 1: MIDI-thru gate/status
 include("live_api.js");
+include("parameter_observers.js");
 
 var adapter = null, localId = 0;
+function liveObject(path) {
+  if (typeof path === "object") { var object = new LiveAPI(null); object.id = path.id; return object; }
+  return new LiveAPI(null, path);
+}
+function observeParameter(path, changed) {
+  var handles = [];
+  function clear() {
+    handles.forEach(function (handle) { handle.property = ""; handle.id = 0; });
+    handles = [];
+  }
+  try {
+    function watch(address, property, identity) {
+      var handle = new LiveAPI(function () { changed(identity); }, address);
+      handles.push(handle);
+      handle.property = property;
+    }
+    watch(path, "value", false);
+    watch(path, "automation_state", false);
+    watch(path, "name", true);
+    watch(path.match(/^live_set tracks [0-9]+/)[0], "name", true);
+    if (path.indexOf(" mixer_device ") < 0) watch(path.replace(/ parameters [0-9]+$/, ""), "name", true);
+    return clear;
+  } catch (error) { clear(); throw error; }
+}
 function init() {
   if (adapter) return;
   adapter = new TolglowLive.Adapter({
-    api: function (path) {
-      if (typeof path === "object") { var object = new LiveAPI(null); object.id = path.id; return object; }
-      return new LiveAPI(null, path);
-    },
+    api: liveObject,
+    parameters: new TolglowParameters.Observers({
+      api: liveObject, observe: observeParameter,
+      follow: function (path) { var slot = new LiveAPI(null, path); slot.mode = 1; return slot; },
+      defer: function (fn) {
+        var task = new Task(fn);
+        task.schedule(0);
+        return function () { task.cancel(); };
+      },
+      emit: function (sample) { outlet(0, "event", JSON.stringify({kind: "parameter", sample: sample})); },
+      diagnostic: function (sample) {
+        outlet(1, "diagnostic", sample.reason);
+        outlet(0, "event", JSON.stringify({kind: "parameter-error", sample: sample}));
+      }
+    }),
     // Live's note methods take a dictionary. Keep the host-specific serialization
     // isolated; do not retry a mutating method with a different encoding.
     dictionaryCall: function (object, method, data) { return object.call(method, data); },
@@ -60,4 +96,4 @@ function forward(event) {
 }
 function note(pitch, velocity, channel) { forward({type: velocity > 0 ? "note-on" : "note-off", note: pitch, velocity: velocity, channel: channel}); }
 function cc(value, controller, channel) { forward({type: "cc", controller: controller, value: value, channel: channel}); }
-function notifydeleted() { outlet(0, "stop"); }
+function notifydeleted() { if (adapter && adapter.parameters) adapter.parameters.close(); outlet(0, "stop"); }

@@ -329,10 +329,10 @@
     (when (= expected-run-id (:id run))
       (swap! (:binding-generation run) inc))))
 (defn status [manager]
-  (let [{:keys [closed? config status peers recording metrics last-error last-execution active]} @(:state manager)]
+  (let [{:keys [closed? config status peers recording metrics last-error last-execution parameter-watch active]} @(:state manager)]
     {:closed? closed? :state status :running? (= :running status) :active? (boolean active)
      :config config :peers (vec (sort-by (juxt :device-number :address) (vals peers)))
-     :recording recording :metrics metrics :last-error last-error :last-execution last-execution}))
+     :recording recording :parameter-watch parameter-watch :metrics metrics :last-error last-error :last-execution last-execution}))
 (defn clock-at
   "Selected external clock projection for the next owner frame. Manual selection
   returns clock nil so this boundary cannot overwrite the host's manual transport."
@@ -398,14 +398,15 @@
                     (= (:id run) (:sync-session-id payload))
                     (string? (:event-id payload)) (<= 1 (count (:event-id payload)) 256)
                     (case kind :status (map? (:status payload)) :midi (map? (:event payload))
-                          :parameter (map? (:sample payload))
+                          (:parameter :parameter-error) (map? (:sample payload))
                           :handoff (#{:live :lighting "live" "lighting"} (:mode payload)) false))]
     (if-not valid? false
       (let [event (case kind
                     :status {:type :live/status :status (:status payload) :time-ms ((get-in manager [:options :now-ms]))}
                     :midi {:type :live/midi :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
                                                                     (update :origin #(if (string? %) (keyword %) %)))}
-                    :parameter {:type :live/parameter :sample (:sample payload) :event-id (:event-id payload)
+                    (:parameter :parameter-error) {:type (if (= kind :parameter) :live/parameter :live/parameter-error)
+                                :sample (:sample payload) :event-id (:event-id payload)
                                 :time-ms ((get-in manager [:options :now-ms]))}
                     :handoff (when-let [envelope! (:envelope! (run-callbacks run))]
                                {:type :live/handoff :mode (some-> (:mode payload) name keyword) :envelope (envelope!)}))]
@@ -521,8 +522,11 @@
       :forget-parameter (queue! manager active {:type :live/forget-parameter :id id}))))
 
 (defn- update-parameter-watchers! [manager run]
-  (let [table (get-in @(:state manager) [:config :live :observed-parameters])]
-    (live-request! manager run (str (UUID/randomUUID)) :watch-parameters {:sources table})))
+  (let [table (get-in @(:state manager) [:config :live :observed-parameters])
+        generation (str (UUID/randomUUID))]
+    (reset! (:parameter-generation run) generation)
+    (swap! (:state manager) assoc :parameter-watch nil)
+    (live-request! manager run generation :watch-parameters {:sources table :generation generation})))
 
 (defn place-in-arrangement! [manager beat request-id]
   (when-not (and (finite? beat) (<= 0 beat) (string? request-id) (<= 1 (count request-id) 128))
@@ -654,6 +658,8 @@
           (reset! (:callbacks run) (:callbacks event))
           (reset! (:callback-ids run) [])
           (reset! (:poll-pending? run) false)
+          (reset! (:setup-watchers? run) false)
+          (reset! (:parameter-generation run) nil)
           (swap! (:state manager) #(assoc % :bridge (bridge (:config %)) :retired [] :recording nil))))
       :barrier (deliver (:promise event) true)
       :midi/message
@@ -687,9 +693,18 @@
                                     frozen? (assoc :beat (:beat previous)))))
       :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
                        (swap! (:status-version run) inc))
-      :live/parameter
-      (when-let [data (live-params/observation (:live config) (:event-id event) (:time-ms event) (:sample event))]
-        (emit! manager run data))
+      (:live/parameter :live/parameter-error)
+      (let [sample (:sample event) id (live-params/wire-id (:id sample))]
+        (when (and (some? @(:parameter-generation run))
+                   (= @(:parameter-generation run) (:generation sample))
+                   (contains? (get-in config [:live :observed-parameters]) id))
+          (if (= :live/parameter (:type event))
+            (when-let [data (live-params/observation (:live config) (:event-id event) (:time-ms event) sample)]
+              (emit! manager run data))
+            (when (string? (:reason sample))
+              (let [diagnostic {:id id :reason (subs (:reason sample) 0 (min 512 (count (:reason sample))))}]
+                (swap! (:state manager) update-in [:parameter-watch :skipped] (fnil conj []) diagnostic)
+                (emit! manager run (assoc diagnostic :type :live/parameter-lost)))))))
       :live/forget-parameter
       (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
           (update-parameter-watchers! manager run))
@@ -718,6 +733,8 @@
       :live/response
       (let [response (:response event)]
         (when (= :executed (:status response))
+          (when (and (= :watch-parameters (:op event)) (= @(:parameter-generation run) (:id response)))
+            (swap! (:state manager) assoc :parameter-watch (:result response)))
           (when (= :describe-selected-parameter (:op event))
             (let [id (get-in event [:payload :id]) spec (live-params/descriptor (:result response))
                   table (get-in config [:live :observed-parameters])]
@@ -782,7 +799,7 @@
                 (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
               (let [run {:id (str (UUID/randomUUID)) :cancelled? (atom false) :resources (atom {})
                          :queue (ArrayBlockingQueue. (int (get-in manager [:options :queue-capacity])))
-                         :status-version (atom 0) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
+                         :status-version (atom 0) :parameter-generation (atom nil) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
                          :poll-pending? (atom false) :overflow-sources (atom #{}) :callback-ids (atom []) :event-sequence (atom 0)
                          :callbacks (atom callbacks) :binding-lock (Object.) :binding-generation (atom 0)
                          :thread (atom nil) :result (promise)
