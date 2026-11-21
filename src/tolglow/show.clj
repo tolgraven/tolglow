@@ -40,13 +40,17 @@
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.audio-duplex :as duplex]
-            [tolglow.studio.sync :as sync]
+            [afterglow.sync :as sync]
+            [afterglow.sync.session :as session]
+            [afterglow.control.devices.transports :as midi-ports]
+            [tolglow.integrations.live-sync :as live-sync]
             [tolglow.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
             [tolglow.agents :as agents]
@@ -593,7 +597,7 @@
 (defn- acknowledge-sync! [runtime manager command ack epoch]
   (when (and (= :cue/launch (:op command)) (some? (get-in command [:source :note])))
     (when-let [envelope (sync-envelope runtime epoch)]
-      (sync/acknowledge! manager (get-in command [:source :note])
+      (live-sync/acknowledge! manager (get-in command [:source :note])
                          (assoc ack :sync-run-id (get-in command [:source :sync-run-id])) envelope))))
 
 (defn sync-callbacks
@@ -640,7 +644,7 @@
             block))))))
 
 (defn- source-clock-model [runtime model time-ms]
-  (let [{:keys [selected-source clock follow-transport?]} (sync/clock-at (connections/sync (:connections runtime)) time-ms)]
+  (let [{:keys [selected-source clock follow-transport?]} (session/clock-at (connections/sync (:connections runtime)) time-ms)]
     (if-let [captured (cond
                         (= :manual selected-source)
                         (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
@@ -694,7 +698,7 @@
             :let [{:keys [command ack]} (get-in after [:control :history id])]]
       (let [instance (get-in after [:instances (:instance-id ack)])
             timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
-        (sync/record! manager (cond-> command
+        (live-sync/record! manager (cond-> command
                                (:instance-id command)
                                (assoc :cue-id (or (get-in after [:instances (:instance-id command) :cue-id])
                                                   (get-in before [:instances (:instance-id command) :cue-id])))
@@ -887,7 +891,9 @@
          (when-not (and @(:running runtime) (= epoch (:epoch before))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
-         (let [payload (if (= :import type)
+         (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
+                         (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+               payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
                                calibration-armed? (get-in document (into [:model] (conj calibration-session/artifact-path :armed?)))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
@@ -1198,9 +1204,9 @@
   (let [operation! (fn [payload]
                      (let [manager (connections/sync (:connections runtime))]
                        (case operation
-      :status (assoc (sync/status manager) :clock (sync/clock-at manager (now-ms runtime)))
-      :ports (sync/midi-ports)
-      :configure (let [config (sync/validate-config (:config payload payload))
+      :status (assoc (sync/status manager) :clock (session/clock-at manager (now-ms runtime)))
+      :ports (midi-ports/midi-ports)
+      :configure (let [config (live-sync/validate-config (:config payload payload))
                        model (:model @(:state runtime))
                        config (update config :live ableton/bind-registry-ids (:registry model))
                        pages (sort-by (comp str :id) (vals (:pages model)))
@@ -1212,18 +1218,18 @@
                        config (if map? (update config :live ableton/map-page (:registry model) page) config)]
                    (cond-> (sync/configure! manager config)
                      map? (assoc :unmapped (ableton/unmapped-fields (:live config) (:registry model) page))))
-      :arrange {:accepted? (sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
+      :arrange {:accepted? (live-sync/place-in-arrangement! manager (:song-beat payload) (:request-id payload))}
       :start (do (connections/start-sync! (:connections runtime) (sync-callbacks runtime))
                  (sync/status manager))
       :stop (let [generation (:generation (connections/status (:connections runtime)))]
               #(connections/stop-sync! (:connections runtime) generation))
       :source (sync/select-source! manager (:source-id payload))
-      :handoff {:accepted? (sync/handoff! manager (:mode payload)
+      :handoff {:accepted? (live-sync/handoff! manager (:mode payload)
                                           (sync-envelope runtime (get-in @(:state runtime) [:model :epoch])))}
       :live (do
               (when-not (= 1 (:protocol-version payload))
                 (throw (ex-info "Unsupported Live bridge protocol" {})))
-              {:accepted? (sync/ingest-live! manager payload)})
+              {:accepted? (live-sync/ingest-live! manager payload)})
       (throw (ex-info "Unknown synchronization operation" {:operation operation})))))]
     (if (#{:status :ports} operation) (operation! payload)
         (let [result (session-operation! runtime payload operation!)]

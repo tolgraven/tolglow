@@ -2,7 +2,7 @@
   (:require [clojure.test :as test]))
 
 (def pure-tests
-  '[tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
+  '[tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
     tolglow.clock-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.compiler.batch-test
@@ -22,7 +22,7 @@
     tolglow.studio.output-options-test
     tolglow.studio.fixture-host-test tolglow.rig-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
-    tolglow.studio.sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
+    tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
@@ -33,7 +33,7 @@
 
 (def suites
   {"pure" pure-tests
-   "parity" (into pure-tests '[tolglow.fixtures-test tolglow.parity-test])})
+   "parity" (into pure-tests '[tolglow.fixtures.patch-parity-test tolglow.fixtures-test tolglow.parity-test])})
 
 (defn -main [& [suite & extra]]
   (let [namespaces (get suites (or suite "pure"))]
