@@ -89,6 +89,10 @@ explicit launching, file export/import, touch cancellation, fallback and teardow
 It also checks pixels from the presented canvas so a functioning form cannot
 hide an absent 3D path overlay.
 
-Observed results and scope are recorded in the work ledger. Chromium touch and
+The [retained browser evidence](benchmarks/rig-editor-browser.json) records the
+validated revision, workflows, pixel check and renderer telemetry. Final gates
+passed 156 frontend tests / 838 assertions, 506 JVM pure tests / 3,985 assertions,
+38 preview tests, and an optimized 150-file release with zero warnings.
+Observed results and scope are also recorded in the work ledger. Chromium touch and
 viewport emulation do not verify physical iPad Safari, moving-head mechanics,
 room calibration, or high-refresh performance on a hardware GPU.
