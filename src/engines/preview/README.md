@@ -24,15 +24,18 @@ capabilities, `worker.js` owns a new OffscreenCanvas and all WebGL/fog resources
 `worker-proxy.js` keeps DOM OrbitControls and presents transferred ImageBitmaps.
 One state message can be in flight; the latest pending graphics projection
 replaces intermediate snapshots. Only emitted output, rig and show/frame identity
-cross that boundary. One bitmap can be outstanding; the worker waits for its
-presentation acknowledgement before scheduling another draw. Consumed, rejected
+cross that boundary. A WebGL completion fence resolves before a bitmap is
+published; the worker polls it asynchronously while holding, without applying,
+the one upstream state message. One bitmap can be outstanding; the worker waits
+for its presentation acknowledgement before scheduling another draw. Consumed, rejected
 and stale-show/epoch bitmaps are closed, and show changes clear the old image.
 `getTelemetry()` reports the execution thread, coalescing and discarded frames.
 
 The visible canvas is never transferred. A failed worker startup leaves its
 context untouched so the same SceneRenderer can acquire WebGL on it. After a
-bitmap presentation context exists, errors remain explicit and retain the last
-frame; the proxy does not attempt an invalid canvas context switch. Hidden or
+bitmap presentation context exists or real rendering has started, errors remain
+explicit and retain the last frame; the proxy does not switch an active or
+stalled renderer onto the main thread. Hidden or
 offscreen views stop render scheduling, controls remain on the UI thread, and
 disposal disconnects listeners/observers, closes pending state and terminates the
 worker. Main-thread fallback uses completion-paced backpressure. Actual Safari
@@ -141,19 +144,35 @@ input latency or physical mobile performance; the separate Studio owner checks
 cue/parameter responsiveness with the preview visible.
 
 Worker verification additionally exercises a real eight-light scene while a
-20ms UI callback continually supplies projections for ten seconds; state
+20ms UI callback continually supplies projections for ten seconds; RAF-driven
+DOM changes also check compositor progress. State
 coalescing, an epoch change during an actual draw, bitmap ownership, resizing,
-disposal and an asynchronous worker startup exception all pass. In the latest
-isolated Chromium/SwiftShader run, 478 UI callbacks had a maximum gap of 47.1ms,
-and the renderer completed 58 frames while recovering to its 100ms software
-profile budget. First-frame shader compilation took 1030ms; it did not leave a
-multi-second idle budget on subsequent frames. `workerFrameMs` includes bitmap
-transfer cost, separately reported as `bitmapTransferMs`; these CPU/driver
-measurements are not physical-GPU timer queries. Evidence is in
-`/tmp/studio-qa/worker-test-stable-lights.log` and `/tmp/studio-qa/preview-worker-app/`.
+disposal and an asynchronous worker startup exception all pass. A subsequent
+same-page Studio pause/render comparison exposed a shared GPU compositor backlog:
+bitmap transfer acknowledgement completed while submitted GPU work was still
+queued. The worker now waits for actual GPU completion before publishing and
+uses that total duration for pacing. In the first fenced Chromium/SwiftShader
+run, 495 UI callbacks had a maximum gap of 101ms and 40 frames completed in ten
+seconds. A representative frame submitted in 4.5ms but took another 100ms to
+finish; the recovered budget was 210ms rather than pretending it cost 4.5ms.
+`workerFrameMs` includes submission, `gpuCompletionWaitMs` and bitmap transfer
+cost, separately reported as `bitmapTransferMs`. Fence polling measures wall time
+until completion, not precise GPU elapsed queries or physical-device throughput.
+Evidence is in `/tmp/studio-qa/worker-test-fenced.log` and
+`/tmp/studio-qa/preview-worker-app/`.
 The black-to-lit transition kept all 18 linked programs, with no extra shader
 variant. GitHub CI installs the pinned Playwright Chromium and supplies its
 executable explicitly, so these browser tests cannot silently skip there.
+
+The actual same-page Studio gate now passes while rendering: 29 parameter edits
+over ten seconds had DOM response median 36.1ms, p95 188ms, maximum 207ms; the
+paused comparison had median 23.8ms. Actual command responses had median 124ms
+and maximum 208ms, with no browser errors. The prior unfenced renderer grew to
+8.3s DOM delays on the same workflow. Evidence:
+`/tmp/studio-qa/visible-worker-controls-fenced-{results,summary}.json` and `.png`.
+The measured final software-GPU frame took 248ms including completion and paced
+at 495ms. This accepts control responsiveness for that measured workload, not
+high preview FPS or a physical iPad/Safari performance claim.
 
 Visual acceptance remains open. The revised room is materially more detailed
 than the analytic box prototype, but thick plume billow detail, current mobile/

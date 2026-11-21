@@ -77,7 +77,7 @@ export class WorkerRoomPreview {
     else if (message.type === 'state-ack') {
       this.actions = this.actions.filter(action => action.id > message.actionThrough); this.channel.acknowledge(message.id);
     } else if (message.type === 'status') this.setStatus(message.text);
-    else if (message.type === 'render-start') this.rendering = true;
+    else if (message.type === 'render-start') {this.rendering = true; this.startedRendering = true;}
     else if (message.type === 'error') this.fail(message.message);
     else if (message.type === 'frame') {
       this.rendering = false;
@@ -179,7 +179,7 @@ export class WorkerRoomPreview {
     if (this.disposed || this.fallback) return;
     this.stopProxy(); this.rendering = false;
     const reason = String(error?.message || error);
-    if (!this.presenter) {
+    if (!this.presenter && !this.startedRendering) {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
       if (this.fallback.error) {this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null; return;}
       this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogAmount);

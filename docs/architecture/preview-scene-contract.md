@@ -17,11 +17,15 @@ second browser lighting engine may independently advance effects.
 Where OffscreenCanvas workers are available, the one scene implementation runs
 in a worker. The main thread owns OrbitControls, visibility and bitmap display.
 Only one state message and one output bitmap may be in flight; intermediate
-snapshots coalesce to the latest projection. Bitmaps from an old show/epoch are
+snapshots coalesce to the latest projection. A WebGL completion fence resolves
+before bitmap publication; scene mutation waits until that frame is complete.
+Pacing includes this GPU wait, since transfer/command submission alone can still
+build a compositor backlog and starve the UI. Bitmaps from an old show/epoch are
 closed without display. The DOM canvas is never transferred, allowing startup
 failure to use the same scene implementation on the main thread before its
-presentation context is acquired. An error after presentation retains the last
-image and reports failure. Worker disposal terminates its complete GPU lifetime.
+presentation context is acquired. An error after rendering starts retains the
+last image and reports failure; an active worker stall never switches rendering
+onto the main thread. Worker disposal terminates its complete GPU lifetime.
 Capability fallback is not evidence of Safari support or smooth physical-device
 performance. Cold shader compilation must not poison later rendering cadence.
 

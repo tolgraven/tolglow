@@ -285,12 +285,9 @@ export class SceneRenderer {
     // driver blocks on compilation/submission. Recover gradually after it clears.
     const nominal = 1000 / this.options.fps;
     const previous = this.frameInterval || nominal;
-    this.frameInterval = this.platform.worker
-      // Compilation is a one-off spike. It must not leave a responsive worker
-      // waiting many seconds before showing the user's next lighting change.
-      // Sustained load grows the budget gradually; cleared load recovers fast.
-      ? Math.max(nominal, Math.min(this.lastCPU * (this.softwareRenderer ? 2 : 1.5), previous * 1.5), previous * .5)
-      : Math.max(nominal, this.lastCPU * (this.softwareRenderer ? 4 : 1.5), previous * .95);
+    // The worker computes its budget after the GPU completion fence; command
+    // submission time alone cannot establish render throughput.
+    if (!this.platform.worker) this.frameInterval = Math.max(nominal, this.lastCPU * (this.softwareRenderer ? 4 : 1.5), previous * .95);
     if (!this.ready) { this.ready = true; this.resolveReady?.(true); }
     this.updateStatus();
   }

@@ -9,6 +9,9 @@ owns controls; committed JVM emitted output is authoritative.
 - `worker-proxy.js` owns DOM input/camera, visibility and bitmap presentation;
   `worker.js` owns the OffscreenCanvas and all graphics work. Keep one state
   message and one transferred bitmap in flight; replace pending snapshots.
+  Await a GPU completion fence before publishing a bitmap: transfer submission
+  is not completion and can otherwise saturate the shared browser compositor.
+  Do not apply new scene state while that fence is pending.
   Close rejected bitmaps, fence show/epoch changes and stop all worker resources
   on disposal. Never transfer the visible canvas: startup failure must leave it
   usable by the shared main-thread capability fallback.

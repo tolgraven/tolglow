@@ -1,29 +1,60 @@
 import {SceneRenderer} from './scene-renderer.js';
 
 let engine, canvas, stateId = 0, actionThrough = 0, frameId = 0, pendingFrame = null;
-let state, timer, stopped = false, lastDraw = 0, renderOnce = false;
+let state, timer, stopped = false, lastDraw = 0, renderOnce = false, rendering = false, deferredState = null;
 const send = value => postMessage(value);
 const visible = () => state && !state.hidden && state.visible && !state.paused;
 function schedule(delay = 0) {
   clearTimeout(timer); timer = null;
-  if (!stopped && !pendingFrame && engine && (visible() || renderOnce)) timer = setTimeout(render, delay);
+  if (!stopped && !rendering && !pendingFrame && engine && (visible() || renderOnce)) timer = setTimeout(render, delay);
 }
-function render() {
-  timer = null;
-  if (stopped || pendingFrame || !engine || (!visible() && !renderOnce)) return;
-  if (engine.lost) {schedule(250); return;}
+async function completeGpuFrame(gl) {
+  const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), started = performance.now();
+  if (!fence) throw new Error('Could not fence the preview GPU frame');
+  gl.flush();
   try {
-    const started = performance.now();
+    while (!stopped && !engine.lost) {
+      const status = gl.clientWaitSync(fence, 0, 0);
+      if (status === gl.ALREADY_SIGNALED || status === gl.CONDITION_SATISFIED) return true;
+      if (status === gl.WAIT_FAILED) throw new Error('Preview GPU frame wait failed');
+      if (performance.now() - started > 30000) throw new Error('Preview GPU frame did not complete');
+      await new Promise(resolve => setTimeout(resolve, 4));
+    }
+    return false;
+  } finally {gl.deleteSync(fence);}
+}
+async function render() {
+  timer = null;
+  if (stopped || rendering || pendingFrame || !engine || (!visible() && !renderOnce)) return;
+  if (engine.lost) {schedule(250); return;}
+  rendering = true;
+  try {
+    const started = performance.now(), previousInterval = engine.frameInterval;
     send({type: 'render-start', frameId: frameId + 1, stateId});
     const dt = lastDraw ? Math.min(.1, (started - lastDraw) / 1000) : 0;
     lastDraw = started; engine.clock += dt; engine.draw(dt); renderOnce = false;
+    const submitted = performance.now();
+    // ImageBitmap transfer alone only submits shared GPU work. Wait for actual
+    // completion, otherwise the worker can saturate the browser compositor's
+    // command queue while its own JS timings misleadingly remain fast.
+    if (!await completeGpuFrame(engine.renderer.getContext())) return;
+    engine.lastGPUWait = performance.now() - submitted;
     const bitmapStarted = performance.now(), bitmap = canvas.transferToImageBitmap(); pendingFrame = ++frameId;
     const completed = performance.now();
     engine.lastBitmapTransfer = completed - bitmapStarted; engine.lastWorkerFrame = completed - started;
+    const nominal = 1000 / engine.options.fps;
+    engine.frameInterval = Math.max(nominal,
+      Math.min(engine.lastWorkerFrame * (engine.softwareRenderer ? 2 : 1.5), previousInterval * 1.5), previousInterval * .5);
     postMessage({type: 'frame', frameId, stateId, actionThrough, bitmap,
       showId: engine.snapshot?.['show-id'], epoch: engine.snapshot?.epoch,
-      telemetry: {...engine.getTelemetry(), workerFrameMs: engine.lastWorkerFrame, bitmapTransferMs: engine.lastBitmapTransfer}}, [bitmap]);
+      telemetry: {...engine.getTelemetry(), workerFrameMs: engine.lastWorkerFrame, gpuCompletionWaitMs: engine.lastGPUWait,
+        idleBudgetMs: Math.max(0, engine.frameInterval - engine.lastWorkerFrame), bitmapTransferMs: engine.lastBitmapTransfer}}, [bitmap]);
   } catch (error) {stopped = true; send({type: 'error', message: String(error?.message || error)});}
+  finally {
+    rendering = false;
+    if (!stopped && deferredState) {const message = deferredState; deferredState = null; applyState(message);}
+    if (!stopped && !pendingFrame && !timer) schedule(250);
+  }
 }
 function applyState(message) {
   if (message.id <= stateId || stopped) return;
@@ -53,7 +84,12 @@ function applyState(message) {
 self.onmessage = event => {
   try {
     const message = event.data;
-    if (message.type === 'state') applyState(message);
+    if (message.type === 'state') {
+      // One upstream message is in flight, so this slot stays bounded while a
+      // GPU fence is pending. Ack only after applying the complete projection.
+      if (rendering) deferredState = message;
+      else applyState(message);
+    }
     else if (message.type === 'frame-ack' && message.frameId === pendingFrame) {
       pendingFrame = null;
       schedule(Math.max(0, engine.frameInterval - engine.lastWorkerFrame));
