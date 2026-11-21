@@ -17,6 +17,12 @@
     (is (.isFile (io/file (manifest/fork-source "src/afterglow/show.clj"))))
     (is (.isDirectory (io/file (manifest/fork-source "resources"))))))
 
+(deftest render-compute-loads-from-the-paired-fork
+  (let [resource "afterglow/render/compute.clj"
+        paired (.getCanonicalFile (io/file (manifest/fork-source "src") resource))
+        sources (enumeration-seq (.getResources (clojure.lang.RT/baseLoader) resource))]
+    (is (= [paired] (mapv #(.getCanonicalFile (io/file %)) sources)))))
+
 (deftest lighting-shaders-load-from-the-paired-renderer
   (doseq [[asset path] gpu/resources]
     (let [paired (io/file (manifest/fork-source "resources") path)]

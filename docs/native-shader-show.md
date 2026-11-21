@@ -34,11 +34,14 @@ and is incompatible with `:compute-backend :native-gpu`.
 A pure effect step returns a named field request with its parameter and beat
 snapshot, selected fixture IDs and envelope gains. The show evaluates ordered
 requests through one Afterglow session shared by every active effect, including
-effects launched or reloaded during playback. The fork owns the GPU context,
-shader cache, draws and readback. The show releases it on stop, including when
-startup fails after acquiring the context.
+effects launched or reloaded during playback. Afterglow's render compute API
+owns native sessions, shader dispatch, readback, the shared deadline and CPU
+recovery. Tolglow translates its show config and binds the compiler to the
+fork's pure group preparation. It closes the render owner on show stop and
+when startup fails after acquisition.
+[Afterglow compute API](https://github.com/tolgraven/afterglow/blob/master/src/afterglow/render/compute.clj)
 
-Tolglow keeps the reference CPU evaluator and full-precision positions for
+Afterglow keeps the reference CPU evaluator and full-precision positions for
 each group. A failed or late draw takes that path immediately using the same
 captured frame inputs. If the driver finishes later, the completed draw has
 no path to a publication or a later frame. Successful requests are reused

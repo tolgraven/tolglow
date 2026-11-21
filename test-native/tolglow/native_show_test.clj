@@ -4,8 +4,6 @@
             [afterglow.render.gpu.movement :as movement]
             [clojure.test :refer [deftest is]]
             [tolglow.application :as app]
-            [tolglow.compiler.batch :as batch]
-            [tolglow.compute :as compute]
             [tolglow.demo :as demo]
             [tolglow.show :as show]))
 
@@ -51,10 +49,11 @@
 
 (deftest configured-show-owns-and-releases-native-session
   (let [runtime (app/start! {:init {:components [:show] :modules [] :post []}
-                             :hz 40 :show {:enabled true :compute-backend :native-gpu}})
+                             :hz 80 :show {:enabled true :compute-backend :native-gpu}})
         session (get-in runtime [:compute :session])]
     (try
       (is (= :native-gpu (get-in (show/snapshot runtime) [:status :compute :active])))
+      (is (= 6 (get-in (show/snapshot runtime) [:status :compute :gpu-budget-ms])))
       (is (string? (:renderer (gpu/status session))))
       (finally (app/stop! runtime)))
     (is (:closed? (gpu/status session)))
@@ -67,7 +66,7 @@
                                       :gpu-options {:max-programs 2 :timeout-ms 500}})
         session (get-in runtime [:compute :session])
         rig (demo/fixtures)
-        step (batch/compile-effect wash rig (compute/compiler-options (:compute runtime) true))
+        step ((:compile runtime) wash)
         ctx {:frame {:time-ms 0.0 :fixtures rig :transport {:beat 0.0 :bpm 120.0}}
              :instance {:id "one" :phase :running :started-at-ms 0.0 :params {}}
              :state {} :intents [] :assignments [] :contributions [] :done? false}]
