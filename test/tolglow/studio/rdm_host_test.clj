@@ -76,6 +76,25 @@
       (is (false? (:connected? (rdm/status (:rdm runtime)))))
       (finally (studio/stop! runtime)))))
 
+(deftest a-blocked-rdm-request-does-not-block-show-commands-or-frame-publication
+  (let [entered (promise) release (promise)
+        runtime (studio/start! {:port 0 :workspace-options nil
+                                :rdm-options {:open! (fn [_ _ register!]
+                                                       (register! #(deliver release true))
+                                                       {:close! #(deliver release true)
+                                                        :request! (fn [_ _] (deliver entered true) @release {:universe 1 :uids []})})}})]
+    (try
+      (let [session (get-in (request runtime :connect {} true) [:data :session-id])]
+        (request runtime :discover {:universe 1 :session-id session} true)
+        (is (= true (deref entered 1000 false)))
+        (let [before (:frame-number (studio/snapshot runtime))
+              reply (studio/submit! runtime {:op :cue/launch :cue-id :ember})]
+          (is (= :accepted (:status (deref reply 2000 {}))))
+          (peer/wait-until #(> (:frame-number (studio/snapshot runtime)) before))
+          (is (seq (:instances (studio/snapshot runtime))))
+          (is (not (realized? release)))))
+      (finally (deliver release true) (studio/stop! runtime)))))
+
 (deftest queued-observation-from-disconnected-session-is-rejected-at-commit
   (let [runtime (studio/create-runtime {:workspace-options nil})
         identity {:runtime-id (:id runtime) :expected-epoch 0}]

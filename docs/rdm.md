@@ -27,12 +27,15 @@ OLA and direct ArtDMX lighting sinks remain unchanged.
    independent from patch changes.
 4. Address, personality, label and identify buttons send explicit SET requests.
    Address/personality changes require previously read footprint information and
-   reject proposed overlap with another linked show fixture. The device is read
+   reject proposed overlap with another show fixture when the device is linked.
+   The device is read
    back after a successful typed SET, with verified/mismatch/unavailable status.
 5. **Adopt observed address** changes the show's patch separately, using the last
    observed address/footprint and the normal renderer patch validator. It does
    not infer channel meanings from a personality number. Use the fixture library
    to select the correct channel definition when changing operating modes.
+   Adoption requires the inspected device and readback timestamp to still match;
+   a changed association or newer observation requires another review.
 
 The advanced inspector accepts GET or SET, numeric/hexadecimal PID, subdevice
 0..512 and up to 231 hexadecimal parameter bytes. Broadcast device/subdevice SET
@@ -101,4 +104,28 @@ Golden packet expectations and owned loopback peers test the protocol boundary.
 Actual olad/plugin/USB fixture qualification and physical iPad Safari remain
 separate gates. Tests and browser demos do not activate physical hardware.
 
-Final test and browser evidence is recorded in the work ledger after validation.
+## Repeating the browser gate
+
+Build the optimized frontend with `npm run studio:build`. In a separate terminal,
+start the explicit QA host. It has preview output and creates its own TCP OLA
+peer; there is no real olad or fixture connection:
+
+```sh
+clojure -Sdeps '{:aliases {:rdm-qa {:extra-paths ["test" "dev"]}}}' \
+  -M:rdm-qa -m tolglow.rdm-qa
+```
+
+Wait for `Owned RDM QA host ready`, then run `node test/studio/rdm_browser.mjs`.
+The script reads `target/rdm-qa.json`, drives the real Ring/re-frame workflow and
+writes its report and desktop/iPad/phone screenshots to `target/rdm-browser/`.
+Set `STUDIO_CHROMIUM` to a different Chromium binary when needed. Stop the QA
+host after the run; its shutdown hook closes the server, runtime and peer.
+Each repeat needs a fresh QA host because the test deliberately adopts a patch.
+
+On 2026-11-21, `./bin/test parity` passed 551 tests / 4,617 assertions and
+`npm run studio:test` passed 161 / 860. `npm run studio:build` produced 179 files
+with zero warnings. The browser gate passed 14 checks, including discovery,
+linking, overlap rejection, SET/readback, separate adoption, labels, identify,
+unsupported-PID reporting and responsive layout, with no component errors.
+The aggregate JVM lane includes a regression proving a blocked RDM request
+does not block cue commands or frame publication, plus full save/load disarming.
