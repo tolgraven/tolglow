@@ -1,7 +1,20 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :studio/committed-event-inspection
+ [{:id :render/calibrated-moving-head-shader
+   :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
+   :kind :research :status :done :owner nil
+   :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
+           "tolglow/dev/gpu/profile-movers.cjs" "tolglow/dev/tolglow/mover_oracle.clj"
+           "tolglow/bin/profile-mover-shader" "tolglow/docs/moving-head-shader.md"]
+   :depends-on [:render/gpu-experiment-v1]
+   :acceptance ["Drive at least 64 differently mounted heads through a changing world-space aim path"
+                "Compare calibrated axes, reachability, and multi-universe coarse/fine output with the paired Afterglow renderer"
+                "Record upload, dispatch, fence, readback, CPU packing and total wall time with the actual renderer"]
+   :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
+              "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
+              "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
+  {:id :studio/committed-event-inspection
    :kind :implementation :status :done :owner nil
    :title "Observe committed show events, real subscriber deliveries and one selected DMX universe"
    :paths ["tolglow/src/tolglow/studio/show_events.clj" "tolglow/src/tolglow/studio/debug_stream.clj"

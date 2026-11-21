@@ -105,6 +105,7 @@ jobs:
           npx --no-install playwright-core install --with-deps chromium
           export CHROMIUM_PATH="$(node --input-type=module -e 'import {chromium} from "playwright-core"; process.stdout.write(chromium.executablePath())')"
           npm run preview:test
+          bin/profile-mover-shader 64 24
       - name: Run re-frame tests and production build
         working-directory: tolglow
         run: |
