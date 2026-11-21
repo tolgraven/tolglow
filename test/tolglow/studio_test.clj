@@ -37,7 +37,8 @@
     (let [failing (assoc r :compile (fn [_] (fn [_] (throw (ex-info "bad effect" {})))))
           ack (apply-at! failing :command {:op :blackout/set :value true} 200)]
       (is (= :accepted (:status ack)))
-      (is (get-in (studio/snapshot r) [:status :error]))
+      (is (get-in (studio/snapshot r) [:instances 0 :fault]))
+      (is (nil? (get-in (studio/snapshot r) [:status :error])))
       (is (every? zero? (mapcat seq (vals (get-in @(:state r) [:output :universes]))))))))
 
 (deftest held-gesture-lease-and-instance-specific-release

@@ -2,7 +2,20 @@
  :updated "2026-11-21",
  :items
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
- [{:id :web/push-preset-global-widgets
+ [{:id :runtime/effect-fault-isolation
+   :title "Isolate live-coded effect faults, recover revisions, and publish bounded diagnostics"
+   :kind :implementation :status :in-progress :owner "effect_error_isolation_recovery_events_and_logs"
+   :paths ["afterglow/src/afterglow/runtime.clj" "afterglow/src/afterglow/runtime/engine.clj"
+           "afterglow/src/afterglow/runtime/faults.clj" "afterglow/test/afterglow/runtime/faults_test.clj"
+           "tolglow/src/tolglow/studio/effect_faults.clj" "tolglow/test/tolglow/studio/effect_faults_test.clj"
+           "tolglow/docs/effect-fault-isolation.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Healthy effects continue when another revision fails"
+                "Failed output/state/intents never publish; valid reload and explicit retry recover"
+                "Bounded portable diagnostics reach reactive subscriptions and asynchronous logs"
+                "Serial and bounded worker results agree, with actual host save/restore/restart evidence"]
+   :evidence []}
+  {:id :web/push-preset-global-widgets
    :title "Show cue preset feedback and touched global controls on Push"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/push_display.cljs"

@@ -26,6 +26,7 @@
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.effect-faults :as effect-faults]
             [tolglow.studio.web :as web]
             [tolglow.studio.persistence :as persistence]
             [tolglow.studio.connections :as connections]
@@ -78,6 +79,7 @@
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
+            :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
                                              (get-in model [:modulation :controllers]))
@@ -95,6 +97,7 @@
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
@@ -134,6 +137,7 @@
                       (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime {:id (str (UUID/randomUUID))
+      :effect-logs (effect-faults/create (select-keys options [:log!]))
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
@@ -592,7 +596,8 @@
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms]
    (let [retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
-         restored-generation (volatile! nil) restarted-generation (volatile! nil)]
+         restored-generation (volatile! nil) restarted-generation (volatile! nil)
+         committed-fault-events (volatile! [])]
      (try
        (locking (:lock runtime)
          (when @(:running runtime)
@@ -671,21 +676,24 @@
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
-                           rendered (render/resolve-contributions
-                                     (patch! runtime (get-in model [:rig :fixtures])) (:contributions result)
+                           resolved (effect-faults/resolve-output result
+                                     #(render/resolve-contributions
+                                     (patch! runtime (get-in model [:rig :fixtures])) %
                                      {:master (:master model) :blackout? (:blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
-                                      :previous-compact (get-in before [:output :compact])})]
-                       {:model (:model result) :output rendered
+                                      :previous-compact (get-in before [:output :compact])}))
+                           result (:result resolved)]
+                       {:model (:model result) :output (:output resolved) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
-                       (assoc before :model model :status {:error (error-data error)}
+                       (assoc before :model model :status {:error (error-data error)} :fault-events []
                               :output (if (or (:blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))]
              (reset! (:state runtime) next-state)
+             (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
                (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts)
@@ -701,8 +709,10 @@
                   (catch Exception error (vreset! reactive-error (error-data error))))
              (when @reactive-error
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error)))))
-       (finally (finish-resource-work! runtime @retired @candidates @retired-devices
-                                       @restored-generation @restarted-generation))))))
+       (finally
+         (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
+         (finish-resource-work! runtime @retired @candidates @retired-devices
+                                @restored-generation @restarted-generation))))))
 
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
@@ -749,6 +759,7 @@
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(output-scheduler/close! (:publisher runtime))
+                              #(effect-faults/close! (:effect-logs runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
