@@ -46,6 +46,7 @@
             [tolglow.studio.sensor-osc :as sensor-osc]
             [tolglow.studio.fixture-service :as fixture-service]
             [tolglow.studio.rig :as rig]
+            [tolglow.studio.rdm :as rdm]
             [tolglow.studio.calibration :as calibration]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.studio.audio :as audio]
@@ -115,7 +116,7 @@
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
-(declare send-output! heartbeat!)
+(declare send-output! heartbeat! submit!)
 
 (defn create-runtime
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
@@ -174,6 +175,11 @@
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
+      :rdm (rdm/create (merge (:rdm-options options)
+                             {:model! #(get @(:state @runtime-ref) :model)
+                              :identity! #(let [runtime @runtime-ref]
+                                            {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
+                              :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compiler-context compiler-context :batch? batch?
@@ -268,6 +274,10 @@
   (case type
     :command (command model payload time-ms)
     :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
+    :rdm-update (do (when (and (:rdm-session-id payload)
+                              (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
+                      (throw (ex-info "RDM result belongs to a retired device session" {})))
+                    {:model (rdm/update-model model payload) :ack {:status :accepted}})
     :calibration (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
                                               (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :sensor-configure
@@ -803,7 +813,8 @@
        (finally
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
-                                @restored-generation @restarted-generation))))))
+                                @restored-generation @restarted-generation)
+         (rdm/reconcile! (:rdm runtime)))))))
 
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
@@ -896,6 +907,7 @@
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
                              [#(event-callbacks/close! (:event-callbacks runtime))
+                              #(rdm/close! (:rdm runtime))
                               #(debug-stream/close! (:debug-stream runtime))
                               #(state-stream/close! (:state-stream runtime))
                               #(projection/clear! (:browser-projections runtime))
@@ -1060,6 +1072,28 @@
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view)))
+
+(defn rdm-action!
+  "Explicit, independently owned RDM service. Status never touches a device."
+  [runtime operation payload]
+  (if (= :status operation)
+    (assoc (rdm/status (:rdm runtime)) :runtime-id (:id runtime)
+           :epoch (get-in @(:state runtime) [:model :epoch]))
+    (let [identity (locking (:lock runtime)
+                     (let [epoch (get-in @(:state runtime) [:model :epoch])]
+                       (when-not (and @(:running runtime)
+                                      (= (:runtime-id payload) (:id runtime))
+                                      (= (:expected-epoch payload) epoch))
+                         (throw (ex-info "RDM action belongs to a previous show session" {})))
+                       {:runtime-id (:id runtime) :expected-epoch epoch}))]
+      (case operation
+        :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
+        :disconnect (rdm/disconnect! (:rdm runtime))
+        :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
+        (:associate :unassociate :adopt)
+        (deref (submit! runtime :rdm-update (merge payload identity {:operation operation})) 5000 {:status :pending})
+        (:discover :read :command) (rdm/submit! (:rdm runtime) operation payload)
+        (throw (ex-info "Unknown RDM action" {:operation operation}))))))
 
 (defn fixture-action!
   "Fixture library operations; publication and patching join the owner queue."
@@ -1265,6 +1299,7 @@
             :chat-history! #(agents/history (agent-manager runtime))
             :chat-select! #(agents/select-conversation! (agent-manager runtime) %)
             :fixture! #(fixture-action! runtime %1 %2)
+            :rdm! #(rdm-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
             :expressive! (fn [payload]
