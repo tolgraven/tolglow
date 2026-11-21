@@ -1,7 +1,24 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :web/state-delta-transport
+ [{:id :performance/master-mixed-rig-profiling
+   :title "Profile complete mixed rigs on master and optimize measured hot paths"
+   :kind :implementation :status :in-progress
+   :owner "master_render_performance_profiler_and_optimizations"
+   :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
+           "tolglow/.github/workflows/performance.yml"
+           "afterglow/src/afterglow/render/frame.clj" "afterglow/test/afterglow/render/frame_test.clj"
+           "afterglow/src/afterglow/render/AGENTS.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Repeatable scalar-oracle-checked 100/1000/10000-pixel and moving-head workloads"
+                "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
+                "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
+   :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
+              "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
+              "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
+              ".github/workflows/performance.yml: master path pushes/manual/weekly artifact-only timings with oracle failures enforced"]}
+  {:id :web/state-delta-transport
    :title "Send versioned state deltas and recover complete browser projections"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/studio/projection.clj"
