@@ -2,7 +2,8 @@
   (:require [clojure.test :refer :all]
             [clojure.data.json :as json]
             [tolglow.studio.sync :as sync]
-            [tolglow.integrations.ableton :as ableton])
+            [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.live-parameters :as live-params])
   (:import [java.net DatagramPacket InetAddress InetSocketAddress]
            [com.sun.net.httpserver HttpServer HttpHandler]
            [org.deepsymmetry.beatlink Beat DeviceAnnouncement]
@@ -378,3 +379,22 @@
       (send-midi! manager 100 [0xfa]) (send-midi! manager 100 [0xf8]) (is (sync/flush! manager))
       (is (true? (get-in (sync/clock-at manager 100) [:clock :playing?])))
       (finally (.countDown gate) (sync/close! manager)))))
+
+(deftest live-parameter-source-preserves-native-units-and-typed-restore-data
+  (let [spec {:path "live_set tracks 0 devices 1 chains 2 devices 3 parameters 4"
+              :track-name "Keys" :device-name "Synth" :name "Cutoff" :range [20 20000] :quantized? false}
+        config (sync/validate-config {:live {:source-id :performance/live :observed-parameters {:cutoff spec}}})
+        live (:live config)
+        sample {:id "cutoff" :path (:path spec) :value 305.25 :automation-state 1}
+        observation #(get (live-params/observation live "event-1" 7.5 %) :observation)]
+    (is (= {"cutoff" spec} (:observed-parameters live)))
+    (is (= config (:config (sync/validate-state {:version 1 :config config}))))
+    (is (= {:source-id "live/performance/live/parameter/cutoff" :value 305.25 :kind :automation}
+           (select-keys (observation sample) [:source-id :value :kind])))
+    (is (= :playing (get-in (observation sample) [:port :automation-state])))
+    (is (= [20 20000] (get-in (observation sample) [:port :range])))
+    (is (nil? (observation (assoc sample :value ##NaN))))
+    (is (nil? (observation (assoc sample :id "another"))))
+    (is (nil? (observation (assoc sample :path "live_set tracks 1 mixer_device volume"))))
+    (is (nil? (live-params/observation (assoc live :mode :live) "event-2" 8 sample)))
+    (is (thrown? clojure.lang.ExceptionInfo (live-params/descriptor (assoc spec :path "live_set tracks 0"))))))

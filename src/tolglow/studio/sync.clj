@@ -9,6 +9,7 @@
             [afterglow.control.codecs.midi :as midi-codec]
             [afterglow.control.devices.transports :as device-transports]
             [tolglow.integrations.ableton :as ableton]
+            [tolglow.integrations.live-parameters :as live-params]
             [tolglow.integrations.ableton-link :as link]
             [tolglow.integrations.providers :as providers])
   (:import [javax.sound.midi MidiSystem MidiDevice MidiMessage Receiver ShortMessage]
@@ -72,7 +73,7 @@
                              [:link #{:enabled? :source-id :port :follow-transport?}]
                              [:midi #{:enabled? :source-id :input-index :output-index :control? :expected-input-name :expected-output-name}]
                              [:beat-link #{:enabled? :source-id :status? :align-bars? :peer}]
-                             [:live #{:enabled? :source-id :bridge-id :endpoint :poll-ms :timeout-ms :record-route :mode :channel :mappings :parameters :pairing :automap?}]]]
+                             [:live #{:enabled? :source-id :bridge-id :endpoint :poll-ms :timeout-ms :record-route :mode :channel :mappings :parameters :pairing :automap? :observed-parameters}]]]
     (when (contains? input section)
       (when-not (and (map? (get input section)) (every? allowed (keys (get input section))))
         (fail! :invalid-config "Unknown synchronization section field"))))
@@ -83,7 +84,7 @@
               :beat-link {:enabled? false :source-id :beat-link :status? false :align-bars? false :peer nil}
               :live {:enabled? false :source-id :ableton-live :bridge-id "tolglow-m4l" :endpoint "http://127.0.0.1:8750/live"
                      :poll-ms 500 :timeout-ms 2000 :record-route :bridge :mode :lighting :channel 1
-                     :mappings {} :parameters {} :pairing nil :automap? true}}
+                     :mappings {} :parameters {} :pairing nil :automap? true :observed-parameters {}}}
         config (reduce (fn [out key] (assoc out key (merge (get base key) (get input key))))
                        (assoc base :selected-source (source-id (get input :selected-source :manual))) [:clock :midi :beat-link :link :live])
         config (reduce #(update-in %1 [%2 :source-id] source-id) config [:midi :beat-link :link :live])
@@ -91,7 +92,8 @@
                    (update-in [:live :mode] #(if (string? %) (keyword %) %))
                    (update-in [:live :record-route] #(if (string? %) (keyword %) %))
                    (update-in [:live :mappings] #(mappings (into {} (map (fn [[k v]] [k (cond-> v (string? (:mode v)) (update :mode keyword))]) %)) :notes))
-                   (update-in [:live :parameters] #(mappings % :parameters)))
+                   (update-in [:live :parameters] #(mappings % :parameters))
+                   (update-in [:live :observed-parameters] live-params/sources))
         midi (:midi config) dj (:beat-link config) live (:live config)
         ids (mapv #(get-in config [% :source-id]) [:midi :beat-link :link :live])
         peer (:peer dj)]
@@ -396,12 +398,15 @@
                     (= (:id run) (:sync-session-id payload))
                     (string? (:event-id payload)) (<= 1 (count (:event-id payload)) 256)
                     (case kind :status (map? (:status payload)) :midi (map? (:event payload))
+                          :parameter (map? (:sample payload))
                           :handoff (#{:live :lighting "live" "lighting"} (:mode payload)) false))]
     (if-not valid? false
       (let [event (case kind
                     :status {:type :live/status :status (:status payload) :time-ms ((get-in manager [:options :now-ms]))}
                     :midi {:type :live/midi :event (-> (:event payload) (update :type #(if (string? %) (keyword %) %))
                                                                     (update :origin #(if (string? %) (keyword %) %)))}
+                    :parameter {:type :live/parameter :sample (:sample payload) :event-id (:event-id payload)
+                                :time-ms ((get-in manager [:options :now-ms]))}
                     :handoff (when-let [envelope! (:envelope! (run-callbacks run))]
                                {:type :live/handoff :mode (some-> (:mode payload) name keyword) :envelope (envelope!)}))]
         (locking (:lock manager)
@@ -500,6 +505,23 @@
                                             :time-ms (/ (+ start end) 2.0) :received-at-ms end :round-trip-ms (- end start)})
                        (when (= op :inspect) (reset! (:poll-pending? run) false))))))))
 
+(defn edit-observed-parameter! [manager op id]
+  (when-not (live-params/valid-id? id)
+    (fail! :invalid-live-parameter-id "Use a unique name of up to 64 letters, numbers, dots, hyphens or underscores"))
+  (let [{:keys [active config]} @(:state manager)
+        table (get-in config [:live :observed-parameters])]
+    (when-not active (fail! :not-connected "Start the Live connection before changing observed sources"))
+    (case op
+      :learn-parameter
+      (do (when (or (contains? table id) (>= (count table) live-params/max-parameters))
+            (fail! :parameter-in-use "Choose an unused source name or forget an existing parameter"))
+          (live-request! manager active (str (UUID/randomUUID)) :describe-selected-parameter {:id id}))
+      :forget-parameter (queue! manager active {:type :live/forget-parameter :id id}))))
+
+(defn- update-parameter-watchers! [manager run]
+  (let [table (get-in @(:state manager) [:config :live :observed-parameters])]
+    (live-request! manager run (str (UUID/randomUUID)) :watch-parameters {:sources table})))
+
 (defn place-in-arrangement! [manager beat request-id]
   (when-not (and (finite? beat) (<= 0 beat) (string? request-id) (<= 1 (count request-id) 128))
     (fail! :invalid-placement "Placement requires a nonnegative song beat and a stable request ID"))
@@ -582,6 +604,9 @@
             (doseq [page (partition-all 64 (pads (get-in config [:live :mappings])))]
               (live-request! manager run (str (UUID/randomUUID)) :pad-page {:pads (vec page)})))
           (reset! (:mirrored-pair run) pair))))
+    (when (and (true? (get-in result [:capabilities :observe-parameters?]))
+               (compare-and-set! (:setup-watchers? run) false true))
+      (update-parameter-watchers! manager run))
     (swap! (:state manager) assoc :recording recording)
     (emit! manager run {:type :live/status :status recording})))
 
@@ -659,6 +684,12 @@
         (apply-clock! manager run (cond-> (assoc event :type :clock :kind :ableton-link :confidence 1.0)
                                     frozen? (assoc :beat (:beat previous)))))
       :live/status (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+      :live/parameter
+      (when-let [data (live-params/observation (:live config) (:event-id event) (:time-ms event) (:sample event))]
+        (emit! manager run data))
+      :live/forget-parameter
+      (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
+          (update-parameter-watchers! manager run))
       :live/midi (do (observe-midi! manager run (:event event) :live (get event :time-ms at))
                     (midi-control! manager run (:event event)))
       :live/acknowledgement
@@ -684,9 +715,15 @@
       :live/response
       (let [response (:response event)]
         (when (= :executed (:status response))
+          (when (= :describe-selected-parameter (:op event))
+            (let [id (get-in event [:payload :id]) spec (live-params/descriptor (:result response))
+                  table (get-in config [:live :observed-parameters])]
+              (when (and (not (contains? table id)) (< (count table) live-params/max-parameters))
+                (swap! (:state manager) assoc-in [:config :live :observed-parameters id] spec)
+                (update-parameter-watchers! manager run))))
           (when (#{:inspect :configure-destination} (:op event))
             (process-status! manager run (:result response) (:time-ms event) (:round-trip-ms event))))
-        (when (= :place-in-arrangement (:op event)) (swap! (:state manager) assoc :last-execution response))
+        (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} (:op event)) (swap! (:state manager) assoc :last-execution response))
         (when-not (= :inspect (:op event)) (emit! manager run (assoc response :type :live/execution :op (:op event))))
         (when (and (= :inspect (:op event)) (not= :executed (:status response)))
           (swap! (:state manager) assoc :last-error (:error response))))
@@ -740,7 +777,7 @@
                 (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
               (let [run {:id (str (UUID/randomUUID)) :cancelled? (atom false) :resources (atom {})
                          :queue (ArrayBlockingQueue. (int (get-in manager [:options :queue-capacity])))
-                         :setup-mode? (atom false) :mirrored-pair (atom nil)
+                         :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
                          :poll-pending? (atom false) :overflow-sources (atom #{}) :callback-ids (atom []) :event-sequence (atom 0)
                          :callbacks (atom callbacks) :binding-lock (Object.) :binding-generation (atom 0)
                          :thread (atom nil) :result (promise)

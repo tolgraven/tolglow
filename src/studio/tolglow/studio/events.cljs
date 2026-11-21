@@ -37,7 +37,7 @@
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
-    "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff" "/api/sync/arrange"
+    "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff" "/api/sync/arrange" "/api/sync/learn-parameter" "/api/sync/forget-parameter"
     "/api/audio/start" "/api/audio/stop"
     "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"

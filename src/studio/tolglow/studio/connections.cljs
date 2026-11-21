@@ -15,7 +15,7 @@
    :link {:enabled? false :port 17000 :follow-transport? true}
    :beat-link {:enabled? false :status? false :align-bars? false :peer nil}
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
-          :mode "lighting" :channel 1 :automap? true :poll-ms 500 :timeout-ms 2000 :pairing nil
+          :mode "lighting" :channel 1 :automap? true :observed-parameters {} :poll-ms 500 :timeout-ms 2000 :pairing nil
           :mappings {} :parameters {}}})
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
 (def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil
@@ -98,6 +98,7 @@
     (assoc form :midi midi :link (update (:link form) :port #(integer! % "Carabiner port" 1 65535))
            :live (assoc (dissoc live :paired?) :pairing pairing
                                       :channel (integer! (:channel live) "MIDI channel" 1 16)
+                                      :observed-parameters (get-in s [:sync :config :live :observed-parameters] (:observed-parameters live {}))
                                       :poll-ms (integer! (:poll-ms live) "Live polling interval" 100 10000)
                                       :timeout-ms (integer! (:timeout-ms live) "Live request timeout" 50 10000)
                                       :mappings (mappings! (:notes s) :notes)
@@ -202,6 +203,8 @@
   (fn [{:keys [db]} [_ operation value]]
     (let [[path body] (case operation
                         :start ["/api/sync/start" {}] :stop ["/api/sync/stop" {}]
+                        :learn-parameter ["/api/sync/learn-parameter" {:id value}]
+                        :forget-parameter ["/api/sync/forget-parameter" {:id value}]
                         :arrange ["/api/sync/arrange" {:request-id (str (random-uuid)) :song-beat (js/Number value)}]
                         :source ["/api/sync/source" {:source-id value}]
                         :handoff ["/api/sync/handoff" {:mode value}]
@@ -528,6 +531,20 @@
          [:button.button {:type "button" :disabled (or (:recording? recording) (str/blank? (:arrangement-beat s)))
                           :on-click #(rf/dispatch [:connections/action :arrange (:arrangement-beat s)])} "Place clip in Arrangement"]])
       (when execution [:p.small.muted (str "Last write: " (:status execution) (when (:clip-write-confirmed? execution) " · clip write confirmed"))])
+      (when active?
+        [:details.connection-mappings
+         [:summary "Live automation sources"]
+         [:p.small.muted "Select a knob, mixer fader or send in Live, name the source, then map it in the patchbay."]
+         [:div.form-row
+          [field s [:parameter-source-name] "Source name" {:placeholder "filter-cutoff" :max-length 64}]
+          [:button.button {:type "button" :disabled (not (re-matches #"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}" (:parameter-source-name s "")))
+                           :on-click #(rf/dispatch [:connections/action :learn-parameter (:parameter-source-name s)])}
+           "Learn selected parameter"]]
+         (for [[id spec] (sort-by (comp str key) (get-in s [:sync :config :live :observed-parameters]))]
+           ^{:key id} [:div.form-row
+                       [:span (str (events/wire-id id) " · " (:track-name spec) " / " (:device-name spec) " / " (:name spec))]
+                       [:button.text-button {:type "button" :on-click #(rf/dispatch [:connections/action :forget-parameter (events/wire-id id)])}
+                        "Forget"]])])
       (when (seq (:unmapped s))
         [:details.connection-mappings [:summary (str "Unassigned cue and parameter mappings · " (count (:unmapped s)))]
          (for [{:keys [cue-id param reason]} (:unmapped s)]

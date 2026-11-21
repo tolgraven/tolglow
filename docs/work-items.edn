@@ -1,7 +1,14 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :render/calibrated-moving-head-shader
+ [{:id :integration/live-observed-parameters
+   :title "Learn Live device and mixer automation as named patchbay sources"
+   :kind :implementation :status :in-progress :owner "live-parameter-observations"
+   :paths ["tolglow/src/tolglow/integrations/live_parameters.clj"]
+   :depends-on [:integration/live-bridge-assets-v1]
+   :acceptance ["Observe actual DeviceParameter.value on change" "Keep stable nested-rack paths, native ranges and names in saved show settings" "Disarm replaced or renamed sources and release all observer subscriptions"]
+   :evidence []}
+  {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
    :paths ["tolglow/resources/gpu/mover-aim.vert" "tolglow/dev/gpu/mover-shader.mjs"
