@@ -89,6 +89,8 @@ IDs. Live-playback origin remains visible so the recording bridge can suppress
 re-recording its own playback. Physical MIDI echoes cannot be identified solely
 from bytes; wiring both ends of a loop still requires an explicit routing policy.
 
+See [Live audio sends and returns](live-audio-returns.md) for the multichannel PCM carrier and post-FX return path.
+
 ## Sources available at the current boundary
 
 The sync manager emits one `:sync/observation` event for each captured note or CC,
@@ -99,7 +101,7 @@ equivalent `live/...` IDs. Channels are 1-based. Note-off and velocity-zero have
 capture timestamp, run/event IDs, confidence and origin. The host supplies its
 authoritative epoch and musical clock; the adapter does not invent them.
 
-The existing audio boundary supplies measured features and analysis events with
+The capture worker publishes low/mid/high RMS and monophonic 20–180 Hz bass pitch in addition to the broadband measurements. See [audio analysis](audio-analysis.md) for source IDs, units and window length. The audio boundary supplies measured features and analysis events with
 source/confidence metadata. The host can register those as audio ports, using
 explicit value ranges and confidence gates. Merely selecting an audio port does
 not start capture. The GUI should show actually observed or configured sources,

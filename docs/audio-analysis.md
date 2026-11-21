@@ -292,3 +292,36 @@ smokes was installed or benchmarked during this research.
 [beatnet-license]: https://github.com/mjhydri/BeatNet/blob/81cedd4beeb7235262db80969a0c9ce9a48a0ed4/LICENSE
 [aubiojs-npm]: https://registry.npmjs.org/aubiojs/0.2.1
 [meyda-npm]: https://registry.npmjs.org/meyda/5.6.3
+
+## Patch a band or bass note into a running cue
+
+Start audio capture on the intended input. To use a processed Live track, select
+its routed return as the audio input. Once it receives samples, the Studio
+patchbay lists these measured ports alongside RMS, peak and kick-band level.
+
+| Patchbay source | Measurement | Typical destination |
+| --- | --- | --- |
+| `audio/low-rms` | RMS of a 180 Hz low-pass output | Bass-driven dimmer |
+| `audio/mid-rms` | RMS between the 180 Hz and 2.5 kHz low-pass outputs | Wash saturation |
+| `audio/high-rms` | RMS of the residual above the 2.5 kHz low-pass | Accent intensity |
+| `audio/bass-pitch-hz` | Monophonic bass fundamental, calibrated 20–180 Hz | Pan, hue or another bounded parameter |
+| `audio/bass-pitch-confidence` | Periodicity confidence, 0–1 | Gate or scale another route |
+
+The three band meters use overlapping first-order crossovers. Their filtered
+signals sum to the input. Their RMS readings do not sum to the input RMS.
+Levels are linear normalized PCM amplitudes. Calibrate the patch's input range
+to the level coming back from the track and choose the output bounds and curve
+for the fixture. Editing the EQ in Live changes the samples measured here.
+
+The capture worker low-passes and decimates bass to roughly 1.6 kHz. A 160 ms
+rolling window feeds the same YIN estimator as the parameter carrier, with
+estimates up to once per 40 ms. The estimator opens the pitch gate only above
+the input noise floor with confidence at least 0.88. Loss of periodicity closes
+the gate so the patch's release can finish. Starting capture again or a gap in
+sample time resets the analysis window. This is a monophonic measurement. Kick
+onsets and clock-aligned beats remain separate event types.
+
+The PCM regression suite measures tones at 41.2, 700 and 3300 Hz in differently
+partitioned buffers. The host test feeds a measured 65 Hz signal into an active
+cue through the patchbay and checks its parameter and subsequent silence gate.
+[Analyzer tests](../test/tolglow/integrations/analysis_test.clj) · [Host routing test](../test/tolglow/studio/routing_host_test.clj)

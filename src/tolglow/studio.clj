@@ -7,6 +7,11 @@
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
+            [afterglow.runtime.events :as staging]
+            [tolglow.studio.show-events :as show-events]
+            [tolglow.studio.event-subscribers :as subscribers]
+            [tolglow.studio.event-callbacks :as event-callbacks]
+            [tolglow.studio.debug-stream :as debug-stream]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
@@ -29,6 +34,7 @@
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.effect-faults :as effect-faults]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.state-stream :as state-stream]
@@ -41,9 +47,12 @@
             [tolglow.studio.sensor-osc :as sensor-osc]
             [tolglow.studio.fixture-service :as fixture-service]
             [tolglow.studio.rig :as rig]
+            [tolglow.studio.rdm :as rdm]
             [tolglow.studio.calibration :as calibration]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.studio.audio :as audio]
+            [tolglow.integrations.audio-return :as audio-return]
+            [tolglow.integrations.audio-duplex :as duplex]
             [tolglow.studio.sync :as sync]
             [tolglow.studio.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
@@ -68,6 +77,7 @@
 (defn- project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
@@ -104,12 +114,13 @@
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
+                                   :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
-(declare send-output! heartbeat!)
+(declare send-output! heartbeat! submit!)
 
 (defn create-runtime
   "Create an inert shell. Call tick! manually in tests, or start! to schedule it."
@@ -149,19 +160,31 @@
                       (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
                         (:send! sink) (assoc :receipt-capacity 256)
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
-           runtime {:id (str (UUID/randomUUID))
+           runtime-id (str (UUID/randomUUID))
+           runtime {:id runtime-id
+      :event-admit (get options :event-admit subscribers/admit)
+      :event-callbacks (event-callbacks/create
+                        (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
+                               (:event-callback-options options)))
+      :debug-stream (debug-stream/create runtime-id #(deref (:state @runtime-ref)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
-      :clock clock :sink sink
+      :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :browser-projections (projection/create)
       :state-stream (state-stream/create #(project-snapshot @runtime-ref %) #(heartbeat! @runtime-ref %))
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :scheduler (atom nil) :server (atom nil) :leases (atom {})
+      :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
+      :rdm (rdm/create (merge (:rdm-options options)
+                             {:model! #(get @(:state @runtime-ref) :model)
+                              :identity! #(let [runtime @runtime-ref]
+                                            {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
+                              :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compiler-context compiler-context :batch? batch?
@@ -180,6 +203,7 @@
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
+                subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (update :variables dissoc :audio :sync)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
@@ -208,7 +232,14 @@
                                  payload {:time-ms time-ms}))
           result (if (and (= :accepted (get-in result [:ack :status]))
                           (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
-                   (update result :model restart-model time-ms) result)]
+                   (update result :model
+                           (fn [next-model]
+                             (cond-> (restart-model next-model time-ms)
+                               (contains? model ::staging/pending)
+                               (as-> m (staging/collect (staging/begin m) :control
+                                                        {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
+                                                        (:events result))))))
+                   result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
                (seq (get-in model [:modulation :controllers]))
                (not= :patch (get-in payload [:source :type]))
@@ -229,6 +260,9 @@
         (recur (:model follow) (concat (next pending) (:commands follow))
                (conj receipts (select-keys ack [:status :instance-id :reason :message]))))
       (-> model
+          (as-> m (reduce (fn [acc event]
+                            (staging/collect acc :sensor {:kind :device :id (or (:device-id event) :sensor)} [event]))
+                          m (:events result)))
           (assoc-in [:variables :sensors :events] (vec (take-last 64 (:events result))))
           (assoc-in [:variables :sensors :receipts] (vec (take-last 64 receipts)))))))
 
@@ -244,6 +278,11 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
+    :rdm-update (do (when (and (:rdm-session-id payload)
+                              (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
+                      (throw (ex-info "RDM result belongs to a retired device session" {})))
+                    {:model (rdm/update-model model payload) :ack {:status :accepted}})
     :calibration (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
                                               (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :sensor-configure
@@ -413,13 +452,18 @@
                                                                     :version (inc (get-in model [:registry :cues id :version] 0))
                                                                     :reload-policy :preserve-state}}} time-ms)]
       (update cue-result :ack assoc :effect-id id :cue-id id))
+    :audio-return-configure
+    (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
     :settings
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
-      (let [settings (merge (get-in model [:settings scope]) values)
+      (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
+                     (update :pause-look pause-look/normalize))
+            settings (merge (get-in model [:settings scope]) values)
+            _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
         {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
          :ack {:status :accepted}}))
@@ -435,7 +479,9 @@
       {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
        :ack {:status :accepted}})
      :import
-    {:model (:model payload) :restore? true :restored-output (:frame-output payload)
+    {:model (staging/collect (staging/begin (:model payload)) :show {:kind :studio :id :import}
+                             [{:type :show/restored}])
+     :restore? true :restored-output (:frame-output payload)
      :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}}
     (throw (ex-info "Unknown studio operation" {:type type}))))
 
@@ -523,6 +569,9 @@
       (cond-> model
         (:features captured) (routing/admit-audio (:features captured))
         (:features captured) (assoc-in [:variables :audio :features] (:features captured))
+        (seq (:events captured)) (as-> m (reduce
+            (fn [acc event] (staging/collect acc :audio {:kind :audio :id (or (get-in event [:source :id]) :analysis)} [event]))
+            m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
 
@@ -570,19 +619,49 @@
                                     (and accepted? (not= :rejected (:status ack))))
                                   accepted?))) true commands)))}))
 
+(defn- pause-layer! [runtime model]
+  (let [look (get-in model [:settings :output :pause-look])]
+    (when (and (false? (get-in model [:transport :playing?])) (= :ambient (:mode look)))
+      (let [fixtures (get-in model [:rig :fixtures])
+            cache (:pause-layer-cache runtime)
+            previous @cache]
+        (if (and (identical? fixtures (:fixtures previous)) (= look (:look previous)))
+          (:block previous)
+          (let [block (pause-look/ambient-layer fixtures look)]
+            (vreset! cache {:fixtures fixtures :look look :block block})
+            block))))))
+
 (defn- source-clock-model [runtime model time-ms]
-  (let [{:keys [selected-source clock]} (sync/clock-at (connections/sync (:connections runtime)) time-ms)]
-    (if-let [captured (if (= :manual selected-source)
-                       (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
-                       (when clock (assoc clock :source selected-source)))]
+  (let [{:keys [selected-source clock follow-transport?]} (sync/clock-at (connections/sync (:connections runtime)) time-ms)]
+    (if-let [captured (cond
+                        (= :manual selected-source)
+                        (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
+
+                        (and (false? follow-transport?) (or (nil? clock) (:stale? clock)))
+                        ;; Tempo-only Link must never change local playback just
+                        ;; because a peer has not arrived or has disconnected.
+                        (assoc (:transport (advance-transport model time-ms)) :source selected-source :source-epoch nil)
+
+                        clock
+                        (cond-> (assoc clock :source selected-source)
+                          (false? follow-transport?) (assoc :playing? (get-in model [:transport :playing?]))
+                          (and (false? follow-transport?) (false? (get-in model [:transport :playing?])))
+                          (assoc :beat (get-in model [:transport :beat]))))]
       (let [before (:transport model)
             discontinuity? (or (not= (:source before :manual) (:source captured))
                                (not= (:source-epoch before 0) (:source-epoch captured))
-                               (< (:beat captured) (:beat before)))
+                               (< (:beat captured) (:beat before))
+                               (and (some? follow-transport?) (:playing? captured)
+                                    (or (false? (:playing? before)) (:link-phase-held? before))))
             captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])]
         ;; Rebase from the original model once; never merge the new beat first.
-        (if discontinuity? (show-clock/rebase model captured)
-          (update model :transport merge captured)))
+        (let [model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
+          ;; A local Play command may already have flipped :playing? before the
+          ;; subsequent Link sample arrives. Remember that musical anchors were
+          ;; frozen until we have the resumed peer phase to rebase them against.
+          (if (and (false? follow-transport?) (false? (:playing? captured)))
+            (assoc-in model [:transport :link-phase-held?] true)
+            (update model :transport dissoc :link-phase-held?))))
       (update model :transport assoc :time-ms time-ms :playing? false
               :source selected-source :source-epoch nil))))
 
@@ -591,7 +670,10 @@
                    (let [before @(:sync-input runtime)]
                      (reset! (:sync-input runtime) {:epoch (:epoch model) :events []}) before))]
     (if (and (= (:epoch model) (:epoch captured)) (seq (:events captured)))
-      (-> model (assoc-in [:variables :sync :events] (:events captured))
+      (-> (reduce (fn [acc event]
+                    (staging/collect acc :sync {:kind :sync :id (or (:source-id event) :sync)} [event]))
+                  model (:events captured))
+          (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
 (defn- observe-sync-commands! [runtime before after receipts]
@@ -674,7 +756,7 @@
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
                   [(calibration/advance
-                    (consume-sync! runtime (consume-audio! runtime (source-clock-model runtime (:model before) time-ms)))
+                    (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms))))
                     (output-scheduler/drain-receipts! (:publisher runtime)) ((:now-ms (:publisher runtime)))) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
@@ -696,7 +778,7 @@
                                       (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
                                                                  (patch! runtime (get-in model [:rig :fixtures]))
                                                                  (get-in model [:settings :output :presentation] {})
-                                                                 (or (:blackout? model) (zero? (:master model)))))
+                                                                 (or (pause-look/blackout? model) (zero? (:master model)))))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (calibration/marker model)))
                  started (System/nanoTime)
@@ -709,7 +791,10 @@
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                     :status {:restored? true :frame-ms 0}}
                    (try
-                     (let [model (-> (advance-sensors! runtime model time-ms) (composition/advance time-ms) (advance-auto time-ms)
+                     (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
+                                     (composition/advance time-ms) (advance-auto time-ms)
+                                     (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
@@ -721,10 +806,11 @@
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
+                           pause-layer (pause-layer! runtime model)
                            resolved (effect-faults/resolve-output result
                                      #(render/resolve-contributions
-                                     (patch! runtime (get-in model [:rig :fixtures])) %
-                                     {:master (:master model) :blackout? (:blackout? model)
+                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % pause-layer (conj pause-layer))
+                                     {:master (:master model) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
@@ -734,10 +820,17 @@
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
                        (assoc before :model model :status {:error (error-data error)} :fault-events []
-                              :output (if (or (:blackout? model) (zero? (:master model)))
+                              :output (if (or (pause-look/blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
-                                        (:output before))))))]
+                                        (:output before))))))
+                 operations (map (fn [message [_ ack]]
+                                   {:operation (:type message) :command (get-in message [:payload :op])
+                                    :ack ack :emitter-id (get-in message [:payload :source :adapter])})
+                                 messages receipts)
+                 committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
+                 next-state (:state committed)]
              (reset! (:state runtime) next-state)
+             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
@@ -750,15 +843,20 @@
                     (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
-             (try (connections/publish! (:connections runtime) (:model next-state))
-                  (catch Exception error (vreset! reactive-error (error-data error))))
+             (let [hub (:debug-stream runtime)
+                   trace (try (:delivery-trace (connections/publish! (:connections runtime) (:model next-state)
+                                                                     (debug-stream/observing? hub)))
+                              (catch Exception error (vreset! reactive-error (error-data error)) nil))]
+               (debug-stream/commit! hub (show-events/clock-context (:model next-state))
+                                     (:events committed) (:deliveries committed) trace))
              (when @reactive-error
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (state-stream/publish! (:state-stream runtime) @(:state runtime)))))
        (finally
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
-                                @restored-generation @restarted-generation))))))
+                                @restored-generation @restarted-generation)
+         (rdm/reconcile! (:rdm runtime)))))))
 
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
@@ -802,6 +900,39 @@
          (deliver reply (merge {:status :rejected} (error-data error)))))
      reply)))
 
+(defn register-event-subscriber!
+  "Register show data from the REPL. An inline :middleware function is bound in
+  this process; a qualified Var or portable :implementation can be restored."
+  [runtime {:keys [id middleware] :as registration}]
+  (let [registration (if middleware
+                       (let [_ (when-not (or (fn? middleware) (var? middleware))
+                                 (throw (ex-info "Expected middleware function or Var" {:id id})))
+                             implementation (if (var? middleware)
+                                              {:type :var :symbol (str (symbol middleware))}
+                                              {:type :registered :id id})
+                             definition (-> registration (dissoc :middleware)
+                                            (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
+                         (subscribers/validate-definition definition)
+                         (when (fn? middleware) (event-callbacks/register! (:event-callbacks runtime) id middleware))
+                         definition)
+                       registration)]
+    (submit! runtime :event-subscriber {:op :save :subscriber registration})))
+
+(defmacro reg-event-subscriber!
+  "Register a literal middleware fn as restorable REPL source. Supply lexical
+  values through :bindings, e.g. {\"gain\" gain}. Other maps use the ordinary
+  register-event-subscriber! API."
+  [runtime registration]
+  (let [middleware (when (map? registration) (:middleware registration))]
+    (if (and (seq? middleware) (#{'fn 'fn* 'clojure.core/fn} (first middleware)))
+      `(register-event-subscriber!
+        ~runtime
+        (update ~(dissoc registration :middleware :bindings) :actions (fnil conj [])
+                {:op :callback
+                 :implementation {:type :source :namespace ~(str *ns*)
+                                  :form ~(pr-str middleware) :bindings ~(:bindings registration {})}}))
+      `(register-event-subscriber! ~runtime ~registration))))
+
 (defn stop! [runtime]
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
@@ -817,10 +948,14 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(state-stream/close! (:state-stream runtime))
+                             [#(event-callbacks/close! (:event-callbacks runtime))
+                              #(rdm/close! (:rdm runtime))
+                              #(debug-stream/close! (:debug-stream runtime))
+                              #(state-stream/close! (:state-stream runtime))
                               #(projection/clear! (:browser-projections runtime))
                               #(output-scheduler/close! (:publisher runtime))
                               #(effect-faults/close! (:effect-logs runtime))
+                              #(duplex/stop! (:audio-returns runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -981,6 +1116,28 @@
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view)))
 
+(defn rdm-action!
+  "Explicit, independently owned RDM service. Status never touches a device."
+  [runtime operation payload]
+  (if (= :status operation)
+    (assoc (rdm/status (:rdm runtime)) :runtime-id (:id runtime)
+           :epoch (get-in @(:state runtime) [:model :epoch]))
+    (let [identity (locking (:lock runtime)
+                     (let [epoch (get-in @(:state runtime) [:model :epoch])]
+                       (when-not (and @(:running runtime)
+                                      (= (:runtime-id payload) (:id runtime))
+                                      (= (:expected-epoch payload) epoch))
+                         (throw (ex-info "RDM action belongs to a previous show session" {})))
+                       {:runtime-id (:id runtime) :expected-epoch epoch}))]
+      (case operation
+        :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
+        :disconnect (rdm/disconnect! (:rdm runtime))
+        :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
+        (:associate :unassociate :adopt)
+        (deref (submit! runtime :rdm-update (merge payload identity {:operation operation})) 5000 {:status :pending})
+        (:discover :read :command) (rdm/submit! (:rdm runtime) operation payload)
+        (throw (ex-info "Unknown RDM action" {:operation operation}))))))
+
 (defn fixture-action!
   "Fixture library operations; publication and patching join the owner queue."
   [runtime operation payload]
@@ -1021,6 +1178,15 @@
     :status (assoc (audio/status (connections/audio (:connections runtime)))
                    :received-event-count (get-in @(:state runtime) [:model :variables :audio :event-count] 0))
     :inputs (audio/list-inputs)
+    :return-mixers (duplex/mixers)
+    :return-status (duplex/status (:audio-returns runtime))
+    :return-start (session-operation! runtime payload
+                    (fn [_] (duplex/start! (:audio-returns runtime) (:model @(:state runtime))
+                                           #(get @(:state runtime) :model) #(now-ms runtime)
+                                           (:open-audio-returns! runtime))))
+    :return-stop (let [manager (:audio-returns runtime)
+                       id (session-operation! runtime payload (fn [_] (:session (duplex/status manager))))]
+                   (duplex/stop! manager id))
     :start (session-operation! runtime payload
                                (fn [config]
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))
@@ -1161,6 +1327,8 @@
   "Create the portable Ring application for this explicitly owned runtime."
   [runtime]
   (web/app {:snapshot! #(browser-snapshot runtime %)
+            :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
+            :debug-stream! #(debug-stream/response (:debug-stream runtime) %)
             :state-stream! #(state-stream/response (:state-stream runtime) %)
             :definition! (fn [kind id]
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
@@ -1183,6 +1351,7 @@
             :chat-history! #(agents/history (agent-manager runtime))
             :chat-select! #(agents/select-conversation! (agent-manager runtime) %)
             :fixture! #(fixture-action! runtime %1 %2)
+            :rdm! #(rdm-action! runtime %1 %2)
             :sync! #(sync-action! runtime %1 %2)
             :waveform! #(waveform-action! runtime %1 %2)
             :expressive! (fn [payload]
@@ -1240,7 +1409,7 @@
   [args]
   (when (odd? (count args))
     (throw (ex-info "Studio options require flag/value pairs" {})))
-  (let [allowed #{"--host" "--port" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
+  (let [allowed #{"--host" "--port" "--trust-event-callbacks" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
         options (reduce (fn [result [flag value]]
                           (when-not (allowed flag)
                             (throw (ex-info "Unknown Studio option" {:option flag})))
@@ -1257,6 +1426,8 @@
                         (when-not (<= minimum value 65535)
                           (throw (ex-info "Port is out of range" {:option flag :value value})))
                         value))]
+    (when-not (#{"true" "false"} (get options "--trust-event-callbacks" "false"))
+      (throw (ex-info "--trust-event-callbacks must be true or false" {})))
     (when-not (#{"preview" "ola" "artnet"} output)
       (throw (ex-info "--output must be preview, ola or artnet" {})))
     (when (or (and ola? (not= output "ola")) (and artnet? (not= output "artnet")))
@@ -1264,6 +1435,8 @@
     (when (and (= output "artnet") (not (seq (get options "--artnet-host"))))
       (throw (ex-info "Direct Art-Net requires --artnet-host" {})))
     (cond-> {:host (get options "--host" "127.0.0.1") :port (port-number "--port" "8500" 0)}
+      (contains? options "--trust-event-callbacks")
+      (assoc :event-callback-options {:trusted-source? (= "true" (get options "--trust-event-callbacks"))})
       (= output "ola") (assoc :ola {:host (get options "--ola-host" "127.0.0.1")
                                      :port (port-number "--ola-port" "9010" 1)})
       (= output "artnet") (assoc :artnet {:host (get options "--artnet-host")

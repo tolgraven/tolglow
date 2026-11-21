@@ -189,14 +189,15 @@
 (defn publish!
   "Publish one committed model to the reactive graph. Watcher actions remain
   queued until drain-actions! on the host's next cycle. Call between restores."
-  [connections model]
+  ([connections model] (publish! connections model false))
+  ([connections model trace?]
   (let [{:keys [bundle generation restoring?]} (live-state connections)]
     (when restoring? (fail! :restoring "Cannot publish during connection restoration"))
-    (let [result (graph/publish! (:reactive bundle) model)]
+    (let [result ((if trace? graph/publish-traced! graph/publish!) (:reactive bundle) model)]
       (locking (:lock connections)
         (when (= generation (:generation (live-state connections)))
           (swap! (:state connections) assoc :model model :integrations (or (:integrations model) {}))))
-      result)))
+      result))))
 
 (defn drain-actions! [connections]
   (let [{:keys [bundle restoring?]} (live-state connections)]
