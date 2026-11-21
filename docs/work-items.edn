@@ -265,7 +265,7 @@
    :acceptance ["Differently placed/oriented heads run varying world-space aim effects through the normal host and renderer"
                 "Every head and physical channel matches independent geometry/blending/calibration reference across opacity0/1, fades and competing priorities"
                 "Record serial/bounded-worker frame distributions and separate aiming/packing diagnostics with exact source/hardware provenance"]
-   :evidence ["All seven 64-head lanes passed a complete 20-step opacity cycle locally before the reference module moved into Afterglow"
+   :evidence ["All seven 64-head lanes passed the full20-step opacity cycle through Lein at clean4bcaff1 + Afterglowfcfd6be:64uniquepositions/rotations,24effects,all48heads beyond index15 verified"
               "Independent reference exposed missing packed pan history after zero opacity; Afterglow PR13 merged eeb04cd, regression red before fix, render/IR 46/744 and parity 320/3718 green"
               "Optional 128-head scalar host hit the real 500ms worker timeout on the loaded shared machine; retain as failed evidence, dedicated runner timing pending"
               "Mathematical geometry/physical-channel reference lives in Afterglow dev; Tolglow retains declarative effects, cues, admission, host and paired workflow"]}
