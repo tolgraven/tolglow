@@ -31,6 +31,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | Document | Purpose |
 | --- | --- |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
+| [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
@@ -70,7 +71,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
-| [Sync](sync-progress.md) | Selected clock and explicit MIDI/Beat Link/Live sessions |
+| [Sync](sync-progress.md) | Selected clock and explicit MIDI, Pro DJ Link and Live bridge sessions |
+| [Ableton Link and paused lighting](ableton-link.md) | Follow transport, match tempo and phase, set a pause look and restore the pairing |
 | [Runtime replay](runtime-replay.md) | Checked-in command/frame recording and deterministic output gate |
 | [Live routing](live-routing.md) | Typed musical patch graph, source research and host limits |
 | [Development workspace](product/development-workspace.md) | Popup REPL, source/scratch editing, agent branches, reload and Docker terminal |

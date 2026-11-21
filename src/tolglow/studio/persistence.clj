@@ -21,10 +21,12 @@
             [tolglow.studio.agents :as agents]
             [tolglow.studio.fixture-service :as fixture-service]
             [tolglow.studio.rig :as rig]
+            [tolglow.studio.event-subscribers :as event-subscribers]
             [tolglow.studio.sync :as sync]
             [tolglow.studio.repl-manager :as repl-manager]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.output.pause-look :as pause-look]
             [tolglow.studio.routing :as routing]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
@@ -34,7 +36,7 @@
 (def max-document-characters (* 16 1024 1024))
 (def ^:private model-keys
   #{:show-id :epoch :revision :time-ms :registry :instances :pages :variables
-    :master :blackout? :transport :control :rig :compositions :composition-runs
+    :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
     :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors})
 (def ^:private secret-keys
@@ -113,7 +115,7 @@
   (let [path [:instances id]
         definition (:definition instance)]
     (check! (and (string? id) (= id (:id instance)) (map? instance)
-                 (identifier? (:cue-id instance))
+                 (or (identifier? (:cue-id instance)) (and (contains? instance :cue-id) (nil? (:cue-id instance))))
                  (= (:effect-id instance) (:id definition))
                  (= (:effect-version instance) (:version definition))
                  (map? (:params instance)) (contains? instance :state)
@@ -240,6 +242,8 @@
     (try (expressive/normalize-config (get-in model [:settings :expressive]))
          (catch clojure.lang.ExceptionInfo error
            (check-errors! (:errors (ex-data error)) [:settings :expressive]))))
+  (when (contains? (get-in model [:settings :output] {}) :pause-look)
+    (pause-look/normalize (get-in model [:settings :output :pause-look])))
   (when (contains? (get-in model [:settings :output] {}) :presentation)
     (output-scheduler/validate-options (get-in model [:settings :output :presentation])))
   (validate-registry! (:registry model))
@@ -284,6 +288,7 @@
     (get-in model [:integrations :fixtures]) (update-in [:integrations :fixtures] fixture-service/validate-state)
     (get-in model [:integrations :sync]) (update-in [:integrations :sync] sync/validate-state)
     (get-in model [:integrations :repl]) (update-in [:integrations :repl] repl-manager/validate-state)
+    (contains? model :event-subscribers) (update :event-subscribers event-subscribers/validate-state)
     (contains? model :reactive) (update :reactive reactive-registry/validate-registry)))
 
 (defn validate-frame-output
@@ -418,6 +423,7 @@
                 (:responses saved) (update :responses #(remap-references % ids owners))
                 (:modulation saved) (update :modulation modulation/restore-state
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})
+                (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))

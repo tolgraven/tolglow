@@ -1,7 +1,7 @@
 # Clock and Live integration boundary
 
 The new control clock is immutable data in `afterglow.control.clock`.
-`tolglow.studio.sync` owns explicit MIDI, Pro DJ Link and companion Live bridge
+`tolglow.studio.sync` owns explicit MIDI, Pro DJ Link, Ableton Link and companion Live bridge
 resources. Requiring either namespace, validating a configuration or restoring
 saved settings does not open a device, register a Beat Link listener or connect
 to Live. The studio supplies its logical `now-ms` clock when creating a manager;
@@ -15,7 +15,7 @@ These protocols are different:
 | MIDI Clock | 24 pulses per quarter note, Start, Continue, Stop and Song Position Pointer | Pure decoding and injected capture tests; physical ports unverified |
 | Pro DJ Link through Beat Link 8 | Player announcements, beat BPM/phase and optional player status | Actual library packet getters tested; network/hardware connection unverified |
 | Ableton Live companion bridge | Song tempo/playhead, selected clip position/recording state, MIDI notes/CC, acknowledged note edits and existing Drum Rack chain feedback | Loopback HTTP and injected LiveAPI tests; actual Max/Live host acceptance unverified |
-| Ableton Link | Distributed musical phase/tempo shared by Link applications | **Not implemented by Beat Link or the Live bridge** |
+| Ableton Link through local Carabiner | Session beat, tempo, peers and optional shared start/stop | [Configuration, pause lighting and qualification](ableton-link.md) |
 
 `afterglow.dj-link` was read as reference but is not required: its legacy global
 listeners and mutable synchronization mechanisms are not part of this boundary.
