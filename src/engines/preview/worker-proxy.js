@@ -2,6 +2,7 @@ import {RigEditorInput} from './editor.js';
 import * as THREE from 'three';
 import {SceneRenderer} from './scene-renderer.js';
 import {cameraControls, cameraPreset} from './camera.js';
+import {PreviewActivity} from './preview-activity.js';
 import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
@@ -17,8 +18,8 @@ export class WorkerRoomPreview {
   constructor(canvas, status, options = {}) {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.disposed = false;
     this._ready = false; this.presented = false; this.room = [12, 5, 10]; this.snapshot = null;
-    this.identity = showIdentity(null); this.visible = true; this.paused = false;
-    this.fogAmount = .3; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
+    this.identity = showIdentity(null); this.visible = false; this.generation = 0; this.paused = false;
+    this.lightingMode = 'hold'; this.fogAmount = .3; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
@@ -27,43 +28,61 @@ export class WorkerRoomPreview {
     this.controls.addEventListener('change', () => this.sendState());
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)'); this.coarsePointer = matchMedia('(pointer: coarse)');
     const signal = this.abort.signal;
-    document.addEventListener('visibilitychange', () => this.sendState(), {signal});
     this.reducedMotion.addEventListener('change', () => {this.navigation?.notify(); this.sendState();}, {signal});
     this.coarsePointer.addEventListener('change', () => this.sendState(), {signal});
     this.navigation = new CameraNavigator({camera: this.camera, controls: this.controls, canvas,
       room: () => this.room, snapshot: () => this.snapshot,
-      active: () => !this.paused && !this.disposed && !document.hidden && this.visible && !!canvas.getClientRects().length,
+      active: () => this.visible && !this.paused && !this.disposed,
       reducedMotion: () => this.reducedMotion.matches, changed: () => this.sendState()});
     this.navigation.subscribe(state => this.notifyNavigation(state));
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
-    this.intersectionObserver = new IntersectionObserver(entries => {
-      this.visible = entries.some(entry => entry.isIntersecting); this.sendState();
-    }); this.intersectionObserver.observe(canvas);
+    this.activity = new PreviewActivity(canvas, active => this.changeActivity(active));
     this.setStatus('Starting background room renderer…');
     try {
       const createWorker = options.workerFactory || (url => new Worker(url, {type: 'module', name: 'tolglow-room-preview'}));
       this.worker = createWorker(new URL('./preview-worker.js', import.meta.url));
-      this.channel = new LatestStateChannel(message => this.worker.postMessage(message));
+      this.channel = new LatestStateChannel(message => {
+        const snapshot = message.state.snapshot;
+        const changed = snapshot !== this.lastSentSnapshot;
+        const projection = changed && snapshot ? {...snapshot} : null;
+        if (projection && snapshot.rig === this.lastSentSnapshot?.rig) delete projection.rig;
+        this.worker.postMessage({...message, state: {...message.state, snapshot: projection}});
+        this.lastSentSnapshot = snapshot;
+      });
       this.worker.onmessage = event => this.receive(event.data);
       this.worker.onerror = event => {event.preventDefault(); this.fail(event.message || 'Background renderer failed');};
       this.worker.onmessageerror = () => this.fail('Background renderer message could not be read');
-      const checkStartup = () => {
+      this.checkStartup = () => {
         if (this.ready || this.disposed || this.fallback) return;
-        if (!document.hidden && this.visible && !this.paused) this.fail('Background renderer did not produce its first frame');
-        else this.startupTimer = setTimeout(checkStartup, options.startupTimeout ?? 45000);
+        if (this.visible && !this.paused) this.fail('Background renderer did not produce its first frame');
       };
-      this.startupTimer = setTimeout(checkStartup, options.startupTimeout ?? 45000);
+      this.startupTimeout = options.startupTimeout ?? 45000;
       this.resize();
     } catch (error) {this.fail(error);}
   }
   get ready() {return this.fallback ? this.fallback.ready : this._ready;}
   setStatus(text) {if (this.status && this.status.textContent !== text) this.status.textContent = text;}
+  changeActivity(active) {
+    if (this.disposed || this.fallback) return;
+    this.visible = active; ++this.generation;
+    this.navigation.refreshActivity(); clearTimeout(this.startupTimer);
+    // Out-of-band cancellation also invalidates work already waiting on a GPU fence.
+    this.worker?.postMessage({type: 'activity', active, generation: this.generation});
+    this.lastSentSnapshot = null;
+    if (active) {
+      if (!this.ready && !this.paused) this.startupTimer = setTimeout(this.checkStartup, this.startupTimeout);
+      this.sendState();
+    } else {
+      if (this.channel) this.channel.pending = null;
+      this.actions = []; this.drawRequest?.resolve(false); this.drawRequest = null;
+    }
+  }
   sendState() {
-    if (this.disposed || this.fallback || !this.channel) return;
+    if (this.disposed || this.fallback || !this.channel || !this.visible) return;
     const bounds = this.canvas.getBoundingClientRect();
     this.camera.aspect = Math.max(1, bounds.width) / Math.max(1, bounds.height); this.camera.updateProjectionMatrix();
-    this.channel.offer({snapshot: this.snapshot, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
-      hidden: document.hidden, visible: this.visible && !!this.canvas.getClientRects().length, paused: this.paused,
+    this.channel.offer({snapshot: this.snapshot, receivedAt: this.receivedAt, lightingMode: this.lightingMode, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
+      generation: this.generation, paused: this.paused,
       reducedMotion: this.reducedMotion.matches, coarsePointer: this.coarsePointer.matches,
       quality: this.qualityChoice, fog: this.fogAmount, workLight: this.workLight,
       camera: {position: this.camera.position.toArray(), target: this.controls.target.toArray(), up: this.camera.up.toArray(), fov: this.camera.fov, name: this.cameraName},
@@ -76,10 +95,14 @@ export class WorkerRoomPreview {
       this.actions = this.actions.filter(action => action.id > message.actionThrough); this.channel.acknowledge(message.id);
     } else if (message.type === 'status') this.setStatus(message.text);
     else if (message.type === 'render-start') {this.rendering = true; this.startedRendering = true;}
+    else if (message.type === 'render-retired') this.rendering = false;
     else if (message.type === 'error') this.fail(message.message);
     else if (message.type === 'frame') {
       this.rendering = false;
       try {
+        if (!this.visible || message.generation !== this.generation) {
+          message.bitmap.close(); this.discardedFrames++; return;
+        }
         const accepted = presentFrame(message, this.identity, this.lastFrame, bitmap => {
           // Do not claim the DOM canvas context before an actual worker frame.
           // Worker startup failure therefore leaves the same canvas available
@@ -125,12 +148,18 @@ export class WorkerRoomPreview {
     }
     // Explicit graphics projection: no chat, credentials or definitions cross
     // the render boundary, and only emitted output drives the scene.
-    this.snapshot = {'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
-      'runtime-id': snapshot['runtime-id'], editor: snapshot.editor, 'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
+    this.receivedAt = performance.timeOrigin + performance.now();
+    this.snapshot = {'runtime-id': snapshot['runtime-id'], 'time-ms': snapshot['time-ms'],
+      'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
+      'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
     const room = snapshot.rig?.room || {}; this.room = [room.width || 12, room.height || 5, room.depth || 10].map(value => clamp(Number(value) || 1, 1, 100));
     this.sendState();
   }
   resize() {if (this.fallback) return this.fallback.resize(); this.sendState();}
+  setLightingMode(mode) {
+    if (!['hold', 'interpolate'].includes(mode)) throw new RangeError('Unknown preview lighting mode');
+    this.lightingMode = mode; if (this.fallback) return this.fallback.setLightingMode(mode); this.sendState();
+  }
   setQuality(value = 'auto') {
     if (!['auto', 'low', 'mobile', 'desktop', 'high'].includes(value)) throw new Error('Unknown preview quality');
     this.qualityChoice = value; if (this.fallback) return this.fallback.setQuality(value); this.sendState();
@@ -139,7 +168,7 @@ export class WorkerRoomPreview {
   setWorkLight(value) {this.workLight = clamp(Number(value) || 0, 0, 1); if (this.fallback) return this.fallback.setWorkLight(value); this.sendState();}
   burst(options) {
     if (this.fallback) return this.fallback.burst(options);
-    if (this.actions.length >= 32) return false;
+    if (!this.visible || this.actions.length >= 32) return false;
     this.actions.push({id: ++this.actionId, type: 'burst', options}); this.sendState(); return true;
   }
   setCamera(name) {
@@ -166,11 +195,12 @@ export class WorkerRoomPreview {
     this.controls.target.fromArray(fixture.position); this.camera.position.fromArray(fixture.position).add(new THREE.Vector3(1.3, .5, 2));
     this.controls.update(); this.cameraName = 'fixture'; this.sendState(); return true;
   }
-  pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.navigation.clearInput(); this.sendState();}
-  resume() {this.paused = false; if (this.fallback) return this.fallback.resume(); this.sendState();}
+  pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.navigation.refreshActivity(); this.sendState();}
+  resume() {this.paused = false; if (this.fallback) return this.fallback.resume(); this.navigation.refreshActivity(); this.sendState();}
   draw() {
     if (this.disposed || this.error) return Promise.resolve(false);
     if (this.fallback) return Promise.resolve(this.fallback.draw() !== false);
+    if (!this.visible) return Promise.resolve(false);
     if (this.drawRequest) return this.drawRequest.promise;
     const id = ++this.actionId; let resolve; const promise = new Promise(done => {resolve = done;});
     this.drawRequest = {id, promise, resolve}; this.actions.push({id, type: 'draw'}); this.sendState(); return promise;
@@ -183,9 +213,9 @@ export class WorkerRoomPreview {
       navigation: this.getNavigationState(), camera: this.camera.position.toArray(), target: this.controls.target.toArray()};
   }
   stopProxy() {
-    clearTimeout(this.startupTimer); this.editorInput?.dispose(); this.editorInput = null;
-    this.navigation?.dispose(); this.abort.abort();
-    this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect(); this.controls.dispose(); this.channel?.close();
+    this.editorInput?.dispose(); this.editorInput = null;
+    clearTimeout(this.startupTimer); this.navigation?.dispose(); this.abort.abort();
+    this.resizeObserver?.disconnect(); this.activity?.dispose(); this.controls.dispose(); this.channel?.close();
     this.worker?.terminate(); this.worker = null;
   }
   fail(error) {
@@ -195,7 +225,7 @@ export class WorkerRoomPreview {
     if (!this.presenter && !this.startedRendering) {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
       if (this.fallback.error) {this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null; return;}
-      this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogAmount);
+      this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogAmount);
       if (this.snapshot) this.fallback.update(this.snapshot);
       this.fallback.camera.position.copy(this.camera.position); this.fallback.controls.target.copy(this.controls.target); this.fallback.controls.update();
       this.camera = this.fallback.camera; this.controls = this.fallback.controls;

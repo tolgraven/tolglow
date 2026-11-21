@@ -5,6 +5,7 @@ import {planePoint, projectPoint, pickEditor, RigEditorInput} from './editor.js'
 import {structuralKey} from './math.js';
 import {SceneRenderer} from './scene-renderer.js';
 import {RigOverlay} from './overlay.js';
+import {LightingSamples} from './lighting-samples.js';
 const bounds = {left: 0, top: 0, width: 1000, height: 800};
 const camera = new THREE.PerspectiveCamera(49, 1.25, .1, 100); camera.position.set(0, 8, 10); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
 const rig = {fixtures: [{id: 'a', position: [0, 3, 0], 'rotation-deg': [0, 0, 0]}], trusses: [{id: 't', position: [0, 4, 0], length: 4}]};
@@ -29,7 +30,7 @@ test('fixture and truss pose changes preserve actual geometry instances and cali
   assert.equal(structuralKey(rig), structuralKey(changed));
   assert.notEqual(structuralKey(rig), structuralKey({...rig, trusses: [{...rig.trusses[0], length: 6}]}));
   const root = new THREE.Group(), truss = new THREE.Group();
-  const engine = {renderer: {}, platform: {worker: true}, key: structuralKey(rig), editorOverlay: {update(){}}, options: {fixtures: 16, shadows: 0},
+  const engine = {renderer: {}, visible: true, lighting: new LightingSamples(), applyLighting: SceneRenderer.prototype.applyLighting, platform: {worker: true}, key: structuralKey(rig), editorOverlay: {update(){}}, options: {fixtures: 16, shadows: 0},
     fixtures: [{id: 'a', fixture: rig.fixtures[0], root, head: new THREE.Group(), yoke: new THREE.Group(), lensMaterial: {emissive: new THREE.Color()}}],
     trusses: [{id: 't', root: truss}], apertureUniform: {value: new Float32Array(16)}, rebuild(){throw new Error('Pose edit rebuilt scene');}};
   SceneRenderer.prototype.update.call(engine, {rig: changed});

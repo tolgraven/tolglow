@@ -218,7 +218,7 @@
      (when (:message state) [:p.rig-editor-message {:role "status"} (:message state)])]))
 (defn- editor-panel [db]
   (let [state (editor db) projection (select-keys state [:tool :plane :plane-value :snap :selection :points :selected-point])
-        show (assoc (:show db) :rig (get-in db [:ui :rig-draft]) :editor (assoc projection :closed? (get-in state [:path :closed?])))]
+        show (assoc (or (:server-presentation db) (:show db)) :rig (get-in db [:ui :rig-draft]) :editor (assoc projection :closed? (get-in state [:path :closed?])))]
     [:section.panel.rig-editor {:aria-label "Three dimensional rig and movement editor"}
      [:div.panel-top [:span.section-label "PLACE & CHOREOGRAPH"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar

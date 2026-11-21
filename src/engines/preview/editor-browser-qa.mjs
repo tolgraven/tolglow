@@ -113,7 +113,8 @@ try {
   assert.deepEqual(restored.effects.find(e => e.id === id).editor, exportState.effects.find(e => e.id === id).editor);
   assert.equal((await editor(page)).tool, 'navigate'); assert.equal((await editor(page)).points.length, 0);
   await panel.getByLabel('Saved aim paths').selectOption(id);
-  await page.evaluate(async () => {const e = document.querySelector('.rig-editor canvas').tolglowPreview; e.pause(); await e.draw();});
+  await page.locator('.rig-editor canvas').scrollIntoViewIfNeeded();
+  await page.evaluate(async () => {const e = document.querySelector('.rig-editor canvas').tolglowPreview; await e.draw();});
   const visiblePathPixels = await page.evaluate(() => {
     const source = document.querySelector('.rig-editor canvas'), copy = document.createElement('canvas'); copy.width = source.width; copy.height = source.height;
     const context = copy.getContext('2d'); context.drawImage(source, 0, 0); const pixels = context.getImageData(0, 0, copy.width, copy.height).data;
