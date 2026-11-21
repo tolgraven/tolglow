@@ -2,7 +2,7 @@
 ;; clojure -M docs/benchmarks/state-delta-bench.clj > /tmp/state-delta-report.edn
 (require '[clojure.data.json :as json]
          '[tolglow.studio :as studio]
-         '[tolglow.studio.demo :as demo])
+         '[tolglow.demo :as demo])
 
 (defn large-model []
   (let [model (demo/model)

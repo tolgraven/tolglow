@@ -3,10 +3,10 @@
             [ring.adapter.jetty :as jetty]
             [afterglow.reactive :as reactive]
             [tolglow.studio :as studio]
-            [tolglow.studio.effect-faults-test :as fault-fixtures]
-            [tolglow.studio.show-events :as show-events]
+            [tolglow.effects.faults-test :as fault-fixtures]
+            [tolglow.events :as show-events]
             [tolglow.studio.debug-stream :as debug]
-            [tolglow.studio.transit :as wire])
+            [tolglow.transit :as wire])
   (:import [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
            [java.util Date]

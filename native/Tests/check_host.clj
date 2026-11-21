@@ -1,7 +1,7 @@
 (ns tolglow-native.contract-test
   (:require [clojure.test :refer :all]
             [clojure.string :as str]
-            [tolglow.studio.sensor-osc :as wire])
+            [tolglow.sensors.osc :as wire])
   (:import [java.net DatagramSocket DatagramPacket InetAddress]))
 
 (def fixture-root "native/Core/Tests/TolglowSensorCoreTests/Fixtures/")

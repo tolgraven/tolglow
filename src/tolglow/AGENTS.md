@@ -4,6 +4,8 @@
 authoring and the new functional application. Read the root guidance
 and shared [v1 contract](../../docs/implementation-contract-v1.md).
 
+Code that configures lights, devices, saves or providers belongs in the owning show namespace. Use it directly from code, config and Studio. Keep Ring, Jetty and re-frame at the web boundary. See [public module APIs](../../docs/headless-modules.md).
+
 ## Module boundaries
 
 - `fixtures.clj` expands legacy declarative maps into actual Afterglow channels

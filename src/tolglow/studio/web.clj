@@ -6,7 +6,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [tolglow.studio.transit :as transit]
+            [tolglow.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [ring.middleware.content-type :refer [wrap-content-type]]

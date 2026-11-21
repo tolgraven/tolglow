@@ -83,7 +83,7 @@ its checked-in OSC fixture passed the real JVM decoder/owned loopback gate.
 
 The fixed OSC address is `/tolglow/sensor/v1`, with **exactly one OSC string**
 (type tags `,s`) containing UTF-8 JSON. HTTP ingestion uses the same object.
-`tolglow.studio.sensor-osc` owns strict zero-padding/UTF-8/type validation, a
+`tolglow.sensors.osc` owns strict zero-padding/UTF-8/type validation, a
 60,000-byte packet bound, JSON nesting bounds and optional explicit UDP ownership.
 No OSC bundle or numeric argument is silently reinterpreted as this format.
 
@@ -183,7 +183,7 @@ carry a fabricated authority envelope.
 
 ## Host ownership and persistence
 
-`tolglow.studio.sensors` owns only credentials, observed sessions, bounded mailbox
+`tolglow.sensors` owns only credentials, observed sessions, bounded mailbox
 and optional socket. Mappings, calibration and progress live in:
 
 ```clojure
