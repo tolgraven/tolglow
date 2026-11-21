@@ -11,7 +11,7 @@ The complete project contains:
 - `src/engines/`: specialized browser rendering engines.
 - `resources/`, `test/`, `dev/`, `bin/`: assets, behavioral tests, development tools
   and command entry points.
-- Root `project.clj` and `deps.edn`: application and build configuration.
+- Root `project.clj`: canonical application, dependency and build configuration.
 
 Keep Tolglow and Afterglow as sibling checkouts. See the
 [architecture and feature documentation](docs/README.md),
@@ -21,7 +21,7 @@ are explicit operations; starting the Studio does not activate a rig by itself.
 
 ## Run the studio
 
-With the Clojure CLI and Node versions listed in
+With Leiningen 2.13.1 and the Java/Node versions listed in
 [dependency upgrades](docs/dependency-upgrades.md):
 
 ```sh
@@ -34,8 +34,8 @@ npm run studio:build
 ```
 
 Open `http://127.0.0.1:8500`. The local `../afterglow` dependency uses the fork's
-source directly. The Leiningen project derives its dependencies from the same
-manifests and checkout, rather than requiring an outdated published fork jar.
+source directly; `AFTERGLOW_ROOT` selects another paired checkout. The Leiningen
+project merges explicit application versions with the fork's project data.
 
 ```sh
 ./bin/test pure
@@ -43,7 +43,7 @@ manifests and checkout, rather than requiring an outdated published fork jar.
 npm run studio:test
 npm run preview:test
 npm run studio:build
-clojure -M:check-roadmap
+lein check-roadmap
 ```
 
 The parity lane includes pure tests. Browser workflows, Docker jobs, physical

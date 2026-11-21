@@ -6,8 +6,5 @@ heads="${1:-64}"
 frames="${2:-80}"
 oracle="$(mktemp)"
 trap 'rm -f "$oracle"' EXIT
-afterglow_profile_root=$(cd "${AFTERGLOW_ROOT:-../afterglow}" && pwd)
-profile_deps=$(python3 -c 'import json,sys; print("{:aliases {:mover-shader {:extra-paths [\"dev\"]}} :deps {tolgraven/afterglow {:local/root " + json.dumps(sys.argv[1]) + "}}}")' "$afterglow_profile_root")
-export AFTERGLOW_ROOT="$afterglow_profile_root"
-clojure -J-Xmx384m -Sdeps "$profile_deps" -M:mover-shader -m tolglow.mover-oracle "$heads" "$frames" > "$oracle"
+lein run -m tolglow.mover-oracle "$heads" "$frames" > "$oracle"
 node dev/gpu/profile-movers.cjs "$oracle"

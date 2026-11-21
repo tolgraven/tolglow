@@ -2,8 +2,8 @@
 
 Tolglow is a complete application project. JVM namespaces live under
 `src/tolglow/`; resources, tests, development support and commands live under
-`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` and `deps.edn`
-describe application/build entry points. Browser application source remains
+`resources/`, `test/`, `dev/` and `bin/`. The root `project.clj` owns application,
+dependency and build profiles. Browser application source remains
 `src/studio/`, and specialized rendering engines remain `src/engines/`.
 
 The working tree now contains executable v1 modules: an explicit-state runtime,

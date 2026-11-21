@@ -16,8 +16,9 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 - The full project has JVM application source under `src/tolglow/`, with
   `resources/`, `test/`, `dev/`, `bin/`, and a root `project.clj` application
   manifest. `src/` is the JVM classpath source root; the repository root is not.
-  The new browser source is under `src/studio/`. `deps.edn` now supports the
-  application and tests, including a local `../afterglow` dependency. Both test
+  The browser source is under `src/studio/`. `project.clj` is the canonical
+  application/test manifest, including paired `../afterglow` sources (override
+  with `AFTERGLOW_ROOT`). Both test
   lanes consume new fork APIs; the old default-master pin is not sufficient.
 - The studio frontend is **ClojureScript with re-frame and Reagent**. The backend
   is **Ring**, with a separate Jetty server adapter. Keep domain transitions in
@@ -30,8 +31,8 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 ## Development contract
 
-- Run `./bin/test pure` and applicable `./bin/test parity` against the paired
-  fork. Run `clojure -M:check-roadmap` after tracking changes. Frontend changes
+- Run `lein test-pure` and applicable `lein test` against the paired
+  fork. Run `lein check-roadmap` after tracking changes. Frontend changes
   require the configured production build plus fresh browser interaction
   checks; desktop viewport emulation does not prove real iPad Safari behavior.
   See [testing](docs/testing.md) for exact scope and observed results.
