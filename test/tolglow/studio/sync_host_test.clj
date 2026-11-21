@@ -4,7 +4,8 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.connections :as connections]
-            [tolglow.studio.sync :as sync]))
+            [afterglow.sync :as sync]
+            [afterglow.sync.session :as session]))
 
 (defn- fixture []
   (let [opened (promise) closed (atom 0)
@@ -32,12 +33,12 @@
             manager (connections/sync (:connections runtime))]
         (message! receive! 0 [0xfa])
         (doseq [i (range 25)] (message! receive! (* i (/ 500.0 24)) [0xf8]))
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (show/tick! runtime 500)
         (is (< (Math/abs (- 1.0 (get-in (show/snapshot runtime) [:transport :beat]))) 1.0e-9))
         (is (true? (get-in (show/snapshot runtime) [:transport :playing?])))
         (message! receive! 500 [0xfc])
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (show/tick! runtime 1000)
         (is (= 1.0 (get-in (show/snapshot runtime) [:transport :beat])))
         (is (false? (get-in (show/snapshot runtime) [:transport :playing?]))))
@@ -51,14 +52,14 @@
                                        :live {:mappings {60 {:cue-id :ember :mode :held}}}})
             manager (connections/sync (:connections runtime))]
         (message! receive! 0 [0x90 60 100])
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (show/tick! runtime 100)
-        (is (sync/flush! manager))
+        (is (session/flush! manager))
         (let [id (:id (first (:instances (show/snapshot runtime))))]
           (is (string? id))
           (is (= :held (get-in @(:state runtime) [:model :instances id :launch-mode])))
           (message! receive! 100 [0x80 60 0])
-          (is (sync/flush! manager))
+          (is (session/flush! manager))
           (show/tick! runtime 200)
           (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))
           (show/tick! runtime 1200)
@@ -164,15 +165,15 @@
             (host! {:edit true :pitch lane :velocity 1 :beat 0})
             (is (:accepted? (host! {:play true :pitch pitch :arrangement true})))
             (is (:accepted? (host! {:play true :pitch lane :arrangement true})))
-            (is (sync/flush! manager))
+            (is (session/flush! manager))
             (show/tick! runtime)
-            (is (sync/flush! manager))
+            (is (session/flush! manager))
             (show/tick! runtime)
             (let [instance (last (sort-by :order (vals (get-in @(:state runtime) [:model :instances]))))]
               (is (= :ember (:cue-id instance)))
               (is (= 0.5 (get-in instance [:params :level])))
               (is (:accepted? (host! {:play true :pitch pitch :release true :arrangement true})))
-              (is (sync/flush! manager))
+              (is (session/flush! manager))
               (show/tick! runtime)
               (is (= :releasing (get-in @(:state runtime) [:model :instances (:id instance) :phase]))))
             (is (= 3 (count (host! {:notes true})))))))
