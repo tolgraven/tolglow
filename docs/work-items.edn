@@ -86,6 +86,30 @@
    :evidence ["Afterglow 36abc94, Chromium 156 / SwiftShader: 64 and 128 heads across 80 changing frames per rig."
               "All reachability flags matched, 10 and 20 DMX bytes differed, at most one 16-bit code."
               "docs/benchmarks/2026-11-21-moving-head-shader.json"]}
+  {:id :render/afterglow-shader-execution
+   :title "Run Afterglow's calibrated fixture shader in a headless JVM or WebGL"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/native_gpu.clj"
+           "afterglow/test-native/afterglow/render/native_gpu_test.clj"
+           "afterglow/doc/architecture/moving-head-shaders.md"]
+   :depends-on [:render/calibrated-moving-head-shader]
+   :acceptance ["Both implementations accept world targets and directions with explicit previous pan"
+                "Verify actual shader readback against the CPU on Linux and macOS"
+                "Tolglow consumes the implementation from the paired dependency"]
+   :evidence ["Afterglow PRs 16, 19, 20 and 22; Tolglow PR 43"
+              "64 moving heads over 12 CPU-history frames, plus mixed movement, limits and lifecycle cases"
+              "Mesa llvmpipe and Apple Software Renderer executed the native tests; physical GPU timing remains open"]}
+  {:id :render/named-glsl-fields
+   :title "Compile named lighting fields into one transform-feedback shader"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/ir.clj" "afterglow/test/afterglow/render/ir_test.clj"
+           "afterglow/doc/architecture/numeric-shader-fields.md"]
+   :depends-on [:render/gpu-experiment-v1]
+   :acceptance ["The CPU and GPU accept the same named expression map"
+                "The shader reports per-field offsets and types plus captured clock and parameter bindings"]
+   :evidence ["Afterglow PR 23; Lein IR tests, 11 tests and 118 assertions"
+              "Chromium SwiftShader read back aim, color and focus for 2,048 positions; 14,336 exact comparisons against evaluate-batch in an arithmetic workload"]}
+
   {:id :render/physical-output-in-afterglow
    :title "Own physical DMX publication and fixture protocol handling in Afterglow"
    :kind :implementation :status :done :owner nil
