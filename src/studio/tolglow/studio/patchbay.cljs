@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.audio-returns :as audio-returns]
             [tolglow.studio.modulation :as modulation]))
 
 (def defaults {:id "performance" :revision 0 :routes [] :dirty? false :edit-revision 0
@@ -260,7 +261,7 @@
           [:span.connection-chip {:class (when (:enabled? remote) "active")} [:i] (if (:enabled? remote) "Routing on" "Routing off")]]
          [:div.form-body
           [:p.small.muted "Connect observed notes, controllers and audio features to lighting parameters. Sources must be connected in the controls above."]
-          [:p.small.muted "Live sources currently cover the companion device’s routed MIDI track. Session-wide notes, automation and per-chain audio are not available yet."]
+          [audio-returns/panel]
           [:div.patch-toolbar
            [:label [:span "Patch name"] [:input {:value (:id form) :on-change #(rf/dispatch-sync [:patchbay/edit [:id] (value-of %)])}]]
            [:button.button {:disabled busy? :on-click #(rf/dispatch [:patchbay/load])} "Refresh sources"]

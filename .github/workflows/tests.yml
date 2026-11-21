@@ -118,7 +118,7 @@ jobs:
           lein uberjar
       - name: Test the Live bridge boundaries
         working-directory: tolglow
-        run: node --test src/tolglow/integrations/live_bridge/test/*.test.js
+        run: node --test src/tolglow/integrations/live_bridge/test/*.test.js src/tolglow/integrations/audio_bridge/*.test.cjs
       - name: Test the browser display bridge
         working-directory: tolglow
         run: node --test src/tolglow/integrations/display_bridge/*.test.js
