@@ -26,7 +26,7 @@
                                 (or (nil? targets) (contains? targets (:id %)))) fixtures)]
     {:target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures)}))
 
-(defn- output-groups [fixtures selected outputs]
+(defn- output-groups [fixtures selected outputs prepare-group]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
   (let [groups (reduce (fn [groups output]
@@ -41,7 +41,11 @@
                                  (conj groups {:target-ids target-ids :positions positions :blend (:blend output)
                                                :expressions {(:attribute output) (:expression output)}})))))
                        [] outputs)]
-    (mapv #(assoc % :plan (ir/compile-batch (:expressions %))) groups)))
+    (mapv (fn [{:keys [expressions positions] :as group}]
+            (let [plan (ir/compile-batch expressions)]
+              (cond-> (assoc group :plan plan)
+                prepare-group (assoc :prepared (prepare-group expressions positions plan)))))
+          groups)))
 
 (defn- finish-fields!
   "Validate and optionally scale exclusively owned IR results before publication."
@@ -59,6 +63,20 @@
                        "Computed fixture output must be finite and within [0,1]")))
           (when (not= 1.0 scale) (aset-double values index value))))))
   outputs)
+
+(defn- contribution [{:keys [target-ids positions plan blend prepared expressions]} env envelope-result envelope-attributes]
+  (let [batch {:target-ids target-ids :blend blend}]
+    {:kind :batch
+     :batch
+     (if prepared
+       (assoc batch :field-request
+              {:group prepared :env (dissoc env :state)
+               :scales (when envelope-result
+                         (into {} (for [attribute (keys expressions) :when (envelope-attributes attribute)]
+                                    [attribute (:value envelope-result)])))})
+       (let [result (ir/evaluate-batch plan env positions)]
+         (finish-fields! (:outputs result) envelope-result envelope-attributes)
+         (merge result batch)))}))
 
 (defn- floating-value? [value]
   (if (vector? value) (every? floating-value? value)
@@ -113,7 +131,7 @@
   Responses work unchanged: (comp (compile-effect definition fixtures)
   response-middleware). The canonical model's parameters are not modified."
   ([definition fixtures] (compile-effect definition fixtures {}))
-  ([definition fixtures {:keys [enabled?] :or {enabled? true}}]
+  ([definition fixtures {:keys [enabled? prepare-group] :or {enabled? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
    (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
@@ -123,7 +141,7 @@
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
        (with-meta (compiler/compile-effect definition) {:backend :ordinary :fallback-reasons reasons})
-       (let [groups (output-groups fixtures selected outputs)
+       (let [groups (output-groups fixtures selected outputs prepare-group)
              scalar-step (compiler/compile-effect definition)
              envelope-attributes (set envelope-attributes)]
          (with-meta
@@ -152,16 +170,13 @@
                         :meter (time/normalize-meter (:timing-meter instance))}
                    exact? (exact-environment? numeric env)
                    blocks (if (or done? exact?) []
-                              (mapv (fn [{:keys [target-ids positions plan blend]}]
-                                      (let [batch (ir/evaluate-batch plan env positions)]
-                                        (finish-fields! (:outputs batch) envelope-result envelope-attributes)
-                                        {:kind :batch :batch (assoc batch :target-ids target-ids :blend blend)})) groups))]
+                              (mapv #(contribution % env envelope-result envelope-attributes) groups))]
                (if exact? (scalar-step context)
                    (-> context
                        (assoc :state state :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))
-           {:backend :batch :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
+           {:backend (if prepare-group :deferred :batch) :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
             :groups (count groups)}))))))
 
 (defn compiler-for-rig
