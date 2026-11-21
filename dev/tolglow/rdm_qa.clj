@@ -2,7 +2,7 @@
   "Explicit browser QA host with preview output and an owned loopback OLA peer."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [tolglow.studio :as studio]
+            [tolglow.application :as app]
             [tolglow.rig.rdm-test :as peer]))
 
 (defn -main [& [port connection-file]]
@@ -11,8 +11,8 @@
         physical (atom {})
         ola (peer/loopback-peer (partial peer/fixture-peer physical))]
     (try
-      (let [runtime (studio/start! {:port port :workspace-options nil})
-            close! #(do (studio/stop! runtime) ((:close! ola)))]
+      (let [runtime (app/start! (assoc (app/default-config) :web-server {:port port} :show {:workspace-options nil}))
+            close! #(do (app/stop! runtime) ((:close! ola)))]
         (.addShutdownHook (Runtime/getRuntime) (Thread. close!))
         (io/make-parents connection-file)
         (spit connection-file

@@ -1,7 +1,18 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :foundation/javascript-source-layout
+ [{:id :application/configured-startup
+   :kind :implementation :status :done :owner nil
+   :title "Start a headless or web show from ordered Tolglow config modules"
+   :paths ["tolglow/src/tolglow/modules.clj" "tolglow/src/tolglow/application.clj" "tolglow/src/tolglow/show.clj"
+           "tolglow/test/tolglow/application_test.clj" "tolglow/docs/application-startup.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["A configured module runs once in original component/module/post order"
+                "A headless show advances real frames without a web server"
+                "Optional Studio connects to the same show and shutdown unwinds acquired modules"]
+   :evidence ["Leiningen application tests cover namespace registration, ordered startup/rollback, headless device and agent settings, Transit restore into a Ring server, and shutdown."
+              "Fresh-process headless smoke advanced frames with the Ring, Reitit and Studio namespaces unloaded. Normal lein run read TOLGLOW_CONFIG and served the advancing show on its allocated port."]}
+  {:id :foundation/javascript-source-layout
    :title "Keep the Clojure source tree independent of JavaScript engines and packaged device assets"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/" "tolglow/resources/devices/" "tolglow/test/js/"

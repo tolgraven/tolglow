@@ -2,7 +2,9 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.edn :as edn]
             [clojure.data.json :as json]
+            [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.application :as app]
             [tolglow.fixtures.definitions-test :as catalog]
             [tolglow.integrations.fixtures-test :as fixture-data])
   (:import [java.io ByteArrayInputStream]))
@@ -31,7 +33,7 @@
    :channels {:red 1 :green 2 :blue 3 :white 4 :dimmer 5} :rgbw-policy :none})
 
 (deftest catalog-import-is-a-draft-until-explicit-publication-and-patching
-  (let [calls (atom []) runtime (studio/start! {:port 0 :fixture-options {:provider (catalog/provider calls)}})]
+  (let [calls (atom []) runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:fixture-options {:provider (catalog/provider calls)}}))]
     (try
       (let [handler (studio/handler runtime) initial-rig (rig runtime) initial-types (fixture-types runtime)]
         (is (= 200 (:status (request handler :get "/api/fixtures" {}))))
@@ -50,7 +52,7 @@
           (is (some #(= "unmapped-channel" (:code %)) (get-in result [:data :diagnostics])))
           (is (= initial-rig (rig runtime)))
           (is (= initial-types (fixture-types runtime)))
-          (is (empty? (:instances (studio/snapshot runtime))))
+          (is (empty? (:instances (show/snapshot runtime))))
           ;; Typed source can retain a namespaced ID while the JSON patch command
           ;; addresses that type by its exact wire spelling.
           (let [reviewed (-> definition (assoc :id :library/imported-head)
@@ -63,12 +65,12 @@
                                                          {:calibration (:calibration reviewed)}) [:data :status])))
             (is (= (:channels reviewed) (:channels (last (:fixtures (rig runtime))))))
             (is (= :library/imported-head (:fixture-type-id (last (:fixtures (rig runtime))))))
-            (is (empty? (:instances (studio/snapshot runtime))))))
+            (is (empty? (:instances (show/snapshot runtime))))))
         (is (= 2 (count @calls)) "Offline search/import never fetches another document"))
-      (finally (studio/stop! runtime)))))
+      (finally (app/stop! runtime)))))
 
 (deftest manual-types-preserve-human-labels-and-rig-patches-are-atomic
-  (let [runtime (studio/start! {:port 0 :fixture-options {:provider no-network}})]
+  (let [runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:fixture-options {:provider no-network}}))]
     (try
       (let [handler (studio/handler runtime)
             original (rig runtime)]
@@ -76,7 +78,7 @@
         (is (= rgbw-type (get (fixture-types runtime) "rgbw-par")))
         (is (= original (rig runtime)))
         (is (= "Five channel RGBW + dimmer"
-               (:mode (first (filter #(= "rgbw-par" (:id %)) (:fixture-types (studio/snapshot runtime)))))))
+               (:mode (first (filter #(= "rgbw-par" (:id %)) (:fixture-types (show/snapshot runtime)))))))
         (is (= "accepted" (get-in (patch! handler "rgbw-par" "manual-par" 200
                                                   {:rgbw-policy "extract-min"}) [:data :status])))
         (let [fixture (last (:fixtures (rig runtime)))]
@@ -106,11 +108,11 @@
               rejected (publish! handler (assoc rgbw-type :name "Changed without a new version"))]
           (is (= 422 (:status rejected)))
           (is (= before (fixture-types runtime))))
-        (is (empty? (:instances (studio/snapshot runtime)))))
-      (finally (studio/stop! runtime)))))
+        (is (empty? (:instances (show/snapshot runtime)))))
+      (finally (app/stop! runtime)))))
 
 (deftest unsupported-upload-keeps-typed-candidate-and-diagnostics-without-show-mutation
-  (let [runtime (studio/start! {:port 0 :fixture-options {:provider no-network}})]
+  (let [runtime (app/start! (assoc (app/default-config) :web-server {:port 0} :show {:fixture-options {:provider no-network}}))]
     (try
       (let [handler (studio/handler runtime) original (rig runtime) types (fixture-types runtime)
             source (assoc fixture-data/ofl :name "Matrix Mode with Human Labels"
@@ -137,4 +139,4 @@
           (is (= "mode-required" (get-in choices [:data :diagnostics 0 :code])))
           (is (true? (get-in selected [:data :valid?])))
           (is (= "Compact RGBW" (:mode (edn/read-string (get-in selected [:data :source])))))))
-      (finally (studio/stop! runtime)))))
+      (finally (app/stop! runtime)))))
