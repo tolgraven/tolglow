@@ -5,6 +5,7 @@
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
             [tolglow.studio.events :as events]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.chat]))
@@ -186,13 +187,56 @@
     (is (nil? (events/merge-projection show (assoc partial :revision 4))))))
 
 (deftest mismatched-partial-requests-a-full-snapshot
-  (let [db (assoc-in base [:show :runtime-id] "current")
+  (let [db (-> base (assoc-in [:show :runtime-id] "current")
+              (assoc :server-projection {:token "accepted-base" :view (:show base)}))
         rejected (transition db [:studio/state {:partial? true :runtime-id "old" :epoch 7 :revision 3}])
         url (events/state-url (:db rejected))]
     (is (true? (get-in rejected [:db :force-full?])))
     (is (= (:show db) (get-in rejected [:db :show])))
-    (is (not (str/includes? url "runtime-id")))
-    (is (str/includes? (events/state-url db) "runtime-id=current"))))
+    (is (not (str/includes? url "&base=")))
+    (is (str/includes? (events/state-url db) "base=accepted-base"))))
+
+(deftest delta-baseline-stays-independent-from-optimistic-knob-edits
+  (let [view (assoc (:show base) :runtime-id "runtime" :show-id "main")
+        full {:protocol projection/protocol :kind "full" :token "base"
+              :identity (projection/identity-of view) :view view}
+        initial (:db (transition base [:studio/state-response nil full]))
+        edited (:db (transition initial [:studio/param-set "7:9" :level 0.9]))
+        patch {:protocol projection/protocol :kind "patch" :base-token "base" :token "next"
+               :identity (projection/identity-of view)
+               :changes [["set" ["frame-number"] 13] ["set" ["master"] 0.3]]}
+        next (:db (transition edited [:studio/state-response "base" patch]))
+        acknowledged (-> next (assoc-in [:drafts ["7:9" :level] :revision] 4))
+        echo (assoc patch :base-token "next" :token "echo"
+                    :changes [["set" ["revision"] 4] ["set" ["instances" 0 "params" "level"] 0.9]])
+        finished (:db (transition acknowledged [:studio/state-response "next" echo]))]
+    (is (= 0.9 (get-in next [:show :instances 0 :params :level])))
+    (is (= 0.7 (get-in next [:server-projection :view :instances 0 :params :level])))
+    (is (= 0.3 (get-in next [:show :master])))
+    (is (= 0.9 (get-in finished [:server-projection :view :instances 0 :params :level])))
+    (is (empty? (:drafts finished)))
+    (is (= [:studio/state-response "echo"] (get-in (transition finished [:studio/poll]) [:studio/http :on-success])))))
+
+(deftest late-full-response-cannot-restore-a-replaced-runtime
+  (let [view (assoc (:show base) :runtime-id "new-runtime" :show-id "main")
+        db (assoc base :show view :server-projection {:token "new-base" :view view})
+        stale-view (assoc view :runtime-id "old-runtime")
+        stale {:protocol projection/protocol :kind "full" :token "old-result"
+               :identity (projection/identity-of stale-view) :view stale-view}
+        result (transition db [:studio/state-response "old-request" stale])]
+    (is (= "new-runtime" (get-in result [:db :show :runtime-id])))
+    (is (= "new-base" (get-in result [:db :server-projection :token])))
+    (is (empty? (transition db [:studio/poll-response-failed "old-request" "late failure"])))))
+
+(deftest invalid-delta-requests-a-full-view-without-dropping-visible-state
+  (let [view (assoc (:show base) :runtime-id "runtime" :show-id "main")
+        db (assoc base :show view :server-projection {:token "current" :view view})
+        patch {:protocol projection/protocol :kind "patch" :base-token "missing" :token "next"
+               :identity (projection/identity-of view) :changes []}
+        result (transition db [:studio/state-response "current" patch])]
+    (is (= view (get-in result [:db :show])))
+    (is (true? (get-in result [:db :force-full?])))
+    (is (not (str/includes? (events/state-url (:db result)) "&base=")))))
 
 (deftest saved-preferences-restore-only-supported-portable-fields
   (let [settings {:ui {:view "rig" :page-id "second" :launch-mode "held"

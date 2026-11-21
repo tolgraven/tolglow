@@ -15,7 +15,7 @@
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
     tolglow.studio-test tolglow.studio.web-test tolglow.studio.composition-test tolglow.studio.agents-test
-    tolglow.studio.persistence-test tolglow.studio.audio-test tolglow.studio.credentials-test
+    tolglow.studio.persistence-test tolglow.studio.expressive-test tolglow.studio.audio-test tolglow.studio.credentials-test
     tolglow.studio.fixtures-test tolglow.studio.fixture-service-test
     tolglow.studio.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-test tolglow.studio.output-options-test
@@ -26,7 +26,8 @@
     tolglow.studio.workspace-test tolglow.studio.development-test tolglow.studio.restart-host-test
     tolglow.studio.terminal-test tolglow.studio.sensors-test tolglow.studio.sensor-osc-test
     tolglow.studio.sensor-host-test tolglow.studio.output-scheduler-test
-    tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test])
+    tolglow.studio.waveforms-test tolglow.studio.app-agents-test tolglow.studio.application-agent-host-test
+    tolglow.studio.projection-test])
 
 (def suites
   {"pure" pure-tests
