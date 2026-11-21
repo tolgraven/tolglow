@@ -72,16 +72,48 @@
         (.interrupt writer)
         (try (.close (.getInputStream process)) (catch Exception _))))))
 
+(defn- with-git-read-view
+  "Git's ref backend may read commondir even with GIT_COMMON_DIR set. Give
+  each owned read a private admin directory instead of consulting that mutable
+  pointer. Copy the current owned HEAD, not its creation-time base; the explicit
+  index still belongs to the real worktree. Never repair user-edited metadata."
+  [repo f]
+  (if-not repo (f {})
+    (let [head-path (.resolve ^Path (:git-dir repo) "HEAD")
+          _ (when-not (Files/isRegularFile head-path no-links)
+              (fail! :invalid-git-head "Owned Git HEAD must be a regular reference file"))
+          head (with-open [input (Files/newInputStream head-path
+                                                     (into-array java.nio.file.OpenOption
+                                                                 [StandardOpenOption/READ LinkOption/NOFOLLOW_LINKS]))]
+                 (.readNBytes input 4097))
+          _ (when (or (zero? (alength head)) (> (alength head) 4096))
+              (fail! :invalid-git-head "Owned Git HEAD must be a bounded regular reference"))
+          view (Files/createTempDirectory "tolglow-git-read-" attrs)]
+      (try
+        (Files/write (.resolve view "HEAD") head (make-array java.nio.file.OpenOption 0))
+        (Files/write (.resolve view "commondir")
+                     (.getBytes (str (:common-dir repo) "\n") StandardCharsets/UTF_8)
+                     (make-array java.nio.file.OpenOption 0))
+        (f {"GIT_DIR" (str view) "GIT_COMMON_DIR" (str (:common-dir repo))
+            "GIT_WORK_TREE" (str (:path repo))
+            "GIT_INDEX_FILE" (str (.resolve ^Path (:git-dir repo) "index"))})
+        (finally
+          (Files/deleteIfExists (.resolve view "HEAD"))
+          (Files/deleteIfExists (.resolve view "commondir"))
+          (Files/deleteIfExists view))))))
+
 (defn- git! [directory arguments]
   (let [repo (when (map? directory) directory)
         directory (if repo (:path repo) directory)
-        environment (merge {"GIT_CONFIG_NOSYSTEM" "1" "GIT_CONFIG_GLOBAL" "/dev/null" "GIT_OPTIONAL_LOCKS" "0"}
-                           (when repo {"GIT_DIR" (str (:git-dir repo)) "GIT_COMMON_DIR" (str (:common-dir repo))
-                                       "GIT_WORK_TREE" (str directory)}))
-        result (run-trusted-process! {:argv (into (into ["git" "--no-optional-locks" "-c" "core.hooksPath=/dev/null"
-                                                        "-c" "core.fsmonitor=false" "-c" "extensions.worktreeConfig=false"]
-                                                       (mapcat (fn [key] ["-c" (str key "=")]) (:disabled-filters repo))) arguments)
-                                    :environment environment :cwd (str directory) :timeout-ms 30000 :max-output-bytes 4194304})]
+        environment {"GIT_CONFIG_NOSYSTEM" "1" "GIT_CONFIG_GLOBAL" "/dev/null" "GIT_OPTIONAL_LOCKS" "0"}
+        result (with-git-read-view repo
+                 (fn [identity]
+                   (run-trusted-process!
+                     {:argv (into (into ["git" "--no-optional-locks" "-c" "core.hooksPath=/dev/null"
+                                         "-c" "core.fsmonitor=false" "-c" "extensions.worktreeConfig=false"]
+                                        (mapcat (fn [key] ["-c" (str key "=")]) (:disabled-filters repo))) arguments)
+                      :environment (merge environment identity) :cwd (str directory)
+                      :timeout-ms 30000 :max-output-bytes 4194304})))]
     (when (or (not= 0 (:exit-code result)) (:timed-out? result) (:truncated? result))
       (throw (ex-info "Git workspace operation failed" {:workspace/error :git-failed :result result})))
     (:output result)))

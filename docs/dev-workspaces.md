@@ -51,9 +51,17 @@ lock across unrelated editors.
 Tree listing is paginated and excludes ignored files. Diff includes tracked
 changes and untracked names. Git hooks, fsmonitor, external diff/textconv and
 captured filter commands are disabled for the service's read operations. Worktree
-Git/common-directory paths are captured at creation and explicitly selected for
-later reads; editing a worktree's `.git` pointer or `commondir` cannot redirect
-those operations. The private `runtime-paths` API exposes the captured directories
+Git/common-directory paths are captured at creation. Each later service read
+uses a private temporary administration directory containing the current owned
+HEAD and a trusted `commondir`, with an explicit path to the owned index. This
+also supports staged split indexes. Editing a worktree's `.git` pointer or
+`commondir` cannot redirect those reads: Git 2.56.1's ref backend can follow the
+on-disk pointer even when `GIT_COMMON_DIR` reports the captured directory, so
+setting environment variables alone is insufficient. The temporary view is
+removed after success, failure or cancellation; the service does not repair or
+overwrite the original metadata. Fingerprints and check-result admission use
+these same reads. Arbitrary commands inside an explicitly opened terminal retain
+their own Git behavior. The private `runtime-paths` API exposes the captured directories
 only to the container service. Public status omits those metadata mount paths.
 
 ## Restart recovery
@@ -116,8 +124,8 @@ revalidate its fingerprint again.
 Preparing a candidate starts no preview server, changes no running show and does
 not commit, merge or deploy. Watcher summaries, automatic after-turn reload,
 target-specific last-good rollback and actual Codex/Claude Code execution adapters
-remain separate work. Worktree directories survive service shutdown; restoring a
-manager catalog after application restart is not implemented by this module.
+remain separate work. Worktree directories survive service shutdown; the owned
+catalog recovery described above restores their registrations on explicit startup.
 
 ## Validation
 
@@ -135,3 +143,12 @@ The streaming fingerprint regression also hashes 288 MiB of sparse regular asset
 and checks explicit per-file/total limits without allocating asset-sized buffers.
 An earlier combined run passed **19 tests / 139 assertions**; see the subsequently
 discovered Docker creation/cancellation issue in the terminal documentation.
+
+The subsequent Git metadata isolation regression passed **18 tests / 120
+assertions** on Git 2.56.1. Initial fixture commits now have distinct messages,
+so identical trees created within one second cannot accidentally share a commit
+ID and mask cross-repository ref lookup. The tests reproduce the original
+`fatal: bad object HEAD` failure before the fix, then verify redirected pointer
+isolation, current owned HEAD/staged-index behavior, recovered diffs, check
+fingerprints and temporary-view cleanup.
+The full pure lane on this branch passed **457 tests / 3,610 assertions**.
