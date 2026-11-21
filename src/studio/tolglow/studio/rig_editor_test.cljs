@@ -1,0 +1,60 @@
+(ns tolglow.studio.rig-editor-test
+  (:require [cljs.test :refer-macros [deftest is testing]]
+            [re-frame.core :as rf]
+            [re-frame.db :as rf-db]
+            [tolglow.studio.events]
+            [tolglow.studio.rig-editor :as editor]))
+(def rig {:fixtures [{:id "head" :position [0 3 0] :rotation-deg [0 0 0] :address 17 :channels {:pan [1 2] :tilt [3 4]} :calibration {:pan [128 255]}}]
+          :trusses [{:id "bar" :position [0 4 0] :length 4}]})
+(def base {:show {:show-id "show" :runtime-id "runtime" :epoch 2 :rig rig} :ui {:rig-draft rig}})
+(defn input [db type more] (editor/interaction db (merge {:type type :identity (editor/identity-key db) :token 1} more)))
+(defn tool [db name] (editor/put-editor db (assoc (editor/editor db) :tool name)))
+(deftest placement-is-draft-only-and-gesture-cancel-restores
+  (let [start (tool base "move")
+        begun (input start "begin" {:selection {:kind "fixtures" :id "head"} :point [0 3 0]})
+        moved (input begun "move" {:point [2 3 1]})
+        cancelled (input moved "cancel" {})]
+    (is (= [2 3 1] (get-in moved [:ui :rig-draft :fixtures 0 :position])))
+    (is (= rig (get-in moved [:show :rig])))
+    (is (= (dissoc (first (:fixtures rig)) :position) (dissoc (first (get-in moved [:ui :rig-draft :fixtures])) :position)))
+    (is (= rig (get-in cancelled [:ui :rig-draft])))
+    (is (empty? (:undo (editor/editor cancelled))))
+    (is (= moved (input moved "move" {:token 42 :point [9 9 9]})))
+    (is (= moved (editor/interaction moved {:type "move" :identity "old-show" :token 1 :point [9 9 9]})))))
+(deftest rotation-is-relative-to-gesture-start-and-chosen-plane
+  (let [db (-> (tool base "rotate") (assoc-in [:ui :rig-editor :plane] "xy"))
+        begun (input db "begin" {:selection {:kind "trusses" :id "bar"} :point [0 4 0]})
+        first-move (input begun "move" {:angle 10 :point [0 4 0]})
+        second-move (input first-move "move" {:angle 20 :point [0 4 0]})]
+    (is (= [0 0 20] (get-in second-move [:ui :rig-draft :trusses 0 :rotation-deg])))
+    (is (= 4 (get-in second-move [:ui :rig-draft :trusses 0 :length])))))
+(deftest paths-are-editable-musical-data-and-request-is-fenced
+  (let [db (tool base "draw")
+        first-point (-> db (input "begin" {:point [0 0 0]}) (input "end" {}))
+        second-point (-> first-point (input "begin" {:point [2 0 0]}) (input "move" {:point [3 0 0]}) (input "end" {}))
+        state (assoc (editor/editor second-point) :targets ["head"])
+        db (editor/put-editor second-point state)
+        request (editor/publish-request db false "request")]
+    (is (= [[0 0 0] [3 0 0]] (:points state)))
+    (is (= rig (get-in db [:ui :rig-draft])))
+    (is (= {:bars 4} (get-in request [:body :duration])))
+    (is (= 2 (get-in request [:body :expected-epoch])))
+    (is (= "runtime" (get-in request [:body :runtime-id])))
+    (is (= ["head"] (get-in request [:body :targets])))
+    (is (= [:rig-editor/published (editor/identity-key db) "request" nil] (:on-success request)))
+    (is (empty? (:points (editor/editor (assoc-in db [:show :epoch] 3)))))))
+(deftest undo-discard-and-stale-publication
+  (let [restore (rf/make-restore-fn)]
+    (try
+      (reset! rf-db/app-db (editor/put-editor base (assoc (editor/editor base) :selection {:kind "fixtures" :id "head"})))
+      (rf/dispatch-sync [:rig-editor/nudge 0 0.1])
+      (is (= [0.1 3 0] (get-in @rf-db/app-db [:ui :rig-draft :fixtures 0 :position])))
+      (rf/dispatch-sync [:rig-editor/undo])
+      (is (= rig (get-in @rf-db/app-db [:ui :rig-draft])))
+      (rf/dispatch-sync [:rig-editor/add-point])
+      (rf/dispatch-sync [:rig-editor/cancel])
+      (is (empty? (:points (editor/editor @rf-db/app-db))))
+      (let [before @rf-db/app-db]
+        (rf/dispatch-sync [:rig-editor/published "old" "stale" true {:cue-id "bad"}])
+        (is (= before @rf-db/app-db)))
+      (finally (restore)))))

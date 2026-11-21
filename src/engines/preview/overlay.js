@@ -8,12 +8,17 @@ export class RigOverlay {
   update(snapshot) {
     const editor = snapshot?.editor, selection = editor?.selection;
     const item = snapshot?.rig?.[selection?.kind]?.find(f => String(f.id) === String(selection.id));
-    const key = JSON.stringify([editor, item?.position, item?.['rotation-deg'], item?.length]);
+    const markers = (snapshot?.rig?.fixtures || []).slice(0, 2048).map(f => f.position).filter(finitePoint);
+    const key = JSON.stringify([editor, markers, item?.position, item?.['rotation-deg'], item?.length]);
     if (key === this.key) return; this.key = key; this.clear(); if (!editor) return;
     const line = (points, color, opacity = 1) => {
       const geometry = new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(...p)));
       this.scene.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({color, transparent: opacity < 1, opacity, depthTest: false, toneMapped: false})));
     };
+    if (markers.length) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(markers.map(p => new THREE.Vector3(...p)));
+      this.scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({color: 0xa2b6c9, size: 6, sizeAttenuation: false, depthTest: false, toneMapped: false})));
+    }
     const points = (editor.points || []).filter(finitePoint).slice(0, 256);
     if (points.length > 1) line(editor['closed?'] ? [...points, points[0]] : points, 0xb6c9a9);
     points.forEach((point, index) => {
