@@ -17,10 +17,10 @@
                 "Lein profiles build re-frame production assets and expose paired benchmark developer sources"
                 "Plain lein test runs discovered tests; explicit Docker selector proves owned terminal toolchain"
                 "Verified bootstrap, packaging and immutable paired revisions remain enforced in CI"]
-   :evidence ["Lein :cljs frontend checks passed179/959 then180/965 after master merge; initial optimized release181files/zero warnings; final integrated build checked in CI"
+   :evidence ["Lein :cljs final integrated185tests/994assertions and optimized185files/zero warnings passed locally"
               "Lein :benchmark loads the paired Afterglow independent reference and reports exact 768 MiB heap"
-              "Plain lein test after paired sync lifecycle integration: 591 tests / 4896 assertions passed on Java21; earlier 574-test attempt recorded three failures/one error, then focused rerun passed27/299"
-              "Local Docker build ran out of shared disk; dedicated CI image/build execution gate added, no local image success claimed"]}
+              "Plain lein test after sync lifecycle integration:591/4896 passed on Java21; final sync/manifest23/272 and actual profile-master/subscriber capture-oracle smoke passed; final OSC pin integration rechecked in CI"
+              "Exact e77fce7 CI44898916324 passed all Java17/21/25 lanes, real preview/GLSL, re-frame/release, uberjar, native targets and actual Docker/PTY/Lein gate; local image attempt hit disk limit"]}
  {:id :application/configured-startup
    :kind :implementation :status :done :owner nil
    :title "Start a headless or web show from ordered Tolglow config modules"
