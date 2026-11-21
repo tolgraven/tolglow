@@ -62,9 +62,16 @@ snapshot clears prior touch, bank and component state.
 
 ## Verification, 2026-11-21
 
-The frontend suite passed **135 tests / 713 assertions**, without failures,
+The frontend suite passed **136 tests / 717 assertions**, without failures,
 errors or warnings. The optimized release compiled **147 files**, without
 warnings, on Clojure 1.12.7, Java 25.0.5.1 and Node 26.13.1.
+
+Composition slots resolve values in the same precedence as cue launches: effect
+defaults, authored cue parameters, saved cue defaults, then slot overrides.
+Component edits preserve the other saved components, and resetting a slot
+reveals the saved cue values without changing that cue. A focused transition
+regression covers this order; the backend saved-default integration has its own
+host validation gate.
 
 Actual Chromium checks against the Ring fixture host passed ten workflows:
 current live waveform shape/detail, all three physical output delivery modes,

@@ -10,12 +10,14 @@
            "tolglow/resources/studio/push-display.css"
            "tolglow/src/studio/tolglow/studio/application_agents.cljs"
            "tolglow/src/studio/tolglow/studio/application_agents_test.cljs"
+           "tolglow/src/studio/tolglow/studio/events.cljs"
+           "tolglow/src/studio/tolglow/studio/events_test.cljs"
            "tolglow/resources/studio/application-agents.css"
            "tolglow/docs/parameter-widget-parity.md"]
    :acceptance ["Passive Push renders actual bank, component, touched encoder and active effect navigation"
                 "Application chat shows actual checks and candidate state without implying activation"
                 "Optimized browser checks cover 960x160 Push and touch layouts"]
-   :evidence ["Frontend 135 tests / 713 assertions, optimized 147 files, zero warnings"
+   :evidence ["Frontend 136 tests / 717 assertions, optimized 147 files, zero warnings"
               "Actual Chromium: 10 integrated workflows plus passive 960x160 Push navigation gate; errors empty"
               "Actual JVM push-browser-display: one view, 23 PNG captures, live pulse command and ongoing PCM refresh; no USB output"
               "docs/parameter-widget-parity.md; no physical hardware/provider/Safari claim"]}
