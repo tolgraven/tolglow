@@ -6,6 +6,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
+            [tolglow.studio.transit :as transit]
             [reitit.ring :as ring]
             [tolglow.studio.page-routes :as pages]
             [ring.middleware.content-type :refer [wrap-content-type]]
@@ -26,21 +27,33 @@
     :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
     :timebase :operation :retrigger :unit :distribution :match})
 
-(defn normalize-json [data]
-  (walk/postwalk
-   (fn [x]
-     (if (map? x)
-       (into {} (map (fn [[k v]]
-                       [k (cond
-                            (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
-                            (and (= k :params) (= v "all")) :all
-                            (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :categories} k))
-                            (mapv #(if (string? %) (keyword %) %) v)
-                            :else v)])) x) x)) data))
+(def ^:private transit-type "application/transit+json")
 
-(defn json-response [status data]
-  {:status status :headers {"Content-Type" "application/json; charset=utf-8" "Cache-Control" "no-store"}
-   :body (json/write-str (json-data data))})
+(defn- data-response [status data]
+  {:status status ::data-response true :body data
+   :headers {"Cache-Control" "no-store" "Vary" "Accept"}})
+
+(defn- quality [accept media]
+  (reduce max 0.0
+          (for [entry (str/split (or accept "") #",")
+                :let [[mime & parameters] (str/split (str/lower-case entry) #";")]
+                :when (= media (str/trim mime))
+                :let [q (some #(second (re-matches #"\s*q=([^; ]+)\s*" %)) parameters)]]
+            (if q (or (parse-double q) 0.0) 1.0))))
+
+(defn- wrap-response-format [handler]
+  (fn [request]
+    (let [response (handler request)]
+      (if (::data-response response)
+        (let [accept (get-in request [:headers "accept"])
+              q (quality accept transit-type)
+              transit? (and (pos? q) (>= q (quality accept "application/json")))]
+          (-> response
+              (dissoc ::data-response)
+              (assoc-in [:headers "Content-Type"] (str (if transit? transit-type "application/json") "; charset=utf-8"))
+              (update :body #(when-not (= :head (:request-method request))
+                               (if transit? (transit/encode %) (json/write-str (json-data %)))))))
+        response))))
 
 (defn read-edn
   "Read exactly one EDN definition; no trailing forms or custom readers."
@@ -53,8 +66,8 @@
         (throw (ex-info "Expected exactly one EDN definition" {})))
       value)))
 
-(defn- read-json [request]
-  (with-open [reader (io/reader (or (:body request) (java.io.StringReader. "{}")))]
+(defn- read-body-text [request]
+  (with-open [reader (io/reader (or (:body request) (java.io.StringReader. "")) :encoding "UTF-8")]
     (let [buffer (char-array 4096) text (StringBuilder.)
           limit (cond
                   (#{"/api/import" "/api/fixtures/import" "/api/fixtures/publish"} (:uri request)) (* 32 1024 1024)
@@ -67,20 +80,39 @@
               (throw (ex-info "Request body too large" {:http/status 413})))
             (.append text buffer 0 n)
             (recur))))
-      (json/read-str (if (zero? (.length text)) "{}" (str text)) :key-fn keyword))))
+      (str text))))
 
-(defn wrap-json-body [handler]
+(defn normalize-json [value]
+  ;; Studio widgets emit textual enum choices. Keep typed extension values
+  ;; (particularly thi.ng.color records) intact while converting those choices.
+  (cond
+    (record? value) value
+    (map? value) (into {} (map (fn [[k v]] [k (cond
+                                                (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
+                                                (and (= k :params) (= v "all")) :all
+                                                (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :categories} k))
+                                                (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
+                                                :else (normalize-json v))])) value)
+    (vector? value) (mapv normalize-json value)
+    :else value))
+
+(defn- wrap-api-body [handler]
   (fn [request]
-    (handler (if (and (= :post (:request-method request)) (str/starts-with? (:uri request) "/api/"))
-               (assoc request :json-params
-                      (let [data (read-json request)]
-                        (if (str/starts-with? (:uri request) "/api/fixtures/") data (normalize-json data)))) request))))
+    (let [text (read-body-text request)
+          mime (some-> (get-in request [:headers "content-type"]) (str/split #";" 2) first str/trim str/lower-case)
+          transit? (= mime transit-type)
+          data (cond transit? (transit/decode text)
+                     (str/blank? text) {}
+                     :else (json/read-str text :key-fn keyword))
+          form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
+                     (not (str/starts-with? (:uri request) "/api/fixtures/")))]
+      (handler (assoc request :json-params (if form? (normalize-json data) data))))))
 
 (defn wrap-errors [handler]
   (fn [request]
     (try (handler request)
          (catch Exception error
-           (json-response (or (:http/status (ex-data error)) 400)
+           (data-response (or (:http/status (ex-data error)) 400)
                           {:message (.getMessage error) :details (ex-data error)})))))
 
 (defn wrap-same-origin [handler]
@@ -89,7 +121,7 @@
           host (get-in request [:headers "host"])]
       (if (and (#{:post :put :patch :delete} (:request-method request)) origin
                (not= host (.getAuthority (java.net.URI. origin))))
-        (json-response 403 {:message "Cross-origin mutations are not accepted"})
+        (data-response 403 {:message "Cross-origin mutations are not accepted"})
         (handler request)))))
 
 (defn wrap-isolation [handler]
@@ -154,17 +186,17 @@
    "/api/modulation/cue" :modulation-cue "/api/waveforms/publish" :waveform
    "/api/patch/save" :patch-save "/api/patch/enabled" :patch-enabled})
 
-(defn- not-found [_] (json-response 404 {:message "Route not found"}))
-(defn- ok [value] (json-response 200 value))
+(defn- not-found [_] (data-response 404 {:message "Route not found"}))
+(defn- ok [value] (data-response 200 value))
 (defn- acknowledgement [result]
-  (json-response (if (= :rejected (:status result)) 422 200) result))
+  (data-response (if (= :rejected (:status result)) 422 200) result))
 
 (defn- available
   "Install an optional service at router construction. Some endpoints are
   available only when their service is configured."
   [service unavailable-message handler]
   (cond service handler
-        unavailable-message (constantly (json-response 503 {:message unavailable-message}))
+        unavailable-message (constantly (data-response 503 {:message unavailable-message}))
         :else not-found))
 
 (defn- submit-handler [submit! heartbeat! operation]
@@ -202,7 +234,7 @@
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
                                                          (keyword (get query-params "id" "")))]
                           (ok {:source (pr-str definition)})
-                          (json-response 404 {:message "Definition not found"})))
+                          (data-response 404 {:message "Definition not found"})))
     "/api/export" (fn [_] {:status 200 :headers {"Content-Type" "application/edn"
                                                  "Content-Disposition" "attachment; filename=tolglow-show.edn"}
                            :body (pr-str (export!))})
@@ -279,11 +311,11 @@
 
 (defn- method-not-allowed [request]
   (let [allowed (->> (:result (ring/get-match request)) (keep (fn [[method endpoint]] (when endpoint (str/upper-case (name method))))))]
-    (response/header (json-response 405 {:message "Method not allowed"}) "Allow" (str/join ", " (sort allowed)))))
+    (response/header (data-response 405 {:message "Method not allowed"}) "Allow" (str/join ", " (sort allowed)))))
 
 (defn- routes [services]
   (let [gets (into {} (map (fn [[path handler]] [path (read-methods handler)])) (get-routes services))
-        posts (into {} (map (fn [[path handler]] [path {:post (wrap-json-body handler)}])) (post-routes services))
+        posts (into {} (map (fn [[path handler]] [path {:post (wrap-api-body handler)}])) (post-routes services))
         stream (:state-stream! services)
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
@@ -301,4 +333,5 @@
       wrap-params
       (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript"}})
       wrap-errors
+      wrap-response-format
       wrap-isolation))
