@@ -133,3 +133,10 @@ retains the complete verified artifact archive from run 44901945679. Mixed-rig
 owner/worker allocation falls by approximately 394 KB/tick in both candidates;
 timing and whole-JVM benefits are unproven, and the unfavorable pixel-only
 control is explicitly retained for follow-up attribution.
+
+## Per-attribute envelope scale comparison
+
+[The matched Tolglow compiler report](2026-11-21-batch-scale-comparison/README.md)
+retains run 44904180335 with Afterglow held fixed. Hoisting the primitive scale
+flag reduces measured 10,000-pixel host allocation by about 2.4 MB/tick in both
+candidate passes, while inconsistent timing and subscriber tails remain visible.
