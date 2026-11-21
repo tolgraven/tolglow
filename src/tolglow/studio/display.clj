@@ -48,7 +48,7 @@
   (when temporary-script? (Files/deleteIfExists (.toPath script-file))))
 
 (defn- worker-file! [worker-script]
-  (let [resource (when-not worker-script (io/resource "tolglow/integrations/display_bridge/worker.js"))]
+  (let [resource (when-not worker-script (io/resource "devices/push-display/worker.cjs"))]
     (if (or worker-script (= "file" (some-> resource .getProtocol)))
       (let [file (io/file (or worker-script resource))]
         (when-not (.isFile file)

@@ -13,7 +13,7 @@ The default rate is 48 kHz with 1,024 sample blocks (21.33 ms). Each port uses s
 
 ## Drum Rack chains
 
-Use a distinct send/return pair for every simultaneous parameter. Live can route individual chains to or from dedicated tracks. The editable Max patch sources in `src/tolglow/integrations/audio_bridge` provide a mono bus for cases where the chain routing chooser does not expose the needed tap.
+Use a distinct send/return pair for every simultaneous parameter. Live can route individual chains to or from dedicated tracks. The editable Max patch sources in `resources/devices/ableton-live` provide a mono bus for cases where the chain routing chooser does not expose the needed tap.
 
 - Put **tolglow-bus-send.maxpat** in a Max Audio Effect on a track receiving Studio's dry channel. It accepts the left input and silences the device output. Set **Audio bus** to an unused number.
 - Put **tolglow-bus-receive.maxpat** in a Max Instrument at the start of the destination Drum Rack chain and select that bus. It emits the mono signal into both channels. Put your Live audio effects after the receiver.

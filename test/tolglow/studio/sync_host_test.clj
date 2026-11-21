@@ -128,7 +128,7 @@
         server (ring.adapter.jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
         callback (str "http://127.0.0.1:" (.getLocalPort (first (.getConnectors server))) "/api/live")
         child (.start (doto (ProcessBuilder. ^java.util.List
-                                             ["node" "src/tolglow/integrations/live_bridge/test/behavioral_host.js" callback])
+                                             ["node" "test/js/ableton-live/behavioral_host.js" callback])
                          (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
         manager (connections/sync (:connections runtime))]
     (try
