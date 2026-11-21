@@ -32,6 +32,7 @@
             [tolglow.studio.output :as output]
             [tolglow.studio.display :as display]
             [tolglow.studio.output-scheduler :as output-scheduler]
+            [tolglow.studio.effect-faults :as effect-faults]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]
@@ -87,6 +88,7 @@
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
+            :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
                                              (get-in model [:modulation :controllers]))
@@ -104,6 +106,7 @@
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
 
@@ -116,6 +119,8 @@
   ([] (create-runtime {}))
   ([{:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (calibration/disarm-restored (or model (demo/model)))
+         _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
+             (throw (ex-info "Effect log sink must be callable" {})))
          _ (rig/validate-rig (:rig model))
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
@@ -128,7 +133,9 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (merge {:trusted-source? true} (:reactive-options options)))))
-         _ (when-not (:reactive model) (reactive-clock/register! (connections/reactive owned)))
+         _ (when-not (:reactive model)
+             (reactive-clock/register! (connections/reactive owned))
+             (effect-faults/register! (connections/reactive owned)))
          worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create
@@ -148,6 +155,7 @@
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
       :debug-stream (debug-stream/create runtime-id #(deref (:state @runtime-ref)))
+      :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :clock clock :sink sink
@@ -652,7 +660,8 @@
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms]
    (let [retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
-         restored-generation (volatile! nil) restarted-generation (volatile! nil)]
+         restored-generation (volatile! nil) restarted-generation (volatile! nil)
+         committed-fault-events (volatile! [])]
      (try
        (locking (:lock runtime)
          (when @(:running runtime)
@@ -735,17 +744,19 @@
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
-                           rendered (render/resolve-contributions
-                                     (patch! runtime (get-in model [:rig :fixtures])) (:contributions result)
+                           resolved (effect-faults/resolve-output result
+                                     #(render/resolve-contributions
+                                     (patch! runtime (get-in model [:rig :fixtures])) %
                                      {:master (:master model) :blackout? (:blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
-                                      :previous-compact (get-in before [:output :compact])})]
-                       {:model (:model result) :output rendered
+                                      :previous-compact (get-in before [:output :compact])}))
+                           result (:result resolved)]
+                       {:model (:model result) :output (:output resolved) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
-                       (assoc before :model model :status {:error (error-data error)}
+                       (assoc before :model model :status {:error (error-data error)} :fault-events []
                               :output (if (or (:blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))
@@ -756,6 +767,7 @@
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (:state committed)]
              (reset! (:state runtime) next-state)
+             (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
                (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts)
@@ -776,8 +788,10 @@
              (when @reactive-error
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (state-stream/publish! (:state-stream runtime) @(:state runtime)))))
-       (finally (finish-resource-work! runtime @retired @candidates @retired-devices
-                                       @restored-generation @restarted-generation))))))
+       (finally
+         (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
+         (finish-resource-work! runtime @retired @candidates @retired-devices
+                                @restored-generation @restarted-generation))))))
 
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
@@ -840,6 +854,7 @@
                               #(state-stream/close! (:state-stream runtime))
                               #(projection/clear! (:browser-projections runtime))
                               #(output-scheduler/close! (:publisher runtime))
+                              #(effect-faults/close! (:effect-logs runtime))
                               #(development/close! (:development runtime))
                               #(connections/close! (:connections runtime))
                               (fn [] (locking (:devices runtime)
@@ -932,22 +947,29 @@
     (when-let [device (get @(:devices runtime) id)]
       (try (devices/close! device) (finally (swap! (:devices runtime) dissoc id))))))
 
+(defn- capture-show [runtime format-show]
+  ;; Model/output come from one commit. Serialize after releasing the frame
+  ;; owner so that large pixel runs can keep rendering during a download.
+  (let [[model output] (locking (:lock runtime)
+                         (let [{:keys [model output]} @(:state runtime)]
+                           [(merge model (connections/export-state (:connections runtime) model)) output]))]
+    (format-show model (render/portable-frame output))))
+
 (defn export-show
   "Freeze the full domain state and last output from one committed snapshot."
   [runtime]
-  (locking (:lock runtime)
-    (let [{:keys [model output]} @(:state runtime)
-          model (merge model (connections/export-state (:connections runtime) model))]
-      (persistence/freeze model (render/portable-frame output)))))
+  (capture-show runtime persistence/freeze))
+
+(defn- export-show-source [runtime] (capture-show runtime persistence/write-string))
 
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
   [runtime path]
   (let [file (.getAbsoluteFile (io/file path))
-        text (pr-str (export-show runtime))]
+        text (export-show-source runtime)]
     (io/make-parents file)
     (let [temporary (java.nio.file.Files/createTempFile
-                     (.toPath (.getParentFile file)) ".tolglow-show-" ".edn"
+                     (.toPath (.getParentFile file)) ".tolglow-show-" ".transit"
                      (make-array java.nio.file.attribute.FileAttribute 0))]
       (try
         (with-open [stream (java.io.FileOutputStream. (.toFile temporary))]
@@ -1179,7 +1201,7 @@
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
-            :export! #(export-show runtime)
+            :export! #(export-show-source runtime)
             :calibration! #(let [model (:model @(:state runtime))]
                              {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)
                               :physical-now-ms ((:now-ms (:publisher runtime)))

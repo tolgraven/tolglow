@@ -194,10 +194,12 @@
 (defn- owner-definition [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
     (if (and (not= :pinned (:reload-policy instance :pinned)) current
+             (not= (:version current) (get-in instance [:reload-fault :effect-version]))
              (> (:version current) (:effect-version instance))) current (:definition instance))))
 
-(defn- owner-active? [instance clock]
+(defn- owner-active? [instance definition clock]
   (and (= :running (:phase instance))
+       (not= (:version definition) (get-in instance [:fault :effect-version]))
        (if-let [timer (:duration-timer instance)] (not (:done? (time/sample timer clock)))
          (if-let [duration (:duration-ms instance)]
            (< (:time-ms clock) (+ (:started-at-ms instance) duration)) true))))
@@ -223,7 +225,7 @@
                     (keep (fn [instance]
                             (let [definition (owner-definition model instance)
                                   instance (prepared-owner instance definition clock)]
-                              (when (and (:modulation definition) (owner-active? instance clock))
+                              (when (and (:modulation definition) (owner-active? instance definition clock))
                                 [instance definition])))))
         ids (set (map (comp :id first) owners))
         state (update state :controllers #(vec (remove (fn [c]
