@@ -1,7 +1,24 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :foundation/behavior-inventory
+ [{:id :web/expressive-mapping-settings
+   :title "Edit shared Push 3, Seaboard and generic MPE mappings with touch-friendly previews"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/expressive_mapping.cljs"
+           "tolglow/src/studio/tolglow/studio/expressive_mapping_test.cljs"
+           "tolglow/resources/studio/expressive-mapping.css"
+           "tolglow/docs/expressive-mapping-ui.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Backend mapping plans drive automatic, manual and disabled parameter presentation"
+                "Device and cue overrides survive settings and show round trips"
+                "Late previews cannot replace another device, cue or runtime draft"
+                "Touch layouts and real mapped parameter changes pass browser checks"]
+   :notes "Only views.cljs Connections panel mount and index.html CSS link are delegated integration edits. Backend mapping, Ring and persistence belong to push3_mpe_cue_automapping_overrides_disable."
+   :evidence ["Frontend 159 tests / 861 assertions; explicit Node runner exit 0"
+              "Optimized build 150 files / zero warnings"
+              "14 real Ring/session/browser workflows; desktop, iPad and phone layouts; no browser errors"
+              "docs/expressive-mapping-ui.md; roadmap validator passed with 107 items; integrated master 9a70836"]}
+  {:id :foundation/behavior-inventory
    :title "Inventory performance and authoring behavior from the three reference revisions"
    :kind :documentation :status :done :owner nil
    :paths ["tolglow/docs/feature-parity-inventory.md"]

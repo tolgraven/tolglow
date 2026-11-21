@@ -8,6 +8,7 @@
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
+            [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.modulation :as modulation]
@@ -702,7 +703,8 @@
        (when (= :rig (get-in db [:ui :view])) [rig-view {:ui (:ui db) :show (select-keys (:show db) [:rig])}])
        [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
        [chat/panel db]
-       (when (= :connections (get-in db [:ui :view])) [connections/panel {:show (select-keys (:show db) [:cues :transport])}])
+       (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
+              [expressive/panel (:show db)]])
        (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
        [footer db]]]
      [cue-actions db] [prompt-dialog db] [repl/console-view]
