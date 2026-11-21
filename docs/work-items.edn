@@ -2,7 +2,20 @@
  :updated "2026-11-21",
  :items
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
- [{:id :web/push-preset-global-widgets
+ [{:id :rig/rdm-device-management
+   :title "Discover and configure RDM fixtures through an owned OLA session"
+   :kind :implementation :status :in-progress :owner "rdm_discovery_device_configuration_and_rig_fixtures_ui"
+   :paths ["tolglow/src/tolglow/studio/rdm" "tolglow/src/tolglow/studio/rdm.clj"
+           "tolglow/test/tolglow/studio/rdm_test.clj" "tolglow/test/tolglow/studio/rdm_host_test.clj"
+           "tolglow/src/studio/tolglow/studio/rdm.cljs" "tolglow/src/studio/tolglow/studio/rdm_test.cljs"
+           "tolglow/resources/studio/rdm.css" "tolglow/docs/rdm.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Passive rig view never discovers or changes hardware"
+                "Owned bounded RDM jobs validate replies and retain explicit errors"
+                "Show fixture bindings and observed configurations survive save/load without rearming"
+                "Address/personality edits and patch adoption remain explicit and collision checked"]
+   :evidence []}
+  {:id :web/push-preset-global-widgets
    :title "Show cue preset feedback and touched global controls on Push"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/push_display.cljs"

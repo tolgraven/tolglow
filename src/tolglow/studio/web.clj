@@ -160,7 +160,7 @@
         (#{"/" "/push-display" "/repl"} uri) (response/content-type "text/html; charset=utf-8")))))
 
 (defn- routes [{:keys [snapshot! definition! export! submit! heartbeat! provider-get! provider-put! chat!
-                      chat-history! chat-select! fixture! audio! sync! waveform! patch! repl! repl-eval! workspace! terminal! sensor! app-agent!]}]
+                      chat-history! chat-select! fixture! rdm! audio! sync! waveform! patch! repl! repl-eval! workspace! terminal! sensor! app-agent!]}]
   (fn [{:keys [uri request-method json-params query-params] :as request}]
     (case request-method
       :get
@@ -193,6 +193,8 @@
                                  (json-response 503 {:message "Chat history unavailable"}))
         "/api/fixtures" (if fixture! (json-response 200 (fixture! :snapshot {}))
                              (json-response 503 {:message "Fixture library unavailable"}))
+        "/api/rdm" (if rdm! (json-response 200 (rdm! :status {}))
+                        (json-response 503 {:message "RDM service unavailable"}))
         "/api/audio" (if audio! (json-response 200 (audio! :status {}))
                           (json-response 503 {:message "Audio service unavailable"}))
         "/api/audio/inputs" (if audio! (json-response 200 (audio! :inputs {}))
@@ -222,6 +224,12 @@
         (or (asset uri) (json-response 404 {:message "Route not found"}))))
       :post
       (cond
+        (and rdm! (str/starts-with? uri "/api/rdm/"))
+        (let [operation (keyword (subs uri 9))]
+          (if (#{:connect :disconnect :discover :read :command :cancel :associate :unassociate :adopt} operation)
+            (let [result (rdm! operation json-params)]
+              (json-response (if (= :rejected (:status result)) 422 200) result))
+            (json-response 404 {:message "RDM route not found"})))
         (str/starts-with? uri "/api/application-agents/")
         (if-let [operation (get {"/api/application-agents/configure" :configure
                                 "/api/application-agents/start" :start
