@@ -243,3 +243,5 @@ acknowledgements, request idempotency, callback ordering, bounded input handling
 timeouts, late receipts and explicit shutdown. Patch structure checks validate
 all object references and the `deferlow` path. No Live instance, hardware port or
 external network endpoint is used.
+
+The `tolglow-bus-send.maxpat` and `tolglow-bus-receive.maxpat` patches route audio to individual Drum Rack chains. See the [Live audio returns guide](../../../docs/live-audio-returns.md) for wiring and setup.

@@ -6,13 +6,31 @@
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/" "tolglow/resources/devices/" "tolglow/test/js/"
            "tolglow/dev/preview/" "tolglow/dev/push-display/" "tolglow/test/tolglow/build_manifest_test.clj"]
-   :evidence ["The release build regenerated both preview bundles byte-for-byte. The Leiningen JAR contains both bundles, the Push worker and all four Max assets."
+   :evidence ["The release build regenerated both preview bundles byte-for-byte. The Leiningen JAR contains both bundles, the Push worker and all six Max assets."
               "The production browser editor passed desktop, touch-emulated iPad and phone fallback exercises in Chromium. The worker passed its compositor and lifecycle regression on SwiftShader."
-              "The production re-frame Push route rendered a 960 × 160 PNG through the relocated capture worker. The JVM packaging, capture and Live host tests passed all 120 assertions, and the Live Node suite passed all 19 tests."]
+              "The production re-frame Push route rendered a 960 × 160 PNG through the relocated capture worker. The JVM packaging, capture and Live host tests passed all 122 assertions, and the Live Node suite passed all 21 tests."]
    :depends-on [:foundation/tests]
    :acceptance ["Build both renderer bundles and exercise the worker, its fallback and WebGL fog"
                 "Load the actual packaged Push worker and keep the editable Max patch with its scripts"
                 "Reject non-Clojure implementation files in src and document the repository layout"]}
+  {:id :integrations/live-audio-carrier-returns
+   :title "Render parameter carriers and route isolated Live returns into owned lighting tails"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/integrations/audio_return.clj"
+           "tolglow/src/tolglow/integrations/audio_duplex.clj"
+           "tolglow/test/tolglow/studio/audio_return_test.clj"
+           "tolglow/resources/devices/ableton-live/tolglow-bus-"
+           "tolglow/src/studio/tolglow/studio/audio_returns.cljs"
+           "tolglow/docs/live-audio-returns.md"]
+   :depends-on [:foundation/tests]
+   :evidence ["Real duplex PCM16 send/return through the lighting frame owner and packed DMX with silence, delay taps, decaying gain, human retrigger, disconnect and restore"
+              "Paired JVM parity 581 tests / 4842 assertions before the final stalled-reader case. Two Max bus topology tests passed."
+              "Chromium used real Ring and the optimized re-frame UI to save/reload a lane on an iPad viewport and surface missing-mixer status. No installed Live, CoreAudio hardware or physical fixtures."
+              "docs/live-audio-returns.md"]
+   :acceptance ["Encode numeric effect parameters as dry phase-continuous sine PCM"
+                "Analyze isolated processed PCM and publish confidence-gated pitch, RMS and texture sources"
+                "Render echoes after a dry activation ends without claiming a replacement activation"
+                "Route independent single-track and Drum Rack lanes over explicit virtual audio channels"]}
   {:id :render/calibrated-moving-head-shader
    :title "Measure calibrated moving-head aim, GPU readback and DMX packing"
    :kind :research :status :done :owner nil
@@ -927,7 +945,7 @@
    :owner nil}
   {:evidence [],
    :paths
-   ["tolglow/src/tolglow/integrations/audio" "tolglow/src/tolglow/audio_bridge"],
+   ["tolglow/src/tolglow/integrations/audio" "tolglow/resources/devices/ableton-live/tolglow-bus-"],
    :acceptance
    ["Calibrated sine pitch/value encoding and level tracking"
     "Individual channels and drum-pad effect chains"
