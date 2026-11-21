@@ -31,6 +31,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | Document | Purpose |
 | --- | --- |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
+| [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
 | [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |
@@ -38,6 +39,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [V1 implementation contract](implementation-contract-v1.md) | Shared model/command/runtime boundaries |
 | [Testing](testing.md) | Commands, observed checkpoints and verification limits |
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
+| [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU backend, typed expressions and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
