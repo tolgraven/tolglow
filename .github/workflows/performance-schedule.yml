@@ -1,0 +1,10 @@
+name: Schedule master show performance evidence
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+permissions:
+  contents: read
+jobs:
+  profile-master:
+    uses: tolgraven/tolglow/.github/workflows/performance.yml@master
