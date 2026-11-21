@@ -1,7 +1,7 @@
 (ns tolglow.studio.subs
   (:require [re-frame.core :as rf]))
 
-(rf/reg-sub :studio/db (fn [db _] db))
+(rf/reg-sub :studio/db (fn [db _] (dissoc db :debug)))
 (rf/reg-sub :studio/show (fn [db _] (:show db)))
 (rf/reg-sub :studio/ui (fn [db _] (:ui db)))
 (rf/reg-sub :studio/numeric-edit (fn [db [_ field-id]] (get-in db [:ui :numeric-edits field-id])))

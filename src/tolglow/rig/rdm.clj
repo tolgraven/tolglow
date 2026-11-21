@@ -2,8 +2,8 @@
   "Explicit RDM jobs and portable rig observations. No IO occurs on require,
   construction, status reads, or model transitions."
   (:require [clojure.string :as str]
-            [tolglow.rig.rdm.codec :as codec]
-            [tolglow.rig.rdm.transport :as transport]
+            [afterglow.rdm.codec :as codec]
+            [afterglow.rdm.transport :as transport]
             [afterglow.render.frame :as render])
   (:import [java.util UUID]
            [java.util.concurrent ThreadPoolExecutor TimeUnit ArrayBlockingQueue Executors ThreadFactory

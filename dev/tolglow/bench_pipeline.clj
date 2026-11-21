@@ -7,7 +7,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.composition.response :as response]
-            [tolglow.output :as output]
+            [afterglow.output.artnet :as artnet]
             [clojure.pprint :as pprint]
             [clojure.string :as str])
   (:import [java.lang.management ManagementFactory]
@@ -73,7 +73,7 @@
 (defn- capture-sink []
   {:description {:type :artdmx-packet-capture :network false}
    :send! (fn [universes _frame-number]
-            (mapv (fn [[universe values]] (output/artdmx-packet universe 1 values)) (sort-by key universes)))})
+            (mapv (fn [[universe values]] (artnet/artdmx-packet universe 1 values)) (sort-by key universes)))})
 
 (defn- run-frame [{:keys [model frame patch]} compile map-work sink]
   (let [evaluated (engine/advance model frame compile map-work)
