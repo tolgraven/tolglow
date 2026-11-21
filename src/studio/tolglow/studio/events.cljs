@@ -433,7 +433,7 @@
   (let [slot (get-in db [:ui :composition :slots index]) cue (cue db (:cue-id slot))
         definition (effect db (:effect-id cue))]
     (merge (into {} (map (fn [[key schema]] [key (:default schema)]) (:params definition)))
-           (:params cue) (:params slot))))
+           (:params cue) (:saved-params cue) (:params slot))))
 (rf/reg-event-db :studio/slot-param
   (fn [db [_ index parameter value]] (assoc-in db [:ui :composition :slots index :params parameter] value)))
 (rf/reg-event-db :studio/slot-param-key

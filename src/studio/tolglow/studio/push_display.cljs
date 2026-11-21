@@ -8,8 +8,10 @@
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
-                          :cue :effect :swatch :category-colors :display-mode :audio-waveform])
+                          :cue :effect :swatch :category-colors :display-mode :audio-waveform
+                          :parameter-bank :active-effect-navigation :touched-parameter :fine?])
         (assoc :parameters (vec (take 8 (:parameters view)))
+               :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
 (rf/reg-event-db :push-display/update (fn [db [_ view]] (assoc db :push-display (normalize-view view))))
 (rf/reg-sub :push-display/view (fn [db _] (:push-display db)))
@@ -31,12 +33,33 @@
            :let [value (get env key)] :when (some? value)]
        ^{:key key} [:span [:b short] " " (if (= key :sustain) (widgets/number-label value) (widgets/duration-label value))])]))
 
+(defn bank-label [{:keys [offset total count]}]
+  (when (and (number? count) (> count 1) (number? offset) (number? total) (pos? total))
+    (str "Params " (inc offset) "–" (min (+ offset 8) total) " / " total)))
+
+(defn- navigation [view]
+  (let [{:keys [index count offset]} (:active-effect-navigation view)]
+    [:div.push-navigation
+     (when (and (number? count) (pos? count) (number? index))
+       [:span.push-effect-navigation {:aria-label (str "Active effect " (inc index) " of " count)}
+        [:span (str "Effect " (inc index) " / " count)]
+        [:span.push-effect-dots
+         (for [[local effect] (map-indexed vector (:active-effects view))]
+           ^{:key (:id effect)} [:i {:class (str (when (= (+ (or offset 0) local) index) "selected ") (widgets/label (:phase effect)))
+                                     :title (str (widgets/label (:cue-id effect)) " · " (widgets/label (:phase effect)))}])]])
+     (when-let [label (bank-label (:parameter-bank view))] [:span.push-bank label])
+     (when (:fine? view) [:span.push-fine "Fine"])]))
+
 (defn- parameters [view compact?]
   [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
-   (for [index (range 8) :let [parameter (get (:parameters view) index)]]
-     ^{:key index} [:article.push-parameter {:data-encoder index :class (when-not parameter "empty")}
+   (for [index (range 8) :let [parameter (get (:parameters view) index)
+                             touched? (= index (get-in view [:touched-parameter :encoder]))
+                             component (:component-label parameter)]]
+     ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
                    [:div.push-parameter-name [:span.push-encoder (inc index)]
-                    (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
+                    [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
+                    (when (and component (not (contains? #{:value "value"} component)))
+                      [:span.push-component {:title "Encoder component"} (widgets/label component)])]
                    (cond
                      (nil? parameter) (when-not compact? [:div.push-empty "·"])
                      compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
@@ -50,6 +73,7 @@
       [:span.push-brand (or (:title view) "Tolglow")]
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
+      [navigation view]
       [widgets/category-tags (:categories effect) (:category-colors view)]
       [envelope effect]
       [:span.push-tempo (widgets/number-label (:bpm view)) [:small " BPM"]]

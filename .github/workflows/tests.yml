@@ -1,9 +1,16 @@
 name: Architecture regression tests
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, effects]
+  pull_request:
+concurrency:
+  group: architecture-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         java: ['17', '21', '25']
         suite: [pure, parity]
@@ -21,9 +28,20 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26'
       - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
           cli: 1.12.7.1681
+      - name: Cache verified Maven dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/**/*.lastUpdated
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'tolglow/project.clj', 'afterglow/deps.edn', 'afterglow/project.clj') }}
+          restore-keys: maven-${{ runner.os }}-
       - name: Run explicit test lane
         working-directory: tolglow
         run: ./bin/test "${{ matrix.suite }}"
@@ -54,6 +72,14 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.7.0
         with:
           cli: 1.12.7.1681
+      - name: Cache verified Maven dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/**/*.lastUpdated
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/deps.edn', 'tolglow/project.clj', 'afterglow/deps.edn', 'afterglow/project.clj') }}
+          restore-keys: maven-${{ runner.os }}-
       - name: Install the verified Leiningen release
         shell: bash
         run: |
