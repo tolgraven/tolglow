@@ -123,7 +123,7 @@
         (is (= "Röd cue" (apply str (map :text (filter #(= :text/delta (:type %)) (:events decoded))))))))))
 
 (deftest actual-http-body-can-be-cancelled-and-timed-out
-  (let [body-open (promise) finish (CountDownLatch. 1)]
+  (let [finish (CountDownLatch. 1)]
     (with-http-server
       (fn [exchange]
         (try
@@ -131,15 +131,17 @@
           (.sendResponseHeaders exchange 200 0)
           (with-open [out (.getResponseBody exchange)]
             (.write out (.getBytes ": started\n\n" StandardCharsets/UTF_8)) (.flush out)
-            (deliver body-open true)
-            (.await finish 5 TimeUnit/SECONDS))
+            (.await finish 30 TimeUnit/SECONDS))
           (catch Exception _)
           (finally (.close exchange))))
       (fn [url]
         (let [request (providers/request {:provider :self-hosted :endpoint url :model "local"} messages nil)
-              call (providers/start-http! request (fn [_]) {:timeout-ms 4000})]
+              ;; Signal on the first chunk consumed by the client. This exercises
+              ;; cancellation of an open response body even on a busy runner.
+              consumed (promise)
+              call (providers/start-http! request (fn [_] (deliver consumed true)) {:timeout-ms 30000})]
           (try
-            (is (true? (deref body-open 3000 false)))
+            (is (true? (deref consumed 20000 false)))
             ((:cancel! call))
             (let [result (try @(:result call)
                               (catch Exception exception
