@@ -1,7 +1,7 @@
 (ns tolglow.modules
   "Ordered Tolglow component, module and post-start lifecycles.
   A setup function receives the current context and its own options. It returns
-  a map with optional :value and :stop! entries. Later modules can use earlier
+  a map with optional :value, :stop! and :abort! entries. Later modules can use earlier
   values through [:modules id]. A registry is ordinary Clojure data.")
 
 (defn register
@@ -46,10 +46,10 @@
                   enabled? (assoc :setup (find-setup registry namespaces id)))))
             entries))))
 
-(defn- unwind! [cleanups]
+(defn- unwind! [cleanups phase]
   (reduce (fn [errors stop!]
             (try (stop!) errors (catch Throwable e (conj errors e))))
-          [] (rseq (vec cleanups))))
+          [] (keep phase (rseq cleanups))))
 
 (defn start!
   "Start one independent application. Registration and config carry no
@@ -61,19 +61,19 @@
       (let [context
             (reduce (fn [ctx {:keys [id enabled? options setup]}]
                       (if-not enabled? ctx
-                        (let [{:keys [value stop!] :as result} (setup ctx options)]
-                          (when-not (and (map? result) (or (nil? stop!) (ifn? stop!)))
-                            (throw (ex-info "Setup must return a map with optional :value and :stop!" {:module id})))
-                          (when stop! (swap! cleanups conj stop!))
+                        (let [{:keys [value stop! abort!] :as result} (setup ctx options)]
+                          (when-not (and (map? result) (every? ifn? (remove nil? [stop! abort!])))
+                            (throw (ex-info "Setup must return a map with callable :stop! and :abort! cleanups when supplied" {:module id})))
+                          (when (or stop! abort!) (swap! cleanups conj {:stop! stop! :abort! (or abort! stop!)}))
                           (-> ctx (assoc-in [:modules id] value) (update :loaded-components conj id)))))
                     {:config config :modules {} :loaded-components []} plan)]
         (assoc context :stop! (fn []
                                 (let [[stops _] (swap-vals! cleanups (constantly []))
-                                      errors (unwind! stops)]
+                                      errors (unwind! stops :stop!)]
                                   (when (seq errors)
                                     (let [cause (ex-info "Module shutdown failed" {:failures (count errors)})]
                                       (doseq [e errors] (.addSuppressed cause e))
                                       (throw cause)))))))
       (catch Throwable failure
-        (doseq [error (unwind! @cleanups)] (.addSuppressed failure error))
+        (doseq [error (unwind! @cleanups :abort!)] (.addSuppressed failure error))
         (throw failure)))))
