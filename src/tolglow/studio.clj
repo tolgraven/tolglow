@@ -9,6 +9,8 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
+            [tolglow.event-subscribers :as subscribers]
+            [tolglow.events.callbacks :as event-callbacks]
             [tolglow.studio.debug-stream :as debug-stream]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
@@ -72,6 +74,7 @@
 (defn- project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
@@ -155,6 +158,10 @@
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
+      :event-admit (get options :event-admit subscribers/admit)
+      :event-callbacks (event-callbacks/create
+                        (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
+                               (:event-callback-options options)))
       :debug-stream (debug-stream/create runtime-id #(deref (:state @runtime-ref)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
@@ -191,6 +198,7 @@
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
+                subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (update :variables dissoc :audio :sync)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
@@ -265,6 +273,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
@@ -742,7 +751,9 @@
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                     :status {:restored? true :frame-ms 0}}
                    (try
-                     (let [model (-> (advance-sensors! runtime model time-ms) (composition/advance time-ms) (advance-auto time-ms)
+                     (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
+                                     (composition/advance time-ms) (advance-auto time-ms)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
@@ -777,6 +788,7 @@
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (:state committed)]
              (reset! (:state runtime) next-state)
+             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
@@ -846,6 +858,39 @@
          (deliver reply (merge {:status :rejected} (error-data error)))))
      reply)))
 
+(defn register-event-subscriber!
+  "Register show data from the REPL. An inline :middleware function is bound in
+  this process; a qualified Var or portable :implementation can be restored."
+  [runtime {:keys [id middleware] :as registration}]
+  (let [registration (if middleware
+                       (let [_ (when-not (or (fn? middleware) (var? middleware))
+                                 (throw (ex-info "Expected middleware function or Var" {:id id})))
+                             implementation (if (var? middleware)
+                                              {:type :var :symbol (str (symbol middleware))}
+                                              {:type :registered :id id})
+                             definition (-> registration (dissoc :middleware)
+                                            (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
+                         (subscribers/validate-definition definition)
+                         (when (fn? middleware) (event-callbacks/register! (:event-callbacks runtime) id middleware))
+                         definition)
+                       registration)]
+    (submit! runtime :event-subscriber {:op :save :subscriber registration})))
+
+(defmacro reg-event-subscriber!
+  "Register a literal middleware fn as restorable REPL source. Supply lexical
+  values through :bindings, e.g. {\"gain\" gain}. Other maps use the ordinary
+  register-event-subscriber! API."
+  [runtime registration]
+  (let [middleware (when (map? registration) (:middleware registration))]
+    (if (and (seq? middleware) (#{'fn 'fn* 'clojure.core/fn} (first middleware)))
+      `(register-event-subscriber!
+        ~runtime
+        (update ~(dissoc registration :middleware :bindings) :actions (fnil conj [])
+                {:op :callback
+                 :implementation {:type :source :namespace ~(str *ns*)
+                                  :form ~(pr-str middleware) :bindings ~(:bindings registration {})}}))
+      `(register-event-subscriber! ~runtime ~registration))))
+
 (defn stop! [runtime]
   (let [candidates (volatile! [])
         stop? (locking (:lock runtime)
@@ -861,7 +906,8 @@
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
     (when stop?
       (doseq [cleanup (concat (map #(fn [] (connections/abort-prepared! %)) @candidates)
-                             [#(rdm/close! (:rdm runtime))
+                             [#(event-callbacks/close! (:event-callbacks runtime))
+                              #(rdm/close! (:rdm runtime))
                               #(debug-stream/close! (:debug-stream runtime))
                               #(state-stream/close! (:state-stream runtime))
                               #(projection/clear! (:browser-projections runtime))
@@ -1229,6 +1275,7 @@
   "Create the portable Ring application for this explicitly owned runtime."
   [runtime]
   (web/app {:snapshot! #(browser-snapshot runtime %)
+            :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream runtime) %)
             :state-stream! #(state-stream/response (:state-stream runtime) %)
             :definition! (fn [kind id]
@@ -1310,7 +1357,7 @@
   [args]
   (when (odd? (count args))
     (throw (ex-info "Studio options require flag/value pairs" {})))
-  (let [allowed #{"--host" "--port" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
+  (let [allowed #{"--host" "--port" "--trust-event-callbacks" "--output" "--artnet-host" "--artnet-port" "--ola-host" "--ola-port"}
         options (reduce (fn [result [flag value]]
                           (when-not (allowed flag)
                             (throw (ex-info "Unknown Studio option" {:option flag})))
@@ -1327,6 +1374,8 @@
                         (when-not (<= minimum value 65535)
                           (throw (ex-info "Port is out of range" {:option flag :value value})))
                         value))]
+    (when-not (#{"true" "false"} (get options "--trust-event-callbacks" "false"))
+      (throw (ex-info "--trust-event-callbacks must be true or false" {})))
     (when-not (#{"preview" "ola" "artnet"} output)
       (throw (ex-info "--output must be preview, ola or artnet" {})))
     (when (or (and ola? (not= output "ola")) (and artnet? (not= output "artnet")))
@@ -1334,6 +1383,8 @@
     (when (and (= output "artnet") (not (seq (get options "--artnet-host"))))
       (throw (ex-info "Direct Art-Net requires --artnet-host" {})))
     (cond-> {:host (get options "--host" "127.0.0.1") :port (port-number "--port" "8500" 0)}
+      (contains? options "--trust-event-callbacks")
+      (assoc :event-callback-options {:trusted-source? (= "true" (get options "--trust-event-callbacks"))})
       (= output "ola") (assoc :ola {:host (get options "--ola-host" "127.0.0.1")
                                      :port (port-number "--ola-port" "9010" 1)})
       (= output "artnet") (assoc :artnet {:host (get options "--artnet-host")

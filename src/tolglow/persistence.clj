@@ -21,6 +21,7 @@
             [tolglow.agents :as agents]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [tolglow.event-subscribers :as event-subscribers]
             [tolglow.studio.sync :as sync]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensors]
@@ -34,7 +35,7 @@
 (def max-document-characters (* 16 1024 1024))
 (def ^:private model-keys
   #{:show-id :epoch :revision :time-ms :registry :instances :pages :variables
-    :master :blackout? :transport :control :rig :compositions :composition-runs
+    :master :blackout? :event-subscribers :transport :control :rig :compositions :composition-runs
     :composition-tokens :auto :responses :integrations :extensions :frame-number
     :last-frame-time-ms :last-frame-beat :macros :sequences :reactive :settings :modulation :waveforms :routing :sensors})
 (def ^:private secret-keys
@@ -113,7 +114,7 @@
   (let [path [:instances id]
         definition (:definition instance)]
     (check! (and (string? id) (= id (:id instance)) (map? instance)
-                 (identifier? (:cue-id instance))
+                 (or (identifier? (:cue-id instance)) (and (contains? instance :cue-id) (nil? (:cue-id instance))))
                  (= (:effect-id instance) (:id definition))
                  (= (:effect-version instance) (:version definition))
                  (map? (:params instance)) (contains? instance :state)
@@ -284,6 +285,7 @@
     (get-in model [:integrations :fixtures]) (update-in [:integrations :fixtures] fixture-service/validate-state)
     (get-in model [:integrations :sync]) (update-in [:integrations :sync] sync/validate-state)
     (get-in model [:integrations :repl]) (update-in [:integrations :repl] repl-manager/validate-state)
+    (contains? model :event-subscribers) (update :event-subscribers event-subscribers/validate-state)
     (contains? model :reactive) (update :reactive reactive-registry/validate-registry)))
 
 (defn validate-frame-output
@@ -418,6 +420,7 @@
                 (:responses saved) (update :responses #(remap-references % ids owners))
                 (:modulation saved) (update :modulation modulation/restore-state
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})
+                (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))
