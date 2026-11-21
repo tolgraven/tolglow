@@ -273,7 +273,7 @@
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
-   [interop/preview (:show db)]
+   [interop/preview (or (:server-presentation db) (:show db))]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
@@ -285,6 +285,11 @@
                  :on-change #(input! [:studio/preview-setting :quality (input-value %)])}
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
+      [:label "Fixture updates"
+       [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode] "hold")
+                 :on-change #(input! [:studio/preview-setting :lighting-mode (input-value %)])}
+        [:option {:value "hold"} "Follow show frames"]
+        [:option {:value "interpolate"} "Smooth · one frame delay"]]]
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
        [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])

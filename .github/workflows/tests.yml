@@ -121,3 +121,48 @@ jobs:
       - name: Test the browser display bridge
         working-directory: tolglow
         run: node --test src/tolglow/integrations/display_bridge/*.test.js
+
+  native-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      native: ${{ steps.paths.outputs.native }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select native build changes
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null &&
+             git diff --quiet "$BASE_SHA" HEAD -- native .github/workflows/tests.yml; then
+            echo 'native=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+          fi
+  native:
+    needs: native-changes
+    if: needs.native-changes.outputs.native == 'true'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Inspect the actual Apple build toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk watchos --show-sdk-version
+      - name: Install XcodeGen when unavailable
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+      - name: Check native manifests and compile unsigned Apple targets
+        run: |
+          python3 native/Tests/check_contract.py
+          python3 native/Tests/check_rig_calibration.py
+          native/Tests/check_macos.sh

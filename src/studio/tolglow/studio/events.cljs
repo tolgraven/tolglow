@@ -702,6 +702,7 @@
   (fn [{:keys [db]} [_ key value]]
     (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
                            :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
+                           :lighting-mode (#{"hold" "interpolate"} value)
                            :camera (contains? #{"audience" "overview"} value) false)]
       (when valid? {:db (assoc-in db [:ui :preview-settings key] value) :studio/preview [key value]}))))
 (rf/reg-event-fx :studio/preview-expand
