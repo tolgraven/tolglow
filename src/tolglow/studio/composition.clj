@@ -25,7 +25,7 @@
 
 (defn- validate-slot! [model index slot]
   (let [cue (get-in model [:registry :cues (:cue-id slot)])
-        effect (get-in model [:registry :effects (:effect-id cue)])
+        effect (registry/cue-effect (:registry model) cue)
         launch (:launch slot {})
         mode (:mode launch :persistent)]
     (when-not (and (map? slot) (identifier? (:id slot)) cue effect)
@@ -49,7 +49,7 @@
                         (positive-time? (or (:duration-ms launch) (:duration-ms cue) (:duration-ms effect))))))
       (fail! [:slots index :launch :duration-ms] "Timed/one-shot launches need a declared duration"))
     (let [errors (registry/validate-params (:params effect {})
-                                            (merge (:params cue {}) (:params slot) (:params launch {})))]
+                                            (merge (:params cue {}) (:saved-params cue {}) (:params slot) (:params launch {})))]
       (when (seq errors)
         (throw (ex-info "Invalid slot parameter values"
                         {:errors (mapv #(update % :path (fn [path] (into [:slots index] path))) errors)}))))))

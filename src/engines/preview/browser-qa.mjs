@@ -28,9 +28,9 @@ try {
     await panel.scrollIntoViewIfNeeded();
     await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready);
     console.log(`${name}: real renderer ready`);
-    const automatic = await page.evaluate(() => {
+    const automatic = await page.evaluate(async () => {
       const engine = document.querySelector('#preview').tolglowPreview;
-      cancelAnimationFrame(engine.frame); return engine.getTelemetry();
+      engine.pause(); return engine.getTelemetry();
     });
     if (automatic.softwareRenderer) {
       assert.equal(automatic.quality, 'low');
@@ -55,9 +55,9 @@ try {
     await page.getByRole('button', {name: 'Expand', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#preview-panel').classList.contains('expanded'));
     await panel.scrollIntoViewIfNeeded();
-    const telemetry = await page.evaluate(() => {
+    const telemetry = await page.evaluate(async () => {
       const engine = document.querySelector('#preview').tolglowPreview;
-      cancelAnimationFrame(engine.frame); engine.draw(0); return engine.getTelemetry();
+      engine.pause(); await engine.draw(0); return engine.getTelemetry();
     });
     assert.equal(telemetry.failed, null);
     assert.equal(telemetry.quality, touch ? 'mobile' : 'desktop');
@@ -71,12 +71,12 @@ try {
     if (name === 'desktop') {
       await page.getByRole('button', {name: 'Fullscreen preview', exact: true}).click();
       await page.waitForFunction(() => document.fullscreenElement?.id === 'preview-panel');
-      await page.evaluate(() => {const engine = document.querySelector('#preview').tolglowPreview; engine.resize(); engine.draw(0);});
+      await page.evaluate(async () => {const engine = document.querySelector('#preview').tolglowPreview; engine.resize(); await engine.draw(0);});
       await page.screenshot({path: `${directory}/desktop-fullscreen.png`, timeout: 90000});
       await page.evaluate(() => document.exitFullscreen());
     }
     // The live engine and all scene resources must be removed on route change.
-    const lifecycle = await page.evaluate(() => {
+    const lifecycle = await page.evaluate(async () => {
       const engine = document.querySelector('#preview').tolglowPreview;
       engine.dispose(); return {disposed: engine.disposed, canvasOwnerRemoved: !document.querySelector('#preview').tolglowPreview};
     });
