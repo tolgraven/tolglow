@@ -99,6 +99,12 @@ jobs:
       - name: Install pinned browser dependencies
         working-directory: tolglow
         run: npm ci
+      - name: Run actual preview shader and worker regressions
+        working-directory: tolglow
+        run: |
+          npx --no-install playwright-core install --with-deps chromium
+          export CHROMIUM_PATH="$(node --input-type=module -e 'import {chromium} from "playwright-core"; process.stdout.write(chromium.executablePath())')"
+          npm run preview:test
       - name: Run re-frame tests and production build
         working-directory: tolglow
         run: |

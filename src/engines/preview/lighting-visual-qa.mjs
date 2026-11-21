@@ -13,20 +13,20 @@ try {
   page.on('console', message => {if (message.type() === 'error') errors.push(message.text());});
   await page.route('**/preview-optics-qa', route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
     <body style="margin:0;background:#080a0c;color:white"><canvas style="display:block;width:1280px;height:760px"></canvas>
-    <div id="status"></div><script type="module">import {RoomPreview} from '/studio/preview.js?v=${Date.now()}';
+    <div id="status"></div><script type="module">import {SceneRenderer as RoomPreview} from '/studio/preview.js?v=${Date.now()}';
     window.engine=new RoomPreview(document.querySelector('canvas'),document.querySelector('#status'));</script></body>`}));
   await page.goto(`${origin}/preview-optics-qa`);
   await page.waitForFunction(() => window.engine?.fog, {timeout: 30000});
   const snapshot = await (await page.request.get(`${origin}/api/state`)).json();
   await page.evaluate(snapshot => {
-    cancelAnimationFrame(engine.frame); engine.setQuality('desktop'); engine.update(snapshot);
+    engine.pause(); engine.setQuality('desktop'); engine.update(snapshot);
     engine.controls.enableDamping = false; engine.setCamera('audience');
     engine.fog.field.clear(.07); engine.fog.upload(); window.snapshot = snapshot;
   }, snapshot);
   const captures = [];
   async function capture(name, mode, fog, worklight) {
     const telemetry = await page.evaluate(({mode, fog, worklight}) => {
-      cancelAnimationFrame(engine.frame);
+      engine.pause();
       const state = structuredClone(window.snapshot); state.output ||= {}; state.output.values = {};
       state.rig.fixtures.forEach((fixture, i) => {
         const active = mode === 'crossing' || (mode === 'single' && i === 3);
