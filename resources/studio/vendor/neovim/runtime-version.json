@@ -1,0 +1,34 @@
+{
+  "release": "nightly",
+  "published_at": "2026-11-21T05:16:33Z",
+  "commit": "f2f87f5fc55fbb4c0307bd775d625515b2de8dea",
+  "asset_id": 774513857,
+  "url": "https://github.com/neovim/neovim/releases/download/nightly/nvim-wasm-emscripten.zip",
+  "sha256": "0a0a6ad258df89b2f59012d3c0a0d3be0f0c043684a4d441a824a464eaa08d8c",
+  "files": {
+    "nvim.js": "dd8cdb7a181f4eb4bc19a833b0e05b400157d6261a846f392a4fa33efaf01281",
+    "nvim.wasm": "341c3b8b3b0d802e6690fd7a0ab38b1587d213abc64da90bfffbf2e813bd8f19",
+    "nvim.data": "5de3eac79b92dd682eaf1a14070064a5aa794664351750364705e6a967f34944"
+  },
+  "msgpackr": {
+    "version": "2.1.4",
+    "dist": {
+      "shasum": "6cef448167a2c2d5ae6ad63ba85ada522b84fb71",
+      "tarball": "https://registry.npmjs.org/msgpackr/-/msgpackr-2.1.4.tgz",
+      "fileCount": 34,
+      "integrity": "sha512-TvP18sX5U3MXoHHSUZen/FagaNTEJObyb8OlnJcNbqN6Ux/oCwYJrHhCOzi31bItyW/Efz1IDnRDKQ23j4ZuvA==",
+      "signatures": [
+        {
+          "sig": "MEYCIQDzYxHF/fMA516037cTM3ZIn18eYDZO+Pfm9SN3w7uxjgIhALW+rnpzNRZ9oqjgKBJfvQDyoPe997djPmJEPBqUDU0F",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEYCIQCWHNxxjbBx1sWWI+i3MobXPsMSKoCqfNlNGsnDgdixoAIhAP9SQnM981tlzVOl6sZfeGvgXLz8K8yiqqnhbZl+kI4L",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 2640789
+    },
+    "bundle_sha256": "682aa4201aafcf4fc78f40ea1cbbc23854e9a652b910de43ad5a5458f2b10f4f"
+  }
+}

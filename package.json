@@ -1,0 +1,27 @@
+{
+  "name": "tolglow-studio",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "studio:build": "npm run preview:build && shadow-cljs release studio",
+    "studio:dev": "shadow-cljs watch studio",
+    "studio:check": "shadow-cljs compile studio",
+    "studio:test": "shadow-cljs compile studio-test",
+    "preview:build": "node src/engines/preview/build.mjs",
+    "preview:test": "node --test src/engines/preview/*.test.js src/engines/preview/*.test.mjs"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.6.2",
+    "@capacitor/motion": "8.0.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright-core": "1.65.1",
+    "shadow-cljs": "3.5.14"
+  }
+}

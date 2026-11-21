@@ -1,0 +1,967 @@
+{
+  "queried_on": "2026-11-21",
+  "maven": [
+    {
+      "artifact": "amalloy/ring-buffer",
+      "current": "1.3.1",
+      "release": "1.3.1",
+      "latest_stable": "1.3.1",
+      "source": "https://repo.clojars.org/amalloy/ring-buffer/maven-metadata.xml",
+      "recent": [
+        "made-up-version-SNAPSHOT",
+        "1.2.1",
+        "1.2.2",
+        "1.3.0",
+        "1.3.1"
+      ]
+    },
+    {
+      "artifact": "buddy",
+      "current": "2.0.0",
+      "release": "2.0.0",
+      "latest_stable": "2.0.0",
+      "source": "https://repo.clojars.org/buddy/buddy/maven-metadata.xml",
+      "recent": [
+        "1.0.0",
+        "1.1.0",
+        "1.2.0",
+        "1.3.0",
+        "2.0.0"
+      ]
+    },
+    {
+      "artifact": "camel-snake-kebab",
+      "current": "0.4.3",
+      "release": "0.4.3",
+      "latest_stable": "0.4.3",
+      "source": "https://repo.clojars.org/camel-snake-kebab/camel-snake-kebab/maven-metadata.xml",
+      "recent": [
+        "0.4.0-SNAPSHOT",
+        "0.4.0",
+        "0.4.1",
+        "0.4.2",
+        "0.4.3"
+      ]
+    },
+    {
+      "artifact": "clj-time",
+      "current": "0.15.2",
+      "release": "0.15.2",
+      "latest_stable": "0.15.2",
+      "source": "https://repo.clojars.org/clj-time/clj-time/maven-metadata.xml",
+      "recent": [
+        "0.14.4",
+        "0.14.5",
+        "0.15.0",
+        "0.15.1",
+        "0.15.2"
+      ]
+    },
+    {
+      "artifact": "com.climate/claypoole",
+      "current": "1.1.4",
+      "release": "1.1.4",
+      "latest_stable": "1.1.4",
+      "source": "https://repo.clojars.org/com/climate/claypoole/maven-metadata.xml",
+      "recent": [
+        "1.1.0",
+        "1.1.1",
+        "1.1.2",
+        "1.1.3",
+        "1.1.4"
+      ]
+    },
+    {
+      "artifact": "com.evocomputing/colors",
+      "current": "1.0.6",
+      "release": "1.0.6",
+      "latest_stable": "1.0.6",
+      "source": "https://repo.clojars.org/com/evocomputing/colors/maven-metadata.xml",
+      "recent": [
+        "1.0.2",
+        "1.0.3",
+        "1.0.4",
+        "1.0.5",
+        "1.0.6"
+      ]
+    },
+    {
+      "artifact": "com.fzakaria/slf4j-timbre",
+      "current": "0.3.21",
+      "release": "0.4.1",
+      "latest_stable": "0.4.1",
+      "source": "https://repo.clojars.org/com/fzakaria/slf4j-timbre/maven-metadata.xml",
+      "recent": [
+        "0.3.21-6-9f1d565-SNAPSHOT",
+        "0.3.21-10-299a94e-SNAPSHOT",
+        "0.3.21-11-cb46216-SNAPSHOT",
+        "0.4.0",
+        "0.4.1"
+      ]
+    },
+    {
+      "artifact": "com.roomkey/lein-v",
+      "current": "7.2.0",
+      "release": "7.2.0",
+      "latest_stable": "7.2.0",
+      "source": "https://repo.clojars.org/com/roomkey/lein-v/maven-metadata.xml",
+      "recent": [
+        "6.3.0",
+        "6.4.0",
+        "7.0.0",
+        "7.1.0",
+        "7.2.0"
+      ]
+    },
+    {
+      "artifact": "com.taoensso/timbre",
+      "current": "5.2.1",
+      "release": "6.8.0",
+      "latest_stable": "6.8.0",
+      "source": "https://repo.clojars.org/com/taoensso/timbre/maven-metadata.xml",
+      "recent": [
+        "6.7.0",
+        "6.7.1",
+        "6.6.2",
+        "6.8.0-SNAPSHOT",
+        "6.8.0"
+      ]
+    },
+    {
+      "artifact": "com.taoensso/tower",
+      "current": "3.0.2",
+      "release": "3.1.0-beta5",
+      "latest_stable": "3.0.2",
+      "source": "https://repo.clojars.org/com/taoensso/tower/maven-metadata.xml",
+      "recent": [
+        "3.1.0-beta1",
+        "3.1.0-beta2",
+        "3.1.0-beta3",
+        "3.1.0-beta4",
+        "3.1.0-beta5"
+      ]
+    },
+    {
+      "artifact": "com.taoensso/truss",
+      "current": "1.6.0",
+      "release": "2.5.1",
+      "latest_stable": "2.5.1",
+      "source": "https://repo.clojars.org/com/taoensso/truss/maven-metadata.xml",
+      "recent": [
+        "2.2.1",
+        "2.3.0",
+        "2.4.0",
+        "2.5.0",
+        "2.5.1"
+      ]
+    },
+    {
+      "artifact": "com.taoensso/tufte",
+      "current": "2.2.0",
+      "release": "3.1.0",
+      "latest_stable": "3.1.0",
+      "source": "https://repo.clojars.org/com/taoensso/tufte/maven-metadata.xml",
+      "recent": [
+        "3.0.0-RC1",
+        "3.0.0",
+        "3.0.1",
+        "3.0.2",
+        "3.1.0"
+      ]
+    },
+    {
+      "artifact": "compojure",
+      "current": "1.7.1",
+      "release": "1.7.2",
+      "latest_stable": "1.7.2",
+      "source": "https://repo.clojars.org/compojure/compojure/maven-metadata.xml",
+      "recent": [
+        "1.6.2",
+        "1.6.3",
+        "1.7.0",
+        "1.7.1",
+        "1.7.2"
+      ]
+    },
+    {
+      "artifact": "environ",
+      "current": "1.2.0",
+      "release": "1.2.0",
+      "latest_stable": "1.2.0",
+      "source": "https://repo.clojars.org/environ/environ/maven-metadata.xml",
+      "recent": [
+        "1.0.1",
+        "1.0.2",
+        "1.0.3",
+        "1.1.0",
+        "1.2.0"
+      ]
+    },
+    {
+      "artifact": "http-kit",
+      "current": "2.8.0",
+      "release": "2.9.0-beta4",
+      "latest_stable": "2.8.1",
+      "source": "https://repo.clojars.org/http-kit/http-kit/maven-metadata.xml",
+      "recent": [
+        "2.9.0-alpha6",
+        "2.8.1",
+        "2.9.0-beta2",
+        "2.9.0-beta3",
+        "2.9.0-beta4"
+      ]
+    },
+    {
+      "artifact": "instaparse",
+      "current": "1.5.0",
+      "release": "1.5.0",
+      "latest_stable": "1.5.0",
+      "source": "https://repo.clojars.org/instaparse/instaparse/maven-metadata.xml",
+      "recent": [
+        "1.4.11",
+        "1.4.12",
+        "1.4.13",
+        "1.4.14",
+        "1.5.0"
+      ]
+    },
+    {
+      "artifact": "java3d/j3d-core",
+      "current": "1.3.1",
+      "release": null,
+      "latest_stable": "1.3.1",
+      "source": "https://repo.maven.apache.org/maven2/java3d/j3d-core/maven-metadata.xml",
+      "recent": [
+        "1.3.1",
+        "1.3.1"
+      ]
+    },
+    {
+      "artifact": "java3d/j3d-core-utils",
+      "current": "1.3.1",
+      "release": null,
+      "latest_stable": "1.3.1",
+      "source": "https://repo.maven.apache.org/maven2/java3d/j3d-core-utils/maven-metadata.xml",
+      "recent": [
+        "1.3.1",
+        "1.3.1"
+      ]
+    },
+    {
+      "artifact": "java3d/vecmath",
+      "current": "1.3.1",
+      "release": null,
+      "latest_stable": "1.3.1",
+      "source": "https://repo.maven.apache.org/maven2/java3d/vecmath/maven-metadata.xml",
+      "recent": [
+        "1.3.1",
+        "1.3.1"
+      ]
+    },
+    {
+      "artifact": "lein-codox",
+      "current": "0.10.8",
+      "release": "0.10.8",
+      "latest_stable": "0.10.8",
+      "source": "https://repo.clojars.org/lein-codox/lein-codox/maven-metadata.xml",
+      "recent": [
+        "0.10.4",
+        "0.10.5",
+        "0.10.6",
+        "0.10.7",
+        "0.10.8"
+      ]
+    },
+    {
+      "artifact": "lein-environ",
+      "current": "1.2.0",
+      "release": "1.2.0",
+      "latest_stable": "1.2.0",
+      "source": "https://repo.clojars.org/lein-environ/lein-environ/maven-metadata.xml",
+      "recent": [
+        "1.0.1",
+        "1.0.2",
+        "1.0.3",
+        "1.1.0",
+        "1.2.0"
+      ]
+    },
+    {
+      "artifact": "lein-resource",
+      "current": "17.06.1",
+      "release": "17.06.1",
+      "latest_stable": "17.06.1",
+      "source": "https://repo.clojars.org/lein-resource/lein-resource/maven-metadata.xml",
+      "recent": [
+        "15.10.1",
+        "15.10.2",
+        "16.9.1",
+        "16.11.1",
+        "17.06.1"
+      ]
+    },
+    {
+      "artifact": "lein-shell",
+      "current": "0.5.0",
+      "release": "0.5.0",
+      "latest_stable": "0.5.0",
+      "source": "https://repo.clojars.org/lein-shell/lein-shell/maven-metadata.xml",
+      "recent": [
+        "0.4.0-SNAPSHOT",
+        "0.4.0",
+        "0.4.1",
+        "0.4.2",
+        "0.5.0"
+      ]
+    },
+    {
+      "artifact": "markdown-clj",
+      "current": "1.12.1",
+      "release": "1.12.15",
+      "latest_stable": "1.12.15",
+      "source": "https://repo.clojars.org/markdown-clj/markdown-clj/maven-metadata.xml",
+      "recent": [
+        "1.12.11",
+        "1.12.12",
+        "1.12.13",
+        "1.12.14",
+        "1.12.15"
+      ]
+    },
+    {
+      "artifact": "metosin/ring-http-response",
+      "current": "0.9.4",
+      "release": "0.9.5",
+      "latest_stable": "0.9.5",
+      "source": "https://repo.clojars.org/metosin/ring-http-response/maven-metadata.xml",
+      "recent": [
+        "0.9.1",
+        "0.9.2",
+        "0.9.3",
+        "0.9.4",
+        "0.9.5"
+      ]
+    },
+    {
+      "artifact": "ola-clojure",
+      "current": "0.1.8",
+      "release": "0.1.8",
+      "latest_stable": "0.1.8",
+      "source": "https://repo.clojars.org/ola-clojure/ola-clojure/maven-metadata.xml",
+      "recent": [
+        "0.1.6-SNAPSHOT",
+        "0.1.6",
+        "0.1.7",
+        "0.1.8-SNAPSHOT",
+        "0.1.8"
+      ]
+    },
+    {
+      "artifact": "org.clojars.brunchboy/protobuf",
+      "current": "0.8.3",
+      "release": "0.8.3",
+      "latest_stable": "0.8.3",
+      "source": "https://repo.clojars.org/org/clojars/brunchboy/protobuf/maven-metadata.xml",
+      "recent": [
+        "0.8.3-SNAPSHOT",
+        "0.8.3"
+      ]
+    },
+    {
+      "artifact": "org.clojure/clojure",
+      "current": "1.11.4",
+      "release": "1.13.0-alpha11",
+      "latest_stable": "1.12.7",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/clojure/maven-metadata.xml",
+      "recent": [
+        "1.13.0-alpha7",
+        "1.13.0-alpha8",
+        "1.13.0-alpha9",
+        "1.13.0-alpha10",
+        "1.13.0-alpha11"
+      ]
+    },
+    {
+      "artifact": "org.clojure/core.async",
+      "current": "1.6.681",
+      "release": "1.10.874-alpha3",
+      "latest_stable": "1.9.865",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/core.async/maven-metadata.xml",
+      "recent": [
+        "1.9.859-alpha4",
+        "1.9.865",
+        "1.10.864-alpha1",
+        "1.10.870-alpha2",
+        "1.10.874-alpha3"
+      ]
+    },
+    {
+      "artifact": "org.clojure/core.cache",
+      "current": "1.1.234",
+      "release": "1.2.999",
+      "latest_stable": "1.2.999",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/core.cache/maven-metadata.xml",
+      "recent": [
+        "1.2.254",
+        "1.2.259",
+        "1.2.263",
+        "1.2.999-alpha1",
+        "1.2.999"
+      ]
+    },
+    {
+      "artifact": "org.clojure/data.json",
+      "current": "2.5.0",
+      "release": "2.5.2",
+      "latest_stable": "2.5.2",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/data.json/maven-metadata.xml",
+      "recent": [
+        "2.3.1",
+        "2.4.0",
+        "2.5.0",
+        "2.5.1",
+        "2.5.2"
+      ]
+    },
+    {
+      "artifact": "org.clojure/data.zip",
+      "current": "1.1.0",
+      "release": "1.1.1",
+      "latest_stable": "1.1.1",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/data.zip/maven-metadata.xml",
+      "recent": [
+        "0.1.2",
+        "0.1.3",
+        "1.0.0",
+        "1.1.0",
+        "1.1.1"
+      ]
+    },
+    {
+      "artifact": "org.clojure/math.numeric-tower",
+      "current": "0.1.0",
+      "release": "0.1.1",
+      "latest_stable": "0.1.1",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/math.numeric-tower/maven-metadata.xml",
+      "recent": [
+        "0.0.3",
+        "0.0.4",
+        "0.0.5",
+        "0.1.0",
+        "0.1.1"
+      ]
+    },
+    {
+      "artifact": "org.clojure/tools.cli",
+      "current": "1.1.230",
+      "release": "1.4.256",
+      "latest_stable": "1.4.256",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/tools.cli/maven-metadata.xml",
+      "recent": [
+        "1.0.219",
+        "1.1.230",
+        "1.2.245",
+        "1.3.250",
+        "1.4.256"
+      ]
+    },
+    {
+      "artifact": "org.clojure/tools.nrepl",
+      "current": "0.2.13",
+      "release": "0.2.13",
+      "latest_stable": "0.2.13",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/tools.nrepl/maven-metadata.xml",
+      "recent": [
+        "0.2.9",
+        "0.2.10",
+        "0.2.11",
+        "0.2.12",
+        "0.2.13"
+      ]
+    },
+    {
+      "artifact": "org.clojure/tools.reader",
+      "current": "1.4.2",
+      "release": "1.6.0",
+      "latest_stable": "1.6.0",
+      "source": "https://repo.maven.apache.org/maven2/org/clojure/tools.reader/maven-metadata.xml",
+      "recent": [
+        "1.4.2",
+        "1.5.0",
+        "1.5.1",
+        "1.5.2",
+        "1.6.0"
+      ]
+    },
+    {
+      "artifact": "org.deepsymmetry/beat-link",
+      "current": "8.0.0",
+      "release": "8.0.0",
+      "latest_stable": "8.0.0",
+      "source": "https://repo.maven.apache.org/maven2/org/deepsymmetry/beat-link/maven-metadata.xml",
+      "recent": [
+        "7.1.0",
+        "7.2.0",
+        "7.3.0",
+        "7.4.0",
+        "8.0.0"
+      ]
+    },
+    {
+      "artifact": "org.deepsymmetry/lib-carabiner",
+      "current": "1.2.0",
+      "release": "1.2.0",
+      "latest_stable": "1.2.0",
+      "source": "https://repo.maven.apache.org/maven2/org/deepsymmetry/lib-carabiner/maven-metadata.xml",
+      "recent": [
+        "1.1.3",
+        "1.1.4",
+        "1.1.5",
+        "1.1.6",
+        "1.2.0"
+      ]
+    },
+    {
+      "artifact": "org.deepsymmetry/wayang",
+      "current": "0.1.8",
+      "release": "0.1.8",
+      "latest_stable": "0.1.8",
+      "source": "https://repo.maven.apache.org/maven2/org/deepsymmetry/wayang/maven-metadata.xml",
+      "recent": [
+        "0.1.4",
+        "0.1.5",
+        "0.1.6",
+        "0.1.7",
+        "0.1.8"
+      ]
+    },
+    {
+      "artifact": "overtone/at-at",
+      "current": "1.3.58",
+      "release": "1.4.65",
+      "latest_stable": "1.4.65",
+      "source": "https://repo.clojars.org/overtone/at-at/maven-metadata.xml",
+      "recent": [
+        "1.1.0",
+        "1.1.1",
+        "1.2.0",
+        "1.3.58",
+        "1.4.65"
+      ]
+    },
+    {
+      "artifact": "overtone/midi-clj",
+      "current": "0.5.0",
+      "release": "0.5.0",
+      "latest_stable": "0.5.0",
+      "source": "https://repo.clojars.org/overtone/midi-clj/maven-metadata.xml",
+      "recent": [
+        "0.2.1",
+        "0.3.0",
+        "0.3.1",
+        "0.4.0",
+        "0.5.0"
+      ]
+    },
+    {
+      "artifact": "overtone/osc-clj",
+      "current": "0.9.0",
+      "release": "0.9.0",
+      "latest_stable": "0.9.0",
+      "source": "https://repo.clojars.org/overtone/osc-clj/maven-metadata.xml",
+      "recent": [
+        "0.8.0-SNAPSHOT",
+        "0.8.0",
+        "0.8.1",
+        "0.9.0-SNAPSHOT",
+        "0.9.0"
+      ]
+    },
+    {
+      "artifact": "prone",
+      "current": "2021-04-23",
+      "release": "2021-04-23",
+      "latest_stable": "2021-04-23",
+      "source": "https://repo.clojars.org/prone/prone/maven-metadata.xml",
+      "recent": [
+        "1.6.3",
+        "1.6.4",
+        "2019-07-08",
+        "2020-01-17",
+        "2021-04-23"
+      ]
+    },
+    {
+      "artifact": "re-frame/re-frame",
+      "current": "1.4.7",
+      "release": "1.4.7",
+      "latest_stable": "1.4.7",
+      "source": "https://repo.clojars.org/re-frame/re-frame/maven-metadata.xml",
+      "recent": [
+        "1.4.6-SNAPSHOT",
+        "1.4.4",
+        "1.4.5",
+        "1.4.6",
+        "1.4.7"
+      ]
+    },
+    {
+      "artifact": "reagent/reagent",
+      "current": "2.0.1",
+      "release": "2.0.1",
+      "latest_stable": "2.0.1",
+      "source": "https://repo.clojars.org/reagent/reagent/maven-metadata.xml",
+      "recent": [
+        "2.0.0-alpha2",
+        "2.0.0-alpha3",
+        "2.0.0",
+        "2.0.1",
+        "2.1.0-SNAPSHOT"
+      ]
+    },
+    {
+      "artifact": "ring-middleware-format",
+      "current": "0.7.5",
+      "release": "0.7.5",
+      "latest_stable": "0.7.5",
+      "source": "https://repo.clojars.org/ring-middleware-format/ring-middleware-format/maven-metadata.xml",
+      "recent": [
+        "0.7.1",
+        "0.7.2",
+        "0.7.3",
+        "0.7.4",
+        "0.7.5"
+      ]
+    },
+    {
+      "artifact": "ring-mock",
+      "current": "0.1.5",
+      "release": "0.1.5",
+      "latest_stable": "0.1.5",
+      "source": "https://repo.clojars.org/ring-mock/ring-mock/maven-metadata.xml",
+      "recent": [
+        "0.1.1",
+        "0.1.2",
+        "0.1.3",
+        "0.1.4",
+        "0.1.5"
+      ]
+    },
+    {
+      "artifact": "ring/ring-core",
+      "current": "1.12.2",
+      "release": "1.15.6",
+      "latest_stable": "1.15.6",
+      "source": "https://repo.clojars.org/ring/ring-core/maven-metadata.xml",
+      "recent": [
+        "1.15.2",
+        "1.15.3",
+        "1.15.4",
+        "1.15.5",
+        "1.15.6"
+      ]
+    },
+    {
+      "artifact": "ring/ring-defaults",
+      "current": "0.5.0",
+      "release": "0.7.1",
+      "latest_stable": "0.7.1",
+      "source": "https://repo.clojars.org/ring/ring-defaults/maven-metadata.xml",
+      "recent": [
+        "0.4.0",
+        "0.5.0",
+        "0.6.0",
+        "0.7.0",
+        "0.7.1"
+      ]
+    },
+    {
+      "artifact": "ring/ring-devel",
+      "current": "1.12.2",
+      "release": "1.15.6",
+      "latest_stable": "1.15.6",
+      "source": "https://repo.clojars.org/ring/ring-devel/maven-metadata.xml",
+      "recent": [
+        "1.15.2",
+        "1.15.3",
+        "1.15.4",
+        "1.15.5",
+        "1.15.6"
+      ]
+    },
+    {
+      "artifact": "ring/ring-jetty-adapter",
+      "current": "1.12.2",
+      "release": "1.15.6",
+      "latest_stable": "1.15.6",
+      "source": "https://repo.clojars.org/ring/ring-jetty-adapter/maven-metadata.xml",
+      "recent": [
+        "1.15.2",
+        "1.15.3",
+        "1.15.4",
+        "1.15.5",
+        "1.15.6"
+      ]
+    },
+    {
+      "artifact": "ring/ring-session-timeout",
+      "current": "0.3.0",
+      "release": "0.3.0",
+      "latest_stable": "0.3.0",
+      "source": "https://repo.clojars.org/ring/ring-session-timeout/maven-metadata.xml",
+      "recent": [
+        "0.1.0",
+        "0.2.0",
+        "0.3.0"
+      ]
+    },
+    {
+      "artifact": "selmer",
+      "current": "1.12.61",
+      "release": "1.13.5",
+      "latest_stable": "1.13.5",
+      "source": "https://repo.clojars.org/selmer/selmer/maven-metadata.xml",
+      "recent": [
+        "1.13.1",
+        "1.13.2",
+        "1.13.3",
+        "1.13.4",
+        "1.13.5"
+      ]
+    },
+    {
+      "artifact": "thheller/shadow-cljs",
+      "current": "3.5.14",
+      "release": "3.5.14",
+      "latest_stable": "3.5.14",
+      "source": "https://repo.clojars.org/thheller/shadow-cljs/maven-metadata.xml",
+      "recent": [
+        "3.5.10",
+        "3.5.11",
+        "3.5.12",
+        "3.5.13",
+        "3.5.14"
+      ]
+    },
+    {
+      "artifact": "thi.ng/color",
+      "current": "1.5.1",
+      "release": "1.5.1",
+      "latest_stable": "1.5.1",
+      "source": "https://repo.clojars.org/thi/ng/color/maven-metadata.xml",
+      "recent": [
+        "1.2.1-SNAPSHOT",
+        "1.3.0",
+        "1.4.0",
+        "1.5.0",
+        "1.5.1"
+      ]
+    },
+    {
+      "artifact": "thi.ng/math",
+      "current": "0.3.2",
+      "release": "0.3.2",
+      "latest_stable": "0.3.2",
+      "source": "https://repo.clojars.org/thi/ng/math/maven-metadata.xml",
+      "recent": [
+        "0.2.2-SNAPSHOT",
+        "0.2.2",
+        "0.3.0",
+        "0.3.1",
+        "0.3.2"
+      ]
+    },
+    {
+      "artifact": "uk.co.xfactory-librarians/coremidi4j",
+      "current": "1.6",
+      "release": "1.6",
+      "latest_stable": "1.6",
+      "source": "https://repo.maven.apache.org/maven2/uk/co/xfactory-librarians/coremidi4j/maven-metadata.xml",
+      "recent": [
+        "1.2",
+        "1.3",
+        "1.4",
+        "1.5",
+        "1.6"
+      ]
+    }
+  ],
+  "npm": [
+    {
+      "package": "@capacitor/core",
+      "current": "8.6.2",
+      "latest": "8.6.2",
+      "engines": {},
+      "released": "2026-11-12T18:14:34.748Z"
+    },
+    {
+      "package": "@capacitor/motion",
+      "current": "8.0.1",
+      "latest": "8.0.1",
+      "engines": {},
+      "released": "2026-07-15T10:23:31.416Z"
+    },
+    {
+      "package": "@xterm/addon-fit",
+      "current": "0.11.0",
+      "latest": "0.11.0",
+      "engines": {},
+      "released": "2025-12-22T13:50:25.004Z"
+    },
+    {
+      "package": "@xterm/xterm",
+      "current": "6.0.0",
+      "latest": "6.0.0",
+      "engines": {},
+      "released": "2025-12-22T13:50:12.430Z"
+    },
+    {
+      "package": "react",
+      "current": "19.3.1",
+      "latest": "19.3.1",
+      "engines": {
+        "node": ">=0.10.0"
+      },
+      "released": "2026-10-14T16:47:15.290Z"
+    },
+    {
+      "package": "react-dom",
+      "current": "19.3.1",
+      "latest": "19.3.1",
+      "engines": {},
+      "released": "2026-10-14T16:49:10.081Z"
+    },
+    {
+      "package": "three",
+      "current": "0.181.2",
+      "latest": "0.187.0",
+      "engines": {},
+      "released": "2026-10-30T08:09:24.504Z"
+    },
+    {
+      "package": "esbuild",
+      "current": "0.25.12",
+      "latest": "0.28.2",
+      "engines": {
+        "node": ">=18"
+      },
+      "released": "2026-08-08T20:00:55.454Z"
+    },
+    {
+      "package": "playwright-core",
+      "current": "1.57.0",
+      "latest": "1.65.1",
+      "engines": {
+        "node": ">=20"
+      },
+      "released": "2026-11-13T21:36:08.743Z"
+    },
+    {
+      "package": "shadow-cljs",
+      "current": "3.5.14",
+      "latest": "3.5.14",
+      "engines": {
+        "node": ">=6.0.0"
+      },
+      "released": "2026-11-12T09:13:01.702Z"
+    },
+    {
+      "package": "@antora/cli",
+      "current": "3.1.2",
+      "latest": "3.2.3",
+      "engines": {
+        "node": ">=20.0.0"
+      },
+      "released": "2026-11-15T21:02:41.977Z"
+    },
+    {
+      "package": "@antora/site-generator",
+      "current": "3.1.2",
+      "latest": "3.2.3",
+      "engines": {
+        "node": ">=20.0.0"
+      },
+      "released": "2026-11-15T21:03:28.515Z"
+    },
+    {
+      "package": "@antora/lunr-extension",
+      "current": "^1.0.0-alpha.8",
+      "latest": "1.0.0-alpha.13",
+      "engines": {
+        "node": ">=16.0.0"
+      },
+      "released": "2026-02-02T21:18:27.027Z"
+    },
+    {
+      "package": "@openai/codex",
+      "current": "0.172.0-alpha.2",
+      "latest": "0.171.0",
+      "engines": {
+        "node": ">=16"
+      },
+      "released": "2026-11-20T00:51:29.762Z"
+    }
+  ],
+  "tools": [
+    {
+      "tool": "clojure-cli",
+      "version": "1.12.7.1681",
+      "url": "https://github.com/clojure/brew-install/releases/tag/1.12.7.1681"
+    },
+    {
+      "tool": "setup-clojure",
+      "version": "13.7.0",
+      "url": "https://github.com/DeLaGuardo/setup-clojure/releases/tag/13.7.0"
+    },
+    {
+      "tool": "checkout",
+      "version": "v7.0.1",
+      "url": "https://github.com/actions/checkout/releases/tag/v7.0.1"
+    },
+    {
+      "tool": "setup-java",
+      "version": "v6.3.0",
+      "url": "https://github.com/actions/setup-java/releases/tag/v6.3.0"
+    },
+    {
+      "tool": "setup-node",
+      "version": "v7.1.0",
+      "url": "https://github.com/actions/setup-node/releases/tag/v7.1.0"
+    },
+    {
+      "tool": "neovim",
+      "version": "v0.12.6",
+      "url": "https://github.com/neovim/neovim/releases/tag/v0.12.6"
+    },
+    {
+      "tool": "xcodegen",
+      "version": "2.48.0",
+      "url": "https://github.com/yonaskolb/XcodeGen/releases/tag/2.48.0"
+    }
+  ],
+  "added_resolution_pins": [
+    {
+      "artifact": "com.taoensso/encore",
+      "version": "3.172.1",
+      "source": "https://repo.clojars.org/com/taoensso/encore/maven-metadata.xml"
+    },
+    {
+      "artifact": "org.slf4j/slf4j-api",
+      "version": "2.0.20",
+      "source": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/maven-metadata.xml"
+    },
+    {
+      "artifact": "commons-codec/commons-codec",
+      "version": "1.23.0",
+      "source": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/maven-metadata.xml"
+    }
+  ],
+  "coordinate_replacements": {
+    "org.clojure/tools.nrepl": "nrepl/nrepl 1.8.0",
+    "ring-mock": "ring/ring-mock 0.6.2",
+    "java3d/vecmath": "org.jogamp.java3d/vecmath 1.7.2",
+    "java3d/j3d-core": "org.jogamp.java3d/java3d-core 1.7.2",
+    "java3d/j3d-core-utils": "org.jogamp.java3d/java3d-utils 1.7.2",
+    "buddy": "buddy/buddy-auth 3.0.323 + buddy/buddy-core 1.12.0-430"
+  }
+}

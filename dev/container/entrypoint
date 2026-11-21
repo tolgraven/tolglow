@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# HOME is a fresh writable tmpfs. Prevent zsh's interactive first-run wizard.
+touch "$HOME/.zshrc"
+exec "$@"

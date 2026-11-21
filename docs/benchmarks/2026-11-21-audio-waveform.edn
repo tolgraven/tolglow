@@ -1,0 +1,8 @@
+{:measured-at "2026-11-21"
+ :scope :pcm-summary-and-immutable-view
+ :samples 1000 :warmup 200 :sample-rate 48000 :block-frames 480 :max-columns 256
+ :clojure "1.12.7" :java "21.0.13"
+ :p50-ms 0.08022 :p95-ms 0.157016 :p99-ms 0.283525 :max-ms 1.045327
+ :excluded [:device-capture :pcm-decode :existing-audio-analysis :thread-scheduling
+            :json :http :push-ipc :browser-rendering]
+ :notes "Synthetic reused 480-sample sine blocks; stream timestamps advance 10ms per block. This is not a full audio or lighting deadline measurement."}

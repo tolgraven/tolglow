@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Tolglow · GPU numeric experiment</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #12151d; color: #e2e8f5; }
+    body { max-width: 1000px; padding: 24px; margin: auto; }
+    h1 { font-size: clamp(1.6rem, 5vw, 2.6rem); margin-bottom: 8px; }
+    p { max-width: 75ch; color: #b7c3d9; }
+    button { padding: 12px 18px; background: #7be0b6; color: #10221b; border: 0; border-radius: 8px; font: inherit; font-weight: 650; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    pre { padding: 18px; background: #090d13; border: 1px solid #344059; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+    #status { font-weight: 650; }
+    .pass { color: #7be0b6; } .fail { color: #ff9c9c; }
+  </style>
+</head>
+<body>
+  <h1>GPU numeric experiment</h1>
+  <p>This independent test evaluates emitted Clojure expression shaders in a real WebGL2 context, then reads numeric values back into JavaScript. It has no lighting output connection. Renderer details distinguish software contexts from unverified hardware.</p>
+  <p>Tests compare every component with saved values from the Clojure CPU evaluator. Timing includes upload, dispatch, asynchronous fence polling and readback; it is not an end-to-end show benchmark.</p>
+  <button id="run">Run correctness and timing tests</button>
+  <p id="status" role="status">Ready. Default run: eight expression cases and 1,000/10,000 repeated fixture positions.</p>
+  <pre id="report" aria-label="Experiment results"></pre>
+  <script id="oracle" type="application/json">{"generator":"afterglow.render.ir\/emit-glsl + compile-expression","cases":[{"beat":18.0,"expression":{"op":"vec3","args":[{"op":"beat","clock":"absolute"},{"op":"bar"},{"op":"phrase"}]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"musical-phase","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0,18.0,2.0,0.5,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec3","expression":"vec3(u_beat, (u_elapsed_beats \/ u_beats_per_bar), ((u_elapsed_beats \/ u_beats_per_bar) \/ u_bars_per_phrase))","uniforms":{},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position","bars-per-phrase":"u_bars_per_phrase","beat":"u_beat","beats-per-bar":"u_beats_per_bar","elapsed-beats":"u_elapsed_beats"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nuniform float u_bars_per_phrase;\nuniform float u_beat;\nuniform float u_beats_per_bar;\nuniform float u_elapsed_beats;\nout vec4 fragColor;\nvoid main() {\n  vec3 value = vec3(u_beat, (u_elapsed_beats \/ u_beats_per_bar), ((u_elapsed_beats \/ u_beats_per_bar) \/ u_bars_per_phrase));\n  fragColor = vec4(value, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"const","value":[0.25,0.5,0.75,0.4]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"constant","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4,0.25,0.5,0.75,0.4],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec4","expression":"vec4(0.25, 0.5, 0.75, 0.4)","uniforms":{},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nout vec4 fragColor;\nvoid main() {\n  vec4 value = vec4(0.25, 0.5, 0.75, 0.4);\n  fragColor = value;\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"vec3","args":[{"op":"position","axis":"x"},{"op":"position","axis":"y"},{"op":"position","axis":"z"}]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"position","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[-0.75,-0.25,0.0,1.0,-0.5,-0.25,0.25,1.0,-0.25,-0.25,0.5,1.0,0.0,-0.25,0.75,1.0,0.25,-0.25,1.0,1.0,0.5,-0.25,0.0,1.0,0.75,-0.25,0.25,1.0,-0.75,-0.125,0.5,1.0,-0.5,-0.125,0.75,1.0,-0.25,-0.125,1.0,1.0,0.0,-0.125,0.0,1.0,0.25,-0.125,0.25,1.0,0.5,-0.125,0.5,1.0,0.75,-0.125,0.75,1.0,-0.75,0.0,1.0,1.0,-0.5,0.0,0.0,1.0,-0.25,0.0,0.25,1.0,0.0,0.0,0.5,1.0,0.25,0.0,0.75,1.0,0.5,0.0,1.0,1.0,0.75,0.0,0.0,1.0,-0.75,0.125,0.25,1.0,-0.5,0.125,0.5,1.0,-0.25,0.125,0.75,1.0,0.0,0.125,1.0,1.0,0.25,0.125,0.0,1.0,0.5,0.125,0.25,1.0,0.75,0.125,0.5,1.0,-0.75,0.25,0.75,1.0,-0.5,0.25,1.0,1.0,-0.25,0.25,0.0,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec3","expression":"vec3(v_position.x, v_position.y, v_position.z)","uniforms":{},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nout vec4 fragColor;\nvoid main() {\n  vec3 value = vec3(v_position.x, v_position.y, v_position.z);\n  fragColor = vec4(value, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"add","args":[{"op":"param","key":"gain"},{"op":"multiply","args":[{"op":"time","clock":"absolute"},{"op":"const","value":1.0E-4}]}]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"absolute-clock","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0,0.6821,0.6821,0.6821,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"number","expression":"(u_param_0 + (u_time_ms * 1.0e-4))","uniforms":{"gain":{"name":"u_param_0","type":"number"}},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nuniform float u_param_0;\nout vec4 fragColor;\nvoid main() {\n  float value = (u_param_0 + (u_time_ms * 1.0e-4));\n  fragColor = vec4(vec3(value), 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"vec3","args":[{"op":"add","args":[{"op":"param","key":"offset"},{"op":"multiply","args":[{"op":"position","axis":"x"},{"op":"param","key":"gain"}]}]},{"op":"sin","args":[{"op":"multiply","args":[{"op":"time"},{"op":"const","value":0.001}]}]},{"op":"clamp","args":[{"op":"position","axis":"z"},{"op":"const","value":0.0},{"op":"const","value":1.0}]}]},"limitation":"Exploratory transcendental tolerance; SwiftShader sin\/cos differ about 1.3e-4 from the CPU oracle. Not approved for fine-DMX parity.","tolerance":{"absolute":2.0E-4,"relative":3.0E-6},"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"elapsed-and-params","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[-0.08749999850988388,0.9489846193555862,0.0,1.0,-0.02499999850988388,0.9489846193555862,0.25,1.0,0.03750000149011612,0.9489846193555862,0.5,1.0,0.10000000149011612,0.9489846193555862,0.75,1.0,0.16250000149011612,0.9489846193555862,1.0,1.0,0.22500000149011612,0.9489846193555862,0.0,1.0,0.2875000014901161,0.9489846193555862,0.25,1.0,-0.08749999850988388,0.9489846193555862,0.5,1.0,-0.02499999850988388,0.9489846193555862,0.75,1.0,0.03750000149011612,0.9489846193555862,1.0,1.0,0.10000000149011612,0.9489846193555862,0.0,1.0,0.16250000149011612,0.9489846193555862,0.25,1.0,0.22500000149011612,0.9489846193555862,0.5,1.0,0.2875000014901161,0.9489846193555862,0.75,1.0,-0.08749999850988388,0.9489846193555862,1.0,1.0,-0.02499999850988388,0.9489846193555862,0.0,1.0,0.03750000149011612,0.9489846193555862,0.25,1.0,0.10000000149011612,0.9489846193555862,0.5,1.0,0.16250000149011612,0.9489846193555862,0.75,1.0,0.22500000149011612,0.9489846193555862,1.0,1.0,0.2875000014901161,0.9489846193555862,0.0,1.0,-0.08749999850988388,0.9489846193555862,0.25,1.0,-0.02499999850988388,0.9489846193555862,0.5,1.0,0.03750000149011612,0.9489846193555862,0.75,1.0,0.10000000149011612,0.9489846193555862,1.0,1.0,0.16250000149011612,0.9489846193555862,0.0,1.0,0.22500000149011612,0.9489846193555862,0.25,1.0,0.2875000014901161,0.9489846193555862,0.5,1.0,-0.08749999850988388,0.9489846193555862,0.75,1.0,-0.02499999850988388,0.9489846193555862,1.0,1.0,0.03750000149011612,0.9489846193555862,0.0,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec3","expression":"vec3((u_param_1 + (v_position.x * u_param_0)), sin((u_elapsed_ms * 0.001)), clamp(v_position.z, 0.0, 1.0))","uniforms":{"gain":{"name":"u_param_0","type":"number"},"offset":{"name":"u_param_1","type":"number"}},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nuniform float u_param_0;\nuniform float u_param_1;\nout vec4 fragColor;\nvoid main() {\n  vec3 value = vec3((u_param_1 + (v_position.x * u_param_0)), sin((u_elapsed_ms * 0.001)), clamp(v_position.z, 0.0, 1.0));\n  fragColor = vec4(value, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"vec3","args":[{"op":"add","args":[{"op":"param","key":"offset"},{"op":"multiply","args":[{"op":"position","axis":"x"},{"op":"param","key":"gain"}]}]},{"op":"multiply","args":[{"op":"time"},{"op":"const","value":0.001}]},{"op":"clamp","args":[{"op":"position","axis":"z"},{"op":"const","value":0.0},{"op":"const","value":1.0}]}]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"elapsed-arithmetic","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[-0.08749999850988388,1.25,0.0,1.0,-0.02499999850988388,1.25,0.25,1.0,0.03750000149011612,1.25,0.5,1.0,0.10000000149011612,1.25,0.75,1.0,0.16250000149011612,1.25,1.0,1.0,0.22500000149011612,1.25,0.0,1.0,0.2875000014901161,1.25,0.25,1.0,-0.08749999850988388,1.25,0.5,1.0,-0.02499999850988388,1.25,0.75,1.0,0.03750000149011612,1.25,1.0,1.0,0.10000000149011612,1.25,0.0,1.0,0.16250000149011612,1.25,0.25,1.0,0.22500000149011612,1.25,0.5,1.0,0.2875000014901161,1.25,0.75,1.0,-0.08749999850988388,1.25,1.0,1.0,-0.02499999850988388,1.25,0.0,1.0,0.03750000149011612,1.25,0.25,1.0,0.10000000149011612,1.25,0.5,1.0,0.16250000149011612,1.25,0.75,1.0,0.22500000149011612,1.25,1.0,1.0,0.2875000014901161,1.25,0.0,1.0,-0.08749999850988388,1.25,0.25,1.0,-0.02499999850988388,1.25,0.5,1.0,0.03750000149011612,1.25,0.75,1.0,0.10000000149011612,1.25,1.0,1.0,0.16250000149011612,1.25,0.0,1.0,0.22500000149011612,1.25,0.25,1.0,0.2875000014901161,1.25,0.5,1.0,-0.08749999850988388,1.25,0.75,1.0,-0.02499999850988388,1.25,1.0,1.0,0.03750000149011612,1.25,0.0,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec3","expression":"vec3((u_param_1 + (v_position.x * u_param_0)), (u_elapsed_ms * 0.001), clamp(v_position.z, 0.0, 1.0))","uniforms":{"gain":{"name":"u_param_0","type":"number"},"offset":{"name":"u_param_1","type":"number"}},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nuniform float u_param_0;\nuniform float u_param_1;\nout vec4 fragColor;\nvoid main() {\n  vec3 value = vec3((u_param_1 + (v_position.x * u_param_0)), (u_elapsed_ms * 0.001), clamp(v_position.z, 0.0, 1.0));\n  fragColor = vec4(value, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"multiply","args":[{"op":"param","key":"tint","type":"vec3"},{"op":"param","key":"gain"}]},"limitation":null,"tolerance":null,"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"vector-parameter","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0,0.0625,0.125,0.1875,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec3","expression":"(u_param_1 * vec3(u_param_0))","uniforms":{"gain":{"name":"u_param_0","type":"number"},"tint":{"name":"u_param_1","type":"vec3"}},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nuniform float u_param_0;\nuniform vec3 u_param_1;\nout vec4 fragColor;\nvoid main() {\n  vec3 value = (u_param_1 * vec3(u_param_0));\n  fragColor = vec4(value, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]},{"beat":18.0,"expression":{"op":"vec2","args":[{"op":"position","axis":"y"},{"op":"cos","args":[{"op":"time"}]}]},"limitation":"Exploratory transcendental tolerance; SwiftShader sin\/cos differ about 1.3e-4 from the CPU oracle. Not approved for fine-DMX parity.","tolerance":{"absolute":2.0E-4,"relative":3.0E-6},"params":{"offset":0.10000000149011612,"gain":0.25,"tint":[0.25,0.5,0.75]},"elapsedBeats":6.0,"id":"two-components","meter":{"beatsPerBar":3.0,"barsPerPhrase":4.0},"expected":[-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.25,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,-0.125,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.0,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.125,0.9380365433953481,0.0,1.0,0.25,0.9380365433953481,0.0,1.0,0.25,0.9380365433953481,0.0,1.0,0.25,0.9380365433953481,0.0,1.0],"elapsedMs":1250.0,"timeMs":4321.0,"shader":{"type":"vec2","expression":"vec2(v_position.y, cos(u_elapsed_ms))","uniforms":{},"inputs":{"time-ms":"u_time_ms","elapsed-ms":"u_elapsed_ms","position":"v_position"},"numeric-contract":{"cpu":"float64","gpu":"float32","requirements":["finite-float32-inputs","valid-operator-domains"]},"source":"#version 300 es\nprecision highp float;\nuniform float u_time_ms;\nuniform float u_elapsed_ms;\nin vec3 v_position;\nout vec4 fragColor;\nvoid main() {\n  vec2 value = vec2(v_position.y, cos(u_elapsed_ms));\n  fragColor = vec4(value, 0.0, 1.0);\n}\n"},"positions":[-0.75,-0.25,0.0,-0.5,-0.25,0.25,-0.25,-0.25,0.5,0.0,-0.25,0.75,0.25,-0.25,1.0,0.5,-0.25,0.0,0.75,-0.25,0.25,-0.75,-0.125,0.5,-0.5,-0.125,0.75,-0.25,-0.125,1.0,0.0,-0.125,0.0,0.25,-0.125,0.25,0.5,-0.125,0.5,0.75,-0.125,0.75,-0.75,0.0,1.0,-0.5,0.0,0.0,-0.25,0.0,0.25,0.0,0.0,0.5,0.25,0.0,0.75,0.5,0.0,1.0,0.75,0.0,0.0,-0.75,0.125,0.25,-0.5,0.125,0.5,-0.25,0.125,0.75,0.0,0.125,1.0,0.25,0.125,0.0,0.5,0.125,0.25,0.75,0.125,0.5,-0.75,0.25,0.75,-0.5,0.25,1.0,-0.25,0.25,0.0]}]}</script>
+  <script type="module">
+    import { createComputeRunner, UnsupportedError } from './compute.js';
+    const oracle = JSON.parse(document.querySelector('#oracle').textContent);
+    const status = document.querySelector('#status');
+    const output = document.querySelector('#report');
+    const button = document.querySelector('#run');
+    const absoluteTolerance = 3e-6, relativeTolerance = 3e-6;
+
+    function check(condition, message) { if (!condition) throw new Error(message); }
+    function compare(actual, expected, tolerance = {}) {
+      check(actual.length === expected.length, `Length ${actual.length} differs from ${expected.length}`);
+      let maxError = 0;
+      for (let i = 0; i < actual.length; i++) {
+        const error = Math.abs(actual[i] - expected[i]);
+        maxError = Math.max(maxError, error);
+        if (!Number.isFinite(actual[i]) || error > (tolerance?.absolute ?? absoluteTolerance) + (tolerance?.relative ?? relativeTolerance) * Math.abs(expected[i])) {
+          throw new Error(`Component ${i}: GPU ${actual[i]}, CPU ${expected[i]}, error ${error}`);
+        }
+      }
+      return maxError;
+    }
+    const input = (test) => ({ positions: new Float32Array(test.positions), params: test.params,
+      timeMs: test.timeMs, elapsedMs: test.elapsedMs, beat: test.beat, elapsedBeats: test.elapsedBeats, meter: test.meter, frameId: 27, epoch: 4 });
+    async function expectCode(code, operation) {
+      try { await operation(); } catch (error) {
+        check(error.code === code, `Expected ${code}, got ${error.code}: ${error.message}`);
+        return;
+      }
+      throw new Error(`Expected ${code} rejection`);
+    }
+    function distribution(samples) {
+      const sorted = [...samples].sort((a,b) => a-b);
+      const at = (p) => sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)];
+      return { p50: at(.5), p95: at(.95), p99: at(.99), min: sorted[0], max: sorted.at(-1) };
+    }
+
+    window.runGpuExperiment = async function({ counts = [1000, 10000], warmup = 3, samples = 12 } = {}) {
+      const report = { status: 'running', at: new Date().toISOString(), userAgent: navigator.userAgent,
+        oracle: oracle.generator, absoluteTolerance, relativeTolerance, correctness: [], lifecycle: [], benchmarks: [],
+        timingMeaning: 'CPU wall time, including browser scheduling. Fence wait is not isolated GPU execution time.' };
+      let runner;
+      button.disabled = true;
+      status.className = '';
+      status.textContent = 'Running in an isolated WebGL2 context…';
+      try {
+        check(Number.isInteger(warmup) && warmup >= 0 && Number.isInteger(samples) && samples > 0 && samples <= 1000,
+          'Warmup/samples must be bounded nonnegative/positive integers');
+        runner = createComputeRunner(undefined, { maxElements: 100000, timeoutMs: 5000 });
+        report.context = runner.diagnostics;
+        for (const test of oracle.cases) {
+          runner.compile(test.shader);
+          const result = await runner.run(input(test));
+          check(result.frameId === 27 && result.epoch === 4, 'Result lost frame/epoch identity');
+          report.correctness.push({ id: test.id, components: result.values.length,
+            tolerance: test.tolerance || { absolute: absoluteTolerance, relative: relativeTolerance },
+            limitation: test.limitation,
+            maxAbsoluteError: compare(result.values, test.expected, test.tolerance), timings: result.timings });
+        }
+        const musical = oracle.cases.find((item) => item.id === 'musical-phase');
+        runner.compile(musical.shader);
+        await expectCode('invalid-input', () => runner.run({ ...input(musical), elapsedBeats: undefined }));
+        await expectCode('invalid-input', () => runner.run({ ...input(musical), meter: { beatsPerBar: 0, barsPerPhrase: 4 } }));
+        await expectCode('invalid-input', () => runner.run({ ...input(musical), meter: { beatsPerBar: 3, barsPerPhrase: Infinity } }));
+        report.lifecycle.push({ name: 'musical-clock-and-meter-validation', status: 'passed' });
+        const test = oracle.cases.find((item) => item.id === 'elapsed-arithmetic');
+        runner.compile(test.shader);
+        await expectCode('invalid-shader', () => runner.compile({ ...test.shader, type: 'constructor' }));
+        await expectCode('invalid-input', () => runner.run({ ...input(test), params: {} }));
+        await expectCode('invalid-input', () => runner.run({ ...input(test), positions: new Float32Array([NaN,0,0]) }));
+        await expectCode('invalid-input', () => runner.run({ ...input(test), elapsedMs: Infinity }));
+        report.lifecycle.push('missing/invalid inputs rejected before submission');
+        const pending = runner.run(input(test));
+        await expectCode('busy', () => runner.run(input(test)));
+        compare((await pending).values, test.expected);
+        report.lifecycle.push('one in-flight frame enforced');
+        const cancel = new AbortController();
+        const cancelled = runner.run({ ...input(test), signal: cancel.signal });
+        cancel.abort();
+        await expectCode('aborted', () => cancelled);
+        compare((await runner.run(input(test))).values, test.expected);
+        report.lifecycle.push('cancellation discards result and next frame recovers');
+        await expectCode('shader-compile', () => runner.compile({ ...test.shader, source: '#version 300 es\nthis is invalid;' }));
+        compare((await runner.run(input(test))).values, test.expected);
+        report.lifecycle.push('failed compilation retains last good program');
+        try { createComputeRunner({ getContext: () => null }); throw new Error('Expected unsupported context'); }
+        catch (error) { check(error instanceof UnsupportedError, 'Unavailable context was not an UnsupportedError'); }
+        report.lifecycle.push('unavailable WebGL2 reports explicit unsupported result');
+
+        const deadlineRunner = createComputeRunner(undefined, { timeoutMs: 1 });
+        try {
+          deadlineRunner.compile(test.shader);
+          const overdue = deadlineRunner.run(input(test));
+          const until = performance.now() + 5;
+          while (performance.now() < until) { /* simulate a suspended event loop for this test */ }
+          await expectCode('timeout', () => overdue);
+          report.lifecycle.push('expired fence deadline discards even an already completed result');
+        } finally { deadlineRunner.dispose(); }
+
+        for (const count of counts) {
+          check(Number.isInteger(count) && count > 0 && count <= 100000, 'Invalid benchmark fixture count');
+          const baseCount = test.positions.length / 3;
+          const positions = new Float32Array(count * 3), expected = new Float64Array(count * 4);
+          for (let i = 0; i < count; i++) {
+            positions.set(test.positions.slice((i % baseCount) * 3, (i % baseCount) * 3 + 3), i * 3);
+            expected.set(test.expected.slice((i % baseCount) * 4, (i % baseCount) * 4 + 4), i * 4);
+          }
+          const request = { ...input(test), positions };
+          const timings = [];
+          let maxError = 0;
+          for (let iteration = 0; iteration < warmup + samples; iteration++) {
+            const result = await runner.run({ ...request, frameId: iteration });
+            maxError = Math.max(maxError, compare(result.values, expected));
+            if (iteration >= warmup) timings.push(result.timings);
+          }
+          report.benchmarks.push({ count, warmup, samples, maxAbsoluteError: maxError,
+            milliseconds: Object.fromEntries(['uploadMs','submitMs','fenceWaitMs','readbackMs','totalMs']
+              .map((key) => [key, distribution(timings.map((timing) => timing[key]))])), observations: timings });
+        }
+
+        const lossCanvas = document.createElement('canvas');
+        const lossRunner = createComputeRunner(lossCanvas);
+        try {
+          lossRunner.compile(test.shader);
+          const lose = lossCanvas.getContext('webgl2').getExtension('WEBGL_lose_context');
+          if (lose) {
+            const outstanding = lossRunner.run(input(test));
+            lose.loseContext();
+            await expectCode('context-lost', () => outstanding);
+            report.lifecycle.push('context loss rejects pending output');
+          } else report.lifecycle.push('context-loss extension unavailable; manual recovery test remains');
+        } finally { lossRunner.dispose(); }
+
+        runner.dispose();
+        await expectCode('disposed', () => runner.run(input(test)));
+        report.lifecycle.push('disposed runner rejects use');
+        report.status = 'passed';
+        status.className = 'pass';
+        status.textContent = `Passed on ${report.context.acceleration === 'software' ? 'a software renderer' : 'an unverified renderer'}. All sampled values match the Clojure oracle within tolerance.`;
+      } catch (error) {
+        report.status = error instanceof UnsupportedError ? 'unsupported' : 'failed';
+        report.error = { name: error.name, code: error.code, message: error.message, details: error.details, stack: error.stack };
+        status.className = 'fail';
+        status.textContent = `${report.status}: ${error.message}`;
+      } finally {
+        runner?.dispose();
+        button.disabled = false;
+        window.gpuReport = report;
+        output.textContent = JSON.stringify(report, null, 2);
+      }
+      return report;
+    };
+    button.addEventListener('click', () => window.runGpuExperiment());
+    window.gpuHarnessReady = true;
+  </script>
+</body>
+</html>

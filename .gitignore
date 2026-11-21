@@ -1,0 +1,11 @@
+.cpcache/
+.clj-kondo/.cache/
+.lsp/
+target/
+.nrepl-port
+.lein-failures
+*.class
+*.jar
+node_modules/
+.shadow-cljs/
+resources/studio/js/

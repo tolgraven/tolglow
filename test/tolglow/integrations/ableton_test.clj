@@ -1,0 +1,77 @@
+(ns tolglow.integrations.ableton-test
+  (:require [clojure.test :refer :all]
+            [afterglow.control.model :as model]
+            [tolglow.integrations.ableton :as live]))
+
+(def envelope {:show-id :main :epoch 0 :command-id "press" :time-ms 0})
+(defn bridge [] (live/new-bridge {:mappings {36 {:cue-id :red :mode :held}}
+                                 :parameters {1 {:cue-id :red :instance-id "0:1" :param :level :bounds [0 10]}}}))
+(def note-on {:type :note-on :channel 1 :note 36 :velocity 127})
+(def note-off (assoc note-on :type :note-off :velocity 0))
+(def recording {:track-armed? true :automation-armed? true :recording? true
+                :writable? true :destination-id "clip-7" :beat 12.5})
+
+(deftest drum-rack-layout-is-64-stable-pads-with-explicit-colors
+  (let [pads (live/pad-page [{:id :red :name "Red" :color [1 0 0]}])]
+    (is (= 64 (count pads)))
+    (is (= (set (range 36 100)) (set (map :note pads))))
+    (is (= {:x 0 :y 0 :note 92 :color [1 0 0] :live-color 16711680 :cue-id :red}
+           (select-keys (first pads) [:x :y :note :color :live-color :cue-id])))
+    (is (nil? (:cue-id (last pads)))))
+  (is (thrown? clojure.lang.ExceptionInfo (live/pad-page [{:color [2 0 0]}]))))
+
+(deftest note-launch-and-release-use-the-real-shared-reducer
+  (let [show (model/new-show {:registry {:effects {:fx {:id :fx :version 1 :params {}}}
+                                        :cues {:red {:id :red :version 1 :effect-id :fx}}}})
+        pressed (live/midi->commands (bridge) note-on envelope)
+        launched (model/apply-command show (first (:commands pressed)))
+        bound (live/acknowledge-launch (:state pressed) 36 (:ack launched) envelope)
+        released (live/midi->commands (:state bound) note-off (assoc envelope :command-id "off" :time-ms 1))
+        ended (model/apply-command (:model launched) (first (:commands released)))]
+    (is (= :accepted (get-in launched [:ack :status])))
+    (is (= "0:1" (:instance-id (first (:commands released)))))
+    (is (= :accepted (get-in ended [:ack :status])))
+    (is (= :releasing (get-in ended [:model :instances "0:1" :phase])))))
+
+(deftest release-before-ack-and-mode-handoff-cannot-leave-stuck-instances
+  (let [pressed (live/midi->commands (bridge) note-on envelope)
+        released (live/midi->commands (:state pressed) note-off (assoc envelope :command-id "off"))
+        ack {:status :accepted :command-id "press" :instance-id "old-instance"}
+        bound (live/acknowledge-launch (:state released) 36 ack (assoc envelope :command-id "late-off"))]
+    (is (empty? (:commands released)))
+    (is (= "old-instance" (:instance-id (first (:commands bound)))))
+    (is (empty? (get-in bound [:state :held])))
+    (let [handed (live/handoff (:state pressed) :live (assoc envelope :command-id "mode"))
+          late (live/acknowledge-launch (:state handed) 36 ack (assoc envelope :command-id "late"))]
+      (is (= :live (get-in handed [:state :mode])))
+      (is (= "old-instance" (:instance-id (first (:commands late)))))
+      (is (empty? (:commands (live/midi->commands (:state handed) note-on envelope)))))))
+
+(deftest bridge-suppresses-feedback-and-scales-controller-input
+  (is (empty? (:commands (live/midi->commands (bridge) (assoc note-on :origin :tolglow-feedback) envelope))))
+  (is (empty? (:commands (live/midi->commands (bridge) (assoc note-on :channel 2) envelope))))
+  (is (= 10.0 (:value (first (:commands (live/midi->commands (bridge) {:type :cc :channel 1 :controller 1 :value 127} envelope))))))
+  (is (thrown? clojure.lang.ExceptionInfo
+               (live/midi->commands (bridge) {:type :cc :channel 1 :controller 1 :value 128} envelope))))
+
+(deftest recording-requires-accepted-armed-events-and-never-recurses
+  (let [cmd (merge envelope {:op :cue/launch :cue-id :red :source {:type :push}})
+        ack {:command-id "press" :status :accepted :instance-id "0:1"}
+        first-write (live/record-command (bridge) cmd ack recording)]
+    (is (= :note-on (-> first-write :midi first :type)))
+    (is (= "clip-7" (-> first-write :intents first :destination-id)))
+    (is (empty? (:intents (live/record-command (:state first-write) cmd ack recording))))
+    (is (empty? (:intents (live/record-command (bridge) cmd ack (assoc recording :track-armed? false)))))
+    (is (empty? (:intents (live/record-command (bridge) cmd (assoc ack :status :rejected) recording))))
+    (is (empty? (:intents (live/record-command (bridge) (assoc cmd :source {:origin :live-playback}) ack recording))))
+    (let [param (merge envelope {:command-id "knob" :op :param/set :instance-id "0:1" :param :level :value 5})
+          ack {:command-id "knob" :status :accepted}]
+      (is (= 64 (-> (live/record-command (:state first-write) param ack recording) :midi first :value)))
+      (is (empty? (:intents (live/record-command (:state first-write) param ack (assoc recording :automation-armed? false))))))))
+
+(deftest musical-note-launch-duration-is-preserved-as-data
+  (let [state (live/new-bridge {:mappings {36 {:cue-id :pulse :mode :one-shot :duration {:beats 2}}}})
+        result (live/midi->commands state {:type :note-on :channel 1 :note 36 :velocity 100}
+                                      {:command-id "musical-launch" :show-id :main :epoch 1 :time-ms 0})]
+    (is (= {:beats 2} (get-in result [:commands 0 :launch :duration])))
+    (is (nil? (get-in result [:commands 0 :launch :duration-ms])))))

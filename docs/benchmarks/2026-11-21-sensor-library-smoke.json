@@ -1,0 +1,17 @@
+{
+  "library": "@capacitor/motion",
+  "version": "8.0.1",
+  "core": "8.0.1",
+  "assertions": 3,
+  "passed": true,
+  "environment": "v24.22.3",
+  "scope": "Actual package with injected EventTarget; no permission or physical sensor proof",
+  "recorded-at": "2026-11-21",
+  "repository-revision": "87c0bb8045db2b4560d3db4b7d8e565c23ec1736",
+  "license": "MIT",
+  "package-integrity": "sha512-kON6AwzCzMmyw6A76G0zLF/Q7xVPMC66HSfTSCgpMNwoQkRMMMEDHQbfFxZYLmCcS/4apy3lzG/HTvE5coAZiw==",
+  "sources": [
+    "https://registry.npmjs.org/@capacitor/motion/latest",
+    "https://github.com/ionic-team/capacitor-plugins/tree/87c0bb8045db2b4560d3db4b7d8e565c23ec1736/motion"
+  ]
+}
