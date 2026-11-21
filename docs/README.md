@@ -53,6 +53,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
 | [Reactive REPL](reactive.md) | Durable subscriptions, ratoms, watchers and queued actions |
 | [Fixture library](fixture-library.md) | Verified format coverage, search, validation and rig workflow |
+| [Aim paths](aim-paths.md) | Musical world-space path effects, guarded cue publication and persistence |
 | [Studio UI](studio-ui.md) | Frontend implementation and browser verification |
 | [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |
 | [System controls](system-controls.md) | Instance/category pause, opacity and independent musical AR |

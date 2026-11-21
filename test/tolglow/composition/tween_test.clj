@@ -4,6 +4,12 @@
 
 (def ramp {:keyframes [{:at-ms 0 :value 0} {:at-ms 1000 :value 1}]})
 
+(deftest floating-zero-keyframes-from-drawn-paths-are-valid
+  (is (= 0.5 (:value (tween/sample {:keyframes [{:at {:beats 0.0} :value 0}
+                                               {:at {:beats 2.0} :value 1}]} 1))))
+  (is (= 0.5 (:value (tween/sample {:keyframes [{:at-ms 0.0 :value 0}
+                                               {:at-ms 100.0 :value 1}]} 50)))))
+
 (deftest musical-keyframes-use-explicit-elapsed-beats
   (let [spec {:keyframes [{:at {:beats 0} :value 0} {:at {:bars 1} :value 1}]
               :mode :ping-pong :repeat-count 2}
