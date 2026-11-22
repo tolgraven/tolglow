@@ -50,7 +50,7 @@ In this example, up to four sources can run above standby, including up to two i
 
 Enable `:lighting-activity` to score the final, visible output from zero to one. A fast strobe or square dimmer LFO raises the flashing component. A softer edge reduces it. Moving-head speed contributes while the head is lit. A handful of sparkles can score highly on their own fixtures while contributing little to the whole room.
 
-Read the score and its brightness, coverage, flashing, movement and strobe components under `[:lighting/activity :scene]` in `(show/variables runtime)`. Use `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups patch-group-id]` for a narrower view.
+Read the score and its brightness, coverage, flashing, movement and strobe components under `[:lighting/activity :scene]` in `(show/variables runtime)`. Use `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups patch-group-id]` for a narrower view. The scene reads the combined output. Per-effect scores estimate how much each writer contributed when arithmetic blends share a channel.
 
 Attack smooths rising light. Release smooths falling light and leaves a tail when a cue ends. After one duration the output has moved about 63% toward a held input. The activity meter sees the result. On a fixture with a mechanical strobe, the envelope controls the brightness of the flashes. The shutter command sets their rate.
 
