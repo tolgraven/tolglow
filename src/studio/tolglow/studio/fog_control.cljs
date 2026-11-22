@@ -1,5 +1,6 @@
 (ns tolglow.studio.fog-control
-  (:require [re-frame.core :as rf]))
+  (:require [re-frame.core :as rf]
+            [reagent.core :as r]))
 
 (rf/reg-sub :fog-control/settings (fn [db _] (get-in db [:show :settings :fog-control])))
 (rf/reg-sub :fog-control/live (fn [db _] (get-in db [:show :output :fog-control])))
@@ -13,11 +14,19 @@
 (defn- percent [x] (str (js/Math.round (* 100 x)) "%"))
 (defn- change! [key value] (rf/dispatch [:connections/set-fog-control {key value}]))
 (defn- bound [label key value minimum maximum disabled?]
-  [:label label
-   [:select {:aria-label label :disabled disabled? :value (str value)
-             :on-change #(change! key (js/Number (.. % -target -value)))}
-    (for [v (sort (conj (set (filter #(<= minimum % maximum) (map #(/ % 100) (range 101)))) value))]
-      ^{:key v} [:option {:value (str v)} (percent v)])]])
+  (r/with-let [draft (r/atom nil)]
+    (let [display (or @draft value)
+          commit! (fn []
+                    (when (some? @draft)
+                      (let [new @draft]
+                        (reset! draft nil)
+                        (when (not= new value) (change! key new)))))]
+      [:label [:span (str label " · " (percent display))]
+       [:input {:type "range" :aria-label label :aria-valuetext (percent display) :disabled disabled?
+                :min minimum :max maximum :step 0.01 :value display :style {:width "100%" :min-height "44px"}
+                :on-input #(reset! draft (js/Number (.. % -target -value)))
+                :on-pointer-up commit! :on-key-up commit! :on-blur commit!
+                :on-pointer-cancel #(reset! draft nil)}]])))
 
 (defn panel [pending?]
   (let [{:keys [enabled? target hysteresis fog-fixture-ids]

@@ -44,7 +44,7 @@
 (deftest publisher-guard-copies-only-expired-auto-slots
   (let [original (byte-array [80 10 19])
         packet {1 original}
-        leases (deadline/remember nil 7 [{:until-ms 100 :slots [[1 0] [1 1]]}])]
+        leases (deadline/remember nil 7 [{:until-ms 100 :off-bytes {[1 0] 0 [1 1] 0}}])]
     (is (identical? packet (deadline/guard leases packet 7 99)))
     (is (= [0 0 19] (vec (get (deadline/guard leases packet 7 100) 1))))
     (is (= [80 10 19] (vec original)))
@@ -89,5 +89,50 @@
     (is (empty? (:leases suspended)))
     (let [inverted (frame/compile-patch [(assoc-in jet [:fogger :dmx-range] [255 0])])
           s (fog/advance armed inverted (observed 0.1 0) nil 0 false)]
-      (is (= :no-zero-off (get-in s [:pumps :jet :mode])))
-      (is (empty? (fog/demands s))))))
+      (is (= :injecting (get-in s [:pumps :jet :mode])))
+      (is (< (abs (- 0.65 (get-in (fog/demands s) [0 :value]))) 1e-9))
+      (is (= {[1 0] 255} (get-in (fog/demands s) [0 :off-bytes])))
+      (is (= [255 42] (mapv #(bit-and 255 %) (get (deadline/restore-packet inverted [:jet] {1 (byte-array [80 42])}) 1)))))))
+
+(deftest restoring-an-active-automatic-pulse-preserves-other-channels-and-disarms
+  (let [wall (atom 0) raw (atom nil)
+        sink {:send! (fn [packets _] (reset! raw (bit-and 255 (aget ^bytes (get packets 1) 0))))}
+        rt (show/create-runtime {:model base :sink sink :physical-now-ms #(deref wall)})]
+    (try
+      (let [config (show/submit! rt :settings {:scope :fog-control :values options})]
+        (show/tick! rt 0) (is (= :accepted (:status @config)))
+        (reset! wall 25) (show/tick! rt 25)
+        (reset! wall 50) (show/tick! rt 50)
+        (is (pos? @raw))
+        (let [doc (show/export-show-source rt)
+              receipt (show/submit! rt :import {:source doc})]
+          (reset! wall 75) (show/tick! rt 75)
+          (is (= :accepted (:status @receipt)))
+          (is (zero? @raw))
+          (is (= false (get-in (show/snapshot rt) [:settings :fog-control :enabled?])))))
+      (finally (show/stop! rt))))
+  (let [b (byte-array [80 42]), restored (deadline/restore-packet patch [:jet] {1 b})]
+    (is (= [0 42] (vec (get restored 1))))
+    (is (= [80 42] (vec b)))))
+
+(deftest split-universe-reversed-nozzle-has-the-same-optical-target-and-physical-off
+  (let [jet (-> jet (assoc :address 512 :channels {:fog {:offset 1 :fine-offset 2 :inverted-from 90}})
+                (assoc-in [:fogger :dmx-range] [220.25 20.25]))
+        model (model/new-show {:rig (assoc rig :fixtures [jet])})
+        now (atom 0) bytes (atom nil)
+        rt (show/create-runtime {:model model :independent-output? true :physical-now-ms #(deref now)
+                                 :sink {:send! (fn [out _]
+                                                 (reset! bytes [(bit-and 255 (aget ^bytes (get out 1) 511))
+                                                                (bit-and 255 (aget ^bytes (get out 2) 0))]))}})
+        cycle! #(do (reset! now %) (show/tick! rt (double %)) (scheduler/publish! (:publisher rt)))]
+    (try
+      (let [ack (show/submit! rt :settings {:scope :fog-control :values options})]
+        (cycle! 0)
+        (is (= :accepted (:status @ack)))
+        (is (= [220 64] @bytes))
+        (cycle! 25) (cycle! 50)
+        (is (= [150 64] @bytes))
+        (reset! now 200)
+        (scheduler/publish! (:publisher rt))
+        (is (= [220 64] @bytes)))
+      (finally (show/stop! rt)))))

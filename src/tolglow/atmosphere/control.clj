@@ -1,6 +1,7 @@
 (ns tolglow.atmosphere.control
   "Opt-in mixed-room fog control. Times use the physical presentation clock."
-  (:require [afterglow.runtime.events :as staging]))
+  (:require [afterglow.runtime.events :as staging]
+            [afterglow.render.atmosphere :as atmosphere]))
 
 (def defaults {:enabled? false :target 0.2 :hysteresis 0.05 :fog-fixture-ids []})
 (def default-duty {:max-on-s 0.4 :min-off-s 6.0 :max-level 0.5})
@@ -32,9 +33,14 @@
   (and (map? duty)
        (let [{:keys [max-on-s min-off-s max-level]} (merge default-duty duty)]
          (and (finite? max-on-s) (<= 0.025 max-on-s 3600)
-         (finite? min-off-s) (< 0 min-off-s 86400.001) (unit? max-level) (pos? max-level)))))
+         (finite? min-off-s) (<= 0 min-off-s 86400) (unit? max-level) (pos? max-level)))))
 
 (defn- recent? [now stamp] (and (finite? stamp) (<= 0 (- now stamp) 500)))
+
+(defn- prior-pump [previous id]
+  (let [a (get-in previous [:pumps id])
+        b (get-in previous [:music-pumps id])]
+    (if (> (:rest-until-ms b 0) (:rest-until-ms a 0)) b a)))
 
 (defn- pump [fixture source previous now request? ready?]
   (let [{:keys [fogger compiled-channels]} fixture
@@ -42,7 +48,6 @@
         [off full] (:dmx-range fogger [0 255])
         duty (if (valid-duty? (:duty fogger {})) (merge default-duty (:duty fogger)) default-duty)
         reason (cond (or (nil? source) (nil? channel)) :missing
-                     (or (> off full) (some? (:inverted-from channel))) :no-zero-off
                      (not (valid-duty? (:duty fogger {}))) :invalid-duty
                      (not (recent? now (:last-presented-ms source))) :no-recent-dmx
                      (not ready?) :suspended)
@@ -58,7 +63,8 @@
      :rest-until-ms (if active? (max rest-until (+ until (* 1000 (:min-off-s duty)))) rest-until)
      :mode (cond reason reason active? :injecting (and request? (< now rest-until)) :resting
                  flowing? :external-flow :else :idle)
-     :channel channel :demand (if active? (/ (+ off (* (:max-level duty) (- full off))) 255.0) 0.0)}))
+     :off-bytes (atmosphere/off-bytes fixture)
+     :demand (if active? (atmosphere/physical-level channel (+ off (* (:max-level duty) (- full off)))) 0.0)}))
 
 (defn advance
   "Calculate automatic demand from an immutable, delivered DMX observation.
@@ -74,7 +80,7 @@
         level (:fog-level observation)
         fresh? (and (= epoch (:epoch observation)) (unit? level)
                     (recent? now (:last-presented-ms observation)))
-        zone (when (and fresh? valid?) (cond (< level low) :below (> level high) :above :else :in-band))
+        zone (when (and fresh? valid?) (cond (and (pos? target) (<= level low)) :below (>= level high) :above :else :in-band))
         request? (and fresh? valid? (pos? target) (or (= zone :below)
                      (and (= zone :in-band) (:request? previous) (< level high))))
         enabled? (:enabled? s)
@@ -83,7 +89,7 @@
                              :let [index (:by-id patch)
                                    id (if (contains? index configured) configured
                                         (if (keyword? configured) (subs (str configured) 1) configured))]]
-                         [id (pump (get-in patch [:by-id id]) (get sources id) (or (get-in previous [:pumps id]) (get-in previous [:music-pumps id]))
+                         [id (pump (get-in patch [:by-id id]) (get sources id) (prior-pump previous id)
                                    now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))]
     {:epoch epoch :enabled? enabled? :target target :level level :lower low :upper high :zone zone
      :fresh? (boolean fresh?) :request? (boolean (and request? enabled? (not bypass?))) :pumps pumps}))
@@ -106,13 +112,14 @@
   (when (:enabled? status) (set (keys (:pumps status)))))
 
 (defn- batch-fog? [id batch]
-  (and (pos? (:opacity batch 1)) (some #{id} (:target-ids batch))
+  (and batch (pos? (:opacity batch 1))
        (or (contains? (:outputs batch) :fog)
-           (some #(= :fog (:attribute %)) (get-in batch [:field-request :group :cpu-plan :outputs])))))
+           (some #(= :fog (:attribute %)) (get-in batch [:field-request :group :cpu-plan :outputs])))
+       (some #{id} (:target-ids batch))))
 
 (defn- manual-fog? [id {:keys [assignments batch native-layer]}]
   (and (pos? (:opacity native-layer 1)) (pos? (:member-opacity native-layer 1))
-       (or (some #(and (= id (:target-id %)) (= :fog (:attribute %)) (pos? (:opacity % 1))) assignments)
+       (or (some #(and (= :fog (:attribute %)) (= id (:target-id %)) (pos? (:opacity % 1))) assignments)
            (batch-fog? id batch)
            (and (some #(= :fog (:attribute %)) (:transforms native-layer))
                 (or (= :previous (:targets native-layer)) (some #{id} (:target-ids native-layer)))))))
@@ -124,10 +131,10 @@
                                             (assoc pump :active? false :mode :manual :demand 0.0) pump)])))))
 
 (defn demands [status]
-  (into [] (for [[id {:keys [active? demand until-ms channel]}] (:pumps status)
+  (into [] (for [[id {:keys [active? demand until-ms off-bytes]}] (:pumps status)
                  :when active?]
              {:target-id id :attribute :fog :value demand :blend :replace
-              :until-ms until-ms :slots (into [(:coarse channel)] (keep identity [(:fine channel)]))})))
+              :until-ms until-ms :off-bytes off-bytes})))
 
 (defn with-demands [blocks assignments]
   (cond-> blocks (seq assignments) (conj {:kind :assignments :assignments assignments})))
@@ -149,7 +156,7 @@
                              :let [musical (get requested id)
                                    cap (min (:value musical 0.5) (get-in fixture [:fogger :duty :max-level] 0.5))
                                    p (pump (assoc-in fixture [:fogger :duty :max-level] cap) (get sources id)
-                                           (or (get previous-pumps id) (get-in previous [:pumps id])) now
+                                           (prior-pump previous id) now
                                            (some? musical) (not bypass?))]]
                          [id (if (some (partial manual-fog? id) blocks)
                                (assoc p :active? false :mode :manual) p)]))

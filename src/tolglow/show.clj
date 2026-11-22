@@ -884,10 +884,14 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:model model
+                   {:model (cond-> model (get-in model fog-deadline/saved-ids-path)
+                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
                     :output (if restored-output
                               (update restored-output :universes
-                                      #(into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %))
+                                      #(fog-deadline/restore-packet
+                                         (patch! runtime (get-in model [:rig :fixtures]))
+                                         (get-in model fog-deadline/saved-ids-path)
+                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                     :status {:restored? true :frame-ms 0}}
                    (try
@@ -1201,7 +1205,7 @@
   (let [[model output] (locking (:lock runtime)
                          (let [{:keys [model output]} @(:state runtime)
                                atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (merge model (connections/export-state (:connections runtime) model))
+                           [(cond-> (fog-deadline/save-ids (merge model (connections/export-state (:connections runtime) model)) output)
                               atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
