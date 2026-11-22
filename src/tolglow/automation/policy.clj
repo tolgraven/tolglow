@@ -60,7 +60,7 @@
     (->> (get-in model [:registry :cues]) vals
          (filter #(and (or (nil? ids) (ids (:id %)))
                        (not (false? (:auto? %))) (not (:show-control? %))
-                       (not (:show-control? (registry/cue-effect (:registry model) %))))))
+                       (not (:show-control? (registry/cue-effect (:registry model) %)))))
          (sort-by (comp str :id))
          (mapv #(-> %
                     (update :params (fn [params] (merge params (get-in config [:launch :params]))))
