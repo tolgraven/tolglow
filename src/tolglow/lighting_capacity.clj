@@ -21,6 +21,19 @@
 
 (def ^:private field-bit (zipmap (into [:dimmer :color] (keys photometry/emitter-spectrum)) (map #(bit-shift-left 1 %) (range))))
 
+(defn full-brightness
+  "Nominal full-white visible output of a patched light source. Also accepts
+  the uncompiled fixture definitions available when authoring a scene."
+  [{:keys [channels measured-relative-brightness max-watts emission-share] :as fixture}]
+  (let [emitters (keep photometry/emitter-spectrum (keys channels))
+        lamp? (and (:dimmer channels) (empty? emitters)
+                   (not-any? channels [:fog :haze :fan :relay :pump]))]
+    (if (or lamp? (some #(pos? (first %)) emitters))
+      (if (or measured-relative-brightness max-watts)
+        (photometry/relative-brightness fixture)
+        (double (or emission-share 1.0)))
+      0.0)))
+
 (defn- head [{:keys [id compiled-channels channels emission-share max-watts] :as fixture}]
   (let [emitters (into [] (keep (fn [[attr [response tint]]]
                                   (when-let [channel (compiled-channels attr)]
@@ -28,8 +41,7 @@
         dimmer (:dimmer compiled-channels)
         lamp? (and dimmer (empty? emitters)
                    (not (some #(contains? channels %) [:fog :haze :fan :relay :pump])))
-        weight (if (or max-watts (:measured-relative-brightness fixture))
-                 (photometry/relative-brightness fixture) (double (or emission-share 1.0)))
+        weight (full-brightness fixture)
         response (reduce + (map :response emitters))]
     (when (or lamp? (seq emitters))
       {:id id :dimmer dimmer :emitters emitters :lamp-color (:emission-color fixture [1 1 1])
@@ -64,16 +76,23 @@
 
 (defn prepare
   "Compile a meter plan alongside an Afterglow compiled patch, once per rig."
-  [patch]
+  ([patch] (prepare patch nil))
+  ([patch reference-brightness]
   (let [heads (into [] (keep head) (:fixtures patch))
         universes (:universes patch)
+        reference (or reference-brightness (reduce max 0.0 (map :weight heads)))
         indices (zipmap universes (range))]
     {:meter-heads (object-array (map #(meter-head indices %) heads)) :universes universes
+     :reference-brightness reference
+     :source-capacities (into {} (map (fn [{:keys [id weight watts]}]
+                                        [id {:relative-capacity weight :rated-watts watts
+                                             :global-maximum (if (pos? reference) (/ weight reference) 0.0)}])) heads)
+     :visible-heads (count (filter #(pos? (:weight %)) heads))
      :writers-by-head (into {} (map-indexed (fn [i h] [(:id h) [i (:attributes h)]]) heads))
      :foggers (into #{} (keep #(when (contains? (:channels %) :fog) (:id %))) (:fixtures patch))
      :relative-capacity (reduce + 0.0 (map :weight heads))
      :rated-watts (reduce + 0.0 (keep :watts heads))
-     :rated-heads (count (filter :watts heads)) :heads-count (count heads)}))
+     :rated-heads (count (filter :watts heads)) :heads-count (count heads)})))
 
 (defn- level ^double [^objects buffers ^MeterAddress channel]
   (if (nil? channel) 1.0
@@ -96,6 +115,43 @@
         (aset totals 3 (+ (aget totals 3) (* drive (.-green emitter))))
         (aset totals 4 (+ (aget totals 4) (* drive (.-blue emitter))))))))
 
+(defn- source-reading [^objects buffers ^MeterHead head {:keys [relative-capacity rated-watts] :as source}
+                       reference]
+  (let [dimmer (level buffers (.-dimmer head))
+        ^objects emitters (.-emitters head)
+        n (alength emitters)]
+    (loop [i 0 light 0.0 drive 0.0]
+      (if (= i n)
+        (let [mean-drive (/ drive n)]
+          (assoc source :relative-output light :emitter-drive mean-drive
+                 :used-rated-watts (when rated-watts (* rated-watts mean-drive))
+                 :local-brightness (if (pos? relative-capacity) (/ light relative-capacity) 0.0)
+                 :global-brightness (if (pos? reference) (/ light reference) 0.0)))
+        (let [^MeterEmitter emitter (aget emitters i)
+              amount (* dimmer (level buffers (.-address emitter)))]
+          (recur (inc i) (+ light (* amount (.-brightness emitter))) (+ drive amount)))))))
+
+(defn measure-sources
+  "Read selected heads from the committed DMX buffers. Global brightness uses
+  the brightest full-white source in the entire rig. Utility IDs are omitted."
+  [{:keys [source-capacities writers-by-head meter-heads reference-brightness] :as plan} universes ids]
+  (let [buffers (object-array (map universes (:universes plan)))]
+    (into {} (keep (fn [id]
+                     (when-let [[index] (get writers-by-head id)]
+                       [id (source-reading buffers (aget ^objects meter-heads (int index))
+                                           (source-capacities id) reference-brightness)]))) ids)))
+
+(defn match-brightness
+  "Inverse of the visible-light meter at full white. Local drive saturates
+  on a weaker fixture. :achievable is expressed on the rig-wide reference."
+  [{:keys [source-capacities]} ids target]
+  (when-not (and (number? target) (<= 0 target 1))
+    (throw (ex-info "Global brightness must be in [0,1]" {:target target})))
+  (into {} (for [id ids :let [source (get source-capacities id)] :when source
+                 :let [maximum (:global-maximum source)]]
+             [id {:local-drive (if (pos? maximum) (min 1.0 (/ target maximum)) 0.0)
+                  :achievable (min target maximum) :limited? (> target maximum)}])))
+
 (defn measure
   "Measure rendered DMX, including physical dimmer, fine channels and inversion.
   Electrical drive is an equal-emitter estimate for heads with known ratings."
@@ -106,10 +162,12 @@
     (dotimes [i (alength heads)] (meter-head! totals buffers (aget heads i)))
     (let [light (aget totals 0)
           utilization (if (pos? relative-capacity) (min 1.0 (/ light relative-capacity)) 0.0)
+          common (* (:reference-brightness plan) (:visible-heads plan))
           rgb (mapv #(aget totals %) [2 3 4])
           peak (reduce max rgb)]
       (assoc (select-keys plan [:relative-capacity :rated-watts :rated-heads :heads-count])
              :relative-output light :utilization utilization :headroom (- 1.0 utilization)
+             :local-brightness utilization :global-brightness (if (pos? common) (/ light common) 0.0)
              :used-rated-watts (aget totals 1) :color (if (pos? peak) (mapv #(/ % peak) rgb) rgb)))))
 
 (defn- source-targets [{:keys [batch assignments native-layer]}]

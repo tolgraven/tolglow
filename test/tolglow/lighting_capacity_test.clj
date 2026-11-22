@@ -189,3 +189,28 @@
       (is (empty? (registry/validate-definition :effects {:id field :version 1 :params {} :outputs {field (demo/constant 0.5)}})))
       (is (ifn? (compiler/compile-effect {:id field :version 1 :params {} :outputs {field (demo/constant 1.0)}
                                          :envelope {:attack {:beats 1} :attributes [field]}}))))))
+
+(deftest compare-source-output-on-a-shared-white-reference
+  (let [weak {:id :weak :universe 1 :address 1 :channels {:dimmer 1}
+              :measured-relative-brightness 1}
+        strong {:id :strong :universe 1 :address 2 :channels {:dimmer 1}
+                :measured-relative-brightness 4 :max-watts 100}
+        uv {:id :uv :universe 1 :address 3 :channels {:uv 1} :max-watts 70}
+        patch (frame/compile-patch [weak strong uv])
+        plan (capacity/prepare patch)
+        frame (frame/resolve-frame patch [{:target-id :weak :attribute :dimmer :value 0.8}
+                                          {:target-id :strong :attribute :dimmer :value 0.2}
+                                          {:target-id :uv :attribute :uv :value 0.5}])
+        samples (capacity/measure-sources plan (:universes frame) [:weak :strong :uv])]
+    (is (= (get-in samples [:strong :global-brightness]) (get-in samples [:weak :global-brightness])))
+    (is (= 0.25 (get-in samples [:weak :global-maximum])))
+    (is (near? 0.8 (get-in samples [:weak :local-brightness])))
+    (is (near? 0.2 (get-in samples [:strong :local-brightness])))
+    (is (nil? (get-in samples [:weak :used-rated-watts])))
+    (is (near? 0.8 (get-in samples [:weak :emitter-drive])))
+    (is (near? 20 (get-in samples [:strong :used-rated-watts])))
+    (is (near? 0.5 (get-in samples [:uv :emitter-drive])))
+    (is (zero? (get-in samples [:uv :global-brightness])))
+    (is (= {:strong {:local-drive 0.5 :achievable 0.5 :limited? false}
+            :weak {:local-drive 1.0 :achievable 0.25 :limited? true}}
+           (capacity/match-brightness plan [:strong :weak] 0.5)))))
