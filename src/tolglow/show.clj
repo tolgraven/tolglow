@@ -48,6 +48,7 @@
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.photometry :as photometry]
+            [tolglow.venue-fog :as venue-fog]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
             [tolglow.integrations.audio-return :as audio-return]
@@ -112,6 +113,7 @@
                                                (if (identical? fixtures (:fixtures cached))
                                                  (:brightness-gains cached)
                                                  (preview/brightness-gains fixtures))))
+                     :atmosphere (:atmosphere output)
                      :preview-only? true
                      :lighting-capacity (:lighting-capacity output)
                      :universes (vec (sort (keys (:universes output))))}
@@ -167,6 +169,7 @@
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
+         _ (venue-fog/validate-saved! model)
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
          patch (render/compile-patch fixtures)
@@ -206,6 +209,7 @@
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
+      :venue-fog (atom {})
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
@@ -588,7 +592,10 @@
              (fn [buffers] (reduce #(if (contains? %1 %2) %1 (assoc %1 %2 (byte-array 512))) buffers retired)))
       ;; Continue zeroing retired universes; UDP has no acknowledgement and a
       ;; single blackout packet on a patch change could be lost.
-      (send! (merge @(:retired-buffers runtime) universes) frame-number))))
+      (let [packet (merge @(:retired-buffers runtime) universes)]
+        (send! packet frame-number)
+        (when (:plan @(:venue-fog runtime))
+          (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))))))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -923,7 +930,8 @@
                                     :ack ack :emitter-id (get-in message [:payload :source :adapter])})
                                  messages receipts)
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
-                 next-state (:state committed)]
+                 next-state (venue-fog/commit! runtime (:state committed)
+                              (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
              (reset! (:state runtime) next-state)
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
@@ -976,6 +984,7 @@
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
                                document (update document :model (comp photometry/disarm calibration/disarm-restored))
+                               _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
                                prepared (connections/prepare-restore (:connections runtime) restored)]
@@ -1152,8 +1161,10 @@
   ;; Model/output come from one commit. Serialize after releasing the frame
   ;; owner so that large pixel runs can keep rendering during a download.
   (let [[model output] (locking (:lock runtime)
-                         (let [{:keys [model output]} @(:state runtime)]
-                           [(merge model (connections/export-state (:connections runtime) model)) output]))]
+                         (let [{:keys [model output]} @(:state runtime)
+                               atmosphere (venue-fog/for-save runtime output)]
+                           [(cond-> (merge model (connections/export-state (:connections runtime) model))
+                              atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
 (defn export-show
