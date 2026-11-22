@@ -550,6 +550,20 @@
            ^{:key dimension} [:label title [number-input {:id (str "room-" (name dimension)) :type "number" :min 1 :max 1000 :step 0.1
                                                    :value (get-in rig [:room dimension] 1)
                                                    :on-change #(when-let [n (number-value %)] (input! [:studio/rig-set [:room dimension] n]))}]])]
+        [:fieldset.form-row.room-dimensions
+         [:legend "Room atmosphere"]
+         (for [[field title default minimum maximum]
+               [[:air-changes-per-hour "Ventilation (air changes/h)" 0 0 3600]
+                [:fog-half-life-s "Fog half-life (s)" 180 0 nil]]]
+           ^{:key field}
+           [:label {:for (name field)} title
+            [number-input {:id (name field) :type "number" :step "any"
+                           :min minimum :max maximum :placeholder (str default)
+                           :value (get-in rig [:room field] "")
+                           :on-change (fn [e]
+                                        (let [raw (input-value e)]
+                                          (if (empty? raw) (input! [:studio/rig-atmosphere field nil])
+                                            (when-let [n (number-value e)] (input! [:studio/rig-atmosphere field n])))))}]])]
         [:div#fixture-list.fixture-list
          (for [[index fixture] (map-indexed vector (:fixtures rig))]
            ^{:key (:id fixture)} [:div.fixture-card

@@ -2,6 +2,7 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.fog-fields :as fog]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
@@ -518,6 +519,8 @@
                                     :on-success [:studio/success "Composition stopped."]}}))
 (rf/reg-event-fx :studio/success (fn [_ [_ text _]] {:dispatch [:studio/toast text]}))
 
+(rf/reg-event-db :studio/rig-atmosphere
+  (fn [db [_ field value]] (fog/set-room-value db field value)))
 (rf/reg-event-db :studio/rig-set
   (fn [db [_ path value]] (-> db (assoc-in (into [:ui :rig-draft] path) value) (assoc-in [:ui :rig-dirty?] true))))
 (rf/reg-event-db :studio/rig-remove
@@ -575,8 +578,10 @@
 (rf/reg-event-fx :studio/rig-save
   (fn [{:keys [db]} _]
     (let [rig (get-in db [:ui :rig-draft])]
-      {:studio/http {:path "/api/rig" :body rig
-                     :on-success [:studio/rig-saved rig (get-in db [:show :epoch]) (get-in db [:show :runtime-id])]}})))
+      (if-let [message (fog/room-error (:room rig))]
+        {:dispatch [:studio/toast message true]}
+        {:studio/http {:path "/api/rig" :body rig
+                       :on-success [:studio/rig-saved rig (get-in db [:show :epoch]) (get-in db [:show :runtime-id])]}}))))
 (rf/reg-event-fx :studio/rig-saved
   (fn [{:keys [db]} [_ rig epoch runtime-id _]]
     (when (and (= epoch (get-in db [:show :epoch])) (= runtime-id (get-in db [:show :runtime-id])))
