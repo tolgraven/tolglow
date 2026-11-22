@@ -103,6 +103,7 @@ self.onmessage = event => {
       active = message.active; generation = message.generation; renderOnce = false; lastDraw = 0;
       if (engine) {
         engine.visible = active; engine.platform.hidden = !active;
+        if (!active) engine.fog?.showAtmosphere?.suspend();
         engine.displayClock.cancel(); engine.lighting.latest = engine.lighting.previous = null;
       }
     } else if (message.type === 'state') {
