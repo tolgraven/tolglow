@@ -60,8 +60,26 @@ try {
   if (await live.isVisible()) await live.tap();
   assert.equal(await panel.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true);
   assert.deepEqual(await submit('Release group'), []);
+  const bound = await fetch(origin + '/api/lighting-scene', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ op: 'apply', 'group-id': 'qa-energy', 'fixture-ids': applied['fixture-ids'],
+      target: 0.42, 'target-var': ['audio', 'energy'], 'expected-epoch': initial.epoch, 'runtime-id': initial['runtime-id'] }),
+  });
+  assert.ok(bound.ok, await bound.text());
+  const boundOption = choices.locator('option').filter({ hasText: /^qa energy/ });
+  await boundOption.waitFor({ state: 'attached' });
+  await choices.selectOption(await boundOption.getAttribute('value'));
+  await panel.getByRole('button', {name: 'Set manual target'}).waitFor();
+  await target.focus();
+  await target.press('ArrowRight');
+  const [following] = await submit('Something different');
+  assert.deepEqual(following['target-var'], ['audio', 'energy']);
+  const [manual] = await submit('Set manual target');
+  assert.equal(manual.target, 0.43);
+  assert.ok(!manual['target-var']);
+  assert.deepEqual(await submit('Release group'), []);
   assert.deepEqual(problems, []);
-  console.log('Touch and keyboard set a 72% target, verified measured output, prevented an overlapping group, varied the scene and released it at phone width.');
+  console.log('Touch and keyboard set a 72% target, verified measured output, prevented an overlapping group, varied the scene and released it at phone width. Vary retained an audio binding until an explicit manual takeover.');
 } finally {
   await browser.close();
 }

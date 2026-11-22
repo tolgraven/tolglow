@@ -445,5 +445,7 @@ The output readout comes from the committed show frame. It displays the
 requested level alongside the group's actual fraction of available light and
 reports when another light source or the rig's output limits prevent the
 requested level. **Something different** varies the scene at the chosen
-target. **Release group** gives up the scene's fixtures. Active groups have
+target. If a show variable sets the level, its path appears beside the reading.
+Varying the look preserves that binding. **Set manual target** switches to the
+chosen percentage. **Release group** gives up the scene's fixtures. Active groups have
 disjoint membership.

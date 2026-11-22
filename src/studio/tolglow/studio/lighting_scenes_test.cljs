@@ -11,20 +11,29 @@
          :server-projection {:view (assoc identity-key :rig {:fixtures fixtures}
                                           :lighting-scenes {:eligible-fixture-ids ids :groups []})}})
 
+(defn body [db op]
+  (dissoc (get-in (scene/request db op) [:studio/http :body]) :command-id))
+
 (deftest groups-use-authoritative-emitter-membership-and-full-typed-ids
   (let [eligible (scene/eligible-fixtures fixtures ids)
         chosen (scene/selection (:lighting-scene-ui db) (scene/choices eligible []) [])]
     (is (= ids (mapv :id eligible)))
     (is (= [:rig/washes ids] ((juxt :id :ids) chosen)))
     (is (= {:op :apply :group-id :rig/washes :fixture-ids ids :target 0.72 :expected-epoch 3 :runtime-id "test-runtime"}
-           (get-in (scene/request db :apply) [:studio/http :body])))))
+           (body db :apply)))))
 
 (deftest live-scenes-vary-release-and-disallow-overlapping-groups
   (let [active {:group-id :rig/washes :fixture-ids ids :target 0.25 :actual 0.19 :status :limited}
         live (assoc-in db [:server-projection :view :lighting-scenes :groups] [active])]
-    (is (= 0.25 (get-in (scene/request live :vary) [:studio/http :body :target])))
+    (is (not (contains? (body live :vary) :target)) "Vary preserves the current target and its variable binding")
+    (is (= 0.5 (:target (body (assoc-in live [:lighting-scene-ui :percent "group:rig/washes"] 50) :vary))))
+    (is (string? (get-in (scene/request live :vary) [:studio/http :body :command-id])))
+    (let [bound (-> live (assoc-in [:server-projection :view :lighting-scenes :groups 0 :target-var] [:audio :energy])
+                    (assoc-in [:lighting-scene-ui :percent "group:rig/washes"] 50))]
+      (is (not (contains? (body bound :vary) :target)))
+      (is (= 0.5 (:target (body bound :apply)))))
     (is (= {:op :release :group-id :rig/washes :expected-epoch 3 :runtime-id "test-runtime"}
-           (get-in (scene/request live :release) [:studio/http :body])))
+           (body live :release)))
     (is (nil? (scene/request (assoc-in live [:lighting-scene-ui :selected] "group:studio/all-lights") :apply)))
     (is (nil? (scene/request db :vary)))
     (is (nil? (scene/request (assoc-in live [:connection :connected?] false) :release)))))
@@ -33,7 +42,7 @@
   (let [custom (update db :lighting-scene-ui merge {:selected "custom" :name "Back wall" :picked [:rear/wash]})]
     (is (= {:op :apply :group-id :studio.scene/back-wall :fixture-ids [:rear/wash]
             :expected-epoch 3 :runtime-id "test-runtime" :target 0.72}
-           (get-in (scene/request custom :apply) [:studio/http :body])))
+           (body custom :apply)))
     (is (nil? (scene/request (assoc-in custom [:lighting-scene-ui :name] " ") :apply)))
     (is (nil? (scene/request (assoc-in custom [:lighting-scene-ui :picked] [:no/light]) :apply)))
     (is (nil? (scene/request (:db (scene/request custom :apply)) :apply)))

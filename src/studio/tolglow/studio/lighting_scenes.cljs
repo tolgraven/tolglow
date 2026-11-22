@@ -77,6 +77,9 @@
         {:keys [id ids occupied?] :as choice} (selection state (choices fixtures groups) groups)
         scene (active-scene id groups)
         percent (requested-percent state choice scene)
+        key (get-in choice [:option :value])
+        edited (get-in state [:percent key])
+        manual? (or (= :apply op) (and (= :vary op) (some? edited) (nil? (:target-var scene))))
         valid? (and id (seq ids) (not occupied?) (every? (set eligible-fixture-ids) ids)
                     (integer? percent) (<= 0 percent 100))
         token [(identity-key db) (str (random-uuid))]]
@@ -84,16 +87,19 @@
                (case op :release scene :apply valid? :vary (and valid? scene) false))
       {:db (assoc db :lighting-scene-ui (-> state (assoc :pending token) (dissoc :error)))
        :studio/http {:path "/api/lighting-scene" :typed? true
-                     :body (cond-> {:op op :group-id id :expected-epoch (:epoch v) :runtime-id (:runtime-id v)}
-                             (not= :release op) (assoc :target (/ percent 100) :fixture-ids ids))
-                     :on-success [::finished token id op] :on-failure [::failed token]}})))
+                     :body (cond-> {:op op :group-id id :command-id (second token)
+                                    :expected-epoch (:epoch v) :runtime-id (:runtime-id v)}
+                             (not= :release op) (assoc :fixture-ids ids)
+                             manual? (assoc :target (/ percent 100)))
+                     :on-success [::finished token id op key (when manual? edited)] :on-failure [::failed token]}})))
 
 (rf/reg-event-fx ::send (fn [{:keys [db]} [_ op]] (or (request db op) {})))
 (rf/reg-event-db ::finished
-  (fn [db [_ token id op _]]
+  (fn [db [_ token id op key edited _]]
     (let [state (form db)]
       (if (= token (:pending state))
         (assoc db :lighting-scene-ui (cond-> (dissoc state :pending)
+                                       (= edited (get-in state [:percent key])) (update :percent dissoc key)
                                        (and (not= :release op) (= "custom" (:selected state))) (assoc :selected (option-key id)))) db))))
 (rf/reg-event-db ::failed
   (fn [db [_ token error]]
@@ -149,9 +155,10 @@
        [:div.scene-reading {:class (when (#{:limited :over-target :unlit} status) "unmet")}
         [:span (str "Output " (or (percent-text (:actual scene)) "unavailable") " · requested " (percent-text (:target scene)))]
         [:strong (get status-label status "Awaiting measurement")]
+        (when-let [path (:target-var scene)] [:span (str "Following " (str/join " / " (map events/wire-id path)))])
         (when-let [source (:source-effect-id scene)] [:span (label source)])])
      [:div.performance-actions
-      [:button.button {:type "button" :disabled (boolean invalid?) :on-click #(rf/dispatch [::send :apply])} "Apply target"]
+      [:button.button {:type "button" :disabled (boolean invalid?) :on-click #(rf/dispatch [::send :apply])} (if (:target-var scene) "Set manual target" "Apply target")]
       [:button.button {:type "button" :disabled (boolean (or invalid? (nil? scene))) :on-click #(rf/dispatch [::send :vary])} "Something different"]
       [:button.button {:type "button" :disabled (boolean (or disabled? (nil? scene))) :on-click #(rf/dispatch [::send :release])} "Release group"]]
      (cond (:error state) [:p.performance-error {:role "alert"} (:error state)]
