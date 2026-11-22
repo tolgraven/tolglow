@@ -14,15 +14,18 @@ export function opticalFrustum(position, direction, halfAngle, radius) {
 // Three's punctual spotlight represents a finite optical frustum with a virtual
 // apex. Suppress illumination behind the physical aperture plane. The aperture
 // uniform order mirrors Three's shadow-first ordering of visible spotlights.
-export function finiteApertureMaterial(material, uniform) {
+export function finiteApertureMaterial(material, uniform, patchRadii) {
   material.onBeforeCompile = shader => {
     shader.uniforms.tolglowApexDepth = uniform;
-    shader.fragmentShader = 'uniform float tolglowApexDepth[16];\n' + shader.fragmentShader;
+    shader.uniforms.tolglowPatchRadius = patchRadii;
+    shader.fragmentShader = 'uniform float tolglowApexDepth[18]; uniform float tolglowPatchRadius[18];\n' + shader.fragmentShader;
     const lighting = THREE.ShaderChunk.lights_fragment_begin.replace(
       'getSpotLightInfo( spotLight, geometryPosition, directLight );',
       `getSpotLightInfo( spotLight, geometryPosition, directLight );
-       directLight.color *= step(tolglowApexDepth[i], dot(spotLight.position - geometryPosition, spotLight.direction));`);
+       directLight.color *= step(tolglowApexDepth[i], dot(spotLight.position - geometryPosition, spotLight.direction));
+       { float patchD2 = dot(spotLight.position - geometryPosition, spotLight.position - geometryPosition);
+       directLight.color *= patchD2 / max(1.e-9, patchD2 + tolglowPatchRadius[i]*tolglowPatchRadius[i]); }`);
     shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_begin>', lighting);
   };
-  material.customProgramCacheKey = () => 'tolglow-finite-aperture-v1';
+  material.customProgramCacheKey = () => 'tolglow-finite-aperture-patch-v2';
 }

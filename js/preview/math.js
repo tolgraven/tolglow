@@ -51,10 +51,13 @@ export function emittedColor(output = {}) {
 }
 export function beamAngle(fixture, output = {}) {
   const range = fixture['zoom-range-deg'];
-  const zoom = clamp(Number(output.zoom) || 0, 0, 1);
-  const full = Array.isArray(range) && range.length === 2 ? range[0] + zoom * (range[1] - range[0]) : (fixture['beam-angle'] || 12) + zoom * 34;
-  return clamp(radians(full / 2), .012, Math.PI * .42);
+  const zoom = clamp(Number(output.zoom ?? output.channels?.zoom) || 0, 0, 1);
+  const valid = value => Number.isFinite(value) && value > 0 && value < 180;
+  const full = Array.isArray(range) && range.length === 2 && range.every(valid)
+    ? range[0] + zoom * (range[1] - range[0])
+    : valid(fixture['beam-angle']) ? fixture['beam-angle'] : 12 + zoom * 34;
+  return radians(full / 2);
 }
 export function structuralKey(rig) {
-  return JSON.stringify({room: rig?.room, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
+  return JSON.stringify({room: rig?.room, surfaces: rig?.surfaces, reflections: (rig?.fixtures || []).filter(f => f['pseudo-fixture']).length, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
 }
