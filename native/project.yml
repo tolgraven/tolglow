@@ -23,7 +23,7 @@ targets:
       properties:
         CFBundleDisplayName: Tolglow
         UILaunchScreen: {}
-        NSCameraUsageDescription: Scan visible fixture lenses and beam targets with ARKit and LiDAR after you start a rig scan.
+        NSCameraUsageDescription: Measure relative fixture brightness or scan fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you explicitly preview or conduct lights.
         NSLocalNetworkUsageDescription: Connect to your chosen Tolglow lighting host and send armed OSC observations.
         NSAppTransportSecurity:
