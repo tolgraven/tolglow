@@ -42,6 +42,7 @@ import Foundation
             request.httpBody = try JSONSerialization.data(withJSONObject: identity.merging(body) { _, new in new })
         }
         let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
+        try StudioOperatorAccess.checkSignIn(response)
         var data = Data()
         for try await byte in bytes {
             guard data.count < 2_097_152 else { throw URLError(.dataLengthExceedsMaximum) }

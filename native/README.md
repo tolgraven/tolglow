@@ -199,7 +199,7 @@ In the iPhone or iPad app, open **Connect → Studio operator**, enter the
 Studio HTTPS origin and save the venue’s operator password. The device keeps
 it in its Keychain. Perform, rig scanning, photometry, fog calibration and
 the embedded re-frame app share this setting. Enter the same origin on each
-surface you use. A different hostname, port, or scheme has its own credential.
+surface you use, then reconnect or tap **Open** to retry sign-in. A different hostname, port, or scheme has its own credential.
 The server challenge must identify the Tolglow Studio realm. **Forget saved
 password** removes the local credential for the selected origin. Existing
 browser sessions expire on their normal schedule. OSC pairing for the phone

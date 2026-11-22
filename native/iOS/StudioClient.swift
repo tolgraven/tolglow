@@ -63,6 +63,7 @@ struct StudioSnapshot: Decodable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
+        try StudioOperatorAccess.checkSignIn(response)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             throw URLError(.badServerResponse)
         }

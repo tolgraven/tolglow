@@ -6,6 +6,7 @@ import WebKit
 struct WebStudioView: View {
     @AppStorage("studio-origin") private var origin = "http://tolglow.local:8500"
     @State private var loadedURL: URL?
+    @State private var loadID = UUID()
     @State private var status = "Open the configured studio to use its complete web interface"
     var body: some View {
         VStack(spacing: 8) {
@@ -16,13 +17,14 @@ struct WebStudioView: View {
                     guard let url = URL(string: origin), ["http", "https"].contains(url.scheme ?? ""),
                           url.host != nil, url.user == nil, url.password == nil,
                           url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else { status = "Enter an HTTP(S) studio origin"; return }
+                    loadID = UUID()
                     loadedURL = url; status = "Loading studio"
                 }
                 if loadedURL != nil { Button("Close") { loadedURL = nil; status = "Studio closed" } }
             }.padding(.horizontal)
             Text(status).font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
             if let loadedURL {
-                OwnedStudioWebView(url: loadedURL, status: $status).id(loadedURL)
+                OwnedStudioWebView(url: loadedURL, status: $status).id(loadID)
             } else {
                 ContentUnavailableView("Web studio", systemImage: "globe", description: Text("Use the same re-frame cues, parameters, editors and tools served by your Tolglow host."))
             }

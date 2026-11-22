@@ -5,6 +5,14 @@ import TolglowSensorCore
 enum StudioOperatorAccess {
     static let service = "org.tolglow.studio.operator"
 
+    struct SignInRequired: LocalizedError {
+        var errorDescription: String? { "Save the operator password for this Studio in Connect and try again." }
+    }
+
+    static func checkSignIn(_ response: URLResponse) throws {
+        if (response as? HTTPURLResponse)?.statusCode == 401 { throw SignInRequired() }
+    }
+
     static func respond(to challenge: URLAuthenticationChallenge, requestURL: URL?,
                         completion: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let space = challenge.protectionSpace
