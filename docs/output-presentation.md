@@ -165,7 +165,8 @@ The sender consumes at most three completions per deadline. Excess pending
 completions coalesce to the newest three. Epoch, fixture patch, policy or blackout
 changes invalidate older completions; while waiting for the first valid frame of
 that generation the scheduler sends darkness. Closing fences late completions
-before the host sends its final zero frame and closes the transport.
+before the host sends the final idle frame. Profiled fog channels use their
+physical off endpoints, including the fine byte, before other services finish closing.
 
 Select the policy through the normal settings command, which is validated before
 publication and persists in full show files:

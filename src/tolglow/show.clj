@@ -37,6 +37,7 @@
             [tolglow.composition :as composition]
             [tolglow.output :as output]
             [tolglow.studio.display :as display]
+            [afterglow.output.retirement :as retirement]
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
@@ -245,11 +246,11 @@
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
-      :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
       :optics-plan (atom (reflections/plan (:rig model)))
-      :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
+      :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
+                    :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
                    (or (get @cache definition)
@@ -573,7 +574,9 @@
   (let [cached @(:patch runtime)]
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
-          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)}) patch))))
+          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)
+                                  :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
+          patch))))
 
 (defn- capacity-plan! [runtime patch]
   (let [cache (:capacity-plan runtime)]
@@ -628,18 +631,10 @@
 
 (defn- send-output! [runtime universes frame-number]
   (when-let [send! (get-in runtime [:sink :send!])]
-    (let [old @(:known-universes runtime)
-          current (set (keys universes))
-          retired (remove current old)]
-      (swap! (:known-universes runtime) into current)
-      (swap! (:retired-buffers runtime)
-             (fn [buffers] (reduce #(if (contains? %1 %2) %1 (assoc %1 %2 (byte-array 512))) buffers retired)))
-      ;; Continue zeroing retired universes; UDP has no acknowledgement and a
-      ;; single blackout packet on a patch change could be lost.
-      (let [packet (merge @(:retired-buffers runtime) universes)]
-        (send! packet frame-number)
-        (when (:plan @(:venue-fog runtime))
-          (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))))))
+    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)]
+      (send! packet frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -1119,6 +1114,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1131,7 +1127,6 @@
 
                               (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
-                              #(send-output! runtime (into {} (map (fn [u] [u (byte-array 512)])) @(:known-universes runtime)) 0)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))
