@@ -14,3 +14,9 @@ Add the fogger to your fixture definition, or patch it as you would a dimmer wit
 The show holds the last successfully delivered DMX level for the elapsed physical time. At full flow for four seconds this machine emits four cubic metres of *equivalent rated-output volume*. The initial plume is concentrated around the nozzle. It mixes into the venue while both deposition and the configured air exchange reduce the total. A zero output stops emission immediately; fog already released keeps dispersing, including during a musical pause. In a preview-only show the committed DMX buffer and the show clock drive the same model. A real sink's successful send confirms software delivery; a machine's heater, duty cycle, fluid choice and actual air currents still affect the room.
 
 Read `(get-in (tolglow.show/snapshot runtime) [:output :atmosphere])` for per-source emitted and local volumes, current flow, room volume, mixed volume and mixed density. The model measures relative optical density; a value of 1 represents one room volume of fog at rated output density. This value can exceed 1, and is independent of the light output percentage. Saving a show records the quantities. Restoring rebases the physical clock and starts the pumps' estimated flow at zero until another frame is presented.
+
+Fog is off at its declared physical DMX endpoint when no cue assigns the
+channel, during blackout, while the independent publisher waits for a fresh
+frame, and on shutdown. When repatching, the output continues to send that
+endpoint on the old addresses until another channel or fixture footprint owns
+them. This includes coarse/fine pairs spanning two universes.
