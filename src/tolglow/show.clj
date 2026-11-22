@@ -28,6 +28,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
+            [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]
@@ -961,7 +962,9 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (advance-light-scenes runtime (:model result) patch frame time-ms bypass?) :output frame :fault-events (:fault-events result)
+                       {:model (let [updated (advance-light-scenes runtime (:model result) patch frame time-ms bypass?)]
+                                 (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
+                        :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error

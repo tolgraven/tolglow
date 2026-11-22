@@ -107,10 +107,38 @@ Two warmed preview owners ran the same generated look on 2,048 RGB heads at a
 same owned cue at its settled opacity. Sampling order alternated and the final
 DMX universes had to match byte-for-byte. On the shared JDK 21 host, the
 difference between the two median owner-thread CPU readings fell from 0.39 ms
-to 0.03 ms after reusing unchanged measurements. The corresponding median
-allocation difference fell from 8,192 to 2,752 bytes per frame. With reuse, wall
-p50/p95 were 5.08/26.37 ms with feedback and 5.88/22.64 ms with the same look
+to 0.10 ms after reusing unchanged measurements and publishing the observed show
+variables. The corresponding median allocation difference fell from 8,192 to
+2,952 bytes per frame. With reuse, wall p50/p95 were 4.06/26.10 ms with feedback
+and 3.77/14.64 ms with the same look
 alone. The benchmark includes the complete software tick, runs unpaced, and
 reports CPU/allocation for the owner thread. It does not measure physical
 output or universal 40 Hz delivery. A first scene still compiles the generated
 effect and prepares its calibrated meter.
+
+## Use measured light as a show signal
+
+The accepted frame publishes `{:actual 0.713 :target 0.72 :status :at-target}`
+under `[:variables :lighting/groups group-id]`. With rig metering enabled,
+`[:variables :lighting/rig]` holds the rig’s actual fraction, target, follow mode
+and status. These are ordinary show variables. Use
+`[:lighting/groups :wash :actual]` as another group’s `:target-var` to mirror
+the wash group’s measured energy. Releasing the wash removes its measurement.
+Disabling the rig meter removes its variable.
+
+Group state changes emit `:lighting/group-seeking`, `:lighting/group-at-target`,
+`:lighting/group-limited` or `:lighting/group-released`. Limited events include
+the specific status, such as `:over-target`. Rig changes emit
+`:lighting/rig-level` when the rounded percentage, mode or status changes.
+Continuous values remain available in the variable at frame precision. The
+rig emits `:lighting/rig-unavailable` when metering stops.
+
+This subscriber starts a look in another fixture group when the wash reaches
+its own requested level. A steady wash at 72% triggers once.
+
+```clojure
+{:id :when-wash-settles
+ :match {:type :lighting/group-at-target :emitter-id :wash}
+ :actions [{:op :lighting/scene
+            :scene {:op :vary :group-id :front :target 0.4}}]}
+```

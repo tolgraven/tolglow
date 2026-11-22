@@ -4,6 +4,8 @@
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as subs]
             [tolglow.lighting-scenes :as scenes]
+            [tolglow.lighting-levels :as levels]
+            [afterglow.runtime.events :as staging]
             [tolglow.persistence :as persistence]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.show :as show]))
@@ -14,8 +16,10 @@
    {:id :other :groups [:foh] :universe 1 :address 5 :channels {:dimmer 1}}
    {:id :pump :groups [:wash] :universe 1 :address 6 :channels {:fog 1}}])
 
-(defn local [batch?]
-  (let [model (-> (demo/model)
+(defn local
+  ([batch?] (local batch? {}))
+  ([batch? options]
+   (let [model (-> (demo/model)
                   (assoc-in [:rig :fixtures] fixtures)
                   (assoc-in [:variables :energy] 0.72)
                   (assoc-in [:registry :effects :ember :targets] [:left])
@@ -23,7 +27,7 @@
                   (assoc-in [:registry :effects :manual] {:id :manual :version 1 :targets [:other] :params {}
                                                            :outputs {:dimmer (demo/constant 0.35)}})
                   (assoc-in [:registry :cues :manual] {:id :manual :effect-id :manual :version 1}))]
-    (show/create-runtime {:model model :batch? batch?})))
+    (show/create-runtime (assoc options :model model :batch? batch?)))))
 
 (defn issue! [rt time type payload]
   (let [ack (show/submit! rt type payload)] (show/tick! rt (swap! time + 25)) @ack))
@@ -166,4 +170,45 @@
         (is (identical? (:instances m) (:instances next-model)))
         (is (= :limited (:status (:wash (scenes/groups (scenes/feedback m {:wash value} @t true))))))
         (is (not (identical? next-model (scenes/feedback m {:wash 0.1} @t false)))))
+      (finally (show/stop! rt)))))
+
+(deftest reaching-a-measured-target-launches-a-subscriber-and-publishes-vars
+  (let [captured (atom [])
+        rt (local true {:event-admit (fn [m batch]
+                                       (swap! captured into (filter #(= :lighting (:category %)) batch))
+                                       (subs/admit m batch))})
+        t (atom 0)
+        act #(issue! rt t %1 %2)
+        model #(get @(:state rt) :model)
+        variable (fn [& path] (get-in (model) (into [:variables] path)))]
+    (try
+      (is (= :accepted (:status (act :event-subscriber
+             {:op :save :subscriber {:id :on-wash-target :match {:type :lighting/group-at-target :emitter-id :wash}
+                                     :actions [{:op :lighting/scene :scene {:op :vary :group-id :foh :target 0.4 :effect-ids []}}]}}))))
+      (is (= :accepted (:status (act :settings {:scope :lighting-capacity :values {:enabled? true}}))))
+      (act :lighting-scene {:op :apply :group-id :wash :target 0.72 :effect-ids []})
+      (ticks! rt t 50)
+      (is (= 1 (:generation (group! rt :foh))))
+      (is (= {:actual (:actual (group! rt :wash)) :target 0.72 :status :at-target} (variable :lighting/groups :wash)))
+      (is (= (get-in (show/snapshot rt) [:output :lighting-capacity :utilization]) (variable :lighting/rig :actual)))
+      (is (= :manual (variable :lighting/rig :status)))
+      (let [m (staging/begin (model))
+            meter (get-in @(:state rt) [:output :lighting-capacity])
+            stable (levels/publish m (scenes/groups m) meter)]
+        (is (identical? m stable))
+        (is (empty? (staging/pending stable))))
+      (ticks! rt t 30)
+      (is (= 1 (:generation (group! rt :foh))) "Holding the measured target never retriggers its subscriber")
+      (act :command {:op :master/set :value 0.01})
+      (ticks! rt t 20)
+      (is (= :limited (variable :lighting/groups :wash :status)))
+      (act :lighting-scene {:op :release :group-id :wash})
+      (is (nil? (variable :lighting/groups :wash)))
+      (act :settings {:scope :lighting-capacity :values {:enabled? false}})
+      (is (nil? (variable :lighting/rig)))
+      (let [types (set (map :type @captured))
+            reached (filter #(and (= :lighting/group-at-target (:type %)) (= :wash (get-in % [:emitter :id]))) @captured)]
+        (is (= 1 (count reached)))
+        (is (= 0.72 (get-in (first reached) [:data :target])))
+        (is (every? types [:lighting/group-limited :lighting/group-released :lighting/rig-level :lighting/rig-unavailable])))
       (finally (show/stop! rt)))))

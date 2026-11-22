@@ -19,7 +19,7 @@
   [:id :device-id :source-id :instance-id :cue-id :effect-id :effect-version :param
    :time-ms :observed-at-ms :sequence :confidence :stage :status :operation :reason :code
    :gesture-id :watcher-id :registration-id :active? :armed? :index :crossed :number
-   :command-id :note :velocity :beat :rms :energy :relative-energy :kick-rms :inference])
+   :command-id :note :velocity :beat :rms :energy :actual :target :group-id :mode :previous-status :relative-energy :kick-rms :inference])
 
 (defn- display-event [stamp subscribers delivery {:keys [time type category data emitter]}]
   ;; Deliberately project metadata only. A cue parameter or handler argument can
