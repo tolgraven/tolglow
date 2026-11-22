@@ -57,6 +57,11 @@ For an individually launched modifier, set the effect’s ordinary top-level
 that lower-priority lighting has already touched. A modifier with direct
 outputs can read those outputs and transform them in the same member.
 
+A registered modifier gets the category tags for its output and transform
+destinations. An aim filter that reads dimmer belongs to Movement. A modifier
+that writes both an aim and a color also appears in Color. These tags feed
+Studio, Push and the shared category selectors that pause or fade effects.
+
 | Expression | Value for this head |
 | --- | --- |
 | `{:op :previous :attribute :aim}` | Vector as it stood before this member, including lower-priority lighting |
