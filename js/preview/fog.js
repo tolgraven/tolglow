@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {DEFAULT_EXTINCTION_PER_M, ShowAtmosphere} from './show-atmosphere.js';
 import { FogField, FOG_QUALITY } from './fog-field.js';
 
 const vertex = `out vec2 vUv;
@@ -13,11 +14,11 @@ uniform sampler2D sceneDepth;
 uniform sampler3D densityTexture;
 uniform mat4 inverseProjection, cameraWorld;
 uniform vec3 eye, room;
-uniform float amount, time;
+uniform float amount, time, mixedDensity, extinctionPerM;
 uniform int raySteps, lightCount;
 uniform vec3 lightPosition[16], lightDirection[16], lightColor[16];
 uniform vec3 lightShape[16]; // half-angle cosine, intensity, maximum distance
-uniform float lightPenumbra[16];
+uniform vec4 lightProfile[16]; // inner cosine, optical tangent, halo tangent increment, halo cosine
 uniform float lightStart[16]; // virtual apex to optical lens plane
 uniform vec3 ambientSky,ambientGround;
 uniform int lightShadow[16];
@@ -53,7 +54,7 @@ float visibility(int slot,vec3 position){
  shadowCompare(slot,coordinate.xy+texel,depth));
 }
 float phase(float cosine){const float g=.38;return (1.-g*g)/(12.5663706*pow(max(.001,1.+g*g-2.*g*cosine),1.5));}
-vec2 coneHit(int i,vec3 ro,vec3 rd,float lo,float hi){
+vec2 coneHit(int i,float angleCos,vec3 ro,vec3 rd,float lo,float hi){
  vec3 q=ro-lightPosition[i];float axial=dot(q,lightDirection[i]),slope=dot(rd,lightDirection[i]);
  float plane=lightStart[i];
  if(abs(slope)<1e-7){if(axial<plane)return vec2(1.,0.);}
@@ -61,7 +62,7 @@ vec2 coneHit(int i,vec3 ro,vec3 rd,float lo,float hi){
  float range=lightShape[i].z;
  if(range>0.){float b=dot(q,rd),discriminant=b*b-dot(q,q)+range*range;
   if(discriminant<0.)return vec2(1.,0.);float root=sqrt(discriminant);lo=max(lo,-b-root);hi=min(hi,-b+root);}
- float cos2=lightShape[i].x*lightShape[i].x;
+ float cos2=angleCos*angleCos;
  float a=slope*slope-cos2,b=2.*(axial*slope-cos2*dot(q,rd)),c=axial*axial-cos2*dot(q,q);
  if(abs(a)<1e-7){if(abs(b)<1e-7){if(c<0.)return vec2(1.,0.);}else if(b>0.)lo=max(lo,-c/b);else hi=min(hi,-c/b);}
  else{float discriminant=b*b-4.*a*c;
@@ -71,23 +72,45 @@ vec2 coneHit(int i,vec3 ro,vec3 rd,float lo,float hi){
    if(a<0.){lo=max(lo,first);hi=min(hi,last);}else if(slope>0.)lo=max(lo,last);else hi=min(hi,first);}}
  return vec2(lo,hi);
 }
-vec3 incident(int i,vec3 position,vec3 toEye){
+vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
   vec3 delta=position-lightPosition[i];float distance=length(delta);vec3 travel=delta/max(distance,.001);
   float cosine=dot(travel,lightDirection[i]);float outer=lightShape[i].x;
-  float inner=cos(acos(clamp(outer,-1.,1.))*(1.-lightPenumbra[i]));
+  float inner=lightProfile[i].x;
   float spot=smoothstep(outer,max(outer+.00001,inner),cosine);
+  vec3 shadowPoint=position;
+  float axial=dot(delta,lightDirection[i]);
+  float path=max(0.,axial-lightStart[i]);
+  if(halo){
+   // Forward scattering can illuminate the room just outside the optical
+   // field. The additional width starts at zero at the actual lens.
+   vec3 lateral=delta-axial*lightDirection[i];
+   float coreRadius=axial*lightProfile[i].y;
+   float width=path*lightProfile[i].z;
+   float radial=length(lateral), outside=radial-coreRadius;
+   if(width<=0.||outside>=width)return vec3(0.);
+   spot=.26*(1.-exp(-min(20.,path*extinction)))*(1.-smoothstep(0.,width,outside));
+   // Sample the shadow on the illuminated edge that feeds this halo.
+   shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*min(1.,.98*coreRadius/max(radial,.001));
+  }
   float range=lightShape[i].z;
-  if(spot<.001||(range>0.&&distance>=range))return vec3(0.);
+  if(spot<.00001||(range>0.&&distance>=range))return vec3(0.);
   float falloff=range>0.?pow(clamp(1.-pow(distance/range,4.),0.,1.),2.):1.;
   float attenuation=falloff/max(.25,distance*distance);
-  return lightColor[i]*lightShape[i].y*spot*attenuation*phase(dot(travel,toEye))*visibility(lightShadow[i],position);
+  // Coarse incident-path extinction as well as the independently integrated
+  // viewer-path extinction. Density is measured in the same grid for both.
+  vec3 optical=lightPosition[i]+lightStart[i]*lightDirection[i];
+  vec3 midpoint=mix(optical,shadowPoint,.5);
+  vec3 uvw=vec3(midpoint.x/room.x+.5,midpoint.y/room.y,midpoint.z/room.z+.5);
+  float opticalDepth=extinctionPerM*amount*path*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
+  return lightColor[i]*lightShape[i].y*spot*attenuation*exp(-opticalDepth)*phase(dot(travel,toEye))*visibility(lightShadow[i],shadowPoint);
 }
 float extinctionAt(vec3 position){
  vec3 coordinate=vec3(position.x/room.x+.5,position.y/room.y,position.z/room.z+.5);
  float density=texture(densityTexture,clamp(coordinate,vec3(0.),vec3(1.))).r;
  // Resolved density owns the plume. Coherent advected detail erodes dense jet
  // material into billows; it cannot create fog where the field is empty.
- float detailWeight=smoothstep(.10,.7,density),structure=1.;
+ float localDensity=max(0.,density-mixedDensity);
+ float detailWeight=smoothstep(.10,.7,localDensity),structure=1.;
  if(detailWeight>.001){
   vec3 drift=vec3(-time*.13,-time*.04,time*.02);
   vec3 p=position*1.6+drift;
@@ -96,7 +119,7 @@ float extinctionAt(vec3 position){
   float folds=smoothstep(.36,.64,billow);
   structure=mix(1.,.08+2.6*folds*folds,detailWeight);
  }
- return density*amount*structure*1.25;
+ return (density+(structure-1.)*localDensity)*amount*extinctionPerM;
 }
 void main(){
  if(amount<=0.){volumeOutput=vec4(0.,0.,0.,1.);return;}
@@ -107,9 +130,14 @@ void main(){
  vec3 surfaceWorld=(cameraWorld*surfaceView).xyz;
  vec2 interval=roomHit(eye,ray);float start=max(0.,interval.x),finish=min(interval.y,length(surfaceWorld-eye));
  if(finish<=start){volumeOutput=vec4(0.,0.,0.,1.);return;}
- vec2 lightIntervals[16];
- for(int i=0;i<16;i++){if(i>=lightCount)break;
-  lightIntervals[i]=dot(lightColor[i],lightColor[i])<.000001||lightShape[i].y<=0.?vec2(1.,0.):coneHit(i,eye,ray,start,finish);}
+ vec4 lightIntervals[16];
+ for(int i=0;i<16;i++){
+  if(i>=lightCount)break;
+  lightIntervals[i]=vec4(1.,0.,1.,0.);
+  if(dot(lightColor[i],lightColor[i])>.000001 && lightShape[i].y>0.)
+   lightIntervals[i]=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
+                          coneHit(i,lightProfile[i].w,eye,ray,start,finish));
+ }
  float stepSize=(finish-start)/float(raySteps);
  float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
  vec3 radiance=vec3(0.);float transmission=1.;
@@ -133,20 +161,23 @@ void main(){
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.15,.3,.05)/room,vec3(0.),vec3(1.))).r*.3;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.32,.7,.12)/room,vec3(0.),vec3(1.))).r*.4;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.55,1.3,.2)/room,vec3(0.),vec3(1.))).r*.6;
-   ambient*=.78+.22*exp(-canopy*amount*.7);
+   ambient*=.78+.22*exp(-canopy*extinctionPerM*amount*.56);
   }
   radiance+=transmission*(1.-segment)*.92*ambient;
   for(int i=0;i<16;i++){
    if(i>=lightCount)break;
-   float lo=max(begin,lightIntervals[i].x),hi=min(begin+stepSize,lightIntervals[i].y);
-   if(hi<=lo)continue;
-   // Integrate the actual cone/segment overlap instead of asking a jittered
-   // point whether it hit a centimeters-wide shaft. Narrow near-lens beams
-   // retain coverage without increasing the global march/shadow budget.
-   vec3 samplePosition=eye+ray*((lo+hi)*.5);
-   float localExtinction=extinctionAt(samplePosition);
-   float foreground=exp(-extinction*(lo-begin));
-   radiance+=transmission*foreground*(1.-exp(-localExtinction*(hi-lo)))*.92*incident(i,samplePosition,-ray);
+   for(int layer=0;layer<2;layer++){
+    bool halo=layer==1;
+    vec2 span=halo?lightIntervals[i].zw:lightIntervals[i].xy;
+    float lo=max(begin,span.x),hi=min(begin+stepSize,span.y);
+    if(hi<=lo)continue;
+    vec3 samplePosition=eye+ray*((lo+hi)*.5);
+    float localExtinction=extinctionAt(samplePosition);
+    if(localExtinction<=0.)continue;
+    float foreground=exp(-extinction*(lo-begin));
+    radiance+=transmission*foreground*(1.-exp(-localExtinction*(hi-lo)))*.92*
+       incident(i,samplePosition,-ray,localExtinction,halo);
+   }
   }
   transmission*=segment;
  }
@@ -201,10 +232,10 @@ export class VolumetricFog {
     this.uniforms = {
       sceneDepth: { value: null }, densityTexture: { value: this.density }, inverseProjection: { value: new THREE.Matrix4() },
       cameraWorld: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3() }, room: { value: new THREE.Vector3(...this.field.room) },
-      amount: { value: this.amount }, time: { value: 0 }, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
+      amount: { value: this.amount }, time: { value: 0 }, mixedDensity:{value:0}, extinctionPerM:{value:DEFAULT_EXTINCTION_PER_M}, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
       lightPosition: { value: vectors(16) }, lightDirection: { value: vectors(16) }, lightColor: { value: vectors(16) },
       lightShape: { value: vectors(16) }, lightShadow: { value: new Int32Array(16).fill(-1) },
-      lightPenumbra: { value: new Float32Array(16).fill(.55) },
+      lightProfile: {value: Array.from({length:16}, () => new THREE.Vector4())},
       lightStart: { value: new Float32Array(16) },
       ambientSky: { value: new THREE.Vector3() }, ambientGround: { value: new THREE.Vector3() },
       shadowMatrix: { value: Array.from({ length: 4 }, () => new THREE.Matrix4()) },
@@ -223,10 +254,21 @@ export class VolumetricFog {
   }
 
   upload() {
-    for (let i = 0; i < this.packed.length; i++) this.packed[i] = THREE.DataUtils.toHalfFloat(this.field.data[i]);
+    for (let i = 0; i < this.packed.length; i++) this.packed[i] = THREE.DataUtils.toHalfFloat(Math.min(65504,this.field.data[i]));
     this.density.needsUpdate = true; this.uploads++;
   }
-  setRoom(room) { if (this.field.setRoom(room)) { this.uniforms.room.value.fromArray(room); this.field.burst(); this.upload(); } }
+  setRoom(room) {
+    if (!this.field.setRoom(room)) return;
+    this.uniforms.room.value.fromArray(room);
+    if (this.showAtmosphere) {
+      this.showAtmosphere.suspend();
+      this.field.clear();
+    } else {
+      this.field.burst();
+    }
+    this.upload();
+  }
+  get extinctionPerM() {return this.showAtmosphere?.extinctionPerM ?? DEFAULT_EXTINCTION_PER_M;}
   setAmount(amount) { if (!Number.isFinite(amount)) throw new Error('Invalid fog amount'); this.amount = Math.max(0, Math.min(1, amount)); }
   setAmbient({color, intensity = 0, groundColor = color} = {}) {
     if (!Number.isFinite(intensity) || intensity < 0) throw new Error('Invalid atmosphere ambient intensity');
@@ -237,7 +279,19 @@ export class VolumetricFog {
     };
     set(this.uniforms.ambientSky, color); set(this.uniforms.ambientGround, groundColor);
   }
-  burst(options) { this.field.burst(options); }
+  setAtmosphere(identity, sample) {
+    if (sample != null) {
+      if (!this.showAtmosphere) {this.showAtmosphere = new ShowAtmosphere(); this.field.clear(0); this.upload();}
+      this.showAtmosphere.accept(identity,sample);
+    } else if (this.showAtmosphere) {
+      this.showAtmosphere = null;
+      this.field.clear(this.field.initialHaze); this.field.burst(); this.upload();
+    }
+  }
+  burst(options) {
+    if (this.showAtmosphere) return false;
+    this.field.burst(options); return true;
+  }
   setSize(width, height) {
     if (![width, height].every(v => Number.isFinite(v) && v > 0)) return;
     this.width = Math.max(1, Math.floor(width * this.budget.scale)); this.height = Math.max(1, Math.floor(height * this.budget.scale));
@@ -246,7 +300,8 @@ export class VolumetricFog {
   update(dt, lights = []) {
     if (this.disposed) return;
     const start = now(); this.lights = lights.slice(0, 16);
-    if (this.field.advance(dt)) this.upload();
+    const changed = this.showAtmosphere ? this.showAtmosphere.paint(this.field,dt) : this.field.advance(dt);
+    if (changed) this.upload();
     this.updateMs = now() - start;
   }
   render(sceneTarget, camera, outputTarget = null) {
@@ -256,14 +311,22 @@ export class VolumetricFog {
     const u = this.uniforms, c = this.compositeUniforms;
     u.sceneDepth.value = sceneTarget.depthTexture; u.inverseProjection.value.copy(camera.projectionMatrixInverse);
     u.cameraWorld.value.copy(camera.matrixWorld); u.eye.value.setFromMatrixPosition(camera.matrixWorld);
-    u.amount.value = this.amount; u.time.value = this.field.time; u.lightCount.value = this.lights.length;
+    const atmosphere = this.showAtmosphere;
+    const visibleAmount = atmosphere && !atmosphere.localVolume && !atmosphere.sample?.['mixed-density'] ? 0 : this.amount;
+    u.extinctionPerM.value = this.extinctionPerM;
+    u.mixedDensity.value = atmosphere?.sample?.['mixed-density'] || 0;
+    u.amount.value = visibleAmount; u.time.value = this.field.time; u.lightCount.value = this.lights.length;
     u.lightShadow.value.fill(-1); let shadows = 0;
     for (let slot = 0; slot < 4; slot++) u[`shadow${slot}`].value = this.dummyShadow;
     this.lights.forEach((light, i) => {
       u.lightPosition.value[i].copy(light.virtualPosition || light.position); u.lightDirection.value[i].copy(light.direction).normalize();
       u.lightColor.value[i].set(light.color.r, light.color.g, light.color.b);
       u.lightShape.value[i].set(Math.cos(light.angle), Math.max(0, light.intensity ?? 1), Math.max(0, light.distance ?? 0));
-      u.lightPenumbra.value[i] = Math.max(0, Math.min(1, light.penumbra ?? .55));
+      const penumbra = Math.max(0, Math.min(1, light.penumbra ?? .55));
+      const haloAngle = Math.max(light.angle, Math.min(1.54, light.angle + .23));
+      const tangent = Math.tan(light.angle);
+      u.lightProfile.value[i].set(Math.cos(light.angle * (1 - penumbra)), tangent,
+        Math.tan(haloAngle) - tangent, Math.cos(haloAngle));
       u.lightStart.value[i] = Math.max(0, light.apexDistance ?? 0);
       if (light.shadow?.map?.depthTexture && shadows < this.budget.shadows) {
         if (light.shadow.map.depthTexture.compareFunction !== THREE.LessEqualCompare)
@@ -277,15 +340,15 @@ export class VolumetricFog {
     });
     this.shadowCount = shadows;
     c.sceneColor.value = sceneTarget.texture; c.sceneDepth.value = sceneTarget.depthTexture;
-    c.nearPlane.value = camera.near; c.farPlane.value = camera.far; c.amount.value = this.amount;
+    c.nearPlane.value = camera.near; c.farPlane.value = camera.far; c.amount.value = visibleAmount;
     try {
       renderer.autoClear = true;
-      if (this.amount > 0) { renderer.setRenderTarget(this.target); this.quad.material = this.volumeMaterial; renderer.render(this.scene, this.camera); }
+      if (visibleAmount > 0) { renderer.setRenderTarget(this.target); this.quad.material = this.volumeMaterial; renderer.render(this.scene, this.camera); }
       renderer.setRenderTarget(outputTarget); this.quad.material = this.compositeMaterial; renderer.render(this.scene, this.camera);
     } finally { renderer.setRenderTarget(previousTarget); renderer.autoClear = autoClear; }
   }
   stats() { return { quality: this.quality, targetSize: [this.width, this.height], raySteps: this.budget.steps,
-    lightCount: this.lights.length, shadowCount: this.shadowCount ?? 0, cpuUpdateMs: this.updateMs, uploads: this.uploads, ...this.field.stats() }; }
+    lightCount: this.lights.length, shadowCount: this.shadowCount ?? 0, cpuUpdateMs: this.updateMs, uploads: this.uploads, atmosphere:this.showAtmosphere?.stats(), ...this.field.stats() }; }
   dispose() {
     if (this.disposed) return; this.disposed = true;
     this.target.dispose(); this.density.dispose(); this.dummyShadow.dispose();
