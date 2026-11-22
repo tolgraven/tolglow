@@ -6,11 +6,13 @@
             [afterglow.time :as time]
             [tolglow.automation.random :as random]
             [tolglow.registry :as registry]
-            [tolglow.lighting-scenes :as lighting-scenes]))
+            [tolglow.lighting-scenes :as lighting-scenes]
+            [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
-  {:audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
+  {:lighting (into lighting-levels/group-event-types lighting-levels/rig-event-types)
+   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
    :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
    :control [:instance/launched :instance/removed :instance/released :instance/system-changed
