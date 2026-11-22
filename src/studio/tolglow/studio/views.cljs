@@ -337,12 +337,12 @@
          (when unit (set-ui! [:auto-form :duration-unit] unit)))]
       [:label.policy-toggle [:input {:type "checkbox" :checked enabled?
                                     :on-change #(set-ui! [:auto-form :target-activity?] (checked? %))}]
-       "Choose cues by lighting intensity"]
+       "Choose cues by visual activity"]
       (when enabled?
         [:label.scene-target
-         [:span "Target lighting intensity" [:output (str percent "%")]]
+         [:span "Target visual activity" [:output (str percent "%")]]
          [:input {:type "range" :min 0 :max 100 :step 1 :value percent
-                  :aria-label "Target lighting intensity" :aria-valuetext (str percent "%")
+                  :aria-label "Target visual activity" :aria-valuetext (str percent "%")
                   :on-change #(set-ui! [:auto-form :activity-target] (/ (js/Number (input-value %)) 100))}]])
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
       [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs."]]]))

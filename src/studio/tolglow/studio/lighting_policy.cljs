@@ -236,15 +236,15 @@
         settings @(rf/subscribe [::settings scope])
         {:keys [scene effects]} @(rf/subscribe [::output scope])
         audio @(rf/subscribe [::audio])]
-    [:section.output-policy {:aria-label "Perceived lighting intensity"}
-     [:header [:h3 "Perceived intensity"] [toggle scope "Meter activity" (:enabled? settings) disabled?]]
+    [:section.output-policy {:aria-label "Visual activity"}
+     [:header [:h3 "Visual activity"] [toggle scope "Meter activity" (:enabled? settings) disabled?]]
      [:dl.policy-readings
       [:div [:dt "Music energy"] [:dd (percent audio)]]
-      [:div [:dt "Lighting intensity"] [:dd (percent (:score scene))]]
+      [:div [:dt "Visual activity"] [:dd (percent (:score scene))]]
       (when scene [:div [:dt "Lit coverage"] [:dd (percent (:coverage scene))]])]
      (when scene
        [:details.source-readings
-        [:summary "Intensity contributors"]
+        [:summary "Activity contributors"]
         [:dl.policy-readings
          (for [[field label] [[:brightness "Brightness"] [:flashing "Flashing"] [:movement "Movement"] [:strobe "Strobe"]]]
            ^{:key field} [:div [:dt label] [:dd (percent (get scene field))]])]

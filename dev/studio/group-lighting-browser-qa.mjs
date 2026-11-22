@@ -70,7 +70,7 @@ try {
   const controls = page.getByRole('region', { name: 'Lighting policies', exact: true });
   const budget = controls.getByRole('region', { name: 'Light output budget', exact: true });
   const response = controls.getByRole('region', { name: 'Output response envelope', exact: true });
-  const intensity = controls.getByRole('region', { name: 'Perceived lighting intensity', exact: true });
+  const activity = controls.getByRole('region', { name: 'Visual activity', exact: true });
   async function policyEdit(action) {
     const [reply] = await Promise.all([
       page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings'),
@@ -127,10 +127,10 @@ try {
   const binding = saved.settings['output-response'].groups[applied['group-id']].release.beats;
   assert.ok(binding['cue-id'] && binding.param);
   assert.equal(binding.default, 0.125);
-  await policyEdit(() => intensity.getByLabel('Meter activity').tap());
+  await policyEdit(() => activity.getByLabel('Meter activity').tap());
   await page.waitForFunction(() => {
-    const panel = document.querySelector('[aria-label="Perceived lighting intensity"]');
-    return /Lighting intensity\d+%/.test(panel?.textContent || '');
+    const panel = document.querySelector('[aria-label="Visual activity"]');
+    return /Visual activity\d+%/.test(panel?.textContent || '');
   });
 
   saved = await apply(budget, 'Remove group override');
@@ -139,7 +139,7 @@ try {
   await apply(response, 'Remove group override');
   await policyEdit(() => budget.getByLabel('Enable budgets').tap());
   await policyEdit(() => response.getByLabel('Enable envelopes').tap());
-  await policyEdit(() => intensity.getByLabel('Meter activity').tap());
+  await policyEdit(() => activity.getByLabel('Meter activity').tap());
   await page.setViewportSize({ width: 390, height: 843 });
   if (await live.isVisible()) await live.tap();
   for (const region of [panel, controls]) {
@@ -166,8 +166,8 @@ try {
   assert.deepEqual(await submit('Release group'), []);
   const auto = page.locator('details').filter({ has: page.locator('#auto-start') });
   await auto.locator('summary').tap();
-  await auto.getByLabel('Choose cues by lighting intensity').tap();
-  const activityTarget = auto.getByRole('slider', { name: 'Target lighting intensity' });
+  await auto.getByLabel('Choose cues by visual activity').tap();
+  const activityTarget = auto.getByRole('slider', { name: 'Target visual activity' });
   await activityTarget.focus();
   await activityTarget.press('ArrowLeft');
   const goal = Number(await activityTarget.inputValue()) / 100;
@@ -181,11 +181,11 @@ try {
   }
   assert.equal((await autoCommand('Start auto')).config['activity-target'], goal);
   assert.equal((await autoCommand('Stop auto'))['enabled?'], false);
-  await auto.getByLabel('Choose cues by lighting intensity').tap();
+  await auto.getByLabel('Choose cues by visual activity').tap();
   assert.ok(!Object.hasOwn((await autoCommand('Start auto')).config, 'activity-target'));
   await autoCommand('Stop auto');
   assert.deepEqual(problems, []);
-  console.log('Touch and keyboard verified common-reference brightness, rig and group budgets, fixed and bound response times, intensity metering, optional intensity-based cue selection and independent group override removal through Ring. The phone layout fit both performance panels.');
+  console.log('Touch and keyboard verified common-reference brightness, rig and group budgets, fixed and bound response times, visual activity metering, optional activity-based cue selection and independent group override removal through Ring. The phone layout fit both performance panels.');
 } finally {
   await browser.close();
 }

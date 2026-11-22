@@ -103,7 +103,7 @@
     (is (= 0.9 (get-in (first-command flushed) [:fields :value])))
     (is (= 7 (:epoch (first-command flushed))))))
 
-(deftest automatic-cue-selection-respects-optional-visual-intensity
+(deftest automatic-cue-selection-respects-optional-visual-activity
   (let [start #(get-in (transition % [:studio/auto-start]) [:studio/http :body])
         saved (assoc-in base [:show :auto :config] {:activity-target 0.18 :seed 154})
         edited (-> saved (assoc-in [:ui :auto-form :target-activity?] true)
