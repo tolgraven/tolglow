@@ -288,9 +288,9 @@
 (deftest group-tool-pages-and-namespaced-signal-bindings
   (let [state {:model {:epoch 5 :rig {:fixtures [{:id :bank/left :groups [:area/one] :channels {:red 1}}
                                                    {:id "right" :groups ["two"] :channels {:dimmer 2}}]}
-                       :variables {:signals {"user/drive" 0.48} :fog/observation {:epoch 4 :level 0.28 :session-id "private"}}}
+                       :variables {:signals {"user/drive" 0.48} :fog/observation {:epoch 4 :level 0.28 :level-change-per-s -0.03 :session-id "private"}}}
                :output {:atmosphere {:fog-level 0.42 :sample-time-ms 10 :last-presented-ms 8 :reference-path-m 7
-                                     :sources [{:dmx-coarse 255}]}
+                                     :fog-level-change-per-s 0.012 :clearance-half-life-s 22 :sources [{:dmx-coarse 255}]}
                         :fog-control {:enabled? true :target 0.4 :zone :in-band :pumps {:jet {:active? true}}}}}
         listing (venue/inspect state {:limit 1})
         single (venue/inspect state {:group-id "area/one"})
@@ -300,10 +300,10 @@
     (is (= "two" (get-in next-page [:groups :items 0 :group-id])))
     (is (= "right" (get-in next-page [:eligible-fixtures :items 0 :id])))
     (is (= "bank/left" (get-in single [:eligible-fixtures :items 0 :id])))
-    (is (= {:fog-level 0.42 :sample-time-ms 10 :last-presented-ms 8 :reference-path-m 7}
+    (is (= {:fog-level 0.42 :fog-level-change-per-s 0.012 :clearance-half-life-s 22 :sample-time-ms 10 :last-presented-ms 8 :reference-path-m 7}
            (get-in single [:fog :estimate])))
     (is (= {:enabled? true :target 0.4 :zone :in-band} (get-in single [:fog :controller])))
-    (is (= {:epoch 4 :level 0.28 :current-epoch? false} (get-in single [:fog :observation])))
+    (is (= {:epoch 4 :level 0.28 :level-change-per-s -0.03 :current-epoch? false} (get-in single [:fog :observation])))
     (is (= {:group-id :area/one :op :apply :fixture-ids [:bank/left "right"]
             :target-var [:audio :features :energy-envelope]}
            (venue/scene-request (:model state)
