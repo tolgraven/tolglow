@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import {box, tube} from './geometry.js';
 
-export function createRoom(dimensions, materials) {
+export function createRoom(dimensions, materials, surfaces = []) {
   const [width, height, depth] = dimensions, root = new THREE.Group(); root.name = 'venue-context';
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
-  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; root.add(floor);
+  floor.userData.receiver = 'floor'; floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; root.add(floor);
   box(root, [width + .2, .16, depth + .2], [0, -.09, 0], materials.blackMetal);
   // Audience side is an explicit cutaway. Side/back surfaces remain real depth
   // occluders; the camera does not peer through arbitrary invisible walls.
-  box(root, [width, height, .18], [0, height / 2, -depth / 2 - .09], materials.wall);
+  box(root, [width, height, .18], [0, height / 2, -depth / 2 - .09], materials.wall).userData.receiver = 'back';
   for (const x of [-width / 2, width / 2]) {
-    box(root, [.18, height, depth], [x + Math.sign(x) * .09, height / 2, 0], materials.wall);
+    box(root, [.18, height, depth], [x + Math.sign(x) * .09, height / 2, 0], materials.wall).userData.receiver = x < 0 ? 'left' : 'right';
     for (const z of [-depth * .4, depth * .12, depth * .4]) {
       box(root, [.2, height, .2], [x - Math.sign(x) * .13, height / 2, z], materials.blackMetal, .008);
       box(root, [.36, .08, .36], [x - Math.sign(x) * .13, .04, z], materials.metal, .008);
@@ -19,9 +19,9 @@ export function createRoom(dimensions, materials) {
   }
   // A low modular stage, seams, front edge and a pair of access steps.
   const stageWidth = width * .68, stageDepth = Math.min(2.3, depth * .27), stageZ = -depth / 2 + stageDepth / 2 + .16;
-  box(root, [stageWidth, .42, stageDepth], [0, .21, stageZ], materials.stage, .025);
+  box(root, [stageWidth, .42, stageDepth], [0, .21, stageZ], materials.stage, .025).userData.receiver = 'stage';
   box(root, [stageWidth, .025, .045], [0, .435, stageZ + stageDepth / 2 - .02], materials.metal, .008);
-  for (let x = -stageWidth / 2 + 1; x < stageWidth / 2; x += 1.2)
+  for (let x = -stageWidth / 2 + 1; x < stageWidth / 2; x += Math.max(1.2, stageWidth / 64))
     box(root, [.008, .003, stageDepth - .08], [x, .423, stageZ], materials.rubber);
   for (let step = 0; step < 2; step++) box(root, [.85, .14 * (step + 1), .34], [stageWidth / 2 + .35, .07 * (step + 1), stageZ + stageDepth / 2 - step * .34], materials.stage, .015);
   // Pleated dark curtain: actual displaced surface, lit and shadowed by fixtures.
@@ -54,5 +54,16 @@ export function createRoom(dimensions, materials) {
   const cable = new THREE.CatmullRomCurve3([
     new THREE.Vector3(-width * .4, .025, -depth * .1), new THREE.Vector3(-width * .39, .025, depth * .2), new THREE.Vector3(-width * .28, .025, depth * .35), new THREE.Vector3(-width * .1, .025, depth * .38)]);
   const cableMesh = new THREE.Mesh(new THREE.TubeGeometry(cable, 40, .012, 5, false), materials.rubber); root.add(cableMesh);
+  for (const surface of surfaces) {
+    const {id, point, normal, size} = surface;
+    if (!Array.isArray(size) || !size.every(value => Number.isFinite(value) && value > 0)) continue;
+    const n = new THREE.Vector3(...normal).normalize(), u = new THREE.Vector3(...surface['u-axis']);
+    u.addScaledVector(n, -u.dot(n)).normalize();
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...size), materials.wall);
+    mesh.position.fromArray(point);
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(u, n.clone().cross(u), n));
+    mesh.userData.receiver = String(id); mesh.receiveShadow = mesh.castShadow = true;
+    root.add(mesh);
+  }
   return root;
 }

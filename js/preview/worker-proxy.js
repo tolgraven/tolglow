@@ -6,7 +6,7 @@ import {PreviewActivity} from './preview-activity.js';
 import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
-import {clamp} from './math.js';
+import {clamp, roomDimensions} from './math.js';
 
 export function workerSupported() {
   return typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined'
@@ -152,7 +152,8 @@ export class WorkerRoomPreview {
     this.snapshot = {'runtime-id': snapshot['runtime-id'], 'time-ms': snapshot['time-ms'],
       'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
       'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
-    const room = snapshot.rig?.room || {}; this.room = [room.width || 12, room.height || 5, room.depth || 10].map(value => clamp(Number(value) || 1, 1, 100));
+    this.room = roomDimensions(snapshot.rig?.room);
+    this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.sendState();
   }
   resize() {if (this.fallback) return this.fallback.resize(); this.sendState();}

@@ -51,6 +51,11 @@ export function createMaterials() {
     grille: new THREE.MeshStandardMaterial({color: 0x929697, map: grille(), roughness: .7, metalness: .55}),
     yellow: new THREE.MeshStandardMaterial({color: 0x9b793d, roughness: .65, metalness: .05}),
   };
+  // Mean linear albedo of the procedural sRGB concrete maps.
+  materials.floor.userData.meanMapReflectance = .22;
+  materials.wall.userData.meanMapReflectance = .34;
+  // Custom receiving panels have one visible face and block light on both sides.
+  materials.wall.shadowSide = THREE.DoubleSide;
   return materials;
 }
 export function disposeMaterials(materials) {

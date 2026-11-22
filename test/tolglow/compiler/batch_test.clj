@@ -5,6 +5,7 @@
             [tolglow.composition.response :as response]
             [afterglow.control.model :as control]
             [afterglow.runtime :as runtime]
+            [afterglow.runtime.reuse :as reuse]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
             [afterglow.render.frame :as render]
@@ -186,3 +187,30 @@
     (is (empty? (:contributions result)))
     (is (= (frame-bytes (compiled-frame definition input compiler/compile-effect))
            (frame-bytes (compiled-frame definition input (batch/compiler-for-rig fixtures)))))))
+
+(deftest declared-fields-reuse-only-their-actual-inputs
+  (let [calls (atom 0)
+        bind-pure (fn [spec calculate]
+                    (reuse/evaluator spec (fn [inputs] (swap! calls inc) (calculate inputs))))
+        definition {:id :hold :version 1
+                    :params {:level {:type :number :default 0.25 :bounds [0 1]}}
+                    :outputs {:dimmer {:op :param :key :level}}}
+        step (batch/compile-effect definition fixtures {:bind-pure bind-pure})
+        ctx (context definition)
+        values #(get-in (first (:contributions (step %))) [:batch :outputs :dimmer :values])
+        original (values ctx)]
+    (aset-double ^doubles original 0 0.9)
+    (is (= [0.25 0.25 0.25] (vec (values (assoc-in ctx [:frame :time-ms] 900)))))
+    (is (= 1 @calls))
+    (is (= [0.75 0.75 0.75] (vec (values (assoc-in ctx [:instance :params :level] 0.75)))))
+    (is (= 2 @calls))
+    (let [clock-def (assoc definition :outputs {:pan {:op :fract :args [{:op :phrase :clock :absolute}]}})
+          step (batch/compile-effect clock-def fixtures {:bind-pure bind-pure})
+          sample #(vec (get-in (first (:contributions (step %))) [:batch :outputs :pan :values]))]
+      (is (= [0.0625 0.0625 0.0625] (sample ctx)))
+      (is (= [0.0625 0.0625 0.0625] (sample (assoc-in ctx [:frame :time-ms] 901))))
+      (is (= 3 @calls))
+      (is (= [0.125 0.125 0.125] (sample (assoc-in ctx [:instance :timing-meter :beats-per-bar] 2))))
+      (is (= 4 @calls))
+      (is (= [0.25 0.25 0.25] (sample (assoc-in ctx [:frame :transport :beat] 4.0))))
+      (is (= 5 @calls)))))
