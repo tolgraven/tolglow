@@ -90,6 +90,14 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     });
     assert.equal(fenced.telemetry.lightingMode, 'interpolate');
     assert.ok(fenced.discarded >= 1); assert.equal(fenced.telemetry.epoch, 2); assert.equal(fenced.telemetry.ready, true);
+    const atmosphere = await page.evaluate(async () => {
+      const sample={'sample-time-ms':2500,epoch:2,'volume-m3':600,'mixed-m3':3,'mixed-density':.005,
+        sources:[{'fixture-id':'jet',position:[0,1,0],direction:[1,0,0],'local-m3':.5,'emitted-m3':3.5,'flow-m3-s':0}]};
+      engine.update({...snapshot,epoch:2,'frame-number':150,output:{...snapshot.output,atmosphere:sample}});
+      await engine.draw(); return engine.getTelemetry().fog;
+    });
+    assert.equal(atmosphere.atmosphere.foggerCount,1);
+    assert.ok(Math.abs(atmosphere.massEstimate - 3.5)<.00001);
     const resized = await page.evaluate(async () => {
       engine.canvas.style.width = '480px'; engine.canvas.style.height = '300px'; engine.resize(); await engine.draw();
       const telemetry = engine.getTelemetry(); const canvas = engine.canvas; engine.dispose();

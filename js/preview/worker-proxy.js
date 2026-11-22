@@ -151,7 +151,7 @@ export class WorkerRoomPreview {
     this.receivedAt = performance.timeOrigin + performance.now();
     this.snapshot = {'runtime-id': snapshot['runtime-id'], 'time-ms': snapshot['time-ms'],
       'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
-      'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values}};
+      'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
     this.room = roomDimensions(snapshot.rig?.room);
     this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.sendState();
@@ -169,7 +169,7 @@ export class WorkerRoomPreview {
   setWorkLight(value) {this.workLight = clamp(Number(value) || 0, 0, 1); if (this.fallback) return this.fallback.setWorkLight(value); this.sendState();}
   burst(options) {
     if (this.fallback) return this.fallback.burst(options);
-    if (!this.visible || this.actions.length >= 32) return false;
+    if (!this.visible || this.snapshot?.output?.atmosphere || this.actions.length >= 32) return false;
     this.actions.push({id: ++this.actionId, type: 'burst', options}); this.sendState(); return true;
   }
   setCamera(name) {

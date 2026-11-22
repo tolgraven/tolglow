@@ -46,6 +46,14 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.equal(result.finiteNonnegative, true);
     assert.equal(result.behindLensRadiance, 0);
     assert.ok(result.apertureCoverage.every(value => value > 0));
+    assert.equal(result.manualDuringShow,false);
+    assert.equal(result.dryHostDifference,0);
+    assert.ok(result.jetDarkest < .85 && result.jetClearest > .98, JSON.stringify(result));
+    assert.ok(result.roomTransmission < .9 && result.roomTransmission > 0);
+    assert.ok(result.opticalCore > result.halo && result.halo > 0);
+    assert.equal(result.haloGreen,0);
+    assert.ok(Math.abs(result.brighterHalo/result.halo - 2) < .02);
+    assert.equal(result.dryHalo,0);
     assert.equal(result.glError, 0);
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
 });
