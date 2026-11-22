@@ -11,6 +11,7 @@
             [tolglow.event-subscribers :as subscribers]
             [tolglow.events.callbacks :as event-callbacks]
             [afterglow.runtime.executor :as executor]
+            [afterglow.runtime.reuse :as reuse]
             [afterglow.render.compute :as compute]
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
@@ -146,7 +147,7 @@
     ((:close! observer))))
 
 (defn- compiler-context [fixtures batch? compute-owner]
-  (let [options (cond-> {:enabled? batch?}
+  (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
                   (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
