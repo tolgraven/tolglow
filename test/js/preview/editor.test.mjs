@@ -83,3 +83,30 @@ test('an inactive editor does not unlock another interaction owner, including fa
   input.update({rig, editor: {tool: 'move'}}); input.update({rig, editor: {tool: 'navigate'}});
   assert.deepEqual(calls, [true, true]); input.dispose(); assert.deepEqual(calls, [true, true]);
 });
+
+test('aim selects the nearest bounded receiver only on a completed tap', () => {
+  const messages = [], canvas = new EventTarget();
+  Object.assign(canvas, {style: {}, focus(){}, getBoundingClientRect: () => bounds, setPointerCapture(){}, hasPointerCapture: () => false});
+  canvas.addEventListener('tolglow-editor', event => messages.push(event.detail));
+  const input = new RigEditorInput({canvas, camera, setInteractionActive(){}});
+  const floor = {id: 'floor', point: [0, 0, 0], normal: [0, 1, 0], 'u-axis': [1, 0, 0], size: [10, 10]};
+  const stage = {...floor, id: 'stage', point: [0, .4, 0], size: [2, 2]};
+  input.update({rig, 'receiver-surfaces': [floor, stage], epoch: 2, editor: {tool: 'aim'}});
+  const center = projectPoint(camera, bounds, [0, .4, 0]);
+  const event = {button: 0, pointerId: 1, clientX: center.x, clientY: center.y, preventDefault(){}, stopImmediatePropagation(){}};
+  input.down(event); assert.equal(messages.length, 0);
+  input.finish(event, false); assert.equal(messages[0]['surface-id'], 'stage');
+  assert.ok(messages[0].point.every((v,i) => Math.abs(v - stage.point[i]) < 1e-6));
+  input.down(event); input.finish(event, true);
+  input.down(event); input.down({...event, pointerId: 2}); input.finish(event, false);
+  input.down(event); input.move({...event, clientX: center.x + 25}); input.finish(event, false);
+  assert.equal(messages.length, 1);
+  const elsewhere = projectPoint(camera, bounds, [4, 0, 1]);
+  const tap = {...event, clientX: elsewhere.x, clientY: elsewhere.y};
+  input.down(tap); input.finish(tap, false);
+  assert.equal(messages.at(-1)['surface-id'], 'floor');
+  input.update({rig, epoch: 2, 'receiver-surfaces': [], editor: {tool: 'aim'}});
+  input.down(tap); input.finish(tap, false);
+  assert.equal(messages.at(-1).type, 'missed-surface');
+  input.dispose();
+});
