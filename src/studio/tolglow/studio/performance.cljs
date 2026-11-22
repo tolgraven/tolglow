@@ -7,7 +7,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
-            [tolglow.studio.spatial :as spatial]
+            [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
