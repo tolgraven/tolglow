@@ -131,3 +131,25 @@
         sparse (activity/predicted-score model cue)]
     (is (zero? (activity/predicted-score model (assoc cue :saved-params {:level 0}))))
     (is (< sparse (activity/predicted-score (update-in model [:registry :effects :shot :outputs 2] dissoc :targets) cue)))))
+
+(deftest packed-meter-follows-ownership-changes-and-decaying-edges
+  (let [patch (frame/compile-patch lamps) meter (capacity/prepare patch)
+        ids (:target-order patch)
+        score (fn [previous t effect dim]
+                (let [blocks [(block effect ids {:color full :dimmer dim})]
+                      output (frame/resolve-contributions patch blocks {:include-values? false :compact-values? true})]
+                  (activity/advance-meter (:state previous) patch meter output blocks t)))
+        mapped (capture lamps)
+        dark (score nil 0 :wash 0.0)
+        edge (score dark 25 :wash 1.0)
+        held (score edge 50 :wash 1.0)
+        x (score nil 0 :wash 1.0)
+        y (score x 25 :wash 1.0)
+        z (score y 50 :other 1.0)]
+    (is (< 0.0 (get-in held [:report :scene :flashing]) (get-in edge [:report :scene :flashing])))
+    (is (identical? (:report x) (:report y)) "Equivalent new DMX buffers reuse steady measurements")
+    (is (= #{:other} (set (keys (get-in z [:report :effects])))))
+    (is (= (:report edge)
+           (:report (mapped
+                     (mapped nil 0 [(block :wash ids {:color full :dimmer 0})])
+                     25 [(block :wash ids {:color full :dimmer 1})]))))))

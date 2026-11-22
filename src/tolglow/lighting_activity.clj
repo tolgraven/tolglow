@@ -5,6 +5,7 @@
             [afterglow.runtime.events :as events]
             [clojure.set :as set]
             [tolglow.fixtures.shutter :as shutter-profile]
+            [tolglow.lighting-capacity :as capacity]
             [tolglow.registry :as registry]))
 
 (def ^:private motion-fields #{:pan :tilt :aim :direction})
@@ -106,32 +107,9 @@
   (if (and direction previous dt)
     (let [dot (reduce + (map * direction previous))]
       ;; Speed of the beam in world space, one half-turn per second saturates.
-      (unit (/ (Math/acos (max -1.0 (min 1.0 (double dot)))) (* Math/PI dt))))
+      (if (> dot 0.999999999999) 0.0
+        (unit (/ (Math/acos (max -1.0 (min 1.0 (double dot)))) (* Math/PI dt)))))
     0.0))
-
-(defn- emitted-color [frame fixture]
-  (or (get-in frame [:values (:id fixture) :emitted-color])
-      (when-let [field (get-in frame [:compact :fields :emitted-color])]
-        (let [i (::frame/index fixture)]
-          (when (aget ^booleans (:valid field) i)
-            (let [^doubles data (:values field) j (* 3 i)]
-              [(aget data j) (aget data (inc j)) (aget data (+ j 2))]))))))
-
-(defn- sample [fixture frame local prev dt]
-  (let [[open? strobe] (shutter fixture (:universes frame))
-        light (if open? (unit local) 0.0)
-        before (:light prev light)
-        direction (emit-direction fixture (:universes frame))
-        color (when open? (emitted-color frame fixture))
-        color-change (if (and color (:color prev))
-                       (reduce max 0.0 (map #(abs (- %1 %2)) color (:color prev))) 0.0)
-        change (max (abs (- light before)) color-change)
-        ;; Follow a recent steep edge for 180 ms so a short sparkle is visible
-        ;; between samples. The tail remains proportional to its original light.
-        edge (if dt (* (max before light) (unit (/ change (* 8.0 dt)))) 0.0)
-        flashing (if dt (max edge (* (:flashing prev 0.0) (Math/exp (/ (- dt) 0.18)))) 0.0)]
-    {:light light :color color :direction direction :flashing flashing
-     :movement (* light (motion direction (:direction prev) dt)) :strobe (* light strobe)}))
 
 (defn- add! [^doubles totals w count-weight light flashing movement strobe]
   (aset totals 0 (+ (aget totals 0) (* w light)))
@@ -145,59 +123,157 @@
   (assoc (zipmap components (map #(unit (aget totals %)) (range (count components))))
          :score (unit (aget totals 5))))
 
-(defn advance
-  "Sample a final packed frame after brightness matching, envelopes and budget.
-  Pass capacity/measure-sources for every emitting target in the rig and ordered
-  authored contribution blocks (before output processing). dt uses monotonic
-  milliseconds. Drop previous state across rig revisions, seeks and show epochs."
-  [previous patch source-levels frame blocks time-ms]
-  (let [elapsed (when (:time-ms previous) (- time-ms (:time-ms previous)))
-        dt (when (and elapsed (< 0 elapsed 1000)) (/ elapsed 1000.0))
-        prior (when dt (:samples previous))
-        fields (owners blocks)
-        total (reduce + 0.0 (map :global-maximum (vals source-levels)))
-        count-weight (/ 1.0 (max 1 (count source-levels)))
-        ;; A patch group is normalized against its own complete set of emitters.
-        group-weights (reduce-kv (fn [weights id meter]
-                                   (reduce #(update %1 %2 (fn [[sum n]] [(+ (or sum 0.0) (:global-maximum meter)) (inc (or n 0))]))
-                                           weights (distinct (get-in patch [:by-id id :groups])))) {} source-levels)
-        group-totals (update-vals group-weights (fn [_] (double-array 6)))
+(defn- ownership-shape [blocks]
+  (mapv (fn [{:keys [source native-layer assignments batch]}]
+          [source native-layer
+           (when (seq assignments)
+             (mapv (fn [{:keys [target-id attribute opacity blend]}] [target-id attribute opacity blend]) assignments))
+           (when batch [(:target-ids batch) (keys (:outputs batch)) (:opacity batch) (:blend batch)
+                        (mapv :attribute (get-in batch [:field-request :group :cpu-plan :outputs]))])]) blocks))
+
+(defn- layout [patch levels indices]
+  (let [total (reduce + 0.0 (map :global-maximum (vals levels)))
+        groups (reduce-kv
+                (fn [groups id meter]
+                  (reduce (fn [groups group]
+                            (let [[sum n] (groups group [0.0 0])]
+                              (assoc groups group [(+ sum (:global-maximum meter)) (inc n)])))
+                          groups (distinct (get-in patch [:by-id id :groups])))) {} levels)]
+    {:groups (keys groups) :count-weight (/ 1.0 (max 1 (count levels)))
+     :rows (mapv (fn [[id {:keys [global-maximum]}]]
+                   (let [fixture (get-in patch [:by-id id])]
+                     {:id id :fixture fixture :index (::frame/index fixture) :meter-index (some-> (get indices id) first)
+                      :moving? (some (:channels fixture) [:pan :tilt])
+                      :shutter? (some (:channels fixture) [:strobe :shutter]) :weight (if (pos? total) (/ global-maximum total) 0.0)
+                      :groups (mapv (fn [id]
+                                      (let [[sum n] (groups id)]
+                                        [id (if (pos? sum) (/ global-maximum sum) 0.0) (/ 1.0 n)]))
+                                    (distinct (:groups fixture)))})) levels)}))
+
+(defn- with-writers [layout blocks]
+  (let [fields (owners blocks)]
+    (update layout :rows
+            (fn [rows]
+              (mapv (fn [{:keys [id fixture] :as row}]
+                      (let [writers (fields id)
+                            light (not-empty (light-shares writers fixture))
+                            movement (if (or (:aim writers) (:direction writers))
+                                       (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
+                            strobe (shares writers shutter-fields)]
+                        (assoc row :light-share light :motion-share movement :strobe-share strobe
+                               :owners (into #{} (mapcat keys) [light movement strobe])))) rows)))))
+
+(defn- same-packets? [a b]
+  (or (identical? a b)
+      (and (= (count a) (count b))
+           (every? (fn [[id packet]]
+                     (let [other (get b id)]
+                       (and other (java.util.Arrays/equals ^bytes packet ^bytes other)))) a))))
+
+(defn- measure [layout source-levels ^doubles measured frame prior dt]
+  (let [group-totals (zipmap (:groups layout) (repeatedly #(double-array 6)))
         scene (double-array 6)
         effects (java.util.HashMap.)
-        saved (reduce-kv
-               (fn [m id {:keys [local-brightness global-maximum]}]
-                 (let [fixture (get-in patch [:by-id id])
-                       old (get prior id)
-                       {:keys [light flashing movement strobe] :as current}
-                       (sample fixture frame local-brightness old dt)
-                       writers (get fields id)
-                       light-share (or (not-empty (light-shares writers fixture))
-                                       (when (or (pos? light) (> flashing 0.005)) (:light-share old)))
-                       flash-share (merge-with max light-share
-                                               (when (> flashing 0.005) (:light-share old)))
-                       motion-share (if (or (:aim writers) (:direction writers))
-                                      (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
-                       strobe-share (shares writers shutter-fields)
-                       weight (if (pos? total) (/ global-maximum total) 0.0)]
-                   (add! scene weight count-weight light flashing movement strobe)
-                   (doseq [group (distinct (:groups fixture))]
-                     (let [[sum n] (group-weights group)]
-                       (add! (group-totals group) (if (pos? sum) (/ global-maximum sum) 0.0) (/ 1.0 n)
-                             light flashing movement strobe)))
-                   (doseq [owner (into #{} (mapcat keys) [flash-share light-share motion-share strobe-share])]
-                     (let [a (or (.get effects owner)
-                                 (let [a (double-array 6)] (.put effects owner a) a))]
-                       (add! a weight count-weight
-                             (* light (get light-share owner 0.0)) (* flashing (get flash-share owner 0.0))
-                             (* movement (get motion-share owner 0.0)) (* strobe (get strobe-share owner 0.0)))))
-                   (assoc! m id (assoc current :light-share light-share))))
-               (transient {}) source-levels)
-        ;; During a hot reload select the most recent revision for that ID.
-        by-effect (reduce (fn [m [[id version] values]]
-                            (if (and (contains? m id) (< (or version 0) (or (get-in m [id :version]) 0))) m
-                              (assoc m id (assoc (summary values) :version version)))) {} effects)
-        report {:scene (summary scene) :groups (update-vals group-totals summary) :effects by-effect}]
-    {:state {:time-ms time-ms :samples (persistent! saved)} :report report}))
+        rows (:rows layout)
+        n (count rows)
+        ; Each snapshot owns its arrays. Read the previous sample without
+        ; mutating it even if the host later rejects this frame.
+        samples (double-array (* 5 n))
+        ^doubles before (:levels prior)
+        poses (object-array n)
+        ^objects old-poses (:poses prior)
+        writers (object-array n)
+        ^objects old-writers (:writers prior)
+        fade (if dt (Math/exp (/ (- dt) 0.18)) 0.0)
+        slope-scale (if dt (/ 1.0 (* 8.0 dt)) 0.0)
+        compact-color (get-in frame [:compact :fields :emitted-color])
+        ^doubles rgb (:values compact-color)
+        ^booleans valid (:valid compact-color)]
+    (dotimes [i n]
+      (let [{:keys [id fixture index meter-index weight groups light-share motion-share strobe-share owners moving? shutter?]}
+            (nth rows i)
+            [open? strobing] (if shutter? (shutter fixture (:universes frame)) [true 0.0])
+            j (* 5 i)
+            light (if open? (unit (if measured (aget measured (int meter-index))
+                                    (get-in source-levels [id :local-brightness]))) 0.0)
+            old-light (if before (aget before j) light)
+            ;; Reuse the compact field's flat RGB column directly; dense strips
+            ;; need no per-pixel projected maps or RGB vectors.
+            ci (* 3 (int index))
+            packed? (and open? rgb (aget valid (int index)))
+            color (when (and open? (not packed?)) (get-in frame [:values id :emitted-color]))
+            r (if packed? (aget rgb ci) (double (get color 0 0.0)))
+            g (if packed? (aget rgb (inc ci)) (double (get color 1 0.0)))
+            b (if packed? (aget rgb (+ ci 2)) (double (get color 2 0.0)))
+            change (if before (max (abs (- light old-light)) (abs (- r (aget before (inc j))))
+                                   (abs (- g (aget before (+ j 2)))) (abs (- b (aget before (+ j 3))))) 0.0)
+            ; A recent steep edge has a short perception tail. The observed
+            ; edge itself remains proportional to how much light was visible.
+            edge (* (max old-light light) (min 1.0 (* change slope-scale)))
+            trail (if before (* (aget before (+ j 4)) fade) 0.0)
+            flash (max edge (if (< trail 0.0001) 0.0 trail))
+            pose (when moving? (emit-direction fixture (:universes frame)))
+            movement (if moving? (* light (motion pose (when old-poses (aget old-poses i)) dt)) 0.0)
+            strobe (* light (double strobing))
+            previous-share (when old-writers (aget old-writers i))
+            inherited (when (and (nil? light-share) (or (pos? light) (> flash 0.005))) previous-share)
+            light-share (or light-share inherited)
+            tail (when (and (> flash 0.005) (not (identical? light-share previous-share))) previous-share)
+            flash-share (if tail (merge-with max light-share tail) light-share)
+            contributors (if (or tail inherited) (into owners (keys flash-share)) owners)]
+        (aset-double samples j light)
+        (aset-double samples (inc j) r)
+        (aset-double samples (+ j 2) g)
+        (aset-double samples (+ j 3) b)
+        (aset-double samples (+ j 4) flash)
+        (aset poses i pose)
+        (aset writers i light-share)
+        (add! scene weight (:count-weight layout) light flash movement strobe)
+        (doseq [[group part n] groups] (add! (group-totals group) part n light flash movement strobe))
+        (doseq [owner contributors]
+          (let [a (or (.get effects owner) (let [a (double-array 6)] (.put effects owner a) a))]
+            (add! a weight (:count-weight layout)
+                  (* light (get light-share owner 0.0)) (* flash (get flash-share owner 0.0))
+                  (* movement (get motion-share owner 0.0)) (* strobe (get strobe-share owner 0.0)))))))
+    (let [by-effect (reduce (fn [m [[id version] values]]
+                              (if (and (contains? m id) (< (or version 0) (or (get-in m [id :version]) 0))) m
+                                (assoc m id (assoc (summary values) :version version)))) {} effects)]
+      {:samples {:levels samples :poses poses :writers writers}
+       :report {:scene (summary scene) :groups (update-vals group-totals summary) :effects by-effect}})))
+
+(defn- advance* [previous patch source-levels meter frame blocks time-ms]
+  (let [elapsed (when (:time-ms previous) (- time-ms (:time-ms previous)))
+        dt (when (and elapsed (< 0 elapsed 1000)) (/ elapsed 1000.0))
+        same-rig? (and (identical? patch (:patch previous)) (identical? meter (:meter previous)))
+        shape (ownership-shape blocks)
+        same-writers? (and same-rig? (= shape (:shape previous)))
+        before (:report previous)
+        packets (:universes frame)]
+    (if (and same-writers? dt
+             (zero? (get-in before [:scene :movement])) (zero? (get-in before [:scene :flashing]))
+             (same-packets? packets (:packets previous)))
+      {:state (assoc previous :time-ms time-ms :packets packets) :report before}
+      (let [base (if same-rig? (:layout previous)
+                   (layout patch (or (:source-capacities meter) source-levels) (:writers-by-head meter)))
+            plan (if same-writers? (:plan previous) (with-writers base blocks))
+            local (when meter (capacity/local-brightnesses meter packets))
+            {:keys [samples report]} (measure plan source-levels local frame (when (and same-rig? dt) (:samples previous)) dt)]
+        {:state {:time-ms time-ms :patch patch :meter meter :layout base :plan plan :shape shape
+                 :packets packets :samples samples :report report}
+         :report report}))))
+
+(defn advance
+  "Sample an existing complete map from capacity/measure-sources after output
+  processing. Give the scorer ordered authored blocks for effect attribution."
+  [previous patch source-levels frame blocks time-ms]
+  (advance* previous patch source-levels nil frame blocks time-ms))
+
+(defn advance-meter
+  "Real-time entry point. Use the compiled whole-rig capacity meter and the
+  final frame after envelopes, budgeting, master and blackout. Drop private
+  history on seeks/restarts. No per-fixture measurement maps are constructed."
+  [previous patch meter frame blocks time-ms]
+  (advance* previous patch nil meter frame blocks time-ms))
 
 (defn publish
   "Publish the latest scores and preserve the peak learned for current effect
@@ -260,7 +336,7 @@
   without measurements have no prediction."
   [model cue]
   (let [id (:effect-id cue)
-        effect (get-in model [:registry :effects id])
+        effect (registry/cue-effect (:registry model) cue)
         learned (get-in model [:variables :lighting/activity :history id])]
     (if (and effect learned (= (:version effect) (:version learned))) (:score learned)
       (when-let [entries (seq (registry/output-entries (:outputs effect)))]
