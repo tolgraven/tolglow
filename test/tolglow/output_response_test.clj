@@ -3,7 +3,8 @@
             [afterglow.render.emission :as light]
             [afterglow.render.frame :as frame]
             [clojure.test :refer [deftest is]]
-            [tolglow.output-response :as response]))
+            [tolglow.output-response :as response]
+            [tolglow.show :as host]))
 
 (def fixtures [{:id :front :groups [:wash :front] :universe 0 :address 1 :channels {:dimmer 1 :red 2 :blue 3 :strobe 4}}
                {:id :back :groups [:wash] :universe 0 :address 5 :channels {:dimmer 1}}])
@@ -220,3 +221,27 @@
     (is (near? 0.625 (value falling :back :dimmer)))
     (is (near? 0.25 (value end :back :dimmer)))
     (is (= 1.0 (value takeover :back :dimmer)))))
+
+(deftest cue-removal-delivers-the-exact-scoped-release-to-the-output-sink
+  (let [effect {:id :lamp :name "Lamp" :version 1 :targets [:back] :params {} :outputs {:dimmer 1.0}}
+        show (-> (model/new-show {:registry {:effects {:lamp effect}
+                                             :cues {:flash {:id :flash :effect-id :lamp :version 1}}}})
+                 (assoc :rig {:fixtures fixtures})
+                 (assoc-in [:settings :output-response]
+                           {:enabled? true :cues {:flash {:release {:mode :linear :ms 100}}}}))
+        last-byte (atom nil)
+        runtime (host/create-runtime {:model show :workspace-options nil
+                                      :sink {:send! (fn [u _] (reset! last-byte (bit-and 255 (aget ^bytes (get u 0) 4))))}})
+        command (fn [cmd t] (let [ack (host/submit! runtime :command cmd)] (host/tick! runtime t) @ack))]
+    (try
+      (let [ack (command {:op :cue/launch :cue-id :flash} 0)]
+        (is (= :accepted (:status ack)))
+        (host/tick! runtime 25)
+        (is (= 255 @last-byte))
+        (is (= :accepted (:status (command {:op :instance/remove :instance-id (:instance-id ack)} 50))))
+        (is (= 191 @last-byte))
+        (host/tick! runtime 75)
+        (is (= 128 @last-byte))
+        (host/tick! runtime 125)
+        (is (zero? @last-byte)))
+      (finally (host/stop! runtime)))))
