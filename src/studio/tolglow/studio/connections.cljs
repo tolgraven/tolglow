@@ -6,6 +6,7 @@
             [reagent.core :as r]
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
+            [tolglow.studio.lighting-capacity :as capacity]
             [tolglow.studio.audio-scope :as audio-scope]
             [tolglow.studio.events :as events]))
 
@@ -174,7 +175,8 @@
   (fn [{:keys [db]} [_ request-token key error]]
     (when (current? db request-token)
       {:db (-> db (assoc-in [:connections :errors key] (str error))
-               (update-in [:connections :pending] disj key))})))
+               (update-in [:connections :pending] disj key)
+               (cond-> (= key :lighting-capacity) (update :connections dissoc :capacity-draft)))})))
 (rf/reg-event-fx :connections/configure
   (fn [{:keys [db]} [_ start?]]
     (try
@@ -293,6 +295,13 @@
      :fx [(req db :pause "/api/settings" {:scope "output" :values {:pause-look (pause-form db)}}
                :connections/settings-saved)]}))
 
+(rf/reg-event-fx :connections/set-capacity
+  (fn [{:keys [db]} [_ values]]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :lighting-capacity)
+             (assoc-in [:connections :capacity-draft] values))
+     :fx [(req db :lighting-capacity "/api/settings" {:scope "lighting-capacity" :values values}
+               :connections/settings-saved)]}))
+
 (rf/reg-event-fx :connections/save-output
   (fn [{:keys [db]} _]
     (try
@@ -311,7 +320,8 @@
   (fn [{:keys [db]} [_ request-token key _ack]]
     (when (current? db request-token)
       {:db (-> db (update-in [:connections :pending] disj key) (update-in [:connections :errors] dissoc key)
-               (cond-> (= key :pause) (update :connections dissoc :pause-form)))})))
+               (cond-> (= key :pause) (update :connections dissoc :pause-form)
+                       (= key :lighting-capacity) (update :connections dissoc :capacity-draft)))})))
 
 (defn- pause-panel [pending?]
   (let [{:keys [mode color level]} @(rf/subscribe [:connections/pause-look])]
@@ -607,7 +617,7 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [sensors/panel db]
      [patchbay/panel db]]))
 (def panel
