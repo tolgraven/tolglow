@@ -90,8 +90,8 @@ try {
   assert.equal(saved.settings['lighting-budget'].global['standby-mode'], 'all');
 
   const chooser = controls.getByLabel('Budget and envelope scope');
-  await chooser.selectOption({ label: applied['group-id'] });
-  await page.waitForFunction(location => document.querySelector('[aria-label="Light output budget"]')?.dataset.location === location, await chooser.inputValue());
+  const [location] = await chooser.selectOption({ label: applied['group-id'] });
+  await page.waitForFunction(location => document.querySelector('[aria-label="Light output budget"]')?.dataset.location === location, location);
   const groupCount = budget.getByLabel('Maximum active sources');
   await groupCount.focus();
   await groupCount.press('ControlOrMeta+A');
