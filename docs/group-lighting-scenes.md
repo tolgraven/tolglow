@@ -86,3 +86,31 @@ the subscriber for the next rise. No group must be running beforehand.
 Any registered event can supply the target itself using
 `:event-path [:data :intensity]` on the action. In both cases the emitter,
 measurement, gate and scene run through the same show owner as Studio.
+
+## Steady-frame metering cost
+
+Group feedback reads the committed bytes of its selected fixtures. A cached
+reading remains valid only while the patch, group membership and all affected
+universe bytes match. A changed fine byte forces a new measurement. Groups on
+unrelated universes can retain their last reading. A steady target preserves the
+model and instance identity. The controller still observes changed target
+variables and operator settings on each frame.
+
+Reproduce the software comparison from the project root.
+
+```sh
+lein run -m tolglow.bench-group-feedback 2048 60
+```
+
+Two warmed preview owners ran the same generated look on 2,048 RGB heads at a
+72% target. One owner kept the group feedback enabled. The other continued the
+same owned cue at its settled opacity. Sampling order alternated and the final
+DMX universes had to match byte-for-byte. On the shared JDK 21 host, the
+difference between the two median owner-thread CPU readings fell from 0.39 ms
+to 0.03 ms after reusing unchanged measurements. The corresponding median
+allocation difference fell from 8,192 to 2,752 bytes per frame. With reuse, wall
+p50/p95 were 5.08/26.37 ms with feedback and 5.88/22.64 ms with the same look
+alone. The benchmark includes the complete software tick, runs unpaced, and
+reports CPU/allocation for the owner thread. It does not measure physical
+output or universal 40 Hz delivery. A first scene still compiles the generated
+effect and prepares its calibrated meter.

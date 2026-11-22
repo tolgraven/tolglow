@@ -6,7 +6,8 @@
             [clojure.string :as str]
             [tolglow.automation.random :as random]
             [tolglow.lighting-capacity :as capacity]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry])
+  (:import [java.util Arrays]))
 
 (def ^:private location [:extensions ::control :groups])
 (def ^:private light-fields (conj registry/emitter-attributes :color :dimmer))
@@ -243,8 +244,36 @@
 
 (defn prepare [patch ids]
   (let [lookup (:by-id patch)
-        fixtures (into [] (keep lookup) ids)]
-    (capacity/prepare (assoc patch :fixtures fixtures))))
+        fixtures (into [] (keep lookup) ids)
+        universes (into (sorted-set)
+                        (comp (mapcat (comp vals :compiled-channels))
+                              (mapcat (juxt :coarse :fine)) (keep first))
+                        fixtures)]
+    (capacity/prepare {:fixtures fixtures :universes (vec universes)})))
+
+(defn meter-frame
+  "Keep plans and the last committed immutable DMX buffers at the frame owner.
+  Reuse a group's fraction only if its calibration, membership and every byte
+  in its affected universes remain the same, including cross-universe fine."
+  [prior patch groups universes]
+  (let [old-buffers (:universes prior)
+        same-patch? (identical? (:patch prior) patch)
+        ;; Multiple disjoint groups can occupy the same DMX universe.
+        comparisons (java.util.HashMap.)
+        stable? (fn [u]
+                  (if-some [same (.get comparisons u)] same
+                    (let [same (Arrays/equals ^bytes (get old-buffers u) ^bytes (get universes u))]
+                      (.put comparisons u same) same)))
+        plans (reduce-kv
+               (fn [out id {:keys [fixture-ids]}]
+                 (let [old (get-in prior [:plans id])
+                       reuse-plan? (and old same-patch? (= fixture-ids (:ids old)))
+                       plan (if reuse-plan? (:plan old) (prepare patch fixture-ids))]
+                   (assoc out id
+                          (if (and reuse-plan? (every? stable? (:universes plan))) old
+                            {:ids fixture-ids :plan plan :actual (:utilization (capacity/measure plan universes))}))))
+               {} groups)]
+    {:patch patch :universes universes :plans plans}))
 
 (defn feedback
   "Use one committed normalized measurement per group. Each update is bounded;
@@ -277,9 +306,15 @@
                             (and (> saturated 2) (zero? value)) :unlit
                             (> saturated 2) :limited
                             (and (< error -0.015) (zero? gain)) :over-target :else :seeking)
-               adjusted (assoc group :actual value :target target :gain next-gain :saturated saturated :status status)
-               m (-> m (assoc-in (group-path id) adjusted)
-                     (assoc-in [:instances instance-id :system :opacity] next-gain))]
+               same-group? (and (= instance-id (:instance-id (get-in m (group-path id))))
+                                (= target (:target group)) (= value (:actual group))
+                                (= gain next-gain) (= saturated (:saturated group)) (= status (:status group)))
+               adjusted (if same-group? group
+                          (assoc group :actual value :target target :gain next-gain :saturated saturated :status status))
+               m (cond-> m
+                   (not same-group?) (assoc-in (group-path id) adjusted)
+                   (not= next-gain (get-in instance [:system :opacity]))
+                   (assoc-in [:instances instance-id :system :opacity] next-gain))]
            (if (and (= saturated 5) (:allow-generated? group) (:source-effect-id group))
              (let [wanted (set (:fixture-ids group))
                    heads (filterv #(and (wanted (:id %)) (eligible? %)) (fixtures m))]

@@ -1,5 +1,6 @@
 (ns tolglow.lighting-scenes-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.render.frame :as frame]
+            [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as subs]
             [tolglow.lighting-scenes :as scenes]
@@ -128,3 +129,41 @@
     (is (thrown? clojure.lang.ExceptionInfo (scenes/apply-request repeated (assoc request :target 0.4) 2)))
     (is (= 2 (get-in (scenes/groups (scenes/apply-request repeated (assoc request :command-id "turn-2") 3))
                       [:wash :generation])))))
+
+(deftest committed-meter-cache-invalidates-by-rig-membership-and-universe-bytes
+  (let [fixtures [{:id :a :universe 1 :address 512 :channels {:dimmer [1 2]}}
+                  {:id :b :universe 9 :address 1 :channels {:dimmer 1}}]
+        patch (frame/compile-patch fixtures)
+        groups {:a {:fixture-ids [:a]} :b {:fixture-ids [:b]}}
+        full #(into {} (map (fn [u] [u (byte-array 512)]) [1 2 9]))
+        one (full) two (full)
+        a (scenes/meter-frame {} patch groups one)
+        b (scenes/meter-frame a patch groups two)
+        changed (full)
+        _ (aset-byte ^bytes (changed 2) 0 (unchecked-byte 255))
+        c (scenes/meter-frame b patch groups changed)
+        d (scenes/meter-frame c patch {:a {:fixture-ids [:b]}} changed)
+        repatched (frame/compile-patch [(assoc (first fixtures) :measured-relative-brightness 2) (second fixtures)])
+        e (scenes/meter-frame c repatched groups changed)]
+    (is (identical? (get-in a [:plans :a]) (get-in b [:plans :a])) "Fresh equal buffers reuse the last measurement")
+    (is (identical? (get-in b [:plans :b]) (get-in c [:plans :b])) "Another group's fine universe did not change this group")
+    (is (< 0 (get-in c [:plans :a :actual])) "The fine byte alone changes the measured dimmer")
+    (is (zero? (get-in d [:plans :a :actual])) "Reassigning membership invalidates a byte-identical frame")
+    (is (not (identical? (get-in c [:plans :a :plan]) (get-in e [:plans :a :plan]))) "Calibration rebuilds the plan")
+    (is (= #{:a} (set (keys (:plans d)))))))
+
+(deftest stable-feedback-preserves-the-model-and-instance
+  (let [rt (local true) t (atom 0)]
+    (try
+      (issue! rt t :lighting-scene {:op :apply :group-id :wash :target 0.72 :effect-ids []})
+      (ticks! rt t 40)
+      (let [m (:model @(:state rt))
+            g (:wash (scenes/groups m))
+            value (:actual g)
+            next-model (scenes/feedback m {:wash value} @t false)]
+        (is (= :at-target (:status g)))
+        (is (identical? m next-model))
+        (is (identical? (:instances m) (:instances next-model)))
+        (is (= :limited (:status (:wash (scenes/groups (scenes/feedback m {:wash value} @t true))))))
+        (is (not (identical? next-model (scenes/feedback m {:wash 0.1} @t false)))))
+      (finally (show/stop! rt)))))
