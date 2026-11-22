@@ -1147,6 +1147,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1159,7 +1160,6 @@
 
                               (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
-                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))
