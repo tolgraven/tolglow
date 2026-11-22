@@ -150,7 +150,7 @@
       (catch Exception error (.close input) (.close output) (throw error))))))
 
 (def operations
-  {"/api/event-subscribers" :event-subscriber "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
+  {"/api/event-subscribers" :event-subscriber "/api/photometry" :photometry "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
    "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
@@ -199,9 +199,10 @@
 
 (defn- get-routes
   [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! event-subscribers!]}]
+           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
+    "/api/photometry" (available photometry! "Fixture photometry unavailable" (fn [_] (ok (photometry!))))
     "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
     "/api/state" (fn [{:keys [query-params]}]
                    (heartbeat! (get query-params "session"))
