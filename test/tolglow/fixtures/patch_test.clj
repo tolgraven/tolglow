@@ -74,6 +74,15 @@
   (let [profile {:flow-m3-min 4.0 :mixing-seconds 8 :direction [0 1 0]}
         fixture {:id :hybrid :version 1 :fogger profile
                  :channels {:fog 1} :heads [{:channels {:red 2}}]}
-        [machine led] (patch/expand {:hybrid fixture} {:rig {:universe 1 :list [:hybrid]}})]
+        [machine led] (patch/expand {:hybrid fixture} {:rig {:universe 1 :list [:hybrid]}})
+        placed (assoc profile :flow-m3-min 12)
+        panel {:id :with-jet :version 1 :channels {:cold-white 1} :heads [{:channels {:fog 2}}]}
+        [white nozzle] (patch/expand {:panel panel} {:rig {:universe 1 :list [[:panel {:fogger placed}]]}})]
     (is (= profile (:fogger machine)))
-    (is (not (contains? led :fogger)))))
+    (is (not (contains? led :fogger)))
+    (is (= placed (:fogger nozzle)))
+    (is (not (contains? white :fogger)))
+    (is (= [1.0 0.0] (mapv :emission-share [white nozzle])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"needs a target with a fog channel"
+                          (patch/expand {:panel (assoc panel :heads [{:channels {:blue 2}}])}
+                                        {:rig {:universe 1 :list [[:panel {:fogger placed}]]}})))))
