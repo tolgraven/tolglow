@@ -57,19 +57,18 @@
       (/ (reduce (fn [sum {:keys [id capacity] :as s}]
                    (+ sum (* capacity (level s (get gains id 1.0))))) 0.0 sources) total)))
 
-(defn- shuffled [ids prev seed rotate?]
+(defn- shuffled [sources prev seed rotate?]
   (cond
-    (not rotate?) [seed ids]
-    (< (count ids) 2) [seed ids]
-    :else (let [[seed order] (random/shuffle-values seed ids)]
-            [seed (if (= order prev) (conj (subvec order 1) (first order)) order)])))
+    (not rotate?) [seed sources]
+    (< (count sources) 2) [seed sources]
+    :else (let [[seed order] (random/shuffle-values seed sources)]
+            [seed (if (= (map :id order) prev) (conj (subvec order 1) (first order)) order)])))
 
 (defn- allocate
   "Keep the selected lamps at their authored level where possible. Spend above
   authored white only when every source together would otherwise fall short."
   [sources order desired extra total {:keys [standby-level max-gain]}]
-  (let [by-id (into {} (map (juxt :id identity)) sources)
-        low (fn [s] (min standby-level (:level s)))
+  (let [low (fn [s] (min standby-level (:level s)))
         floor (reduce (fn [sum s] (+ sum (* (low s) (:capacity s)))) 0.0 sources)
         desired (* total (clamp 0.0 1.0 desired))
         slack (* total extra)
@@ -78,8 +77,8 @@
         ;; Scale all the way to physical full white where max-gain permits it.
         limit (if boost? max-gain 1.0)]
     (loop [remaining order left (max 0.0 (- desired floor)) gains (transient {})]
-      (if-let [id (first remaining)]
-        (let [{:keys [capacity level] :as s} (by-id id)
+      (if-let [id (:id (first remaining))]
+        (let [{:keys [capacity level] :as s} (first remaining)
               base (* floor-scale (low s))
               cost (* capacity (max 0.0 (- (min 1.0 (* level limit)) base)))
               grant (if (and (pos? left) (<= cost (+ left slack))) cost (min left cost))
@@ -133,20 +132,20 @@
         previous (:active state)]
     ;; A shuffled prefix can contain exactly the same lamps. Give one waiting,
     ;; emitting source first pick when another selection is physically possible.
-    (if-let [id (when (and (:rotate? opts) (seq active) (= previous active))
-                  (let [waiting (into #{} (comp (remove #(active (:id %)))
-                                                (filter #(> (:level %) (:standby-level opts))) (map :id)) sources)]
-                    (some waiting order)))]
-      (let [order (into [id] (remove #{id}) order)
+    (if-let [next-source (when (and (:rotate? opts) (seq active) (= previous active))
+                          (some (fn [{:keys [id level] :as source}]
+                                  (when (and (not (active id)) (> level (:standby-level opts))) source))
+                                order))]
+      (let [order (into [next-source] (remove #(= (:id next-source) (:id %))) order)
             gains (allocate sources order wanted slack total opts)]
-        [order gains (active-ids sources gains (:standby-level opts))])
-      [order gains active])))
+        [(mapv :id order) gains (active-ids sources gains (:standby-level opts))])
+      [(mapv :id order) gains active])))
 
 (defn- light-plan [state sources brightness target opts]
   (let [ids (mapv :id sources)
         total (reduce + 0.0 (map :capacity sources))
         seed (if (= (:initial-seed state) (:seed opts)) (:seed state) (:seed opts))
-        [seed order] (shuffled ids (:order state) seed (:rotate? opts))
+        [seed order] (shuffled sources (:order state) seed (:rotate? opts))
         delta (change brightness target opts)
         now (weighted sources (:gains state) total)
         ;; Preserve an authored pulse's duty cycle when translating average light
@@ -163,7 +162,7 @@
                                :else
                                ;; An unlit sample can be the trough of a dimmer LFO.
                                ;; Keep selected gains ready to respond to its next rise.
-                               [order (into {} (map (fn [id] [id (if (zero? target) 0.0
+                               [(mapv :id order) (into {} (map (fn [id] [id (if (zero? target) 0.0
                                                                         (get (:gains state) id 1.0))])) ids) #{}])
         delivered (weighted sources gains total)
         achieved (* duty (- delivered now))
@@ -187,14 +186,19 @@
                           (not (zero? activity-change)) (conj (make-request :activity activity-change)))
                         (:strategy opts)))))
 
-(defn- check-input! [sources targets]
-  (when-not (and (every? #(unit? (get targets %)) [:brightness :activity])
-                 (every? (fn [{:keys [id level capacity]}]
-                           (and (some? id) (unit? level)
-                                (time/finite-number? capacity) (not (neg? capacity)))) sources))
+(defn- source-membership [sources targets]
+  (when-not (every? #(unit? (get targets %)) [:brightness :activity])
     (throw (ex-info "Expected resolved energy targets and calibrated sources" {:targets targets})))
-  (when-not (= (count sources) (count (into #{} (map :id) sources)))
-    (throw (ex-info "Duplicate source IDs" {}))))
+  (let [membership (persistent!
+                    (reduce (fn [result {:keys [id level capacity]}]
+                              (when-not (and (some? id) (unit? level)
+                                             (time/finite-number? capacity) (not (neg? capacity)))
+                                (throw (ex-info "Expected resolved energy targets and calibrated sources" {:targets targets})))
+                              (assoc! result id (double capacity)))
+                            (transient {}) sources))]
+    (when-not (= (count sources) (count membership))
+      (throw (ex-info "Duplicate source IDs" {})))
+    membership))
 
 (defn- append-correction [pending correction]
   (let [pending (vec pending)]
@@ -225,10 +229,9 @@
     (if-not (due? previous clock epoch options)
       {:state previous :gains (:gains previous {}) :actions [] :due? false :report (:report previous)}
       (let [opts (settings options)
-            _ (check-input! sources targets)
+            membership (source-membership sources targets)
             state (when-not (restarted? previous clock epoch) previous)
             window (or (:window statistics) (:interval opts))
-            membership (into {} (map (juxt :id (comp double :capacity))) sources)
             pending (when (and (= window (:window state)) (= membership (:membership state)))
                       (pending-at (:pending state) clock (max 1e-9 (:coverage statistics 1.0))))
             ;; A show can be restored with live outputs before its first statistics

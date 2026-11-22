@@ -35,3 +35,16 @@
     (is (= [seed shuffled] (random/shuffle-values 42 (range 10))))
     (is (= [42 []] (random/shuffle-values 42 [])))
     (is (= [42 [:only]] (random/shuffle-values 42 [:only])))))
+
+(deftest seeded-shuffles-preserve-prior-show-order-and-input
+  (let [values (object-array (range 10))
+        expected [3753001289 [5 3 7 6 8 9 1 4 0 2]]]
+    (is (= expected (random/shuffle-values 42 values)))
+    (is (= (range 10) (vec values)))
+    (let [big-seed (+' 42 (biginteger "18446744073709551616"))
+          result (random/shuffle-values big-seed (subvec (vec (range 12)) 0 10))]
+      (is (= expected result))
+      (is (instance? clojure.lang.BigInt (first result))))
+    (is (= [4290942778 [0 7 9 3 5 6 4 8 1 2]]
+           (random/shuffle-values -1 (range 10))))
+    (is (thrown? clojure.lang.ExceptionInfo (random/shuffle-values 0.5 values)))))

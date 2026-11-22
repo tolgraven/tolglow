@@ -208,3 +208,16 @@
     (is (near? 0.45 (level 0.0)))
     (is (near? 0.45 (level 0.04)))
     (is (near? 0.5 (level 0.06)))))
+
+(deftest calibrated-allocation-preserves-seeded-show-playback
+  (let [sources (mapv (fn [id level capacity] {:id id :level level :capacity capacity})
+                      [:a :b :c :d :e] [1.0 0.75 0.5 0.9 0.1] [1.0 2.0 1.0 4.0 0.5])
+        in (assoc (inputs 3 [] 0.60 0.50)
+                  :options {:strategy :instant :seed 42}
+                  :targets {:brightness 0.40 :activity 0.50}
+                  :sources sources)
+        state (:state (control/advance nil in))]
+    (is (= 955863294 (:seed state)))
+    (is (= [:c :d :e :a :b] (:order state)))
+    (is (= #{:a :c :d :e} (:active state)))
+    (is (= {:c 1.0 :d 1.0 :e 1.0 :a 0.2833333333333326 :b 0.0} (:gains state)))))
