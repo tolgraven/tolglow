@@ -98,6 +98,7 @@ test('aim selects the nearest bounded receiver only on a completed tap', () => {
   input.finish(event, false); assert.equal(messages[0]['surface-id'], 'stage');
   assert.ok(messages[0].point.every((v,i) => Math.abs(v - stage.point[i]) < 1e-6));
   input.down(event); input.finish(event, true);
+  input.down(event); input.down({...event, pointerId: 2}); input.finish(event, false);
   input.down(event); input.move({...event, clientX: center.x + 25}); input.finish(event, false);
   assert.equal(messages.length, 1);
   const elsewhere = projectPoint(camera, bounds, [4, 0, 1]);

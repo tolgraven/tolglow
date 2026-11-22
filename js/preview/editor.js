@@ -105,6 +105,12 @@ export class RigEditorInput {
   }
   down(event) {
     const e = this.snapshot?.editor;
+    if (this.gesture?.tool === 'aim' && event.pointerId !== this.gesture.pointer) {
+      // Adding a finger turns the gesture into a multi-touch interaction.
+      this.gesture.dragged = true;
+      event.preventDefault(); event.stopImmediatePropagation();
+      return;
+    }
     if (!e || e.tool === 'navigate' || event.button !== 0 || this.gesture) return;
     event.preventDefault(); event.stopImmediatePropagation(); this.canvas.focus();
     if (e.tool === 'aim') {

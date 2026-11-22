@@ -21,7 +21,12 @@ try {
   await page.evaluate(() => document.querySelector('.rig-editor canvas').tolglowPreview.setQuality('low'));
   await page.waitForFunction(() => document.querySelector('.rig-editor canvas').tolglowPreview.ready, null, {timeout: 120000});
   await panel.getByRole('button', {name: 'Aim at surface', exact: true}).tap();
-  for (const head of heads) await panel.getByLabel(head.name || head.id, {exact: true}).check();
+  for (const head of heads) {
+    const name = head.name || head.id;
+    await panel.getByRole('checkbox', {name, exact: true}).tap();
+    await page.waitForFunction(name => [...document.querySelectorAll('.rig-targets label')]
+      .find(label => label.textContent === name)?.querySelector('input').checked, name);
+  }
   async function command(action) {
     const reply = page.waitForResponse(r => new URL(r.url()).pathname === '/api/surface-aim' && r.request().method() === 'POST');
     await action();
