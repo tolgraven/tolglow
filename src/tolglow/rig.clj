@@ -50,10 +50,12 @@
           [(error [:room] :invalid-room "Room must be a map with width, height and depth")]
           (for [axis [:width :height :depth] :when (not (positive? (get-in rig [:room axis])))]
             (error [:room axis] :invalid-room "Room dimensions must be positive finite metres"))))
-      (surfaces/surface-errors rig)
-      (when (and (empty? (surfaces/surface-errors rig))
-                 (or (nil? (:room rig)) (and (map? (:room rig)) (every? positive? (map (:room rig) [:width :height :depth])))))
-        (surfaces/tracking-errors rig))
+      (let [invalid (surfaces/surface-errors rig)
+            room (:room rig)]
+        (if (or (seq invalid) (not (vector? (:fixtures rig)))
+                (and room (not (and (map? room) (every? positive? ((juxt :width :height :depth) room))))))
+          invalid
+          (surfaces/tracking-errors rig)))
       (when (contains? rig :trusses)
         (let [trusses (:trusses rig)]
           (if-not (vector? trusses)

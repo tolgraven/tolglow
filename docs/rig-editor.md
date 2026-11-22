@@ -123,7 +123,9 @@ Ring path is `POST /api/surface-aim`. Supply `:targets` in selection order,
 `:mode` (`:together`, `:edge-to-edge`, `:follow`, or `:release`), `:surface-id`,
 and the world `:point` for a point placement. Edge modes accept `:along` as
 `:u`, `:negative-u`, `:v` or `:negative-v`. The show stores links in
-`:rig :edge-tracking` and direct targets under `:variables :surface-aim`.
+`:rig :edge-tracking` and direct targets under `:variables :surface-aim`. Show files retain both.
+Restarting a show releases the manual point override. Removing a head from
+the patch also releases its manual aim.
 
 Add a receiver to the rig with a unique ID, center, normal, horizontal axis,
 and width/height in metres. The vertical axis is the normal crossed with the

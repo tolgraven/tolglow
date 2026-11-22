@@ -244,7 +244,7 @@
     (cond-> (-> model
                 subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
-                (update :variables dissoc :audio :sync)
+                (update :variables dissoc :audio :sync :surface-aim)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
       (:auto model) (update :auto assoc :enabled? false :state nil :reasons [])
       (seq configs) (assoc-in [:settings :modulation :saved-controllers] configs)
@@ -385,7 +385,11 @@
                     (contains? payload :trusses) (update :trusses resolve-ids :trusses)
                     (:edge-tracking payload) surfaces/resolve-link-ids)]
       (rig/validate-rig payload)
-      {:model (-> model (assoc :rig payload) (update :revision inc)) :ack {:status :accepted}})
+      {:model (cond-> (-> model (assoc :rig payload) (update :revision inc))
+                (get-in model [:variables :surface-aim])
+                (update-in [:variables :surface-aim] select-keys
+                           (for [{:keys [id channels]} (:fixtures payload) :when (and (:pan channels) (:tilt channels))] id)))
+       :ack {:status :accepted}})
     :fixture-patch
     (let [types (get-in model [:registry :fixtures])
           id (:fixture-type-id payload)

@@ -103,4 +103,9 @@
         (is (empty? (:surface-aim (show/snapshot runtime))))
         (is (= "accepted" (get-in (post (assoc aim :mode "release" :targets ["head-1"])) [:data :status])))
         (is (empty? (get-in (show/snapshot runtime) [:rig :edge-tracking]))))
+      (post aim)
+      (let [saved (show/export-show runtime)]
+        (is (= (:surface-aim (show/snapshot runtime)) (get-in saved [:model :variables :surface-aim])))
+        (submit-at! runtime :command {:op :show/restart} 101)
+        (is (empty? (:surface-aim (show/snapshot runtime)))))
       (finally (show/stop! runtime)))))
