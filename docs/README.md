@@ -33,6 +33,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Relative fixture brightness](relative-fixture-brightness.md) | Measure full-white output with a locked camera and save per-type calibration |
 | [Venue fog](venue-fog.md) | Rated fogger output, elapsed DMX time, mixing and venue ventilation |
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
+| [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
@@ -73,6 +74,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |
 | [System controls](system-controls.md) | Instance/category pause, opacity and independent musical AR |
 | [Modulation](modulation.md) | Seeded typed modulation, targeting and holds |
+| [Compound cues and native layers](native-composition.md) | Ordered color, aim and musical transforms, reusable modifier effects and layer opacity |
 | [Effect recipes](effect-recipes.md) | Declarative musical/spatial construction helpers |
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |

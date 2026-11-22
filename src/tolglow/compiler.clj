@@ -111,7 +111,7 @@
         envelope-attributes (:attributes envelope-spec [:dimmer])]
     (when (and envelope-fn
                (not (and (vector? envelope-attributes)
-                          (every? #{:dimmer :color :red :green :blue :white :amber :uv :strobe :fog}
+                          (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
     {:schemas schemas :defaults defaults :outputs outputs :selected selected

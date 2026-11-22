@@ -406,11 +406,13 @@
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))
         owners (into {} (map-indexed (fn [i owner] [owner (str "restore:" epoch ":" i)])
                                     (distinct (concat (map :owner-id (vals (:composition-runs saved)))
+                                                      (keep #(get-in % [:source :native-layer :id]) ordered)
                                                       (when-let [owner (get-in saved [:auto :state :owner-id])] [owner])))))
         model (assoc saved :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
         instances (into {} (for [instance ordered
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
+                                       layer (get-in instance [:source :native-layer])
                                        source (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
                                                 {:adapter :restore :epoch epoch})]]
@@ -418,7 +420,9 @@
                                                (if (get entry field)
                                                  (update entry field #(assoc % :instance-id id :epoch epoch)) entry))
                                              instance [:fault :reload-fault :retry-fault])
-                                     (assoc :id id :source source) (dissoc :gesture-id))]))
+                                     (assoc :id id :source (cond-> source layer
+                                                            (assoc :native-layer (update layer :id owners))))
+                                     (dissoc :gesture-id))]))
         runs (into {} (for [[id run] (:composition-runs saved)]
                         [id (assoc (remap-references run ids owners) :epoch epoch)]))
         tokens (into {} (for [[token instance-id] (:composition-tokens saved) :when (ids instance-id)]

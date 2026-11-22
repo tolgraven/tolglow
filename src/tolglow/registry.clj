@@ -2,6 +2,7 @@
   "Pure, versioned authoring definitions. This namespace never starts a show."
   (:require [clojure.string :as str]
             [afterglow.time :as time]
+            [afterglow.render.layers :as layers]
             [afterglow.render.photometry :as photometry]
             [afterglow.control.categories :as categories]
             [afterglow.control.system :as system]))
@@ -128,8 +129,11 @@
         (map #(update % :path (fn [path] (assoc path 0 :saved-params))))
         (validate-params (:params effect {}) (:saved-params cue {}))))
 
-(def attributes #{:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
-                  :red :green :blue :white :amber :uv :shutter :iris :frost :speed})
+(def emitter-attributes (set (keys photometry/emitter-spectrum)))
+(def attributes (into emitter-attributes
+                      [:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
+                       :shutter :iris :frost :speed]))
+
 (def blends #{:replace :max :add})
 
 (defn output-entries
@@ -165,6 +169,16 @@
              (when-not (data? value)
                [(error [:outputs i :value] "Expression must be portable data")]))))
           (map-indexed vector (output-entries outputs))))))
+
+(defn- validate-layer [layer]
+  (if-not (and (map? layer) (every? #{:transforms :targets} (keys layer)))
+    [(error [:layer] "Effect layer needs an ordered transform program and optional target inheritance")]
+    (concat
+     (when (and (contains? layer :targets) (not= :previous (:targets layer)))
+       [(error [:layer :targets] "Use :previous to include earlier members’ heads")])
+     (try (layers/validate-transforms! (:transforms layer)) []
+          (catch clojure.lang.ExceptionInfo cause
+            [(error [:layer :transforms] (.getMessage cause))])))))
 
 (defn validate-definition
   "Validate authored data. DSL operator validation occurs during compile-effect.
@@ -205,7 +219,13 @@
              (mapcat (fn [[k schema]]
                        (concat (when-not (keyword? k) [(error [:params k] "Parameter IDs must be keywords")])
                                (validate-parameter schema [:params k]))) params))
-           (if (and (map? (:modulation definition)) (empty? (:outputs definition)))
+           (when (contains? definition :layer) (validate-layer (:layer definition)))
+           (if (and (or (map? (:modulation definition))
+                        (and (vector? (get-in definition [:layer :transforms]))
+                             (seq (get-in definition [:layer :transforms]))))
+                    (or (nil? (:outputs definition))
+                        (= {} (:outputs definition))
+                        (= [] (:outputs definition))))
              [] (validate-outputs (:outputs definition)))
            (when (and (contains? definition :modulation) (not (map? (:modulation definition))))
              [(error [:modulation] "Modulation must be a portable configuration map")]))

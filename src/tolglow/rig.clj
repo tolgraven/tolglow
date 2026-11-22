@@ -3,7 +3,8 @@
   Unknown portable scene metadata is preserved; validation never fills defaults."
   (:require [clojure.string :as str]
             [afterglow.render.frame :as render]
-            [afterglow.render.atmosphere :as atmosphere]))
+            [afterglow.render.atmosphere :as atmosphere]
+            [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
 (defn- finite? [value] (and (number? value) (Double/isFinite (double value))))
@@ -53,6 +54,12 @@
           [(error [:room] :invalid-room "Room must be a map with width, height and depth")]
           (for [axis [:width :height :depth] :when (not (positive? (get-in rig [:room axis])))]
             (error [:room axis] :invalid-room "Room dimensions must be positive finite metres"))))
+      (let [invalid (surfaces/surface-errors rig)
+            room (:room rig)]
+        (if (or (seq invalid) (not (vector? (:fixtures rig)))
+                (and room (not (and (map? room) (every? positive? ((juxt :width :height :depth) room))))))
+          invalid
+          (surfaces/tracking-errors rig)))
       (when (contains? rig :trusses)
         (let [trusses (:trusses rig)]
           (if-not (vector? trusses)

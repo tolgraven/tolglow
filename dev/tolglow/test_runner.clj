@@ -8,7 +8,7 @@
     tolglow.compiler-test tolglow.compiler.batch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
-    tolglow.composition.response-test
+    tolglow.composition.response-test tolglow.native-composition-test
     tolglow.automation.random-test tolglow.automation.policy-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
@@ -20,7 +20,7 @@
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test
-    tolglow.studio.fixture-host-test tolglow.rig-test
+    tolglow.studio.fixture-host-test tolglow.rig-test tolglow.rig-surfaces-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
     tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test

@@ -23,3 +23,8 @@ the underlying effects. Selectors and multiple response order are explicit.
 
 Use the actual production compiler/runtime for integration tests. New expression
 operators belong in the shared Afterglow IR, not a second arithmetic interpreter.
+
+Tag composition launches with the execution owner and the slot index. Afterglow
+owns native field arithmetic, opacity, target selection and channel packing.
+Preserve slot order and the captured slot program through release and restore.
+Exercise typed and scalar show rendering when changing compound authoring.

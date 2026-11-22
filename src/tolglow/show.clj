@@ -22,6 +22,8 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
+            [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.clock :as show-clock]
@@ -81,6 +83,8 @@
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :receiver-surfaces (surfaces/receivers (:rig model))
+            :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
@@ -259,7 +263,7 @@
     (cond-> (-> model
                 subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
-                (update :variables dissoc :audio :sync)
+                (update :variables dissoc :audio :sync :surface-aim)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
       (:auto model) (update :auto assoc :enabled? false :state nil :reasons [])
       (seq configs) (assoc-in [:settings :modulation :saved-controllers] configs)
@@ -401,9 +405,14 @@
                                                      (when (string? text) (get existing (keyword text))))]
                                     (cond-> entry original (assoc :id (:id original))))) entries))))
           payload (cond-> (update payload :fixtures resolve-ids :fixtures)
-                    (contains? payload :trusses) (update :trusses resolve-ids :trusses))]
+                    (contains? payload :trusses) (update :trusses resolve-ids :trusses)
+                    (:edge-tracking payload) surfaces/resolve-link-ids)]
       (rig/validate-rig payload)
-      {:model (-> model (assoc :rig payload) (update :revision inc)) :ack {:status :accepted}})
+      {:model (cond-> (-> model (assoc :rig payload) (update :revision inc))
+                (get-in model [:variables :surface-aim])
+                (update-in [:variables :surface-aim] select-keys
+                           (for [{:keys [id channels]} (:fixtures payload) :when (and (:pan channels) (:tilt channels))] id)))
+       :ack {:status :accepted}})
     :fixture-patch
     (let [types (get-in model [:registry :fixtures])
           id (:fixture-type-id payload)
@@ -473,6 +482,7 @@
     {:model (-> model (update :modulation #(modulation/release-hold (or % (modulation/new-state))
                                                                   (:instance-id payload) (:params payload)))
                 (update :revision inc)) :ack {:status :accepted}}
+    :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
     (let [definition (aim-paths/definition model payload)
           id (:id definition)
@@ -896,8 +906,9 @@
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
-                           pause-layer (pause-layer! runtime model)
                            patch (patch! runtime (get-in model [:rig :fixtures]))
+                           manual-aim (surface-aim/contribution model patch)
+                           pause-layer (pause-layer! runtime model)
                            meter-opts (get-in model [:settings :lighting-capacity])
                            plan (when (:enabled? meter-opts) (capacity-plan! runtime patch))
                            audio @(:capacity-audio runtime)
@@ -919,13 +930,14 @@
                                       (fog-control/frame model patch observation previous-control
                                         (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
                                         fog-bypass? (:contributions result) (:block fog)))
+                           extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
+                                          manual-aim (conj manual-aim)
+                                          (:music setpoint) (conj (:music setpoint))
+                                          (:block photo-session) (conj (:block photo-session))
+                                          pause-layer (conj pause-layer))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
-                                     #(resolve-frame
-                                     patch (cond-> (fog-control/with-demands % (:feedback setpoint))
-                                             (:music setpoint) (conj (:music setpoint))
-                                             (:block photo-session) (conj (:block photo-session))
-                                             pause-layer (conj pause-layer))
+                                     #(resolve-frame patch (into % extra-blocks)
                                      {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
@@ -935,7 +947,8 @@
                                    setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
                                    plan (assoc :lighting-capacity
                                                (merge limit (capacity/measure plan (get-in resolved [:output :universes]))
-                                                      (cond-> {:writers (capacity/writers plan (:contributions result))}
+                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
+                                                                          (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
                        {:model (cond-> (:model result) setpoint (fog-control/publish previous-control (:status setpoint)))
                         :output frame :fault-events (:fault-events result)

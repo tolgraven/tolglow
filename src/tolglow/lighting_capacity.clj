@@ -19,19 +19,12 @@
       (throw (ex-info "Lighting capacity requires ordered unit bounds, positive reference RMS and a signal timeout in milliseconds" {:options options})))
     opts))
 
-;; Relative photopic sensitivity at representative wavelengths; broadband white
-;; assumes 300 lm/optical watt, as in afterglow.render.photometry. RGB is a display tint.
-(def ^:private spectrum
-  {:red [0.321 [1 0 0]] :green [0.793 [0 1 0]] :blue [0.074 [0 0 1]]
-   :white [(/ 300.0 683) [1 1 1]] :amber [0.757 [1 0.55 0]] :uv [0.0 [0 0 0]]
-   :warm-white [(/ 300.0 683) [1 0.8 0.62]] :cold-white [(/ 300.0 683) [0.82 0.9 1]]})
-
-(def ^:private field-bit (zipmap (into [:dimmer :color] (keys spectrum)) (map #(bit-shift-left 1 %) (range))))
+(def ^:private field-bit (zipmap (into [:dimmer :color] (keys photometry/emitter-spectrum)) (map #(bit-shift-left 1 %) (range))))
 
 (defn- head [{:keys [id compiled-channels channels emission-share max-watts] :as fixture}]
   (let [emitters (into [] (keep (fn [[attr [response tint]]]
                                   (when-let [channel (compiled-channels attr)]
-                                    {:channel channel :response response :tint tint}))) spectrum)
+                                    {:channel channel :response response :tint tint}))) photometry/emitter-spectrum)
         dimmer (:dimmer compiled-channels)
         lamp? (and dimmer (empty? emitters)
                    (not (some #(contains? channels %) [:fog :haze :fan :relay :pump])))
@@ -43,7 +36,7 @@
        :response response :weight (if (or lamp? (pos? response)) weight 0.0)
        :watts (when max-watts (* max-watts (or emission-share 1.0)))
        :attributes (into (cond-> #{:dimmer} (every? channels [:red :green :blue]) (conj :color))
-                         (filter channels (keys spectrum)))})))
+                         (filter channels (keys photometry/emitter-spectrum)))})))
 
 (deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot])
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
