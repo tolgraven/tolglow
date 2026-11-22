@@ -35,17 +35,18 @@
         (double (or emission-share 1.0)))
       0.0)))
 
-(defn- head [{:keys [id compiled-channels channels emission-share max-watts] :as fixture}]
+(defn- head [patch parent-ids {:keys [id fixture-id compiled-channels channels emission-share max-watts] :as fixture}]
   (let [emitters (into [] (keep (fn [[attr [response tint]]]
                                   (when-let [channel (compiled-channels attr)]
                                     {:channel channel :response response :tint tint}))) photometry/emitter-spectrum)
         dimmer (:dimmer compiled-channels)
-        lamp? (and dimmer (empty? emitters)
+        lamp? (and dimmer (empty? emitters) (not (contains? parent-ids id)) (pos? (or emission-share 1.0))
                    (not (some #(contains? channels %) [:fog :haze :fan :relay :pump])))
         weight (full-brightness fixture)
         response (reduce + (map :response emitters))]
     (when (or lamp? (seq emitters))
-      {:id id :dimmer dimmer :emitters emitters :lamp-color (:emission-color fixture [1 1 1])
+      {:id id :dimmer dimmer :shared-dimmer (get-in patch [:by-id fixture-id :compiled-channels :dimmer])
+       :emitters emitters :lamp-color (:emission-color fixture [1 1 1])
        :shutters (keep (fn [k]
                          (let [ch (get compiled-channels k)
                                closed (shutter/closed-ranges (:functions ch))]
@@ -57,7 +58,7 @@
 
 (deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot])
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
-(deftype MeterHead [^MeterAddress dimmer ^objects emitters shutters ^double weight])
+(deftype MeterHead [^MeterAddress dimmer ^MeterAddress sharedDimmer ^objects emitters shutters ^double weight])
 
 (defn- address [indices {:keys [coarse fine inverted-from]}]
   (when coarse
@@ -65,7 +66,7 @@
                    (if fine (indices (first fine)) -1) (if fine (second fine) -1)
                    (or inverted-from -1.0))))
 
-(defn- meter-head [indices {:keys [emitters dimmer lamp-color response weight watts shutters]}]
+(defn- meter-head [indices {:keys [emitters dimmer shared-dimmer lamp-color response weight watts shutters]}]
   (let [n (count emitters)
         channels (if (zero? n)
                    [(MeterEmitter. nil weight (or watts 0.0)
@@ -77,14 +78,15 @@
                        (MeterEmitter. (address indices channel)
                          (if (pos? response) (* weight (/ sensitivity response)) 0.0) (/ (or watts 0.0) n)
                          (* color-scale (nth tint 0)) (* color-scale (nth tint 1)) (* color-scale (nth tint 2))))))]
-    (MeterHead. (address indices dimmer) (object-array channels)
+    (MeterHead. (address indices dimmer) (address indices shared-dimmer) (object-array channels)
                 (seq (mapv (fn [[channel ranges]] [(address indices channel) ranges]) shutters)) weight)))
 
 (defn prepare
   "Compile a meter plan alongside an Afterglow compiled patch, once per rig."
   ([patch] (prepare patch nil))
   ([patch reference-brightness]
-  (let [heads (into [] (keep head) (:fixtures patch))
+  (let [parent-ids (into #{} (keep :fixture-id) (:fixtures patch))
+        heads (into [] (keep (partial head patch parent-ids)) (:fixtures patch))
         universes (:universes patch)
         reference (or reference-brightness (reduce max 0.0 (map :weight heads)))
         indices (zipmap universes (range))]
@@ -109,13 +111,16 @@
           drive (if (and (>= pivot 0.0) (>= raw pivot)) (- 255.0 (- raw pivot)) raw)]
       (/ drive 255.0))))
 
+(defn- dimmer-level ^double [^objects buffers ^MeterHead head]
+  (* (level buffers (.-dimmer head)) (level buffers (.-sharedDimmer head))))
+
 (defn- open-shutter? [^objects buffers ^MeterHead head]
   (not (some (fn [[^MeterAddress channel ranges]]
                (shutter/closed? ranges (bit-and 255 (aget ^bytes (aget buffers (.-universe channel)) (.-slot channel)))))
              (.-shutters head))))
 
 (defn- meter-head! [^doubles totals ^objects buffers ^MeterHead head]
-  (let [dimmer (level buffers (.-dimmer head))
+  (let [dimmer (dimmer-level buffers head)
         optical (if (and (.-shutters head) (not (open-shutter? buffers head))) 0.0 dimmer)
         ^objects emitters (.-emitters head)]
     (dotimes [i (alength emitters)]
@@ -130,7 +135,7 @@
 
 (defn- source-reading [^objects buffers ^MeterHead head {:keys [relative-capacity rated-watts] :as source}
                        reference]
-  (let [dimmer (level buffers (.-dimmer head))
+  (let [dimmer (dimmer-level buffers head)
         ^objects emitters (.-emitters head)
         n (alength emitters)]
     (loop [i 0 unscaled 0.0 peak 0.0 drive 0.0]
@@ -174,7 +179,7 @@
                     (if (== j n) sum
                       (let [^MeterEmitter emitter (aget emitters j)]
                         (recur (inc j) (+ sum (level buffers (.-address emitter)))))))]
-        (aset-double result i (* (level buffers (.-dimmer head)) (/ total n)))))
+        (aset-double result i (* (dimmer-level buffers head) (/ total n)))))
     result))
 
 (defn local-brightnesses
@@ -194,7 +199,7 @@
                         (if (== j n) sum
                           (let [^MeterEmitter emitter (aget emitters j)]
                             (recur (inc j) (+ sum (* (.-brightness emitter) (level buffers (.-address emitter))))))))]
-            (aset-double result i (* (level buffers (.-dimmer head)) (/ light weight)))))))
+            (aset-double result i (* (dimmer-level buffers head) (/ light weight)))))))
     result))
 
 (defn measure-group-brightness
@@ -212,7 +217,7 @@
           (loop [j 0 unscaled 0.0 peak 0.0]
             (if (== j (alength emitters))
               (let [light (if (and (.-shutters head) (not (open-shutter? buffers head)))
-                            0.0 (* unscaled (level buffers (.-dimmer head))))
+                            0.0 (* unscaled (dimmer-level buffers head)))
                     global (/ light reference-brightness)
                     ceiling (/ (if (pos? peak) (/ unscaled peak) weight) reference-brightness)]
                 (aset-double totals 0 (+ (aget totals 0) light))

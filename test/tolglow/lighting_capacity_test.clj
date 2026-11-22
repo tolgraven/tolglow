@@ -7,6 +7,7 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-scenes :as scenes]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]))
 
@@ -231,3 +232,36 @@
         (is (near? expected (:global-brightness reading)))
         (is (near? 120 (:used-rated-watts reading)))
         (is (near? 120 (:used-rated-watts summary)))))))
+
+(deftest a-parent-dimmer-scales-child-emitters-in-rig-and-group-meters
+  (let [patch (frame/compile-patch [{:id :bar :universe 1 :address 512 :channels {:dimmer 1}}
+                                    {:id :pixel :fixture-id :bar :universe 2 :address 1
+                                     :channels {:dimmer 1 :white 2} :max-watts 100}])
+        plans [(capacity/prepare patch) (scenes/prepare patch [:pixel] 1.0)]]
+    (doseq [plan plans parent-byte [0 127 255]]
+      (let [universes {1 (doto (byte-array 512) (aset-byte 511 (unchecked-byte parent-byte)))
+                       2 (byte-array (map unchecked-byte [127 255]))}
+            expected (* (/ 127.0 255) (/ parent-byte 255.0))
+            m (capacity/measure plan universes)]
+        (is (= 1 (:heads-count plan)))
+        (is (near? expected (:utilization m)))
+        (is (near? (* 100 expected) (:used-rated-watts m)))
+        (is (near? expected (first (capacity/emitter-drives plan universes))))
+        (is (near? expected (first (capacity/local-brightnesses plan universes))))
+        (is (near? expected (:local-brightness (capacity/measure-group-brightness plan universes))))
+        (is (near? expected (get-in (capacity/measure-sources plan universes [:pixel]) [:pixel :local-brightness])))))))
+
+(deftest stale-capture-in-the-mailbox-cannot-drive-light-or-fog
+  (let [wall (atom 100) model (assoc-in (white-look) [:settings :lighting-capacity]
+                                        {:enabled? true :follow-energy? true :signal-timeout-ms 200})
+        rt (show/create-runtime {:model model :physical-now-ms #(deref wall)})
+        feed (:features! (show/audio-callbacks rt))]
+    (try
+      (feed (signal 0.75))
+      (swap! wall + 300)
+      (show/tick! rt 27)
+      (is (= :no-signal (get-in (show/snapshot rt) [:output :lighting-capacity :mode])))
+      (feed (signal 0.75))
+      (show/tick! rt 28)
+      (is (= :following (get-in (show/snapshot rt) [:output :lighting-capacity :mode])))
+      (finally (show/stop! rt)))))

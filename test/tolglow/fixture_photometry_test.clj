@@ -62,3 +62,14 @@
       (is (= :rejected (:status (issue {:op :heartbeat}))))
       (is (nil? (photo/current (:model @(:state rt)))))
       (finally (show/stop! rt)))))
+
+(deftest uv-only-fixtures-are-dark-throughout-photometry
+  (let [model (assoc (demo/model) :rig (update rig :fixtures conj {:id :uv-only :universe 1 :address 40 :channels {:uv 1}}))
+        session {:session-id "uv-blackout"}
+        start (:model (photo/apply-operation model (merge session {:op :start :armed? true :fixture-ids [:ref]}) 0 true))]
+    (is (not-any? #(= :uv-only (:id %)) (photo/fixtures model)))
+    (doseq [phase [:dark :white]]
+      (let [op (merge session {:op :step :fixture-id :ref :phase phase})
+            output (photo/current (:model (photo/apply-operation start op 1 true)))]
+        (is (some #{:uv-only} (map :target-id (get-in output [:block :assignments]))))
+        (is (= 0 (get-in output [:expected-bytes [1 39]])))))))

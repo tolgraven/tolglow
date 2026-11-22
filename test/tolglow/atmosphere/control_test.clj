@@ -166,3 +166,17 @@
         (is (> (count held) 20))
         (is (every? #(and (zero? (second %)) (>= (get-in % [0 :coasting-peak :fog-level]) 0.175)) held)))
       (finally (show/stop! rt)))))
+
+(deftest feedback-pump-retains-physical-rest-across-deselection
+  (let [unselected (fog/configure armed {:fog-fixture-ids []})
+        pulse (fog/advance armed patch (observed 0 0) nil 0 false)
+        flowing (assoc-in (observed 0 50) [:sources 0 :flow-m3-s] 0.1)
+        parked (fog/advance unselected patch flowing pulse 50 false)
+        coasted (fog/advance unselected patch (observed 0 220) parked 220 false)
+        early (fog/advance armed patch (observed 0 340) coasted 340 false)
+        ready (fog/advance armed patch (observed 0 421) early 421 false)]
+    (is (= :injecting (get-in pulse [:pumps :jet :mode])))
+    (is (empty? (fog/automatic-ids parked)))
+    (is (empty? (fog/demands coasted)))
+    (is (= :resting (get-in early [:pumps :jet :mode])))
+    (is (= :injecting (get-in ready [:pumps :jet :mode])))))

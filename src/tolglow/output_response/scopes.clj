@@ -35,7 +35,8 @@
 
 (defn- patch-members [model config]
   (let [scenes (scenes/groups model)]
-    (merge (into {} (map (fn [id] [[:groups id] (:fixture-ids (get scenes id))])) (keys (:groups config)))
+    (merge (into {} (keep (fn [id] (when-let [scene (get scenes id)]
+                                 [[:groups id] (:fixture-ids scene)]))) (keys (:groups config)))
            (into {} (map (fn [id] [[:fixtures id] #{id}])) (keys (:fixtures config))))))
 
 (defn- invert [members]
@@ -48,7 +49,8 @@
         by-scopes (reduce-kv
                    (fn [rows i {:keys [id groups]}]
                      (let [both (into (get active id #{})
-                                      (keep #(when (contains? (:groups config) %) [:groups %])) groups)
+                                      (keep #(when (and (contains? (:groups config) %)
+                                                        (not (contains? members [:groups %]))) [:groups %])) groups)
                            ids [both (get releasing id)]]
                        (update rows ids (fnil conj []) i)))
                    {} (:fixtures patch))]

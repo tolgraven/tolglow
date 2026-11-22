@@ -269,8 +269,8 @@
         universes (into (sorted-set)
                         (comp (mapcat (comp vals :compiled-channels))
                               (mapcat (juxt :coarse :fine)) (keep first))
-                        fixtures)]
-    (capacity/prepare {:fixtures fixtures :universes (vec universes)} reference))))
+                        (concat fixtures (keep (comp lookup :fixture-id) fixtures)))]
+    (capacity/prepare {:fixtures fixtures :by-id lookup :universes (vec universes)} reference))))
 
 (defn- group-measurement [plan universes ids reference]
   (let [display-ids (take 24 ids)

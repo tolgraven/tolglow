@@ -709,7 +709,8 @@
                   (when (current?)
                     (locking (:audio-input runtime)
                       (when (= epoch (:epoch @(:audio-input runtime)))
-                        (swap! (:audio-input runtime) assoc :features features)))))
+                        (swap! (:audio-input runtime) assoc :features features
+                               :arrived-at-ms ((get-in runtime [:publisher :now-ms])))))))
      :done! (fn [result]
               (when (current?)
                 (swap! (:state runtime)
@@ -722,8 +723,9 @@
                      (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})
                      before))]
     (when (and (:features captured) (= (:epoch model) (:epoch captured)))
-      (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms time-ms
-                                         :audio/energy (get-in captured [:features :audio/energy])}))
+      (let [age (max 0 (- ((get-in runtime [:publisher :now-ms])) (:arrived-at-ms captured)))]
+        (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms (- time-ms age)
+                                           :audio/energy (get-in captured [:features :audio/energy])})))
     (if (= (:epoch model) (:epoch captured))
       (cond-> model
         (:features captured) (routing/admit-audio (:features captured))
