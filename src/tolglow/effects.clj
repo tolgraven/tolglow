@@ -193,7 +193,7 @@
   [outputs]
   (let [attributes (set (map :attribute (registry/output-entries outputs)))]
     (cond-> []
-      (some attributes [:color :red :green :blue :white :amber :uv]) (conj :color)
+      (or (attributes :color) (some attributes registry/emitter-attributes)) (conj :color)
       (attributes :dimmer) (conj :intensity)
       (some attributes [:aim :direction :pan :tilt]) (conj :movement)
       (some attributes [:zoom :focus :iris]) (conj :beam-shape)
@@ -212,7 +212,7 @@
   (let [outputs (mapv #(update % :value expression)
                       (into (registry/output-entries (:outputs options {})) (apply compose layers)))
         attributes (set (map :attribute outputs))
-        emitter? (some attributes [:color :red :green :blue :white :amber :uv])
+        emitter? (or (attributes :color) (some attributes registry/emitter-attributes))
         moving? (some attributes [:aim :direction :pan :tilt])
         capabilities (cond-> [] emitter? (conj :emission) (attributes :dimmer) (conj :intensity)
                        moving? (conj :movement) (some attributes [:zoom :focus]) (conj :beam-shape))
