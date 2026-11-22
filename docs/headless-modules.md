@@ -33,12 +33,12 @@ The default application configuration registers three optional modules after fix
 ```clojure
 {:lighting-capacity {:enabled true}
  :fog-control {:enabled true :target 0.30 :hysteresis 0.035 :fog-fixture-ids [:stage-jet]}
- :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.72}]}}
+ :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.45}]}}
 ```
 
 The lighting-capacity module measures the rig. The fog controller uses the calibrated reference sightline and the selected nozzle's delivered flow. Set the manufacturer's pulse and rest limits on the fixture profile, for example `:fogger {:flow-m3-min 60 :mixing-seconds 3 :duty {:max-on-s 0.4 :min-off-s 6 :max-level 0.5}}`. The duty values limit the length and strength of each pulse even when a render is late.
 
-The lighting-scenes module chooses and parameterizes an emission effect for each group. For a later change, call `(tolglow.show/submit! runtime :lighting-scene {:op :vary :group-id :front :target 0.72})`. Audio energy events can request the same operation. [Group scenes and event bindings](group-lighting-scenes.md) · [Fog calibration and control](venue-fog.md)
+The lighting-scenes module chooses and parameterizes an emission effect for each group. For a later change, call `(tolglow.show/submit! runtime :lighting-scene {:op :vary :group-id :front :target 0.45})`. Audio energy events can request the same operation. [Group scenes and event bindings](group-lighting-scenes.md) · [Fog calibration and control](venue-fog.md)
 
 Read `:fog/level-change-per-s` and `:fog/clearance-half-life-s` under the show’s `:variables` to drive effects directly, including while automatic pumping is disarmed. From the REPL, use `(select-keys (tolglow.show/variables runtime) [:fog/level :fog/level-change-per-s :fog/clearance-half-life-s])`. A rate of `0.03` means the sightline is losing three more percentage points of contrast per second. A negative rate means the room is clearing. The half-life describes the loss of suspended material, including ventilation. It comes from the applied scan, or from the configured ventilation and fluid decay when the rig uses manual settings.
 

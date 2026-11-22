@@ -1,154 +1,76 @@
-# Change a group to a measured light level
+# Balance a lighting scene
 
-In Studio’s group scene control, choose a patch group or make a named selection,
-set the visible-output target and apply it. **Vary** asks for a different look at
-the same target. **Release** removes the group’s owned instance. Committed output
-and target are shown separately. A target of 72% means 72% of that group’s
-modeled full visible output, weighted by each fixture’s calibration or rated
-emission. The quantity and uncertainty are described in [Lighting capacity](lighting-capacity.md).
+**Brightness** tells you how much light a source produces. **Lighting budget** determines how many sources may be bright together and how much of their combined output they may use. **Visual activity** describes how busy the result looks. A few white sparkles can change rapidly while the room stays mostly dark. **Audio energy** is a separate measurement from the sound input.
 
-For “something different at 72% on the washes”, chat can call
-`set_lighting_scene` with the following arguments. The Ring route
-`POST /api/lighting-scene` and headless show owner accept the same action data.
+## Match unlike fixtures
 
-```clojure
-(show/submit! runtime :lighting-scene {:op :vary :group-id :wash :target 0.72})
-(get-in (show/snapshot runtime) [:lighting-scenes :groups])
-```
+In Studio, select a fixture group and choose its brightness reference. A source’s **local** brightness is its share of its own full-white output. A group’s local target uses its combined capacity, so an effect can light its members unevenly. With **global** brightness, the brightest full-white source in the entire patch sets the scale. Two fixtures asked for the same global level can therefore emit approximately the same amount of visible light.
 
-A first request can use an existing group in the declarative fixture patch or
-provide explicit fixture IDs. Valid fog and utility targets are ignored in a
-mixed group. Unknown IDs, an all-utility selection and overlap with another
-controlled group reject the entire request. Independently control disjoint
-groups. Manual cues can overlap any group and keep their usual priority.
+For example, if a wash produces twice the full-white light of a spot, the wash at half and the spot at full can match. A higher common target takes the spot to its maximum. The source readback shows its local brightness, global brightness, highest achievable global brightness and whether it is limited. Measured full-white calibration gives the best comparison. Lamp wattage and emitter type supply estimates for unmeasured fixtures. [Fixture calibration](relative-fixture-brightness.md)
+
+Choose **Apply** for a first look or **Vary** for a different effect. Tolglow chooses an eligible emission effect for the group, varies allowed parameters within their recommended ranges, and measures the resulting output. A steady group target controls a low-priority scene instance. **Release** stops that instance. You can use patch groups or explicit fixture IDs. Simultaneously regulated scene groups must be disjoint. Manual cues keep their usual priorities.
 
 ```clojure
+(require '[tolglow.show :as show])
+
 (show/submit! runtime :lighting-scene
-  {:op :apply :group-id :front :fixture-ids [:wash-left :wash-right]
-   :target 0.45 :effect-ids [:ember :orchid] :params {:level 0.85}
-   :allow-generated? false})
-(show/submit! runtime :lighting-scene {:op :release :group-id :front})
+  {:op :vary :group-id :front :brightness-reference :global :target 0.35})
 ```
 
-Tolglow borrows compatible emission programs from the registry, intersects the
-original effect and output target lists with the requested group, and launches
-a group-owned low-priority cue. Movement-only effects, utility and show-control
-cues are excluded. Vary cycles permitted sources and selects eligible parameter
-values using their normal recommended ranges and randomization policy.
-Explicit parameter values win. Setting `:effect-ids []` selects generated
-emission only. When a saturated source cannot reach the requested output,
-`:allow-generated? true` permits a generated fill using the actual emitters
-available on those fixtures. Its tint varies with the generation. At full
-capacity the fixture's full emitter mix leaves no headroom for tint changes.
+Use `:effect-ids` to limit the registry candidates, `:params` for explicit parameter values and `:allow-generated? false` to prevent generated fill. An empty `:effect-ids []` requests generated emission only. Read the results in `(:lighting-scenes (show/snapshot runtime))`. A source blocked by its own maximum, a saturated color or the operator master can leave a target unmet.
 
-Each committed frame supplies a new per-group measurement. The regulator
-changes the opacity of its own instance by at most 0.2 per frame and settles
-within 1.5 percentage points. Operator master, blackout, pause and manual cue
-priority remain in effect. Slow or changing cues may keep a group seeking.
-A fully lit source under a low master or a restricted color may show **Limited**
-or **Unlit**. If a foreground manual look keeps the group above target even with
-the owned scene at zero, the group reports **Over target**. Release only stops
-the group’s owned instance. A registered subscriber can create a fresh look on
-its next matching event. A show backup preserves the target, source and
-owned instance, with instance identity rebound on restore.
+## Limit simultaneous light
 
-## Drive groups from music or code
-
-To follow a normalized show variable continuously, supply its path relative to
-the model’s `:variables`. The existing audio analyzer provides a smoothed RMS
-envelope in that map. A fixed `:target` in a later request disconnects the
-previous variable binding.
+Apply a lighting budget when a composition calls for a few bright sources and the rest at a dim standby level. A budget is a ceiling. A sparse effect can use less. The allocator considers the combined frame, including manual launches and overlapping cues. Its wattage estimate uses rated emitter capacity and requested light output. Use the estimate to balance a look. Electrical circuit loading requires a power measurement.
 
 ```clojure
-(show/submit! runtime :lighting-scene
-  {:op :apply :group-id :wash :target-var [:audio :features :energy-envelope]
-   :target 0.15})
+(show/submit! runtime :settings
+  {:scope :lighting-budget
+   :values {:enabled? true
+            :global {:limit 0.55 :max-active 4 :standby-level 0.025
+                     :strategy :proportional}
+            :groups {:front {:limit 0.45 :max-active 2 :strategy :priority
+                             :fixture-order [:lead-spot :side-wash]}}}})
 ```
 
-To select a new look each time a track gets loud, register this subscriber
-before starting the show’s audio capture. The analyzer’s actual emitted
-`:audio/energy` event carries the RMS envelope at `[:data :energy-envelope]`.
-A crossing above 0.20 requests a different look at 72%. A sustained loud
-passage keeps the same look. A subsequent measurement at or below 0.08 rearms
-the subscriber for the next rise. No group must be running beforehand.
+Here the whole rig can use up to 55% of its estimated capacity, and up to four sources can rise above standby. The front group can use up to two. Proportional allocation shares the available output. Priority allocation protects the preferred fixtures first. Shedding can leave a requested source dim, with its hue intact. Sources that were dark stay dark. If three cues request six of nine fixtures, the allocator can keep four above standby and reduce their combined level to fit the watt budget. Automatic cue selection uses the budget when admitting and retiring its own looks. Each scope’s readback reports requested and used watts, capacity, active and shed counts, and how many sources used the fallback rating.
+
+## Shape visual activity
+
+Enable `:lighting-activity` to read scores from the final lighting output. A sustained wash, a fast strobe and a moving sparkle can have similar average brightness and very different scores. Coverage matters. A single sparkling head contributes less to the whole scene than a bank of heads flashing together. The readback includes brightness, coverage, flashing, movement and strobe components. Inspect `[:lighting/activity :scene]`, `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups group-id]` in `(show/variables runtime)`.
+
+To soften the look, set response durations on the rig or a group. Attack smooths rises in emitted light. Release smooths falling levels, including the tail when a cue ends. Longer values also soften abrupt waveform edges in a running cue. After one duration, the output has moved about 63% toward a held input. The activity meter sees the smoothed result.
+
+```clojure
+(show/submit! runtime :settings
+  {:scope :output-response
+   :values {:enabled? true
+            :global {:attack {:beats 1/4} :release {:beats 1}}
+            :groups {:front {:release {:bars 1}}}}})
+```
+
+Group stages override the corresponding global stage. To use a mapped control for attack, replace the fixed beat count with `{:cue-id :feel :param :attack :default 1/4}`. A knob mapped to the running cue's numeric `:attack` parameter then sets the response in beats. Blackout and the operator's zero master remain immediate.
+
+## Trigger a look from sound
+
+`:audio/energy` names the normalized, smoothed RMS signal from the configured audio capture. The show variable uses that key, the patchbay source is `audio/energy`, and a subscriber to the `:audio/energy` event reads the same key in its event data. Silence measures zero. The analyzer publishes the variable per measurement and throttles event delivery separately.
+
+For continuous control, add `:target-var [:audio/energy]` to a lighting-scene request. For a new look on each loud passage, use a threshold with a lower rearm point. This example waits for audio energy to cross 0.4 and varies the front group once. A later reading at or below 0.15 rearms it.
 
 ```clojure
 (show/submit! runtime :event-subscriber
   {:op :save
-   :subscriber
-   {:id :wash-on-energy-rise
-    :match {:type :audio/energy}
-    :actions [{:op :lighting/scene
-               :gate {:path [:data :energy-envelope] :above 0.20 :below 0.08}
-               :scene {:op :vary :group-id :wash :target 0.72}}]}})
+   :subscriber {:id :front-on-rise
+                :match {:type :audio/energy}
+                :actions [{:op :lighting/scene
+                           :gate {:path [:data :audio/energy] :above 0.4 :below 0.15}
+                           :scene {:op :vary :group-id :front :target 0.35}}]}})
 ```
 
-Any registered event can supply the target itself using
-`:event-path [:data :intensity]` on the action. In both cases the emitter,
-measurement, gate and scene run through the same show owner as Studio.
+A subscriber can also use the event value as the target with `:event-path [:data :audio/energy]`. To react to measured light, subscribe to `:lighting/group-at-target` with the group's `:emitter-id`. Steady output fires once on arrival. Other useful events include `:lighting/group-limited` and `:lighting/activity`. [Subscriber actions](event-subscribers.md)
 
 ## Ask Studio chat for a different look
 
-With a show provider configured, ask **“Something different at 72% on the left movers. Tell me what they actually reach.”** The show agent can call `inspect_lighting` to discover the patched group ID and its light-emitting members, then call `set_lighting_scene` with the discovered ID, `"op": "vary"` and `"target": 0.72`. A second inspection reports the current generation, target, measured fraction, applied gain, numeric effect inputs and controller status. A group marked `seeking` is still settling. A group marked `limited`, `unlit` or `over-target` has an unmet target. Studio’s master, blackout and independently authored cues still apply.
+Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Vary** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
 
-Inspection returns the musical energy envelope and its measurement time, the estimated mixed-room fog level with its reference distance and last presentation time, and the last stationary camera observation with its epoch and sample time. A missing measurement is reported as null. The groups and eligible fixtures have separate page cursors. Filter by group ID to inspect the members of a large rig.
-
-For a continuously modulated look, ask to bind the group’s light target to the music energy envelope. The tool accepts `"target-var": ["audio", "features", "energy-envelope"]`; built-in fog paths are `["fog/level"]` for the modeled room level and `["fog/observed-level"]` for the last camera reading. An existing user-defined show variable whose value is in 0–1 can also supply the target. A fixed target disconnects that binding. These tools operate on the current show.
-
-A one-off variation and a repeating event are separate controls. For example, **“Whenever audio energy rises above 50% after dropping below 20%, vary the left movers to 72%.”** Chat can save or remove that group's `configure_energy_scene` binding. It uses the same `:audio/energy` subscriber and crossing action shown above. Inspection reports its thresholds and target. The operator's configured audio source supplies the measured energy.
-
-## Steady-frame metering cost
-
-Group feedback reads the committed bytes of its selected fixtures. A cached
-reading remains valid only while the patch, group membership and all affected
-universe bytes match. A changed fine byte forces a new measurement. Groups on
-unrelated universes can retain their last reading. A steady target preserves the
-model and instance identity. The controller still observes changed target
-variables and operator settings on each frame.
-
-Reproduce the software comparison from the project root.
-
-```sh
-lein run -m tolglow.bench-group-feedback 2048 60
-```
-
-Two warmed preview owners ran the same generated look on 2,048 RGB heads at a
-72% target. One owner kept the group feedback enabled. The other continued the
-same owned cue at its settled opacity. Sampling order alternated and the final
-DMX universes had to match byte-for-byte. On the shared JDK 21 host, the
-difference between the two median owner-thread CPU readings fell from 0.39 ms
-to 0.10 ms after reusing unchanged measurements and publishing the observed show
-variables. The corresponding median allocation difference fell from 8,192 to
-2,952 bytes per frame. With reuse, wall p50/p95 were 4.06/26.10 ms with feedback
-and 3.77/14.64 ms with the same look
-alone. The benchmark includes the complete software tick, runs unpaced, and
-reports CPU/allocation for the owner thread. It does not measure physical
-output or universal 40 Hz delivery. A first scene still compiles the generated
-effect and prepares its calibrated meter.
-
-## Use measured light as a show signal
-
-The accepted frame publishes `{:actual 0.713 :target 0.72 :status :at-target}`
-under `[:variables :lighting/groups group-id]`. With rig metering enabled,
-`[:variables :lighting/rig]` holds the rig’s actual fraction, target, follow mode
-and status. These are ordinary show variables. Use
-`[:lighting/groups :wash :actual]` as another group’s `:target-var` to mirror
-the wash group’s measured energy. Releasing the wash removes its measurement.
-Disabling the rig meter removes its variable.
-
-Group state changes emit `:lighting/group-seeking`, `:lighting/group-at-target`,
-`:lighting/group-limited` or `:lighting/group-released`. Limited events include
-the specific status, such as `:over-target`. Rig changes emit
-`:lighting/rig-level` when the rounded percentage, mode or status changes.
-Continuous values remain available in the variable at frame precision. The
-rig emits `:lighting/rig-unavailable` when metering stops.
-
-This subscriber starts a look in another fixture group when the wash reaches
-its own requested level. A steady wash at 72% triggers once.
-
-```clojure
-{:id :when-wash-settles
- :match {:type :lighting/group-at-target :emitter-id :wash}
- :actions [{:op :lighting/scene
-            :scene {:op :vary :group-id :front :target 0.4}}]}
-```
+For rig-wide utilization, read `:lighting/rig` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Group metering benchmark](performance/group-feedback.md)

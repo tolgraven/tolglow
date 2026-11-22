@@ -41,7 +41,7 @@ frame, and on shutdown. When repatching, the output continues to send that
 endpoint on the old addresses until another channel or fixture footprint owns
 them. This includes coarse/fine pairs spanning two universes.
 
-A repeatable 10-second capture-sink test drove one lighting group at a 72% target, another directly from `:fog/level`, and a fogger at a 30% target with a 3.5-point band. With the plume forecast, the final fog estimate was 29.91% and the lighting groups ended at 72.16% and 30.59%. Using only the instantaneous fog estimate, the same run finished at 35.63%. These figures describe the scripted rig and room model. A venue's measured flow, air exchange and sightline determine its response.
+A repeatable 10-second capture-sink test drove a front lighting group at a fixed level, a rear group directly from `:fog/level`, and a fogger at a 30% target with a 3.5-point band. With the plume forecast, the final fog estimate was 29.91% and the rear group ended at 30.59%. Using only the instantaneous fog estimate, the same run finished at 35.63%. These figures describe the scripted rig and room model. A venue's measured flow, air exchange and sightline determine its response.
 
 ## Calibrate a room with the iPhone
 
