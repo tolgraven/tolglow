@@ -98,10 +98,23 @@
 (defn- needs-scalar? [value arithmetic?]
   (or (exact-value? value) (and arithmetic? (not (floating-value? value)))))
 
+(defn- coerces-position? [{:keys [op args]}]
+  ;; The scalar IR passes these unary functions through double. For binary
+  ;; arithmetic the floating literal must be an immediate sibling: a later
+  ;; cast cannot repair rounded intermediate integer calculations.
+  (or (#{:sin :cos :abs :floor :sqrt :pow} op)
+      (and (#{:add :subtract :multiply :divide} op) (= 2 (count args))
+           (some #(and (= :const (:op %)) (number? (:value %)) (floating-value? (:value %))) args))))
+
 (defn- exact-position? [{:keys [nodes arithmetic? positions]}]
-  (let [axes (into #{} (keep #(when (= :position (:op %)) ({:x 0 :y 1 :z 2} (:axis %)))) nodes)]
+  (let [axis-index {:x 0 :y 1 :z 2}
+        axes (into #{} (keep #(when (= :position (:op %)) (axis-index (:axis %)))) nodes)
+        exact-axes (when arithmetic?
+                     (into #{} (comp (remove coerces-position?) (mapcat :args)
+                                     (keep #(when (= :position (:op %)) (axis-index (:axis %))))) nodes))]
     (and (seq axes)
-         (some (fn [position] (some #(needs-scalar? (nth position %) arithmetic?) axes)) positions))))
+         (some (fn [position]
+                 (some #(needs-scalar? (nth position %) (contains? exact-axes %)) axes)) positions))))
 
 (defn- numeric-contract [outputs]
   (let [expressions (mapv (fn [output]
@@ -136,7 +149,7 @@
 
   Numeric IR outputs, envelopes, stable-ID selectors and duplicate output layers
   use typed fields. World aim points and directions remain signed vec3 fields.
-  Tweens use the scalar compiler. Exact-number literals/positions in arithmetic also fall back;
+  Tweens use the scalar compiler. Integer-position arithmetic that can remain exact falls back;
   exact parameters or integer clocks select the scalar step for that frame.
   This conservative policy preserves scalar numeric semantics at byte boundaries.
   Unsupported expressions still fail normal validation; they

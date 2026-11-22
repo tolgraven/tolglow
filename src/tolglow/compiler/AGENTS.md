@@ -36,3 +36,9 @@ Positional numeric eligibility uses the intersection of the effect and output
 targets and the axes that the particular output reads. Fixtures outside that
 intersection must not force a spatial pixel or moving-head effect into scalar
 evaluation. Check exact values on selected heads against the scalar compiler.
+
+A fixture coordinate entered as a small integer can use a typed field when
+its immediate expression operation converts it to floating point. Preserve
+the scalar oracle for exact arithmetic, ratios and coordinates outside double
+integer precision. Check every use of an axis, including nested operations
+and operations with more than two arguments.
