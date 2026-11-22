@@ -230,7 +230,7 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!))))
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create

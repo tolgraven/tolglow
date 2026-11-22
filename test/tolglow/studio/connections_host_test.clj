@@ -62,6 +62,24 @@
             (is (not (identical? prior (show/reactions fresh))))
             (check-graph!)))))))
 
+(defn authored-beat [_ _] :authored-beat)
+
+(deftest partial-saved-show-registries-gain-missing-defaults-and-preserve-explicit-definitions
+  (with-runtime [author {}]
+    (let [original (:model (show/export-show author))
+          explicit {:kind :sub :id :clock/beat
+                    :implementation {:type :var :symbol "tolglow.studio.connections-host-test/authored-beat"}}]
+      (doseq [registrations [[] [explicit]]]
+        (with-runtime [fresh {:model (assoc-in original [:reactive :registrations] registrations)
+                              :reactive-options {:allowed-vars #{'tolglow.studio.connections-host-test/authored-beat}}}]
+          (let [graph (show/reactions fresh)]
+            (is (= (if (seq registrations) :authored-beat 0) @(reactive/subscribe graph [:clock/beat])))
+            (is (= {} @(reactive/subscribe graph [:runtime/effect-faults])))
+            (is (= {} @(reactive/subscribe graph [:spatial/scene])))
+            (let [saved (get-in (show/export-show fresh) [:model :reactive :registrations])]
+              (is (= 1 (count (filter #(= :clock/beat (:id %)) saved))))
+              (when (seq registrations) (is (some #{explicit} saved))))))))))
+
 (deftest saved-source-requires-the-runtime-owner-to-opt-in
   (doseq [trusted? [false true]]
     (with-runtime [r {:reactive-options {:trusted-source? trusted?}}]
