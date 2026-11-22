@@ -11,9 +11,9 @@
 (defn select-pump [ids id]
   (if (selected? ids id) (filterv #(not= (wire-id id) (wire-id %)) ids) (conj (vec ids) id)))
 
-(defn- percent [x] (str (js/Math.round (* 100 x)) "%"))
+(defn- percent [x] (str (/ (js/Math.round (* 1000 x)) 10) "%"))
 (defn- change! [key value] (rf/dispatch [:connections/set-fog-control {key value}]))
-(defn- bound [label key value minimum maximum disabled?]
+(defn- bound [label key value minimum step disabled?]
   (r/with-let [draft (r/atom nil)]
     (let [display (or @draft value)
           commit! (fn []
@@ -23,7 +23,7 @@
                         (when (not= new value) (change! key new)))))]
       [:label [:span (str label " · " (percent display))]
        [:input {:type "range" :aria-label label :aria-valuetext (percent display) :disabled disabled?
-                :min minimum :max maximum :step 0.01 :value display :style {:width "100%" :min-height "44px"}
+                :min minimum :max 1 :step step :value display :style {:width "100%" :min-height "44px"}
                 :on-input #(reset! draft (js/Number (.. % -target -value)))
                 :on-pointer-up commit! :on-key-up commit! :on-blur commit!
                 :on-pointer-cancel #(reset! draft nil)}]])))
@@ -45,8 +45,8 @@
                                         (percent (:fog-level coasting-peak)) " in "
                                         (js/Math.ceil (:after-s coasting-peak)) " s")])]
         [:p.small "Awaiting an output frame from a profiled fogger."])
-      [bound "Target light loss" :target (if (number? live-target) live-target target) 0 1 pending?]
-      [bound "Band either side" :hysteresis hysteresis 0.01 1 pending?]
+      [bound "Target light loss" :target (if (number? live-target) live-target target) 0 0.005 pending?]
+      [bound "Band either side" :hysteresis hysteresis 0.005 0.005 pending?]
       (when (seq fixtures)
         [:fieldset [:legend "Feedback pumps"]
          (for [{:keys [id name]} fixtures
