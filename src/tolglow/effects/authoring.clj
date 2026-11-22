@@ -36,7 +36,7 @@
   (let [settings (for [{:keys [id channels]} fixtures
                        attr [:shutter :strobe]
                        :let [{:keys [inverted-from functions]} (get channels attr)
-                             open (some #(when (#{:open :shutter-open :strobe-off} (:type %)) %) functions)]
+                             open (some #(when (#{:open :shutter-open} (:type %)) %) functions)]
                        :when open
                        :let [byte (quot (+ (:start open) (:end open)) 2)
                              drive (/ (double (if (and inverted-from (>= byte inverted-from))
@@ -85,14 +85,13 @@
   (let [candidate (atom nil)
         complete (fn [result] (complete! (assoc result :request request)))]
     (try
-      (agents/start-chat! manager
-        {:message (str "Propose a short one-shot effect for " (pr-str (select-keys request [:domain :direction :amount :channels :duration]))
-                       ". Use an outputs map, e.g. {:color [0.8 0.1 0.1], :dimmer 0.4}, or declarative beat expressions. "
-                       "Omit target IDs to use the assigned fixtures.")
-         :messages []}
-        {:snapshot! (constantly {})
-         :system-message "Compose a portable Tolglow lighting effect. Call propose_effect with its definition, then finish."
-         :background? true :tools [author-tool] :emit! (constantly nil)
+      (agents/start-tool-job! manager
+        {:messages [{:role :system :content "Compose a portable Tolglow lighting effect. Call propose_effect with its definition, then finish."}
+                    {:role :user :content (str "Propose a short one-shot effect for "
+                                               (pr-str (select-keys request [:domain :direction :amount :channels :duration]))
+                                               ". Use an outputs map, e.g. {:color [0.8 0.1 0.1], :dimmer 0.4}, "
+                                               "or declarative beat expressions. Omit targets to use the assigned fixtures.")}]
+         :tools [author-tool]
          :dispatch! (fn [_ arguments _]
                       (let [definition (prepare request (data/normalize-json (:definition arguments)))]
                         (when-not (compare-and-set! candidate nil definition)

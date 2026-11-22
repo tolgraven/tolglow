@@ -141,6 +141,7 @@
        (throw (failure :invalid-options "Invalid agent worker or input limits")))
      {:lock (Object.)
       :options opts
+      :background-jobs (atom {})
       :executor (ThreadPoolExecutor.
                  (int (:workers opts)) (int (:workers opts)) 30 TimeUnit/SECONDS
                  (ArrayBlockingQueue. (int (:queue-size opts)))
@@ -165,7 +166,7 @@
             :credential-persisted? (boolean credential-ref) :credential-ref credential-ref
             :credential-error credential-error
             :selected-conversation-id selected-conversation-id :conversation-count (count conversations)
-            :closed? closed? :active-runs (count runs)
+            :closed? closed? :active-runs (+ (count runs) (count @(:background-jobs manager)))
             :capacity (+ (get-in manager [:options :workers]) (get-in manager [:options :queue-size]))})))
 
 (defn configure!
@@ -290,7 +291,8 @@
     (locking (:lock manager)
       (let [{:keys [closed? runs]} @(:state manager)]
         (when closed? (throw (failure :closed "Agent manager is closed")))
-        (when (seq runs) (throw (failure :busy "Stop agent runs before restoring their configuration and history")))
+        (when (or (seq runs) (seq @(:background-jobs manager)))
+          (throw (failure :busy "Stop agent runs before restoring their configuration and history")))
         (let [store (get-in manager [:options :credential-store])
               lookup (when credential-ref
                        (if store
@@ -483,9 +485,8 @@
   Explicit :messages still overrides prior history. :message and optional :run-id
   retain their previous meaning. Returns {:run-id :conversation-id :cancel! :result}.
   Current system context replaces old prompts. Completion retains bounded text,
-  tool calls/results and failure status. Trusted host hooks may supply a limited
-  tool set, system message and :background? to run without touching chat history."
-  [manager payload {:keys [snapshot! dispatch! emit! done! tools system-message background?]}]
+  tool calls/results and failure status; restore never replays tool operations."
+  [manager payload {:keys [snapshot! dispatch! emit! done!]}]
   (when-not (and (map? payload) (every? ifn? [snapshot! dispatch! emit! done!]))
     (throw (failure :invalid-callbacks "Chat requires message data and snapshot/dispatch/event/completion callbacks")))
   (let [run-id (or (:run-id payload) (str (UUID/randomUUID)))
@@ -507,12 +508,13 @@
                       (locking (:lock manager)
                         (swap! (:state manager)
                                (fn [state]
-                                 (cond-> (remember-result state run-id value (get-in manager [:options :history-limit]))
-                                     (not background?) (update-in [:conversations conversation-id]
+                                 (-> state
+                                     (remember-result run-id value (get-in manager [:options :history-limit]))
+                                     (update-in [:conversations conversation-id]
                                                 #(cond-> (assoc % :messages bounded :status (:status value) :updated-at-ms updated-at)
                                                    (:error value) (assoc :error (:error value))
                                                    (not= bounded messages) (assoc :truncated? true)))
-                                     (not background?) (trim-conversations (:options manager))))))
+                                     (trim-conversations (:options manager))))))
                       (try (done! value) (catch Exception _)
                            (finally (deliver result value))))))
         cancel! (fn []
@@ -544,11 +546,12 @@
                      (catch Exception _ (throw (failure :invalid-message "Chat history contains invalid tool-call/result data"))))
               entry {:id conversation-id :title (or (:title prior) (subs (redact (:message payload) secret) 0 (min 120 (count (redact (:message payload) secret)))))
                      :messages stored :status :running :updated-at-ms (now-ms manager)}
-              next-state (cond-> (assoc-in @(:state manager) [:runs run-id] handle)
-                             (not background?) (assoc-in [:conversations conversation-id] entry)
-                             (not background?) (update :conversation-order #(conj (filterv (fn [id] (not= id conversation-id)) %) conversation-id))
-                             (not background?) (assoc :selected-conversation-id conversation-id)
-                             (not background?) (trim-conversations (:options manager)))
+              next-state (-> @(:state manager)
+                             (assoc-in [:runs run-id] handle)
+                             (assoc-in [:conversations conversation-id] entry)
+                             (update :conversation-order #(conj (filterv (fn [id] (not= id conversation-id)) %) conversation-id))
+                             (assoc :selected-conversation-id conversation-id)
+                             (trim-conversations (:options manager)))
               _ (when (or (> (count (:conversation-order next-state)) (get-in manager [:options :conversation-limit]))
                            (> (count (json/write-str (vals (:conversations next-state)))) 4194304))
                   (throw (failure :busy "Conversation history capacity is full")))
@@ -559,10 +562,9 @@
                      (try
                        (if @cancelled?
                          (finish! {:status :cancelled :run-id run-id :error :cancelled})
-                         (let [messages (cond-> (conversation manager payload (snapshot!) secret)
-                                          system-message (assoc-in [0 :content] system-message))
+                         (let [messages (conversation manager payload (snapshot!) secret)
                                _ (reset! initial messages)
-                               outcome (agent/run! config secret messages (or tools agent/default-tools) dispatch!
+                               outcome (agent/run! config secret messages agent/default-tools dispatch!
                                                    (fn [event]
                                                      (let [event (redact event secret)]
                                                        (swap! ledger capture-event event (get-in manager [:options :max-history-chars]))
@@ -580,11 +582,59 @@
           (reset! (:state manager) next-state)
           (try (.execute ^ThreadPoolExecutor (:executor manager) job)
                (catch RejectedExecutionException _
-                 (swap! (:state manager) #(cond-> (update % :runs dissoc run-id)
-                                               (not background?) (assoc-in [:conversations conversation-id :status] :error)
-                                               (not background?) (assoc-in [:conversations conversation-id :error] :capacity-rejected)))
+                 (swap! (:state manager) #(-> % (update :runs dissoc run-id)
+                                               (assoc-in [:conversations conversation-id :status] :error)
+                                               (assoc-in [:conversations conversation-id :error] :capacity-rejected)))
                  (throw (failure :busy "Agent worker capacity is full")))))))
     (dissoc handle :initial :ledger)))
+
+(defn start-tool-job!
+  "Queue a background proposal on the same bounded provider executor as chat.
+  Caller supplies a narrow tool set and messages. Admission never acquires
+  the chat/configuration lock or accesses a credential store. The worker sees
+  one immutable connection snapshot and completion exposes only its status.
+  A background job has no conversation or chat-history entry."
+  [manager {:keys [messages tools dispatch! done!]}]
+  (let [{:keys [closed? config credential credential-ref]} @(:state manager)
+        executor ^ThreadPoolExecutor (:executor manager)
+        jobs (:background-jobs manager)
+        id (str (UUID/randomUUID))
+        cancelled? (atom false) started? (atom false) completed? (atom false)
+        result (promise)
+        finish! (fn [status]
+                  (when (compare-and-set! completed? false true)
+                    (swap! jobs dissoc id)
+                    (try (done! status) (finally (deliver result status)))))
+        job (FutureTask.
+             ^Callable
+             (fn []
+               (reset! started? true)
+               (try
+                 (let [outcome (agent/run! config (credential-value credential) messages tools dispatch! (constantly nil)
+                                           (merge (select-keys config [:timeout-ms :connect-timeout-ms :max-rounds :max-tool-calls])
+                                                  {:run-id id :cancelled? cancelled?
+                                                   :transport (get-in manager [:options :transport])}))]
+                   (finish! (if @cancelled? {:status :cancelled :error :cancelled}
+                              (select-keys outcome [:status :error :run-id]))))
+                 (catch Exception _
+                   (finish! (if @cancelled? {:status :cancelled :error :cancelled}
+                              {:status :error :error :proposal-failed}))))))
+        cancel! (fn []
+                  (reset! cancelled? true)
+                  (.cancel job true)
+                  (.remove executor job)
+                  (when-not @started? (finish! {:status :cancelled :error :cancelled})))
+        handle {:run-id id :cancel! cancel! :result result}]
+    (when closed? (throw (failure :closed "Agent manager is closed")))
+    (when-not (and config (or credential (and (= :self-hosted (:provider config)) (nil? credential-ref))))
+      (throw (failure :not-configured "Configure a provider before requesting a proposal")))
+    (swap! jobs assoc id handle)
+    (if (:closed? @(:state manager))
+      (cancel!)
+      (try (.execute executor job)
+           (catch RejectedExecutionException _
+             (finish! {:status :error :error :capacity-rejected}))))
+    handle))
 
 (defn cancel-all!
   "Cancel current runs without closing the manager. Wait at most timeout-ms
@@ -594,7 +644,7 @@
   ([manager timeout-ms]
    (when-not (and (integer? timeout-ms) (<= 0 timeout-ms 10000))
      (throw (failure :invalid-timeout "Cancellation timeout must be 0..10000 ms")))
-   (let [runs (locking (:lock manager) (vec (vals (:runs @(:state manager)))))
+   (let [runs (locking (:lock manager) (into (vec (vals (:runs @(:state manager)))) (vals @(:background-jobs manager))))
          deadline (+ (System/nanoTime) (* 1000000 timeout-ms))]
      (doseq [run runs] ((:cancel! run)))
      (doseq [run runs]
@@ -612,9 +662,8 @@
   safe. Cancellation stops future proposals; it does not undo accepted commands."
   [manager]
   (let [runs (locking (:lock manager)
-               (let [runs (vals (:runs @(:state manager)))]
-                 (swap! (:state manager) assoc :closed? true :credential nil)
-                 (vec runs)))]
+               (let [state (swap! (:state manager) assoc :closed? true :credential nil)]
+                 (into (vec (vals (:runs state))) (vals @(:background-jobs manager)))))]
     (doseq [run runs] ((:cancel! run)))
     (.shutdownNow ^ThreadPoolExecutor (:executor manager))
     {:closed? true :cancelled-runs (count runs)

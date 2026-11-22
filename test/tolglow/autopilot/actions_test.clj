@@ -196,3 +196,24 @@
     (is (pos? level))
     (is (<= 50 shutter 100))
     (is (= :no-eligible-look (:result proposed)))))
+
+(deftest background-admission-does-not-wait-for-the-chat-lock-and-closing-cancels-it
+  (let [manager-locked (promise) unlock (promise) entered (promise) response (promise) completed (promise)
+        mgr (agents/create-manager {:workers 1 :queue-size 1
+                                    :transport (fn [_ _ _] (deliver entered true) @response {:status 200})})
+        request (:author-request (advance (initial) :author))]
+    (try
+      (agents/configure! mgr {:provider :self-hosted :model "test" :endpoint "http://unused.test/v1/chat/completions"})
+      (let [holder (future (locking (:lock mgr) (deliver manager-locked true) @unlock))]
+        (is (true? (deref manager-locked 1500 false)))
+        (let [submission (future (authoring/request! mgr request #(deliver completed %)))
+              handle (deref submission 1500 nil)]
+          (is (map? handle))
+          (is (true? (deref entered 1500 false)))
+          (is (= 1 (:active-runs (agents/public-config mgr))))
+          (deliver unlock true)
+          (is (true? (deref holder 1500 false)))
+          (is (= 1 (:cancelled-runs (agents/close! mgr))))
+          (is (= :cancelled (:error (deref completed 1500 nil))))
+          (is (= :cancelled (:status (deref (:result handle) 1500 nil))))))
+      (finally (deliver unlock true) (deliver response nil) (agents/close! mgr)))))
