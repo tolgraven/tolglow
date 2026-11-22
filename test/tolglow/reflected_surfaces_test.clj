@@ -30,7 +30,7 @@
                      (is (= :floor (:surface-id a) (:surface-id b)))
                      (is (vector? (get-in out [:edge-tracking 0 :contact])))
                      (when (and a b) (is (< (abs (- (edge-x a 1) (edge-x b -1))) 1e-5)))
-                     (get-in out [:values :two :pose :direction])))]
+                     (get-in out [:values :two :pose :direction]))))]
       (try (is (not= (aim! -2 25) (aim! 1 50)))
            (finally (show/stop! rt))))))
 
