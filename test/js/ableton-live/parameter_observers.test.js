@@ -90,3 +90,14 @@ test("a malformed replacement keeps current subscriptions and allocates no parti
   assert.equal(handlers.size, 0);
   assert.equal(slots.size, 0);
 });
+
+test("active idle parameters stay fresh through the transport heartbeat and close cancels refresh", () => {
+  const {observers, emissions, flush} = setup();
+  observers.replace({cutoff: observers.selected()});
+  observers.setActive(true); flush();
+  const first = emissions[0];
+  observers.refresh(); flush();
+  assert.deepEqual(emissions, [first, first]);
+  observers.close(); observers.refresh(); flush();
+  assert.equal(emissions.length, 2);
+});

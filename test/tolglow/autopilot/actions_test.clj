@@ -157,13 +157,14 @@
       (is (= (get-in already-lit [:model :instances]) (get-in result [:model :instances])))
       (is (empty? (get-in result [:state :instance-gains]))))))
 
-(deftest manual-opacity-change-relinquishes-running-instance
-  (let [started (advance (initial) :launch)
-        id (get-in started [:result :instance-id])
-        adjusted (:model (command (:model started) {:op :instance/opacity-set :instance-id id :value 0.33} 0))
-        stopped (stop (assoc started :model adjusted))]
-    (is (== 0.33 (get-in stopped [:model :instances id :system :opacity])))
-    (is (empty? (get-in stopped [:state :owned])))))
+(deftest manual-output-changes-relinquish-the-running-instance
+  (doseq [[op k] [[:instance/opacity-set :opacity] [:instance/gain-set :gain]]]
+    (let [started (advance (initial) :launch)
+          id (get-in started [:result :instance-id])
+          adjusted (:model (command (:model started) {:op op :instance-id id :value 0.33} 0))
+          stopped (stop (assoc started :model adjusted))]
+      (is (== 0.33 (get-in stopped [:model :instances id :system k])))
+      (is (empty? (get-in stopped [:state :owned]))))))
 
 (defn packed-output [model time-ms]
   (let [fixture-list (get-in model [:rig :fixtures])

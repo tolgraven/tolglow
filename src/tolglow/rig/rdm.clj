@@ -34,10 +34,8 @@
   (when-not (and (integer? address) (<= 1 address 512) (integer? footprint) (<= 1 footprint 512)
                  (<= (+ address footprint -1) 512))
     (codec/fail! "RDM address and footprint must fit one DMX universe" {}))
-  (let [largest-channel (reduce max 0 (flatten (vals (:channels fixture))))
-        candidate (assoc fixture :address address :footprint footprint)]
-    (when (> largest-channel footprint)
-      (codec/fail! "This personality is smaller than the show's channel definition; update the fixture type first" {}))
+  ;; compile-patch validates the advertised footprint against every coarse and fine offset.
+  (let [candidate (assoc fixture :address address :footprint footprint)]
     (render/compile-patch (mapv #(if (= (:id fixture) (:id %)) candidate %) (get-in model [:rig :fixtures])))
     candidate))
 

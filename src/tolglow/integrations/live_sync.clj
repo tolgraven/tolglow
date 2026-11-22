@@ -65,8 +65,8 @@
           (let [state @(:state manager)
                 matches? (fn [entry run-id]
                            (and (some? (:command-id acknowledgement))
-                                (get-in entry [:held note])
-                                (= (:command-id acknowledgement) (get-in entry [:held note :command-id]))
+                                (or (= (:command-id acknowledgement) (get-in entry [:held note :command-id]))
+                                    (= note (get-in entry [:pending-launches (:command-id acknowledgement) :note] ::missing)))
                                 (or (nil? (:sync-run-id acknowledgement)) (= run-id (:sync-run-id acknowledgement)))))
                 current (:active state)
                 retired-index (first (keep-indexed (fn [index entry] (when (matches? (:bridge entry) (:id entry)) index)) (:retired state)))]
@@ -194,6 +194,7 @@
             commands (mapv #(update % :source merge
                                     (cond-> {:sync-run-id (:id run) :source-id (or (:source-id event) (get-in state [:config :live :source-id]))}
                                       (contains? event :note) (assoc :note (:note event)))) (:commands result))]
+        (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run commands)))))
 
 (defn- receive-handoff! [manager run {:keys [mode envelope]}]

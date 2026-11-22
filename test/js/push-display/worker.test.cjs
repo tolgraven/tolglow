@@ -22,6 +22,19 @@ function harness(overrides = {}) {
 }
 const options = { url: "http://127.0.0.1:8500/push-display", executablePath: "/explicit/chromium" };
 
+test("authenticated capture scopes credentials to the configured loopback origin", async () => {
+  const name = "TOLGLOW_TEST_PUSH_CAPTURE_TOKEN";
+  const password = "synthetic-operator-test-token";
+  process.env[name] = password;
+  try {
+    const h = harness();
+    const worker = await createWorker({ ...options, authTokenEnv: name }, h.launch);
+    const context = h.calls.find(entry => entry[0] === "context")[1];
+    assert.deepEqual(context.httpCredentials, { username: "studio", password, origin: new URL(options.url).origin });
+    await worker.close();
+  } finally { delete process.env[name]; }
+});
+
 test("capture uses an isolated exact-size page and the supplied re-frame update API", async () => {
   const h = harness(), worker = await createWorker(options, h.launch);
   try {

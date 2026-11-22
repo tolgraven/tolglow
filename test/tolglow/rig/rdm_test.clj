@@ -125,6 +125,19 @@
     (is (= 1 (get-in model [:rig :fixtures 0 :address])))
     (is (thrown? clojure.lang.ExceptionInfo (rdm/validate-write! model (merge device {:command :set :pid 0xf0 :data []}))))))
 
+(deftest coarse-and-fine-channel-descriptors-are-validated-on-adopt-and-write
+  (let [model (-> (demo/model)
+                  (assoc-in [:rig :fixtures 0 :channels] {:white 2 :pan {:offset 1 :fine-offset 8 :inverted-from 1}})
+                  (rdm/update-model {:operation :associate :fixture-id :head-1 :device device}))
+        observation #(rdm/update-model model {:operation :observe :device device
+                                              :observation {:fields {:device-info {:status :ack :value {:address 200 :footprint %}}}}})
+        adopt #(rdm/update-model % {:operation :adopt :fixture-id :head-1 :device device})
+        write #(rdm/validate-write! % (merge device {:command :set :parameter :address :value 210}))]
+    (is (= 200 (get-in (adopt (observation 8)) [:rig :fixtures 0 :address])))
+    (is (= [0 210] (:data (write (observation 8)))))
+    (is (thrown? clojure.lang.ExceptionInfo (adopt (observation 7))))
+    (is (thrown? clojure.lang.ExceptionInfo (write (observation 7))))))
+
 (deftest bounded-jobs-cancel-and-release-owned-transport
   (let [model (atom (demo/model)) identity {:runtime-id "test" :expected-epoch 0}
         entered (promise) release (promise) closes (atom 0)

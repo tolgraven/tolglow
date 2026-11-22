@@ -185,6 +185,14 @@
     (library/import-fixture @(:state manager) key (select-keys request [:mode :id :version]))
     (import-file request)))
 
+(defn unmapped-diagnostics [channel-definitions covered]
+  (for [[index channel] (map-indexed vector channel-definitions)
+        :let [physical (or (:offsets channel) (when (:offset channel) [(:offset channel)]))]
+        :when (and (some? (:key channel)) (seq physical) (not-every? covered physical))]
+    {:severity :error :code :unmapped-required-channel :path [:channel-definitions index]
+     :message (str "Map physical channel " (:key channel) " at " (str/join ", " physical)
+                   " before patching; its required value cannot be inferred")}))
+
 (defn instantiate
   "Pure fixture-type -> compact rig instance conversion. Returns :fixture only
   when valid, plus :candidate and :diagnostics. Channels, fine offsets, inversion,
@@ -223,12 +231,7 @@
                       (when-not (and (integer? footprint) (pos? footprint)
                                      (every? #(and (integer? %) (<= 1 % footprint)) offsets))
                         [{:severity :error :code :invalid-footprint :path [:footprint] :message "Footprint must include every coarse and fine channel"}])
-                      (for [[index channel] (map-indexed vector (:channel-definitions definition))
-                            :let [physical (or (:offsets channel) (when (:offset channel) [(:offset channel)]))]
-                            :when (and (some? (:key channel)) (seq physical) (not-every? covered physical))]
-                        {:severity :error :code :unmapped-required-channel :path [:channel-definitions index]
-                         :message (str "Map physical channel " (:key channel) " at " (str/join ", " physical)
-                                       " before patching; its required value cannot be inferred")})
+                      (unmapped-diagnostics (:channel-definitions definition) covered)
                       (for [axis [:pan :tilt] :when (and (contains? channels axis) (nil? (get calibration axis)))]
                         {:severity :error :code :missing-calibration :path [:calibration axis]
                          :message (str "Set the documented " (name axis) " angle range before patching a moving fixture")})

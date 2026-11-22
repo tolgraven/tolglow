@@ -126,6 +126,17 @@
       self.schedule(id, entry);
     });
   };
+  // Reuse the existing transport heartbeat. Change observers own LiveAPI reads.
+  Observers.prototype.refresh = function () {
+    if (!this.active) return;
+    var self = this;
+    Object.keys(this.entries).forEach(function (id) {
+      var entry = self.entries[id];
+      if (!entry.cancel && !entry.checkIdentity && typeof entry.previous === "number")
+        self.emit({id: id, generation: entry.generation, path: entry.spec.path,
+          value: entry.previous, "automation-state": entry.previousState});
+    });
+  };
   Observers.prototype.close = function () {
     this.active = false;
     this.release(this.entries);

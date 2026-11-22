@@ -108,3 +108,11 @@
     (is (= 101 (:status (app {:request-method :get :uri "/api/state/stream"
                               :headers {"upgrade" "websocket"}}))))
     (is (= [{"upgrade" "websocket"}] @upgrades))))
+
+(deftest json-and-form-labelled-bodies-use-the-route-size-limit
+  (let [app (web/app {:heartbeat! identity :submit! (fn [& _] (throw (AssertionError. "unexpected dispatch")))})
+        text (apply str (repeat 262145 " "))]
+    (doseq [mime ["application/json" "application/x-www-form-urlencoded"]]
+      (is (= 413 (:status (app {:request-method :post :uri "/api/command"
+                                :headers {"content-type" mime}
+                                :body (java.io.StringReader. text)})))))))

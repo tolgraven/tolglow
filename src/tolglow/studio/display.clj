@@ -106,8 +106,9 @@
   worker is extracted lazily when inside a JAR and removed with its process.
   :worker-script overrides the resource without transferring file ownership.
   Configure :node-executable and optionally an installed :playwright-module.
+  For authenticated Studio, :auth-token-env names its operator token variable.
   No resource lookup, extraction, browser download or process occurs before :open!."
-  [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox?
+  [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox? auth-token-env
            startup-timeout-ms capture-timeout-ms shutdown-timeout-ms]
     :or {url "http://127.0.0.1:8500/push-display" node-executable "node"
          startup-timeout-ms 10000 capture-timeout-ms 2000 shutdown-timeout-ms 1000}}]
@@ -119,7 +120,8 @@
   (let [config (cond-> {:url url :executablePath browser-executable
                         :startupTimeoutMs startup-timeout-ms :captureTimeoutMs capture-timeout-ms
                         :noSandbox (boolean no-sandbox?)}
-                 playwright-module (assoc :playwrightModule playwright-module))]
+                 playwright-module (assoc :playwrightModule playwright-module)
+                 auth-token-env (assoc :authTokenEnv auth-token-env))]
     {:open!
      (fn []
        (let [owned (atom (merge (worker-file! worker-script)

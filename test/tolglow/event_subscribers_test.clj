@@ -1,5 +1,6 @@
 (ns tolglow.event-subscribers-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is testing]]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
@@ -174,3 +175,24 @@
     (is (= :kicks (:subscriber-id diagnostic)))
     (is (seq (:stacktrace diagnostic)))
     (is (empty? (get-in result [:event-subscribers :runs])))))
+
+(deftest json-scene-subscriber-registers-typed-event-and-gate-paths
+  (let [runtime (show/create-runtime)
+        app (studio/handler runtime)
+        path ["data" "audio/energy"]
+        action {:op "lighting/scene" :scene {:op "apply" :group-id "front"}
+                :event-path path :gate {:path path :above 0.7 :below 0.2}}
+        payload {:op "save" :subscriber {:id "from-json" :enabled? true
+                                         :match {:type "audio/kick"} :actions [action]}}]
+    (try
+      (let [receipt (future (app {:uri "/api/event-subscribers" :request-method :post
+                                  :headers {"content-type" "application/json" "accept" "application/transit+json"}
+                                  :body (java.io.StringReader. (json/write-str payload))}))]
+        (loop [n 0] (when (and (not (realized? receipt)) (< n 200))
+                      (show/tick! runtime 0) (Thread/sleep 5) (recur (inc n))))
+        (is (= :accepted (:status (wire/decode (:body (deref receipt 1000 {})))))))
+      (let [registration (first (:subscribers (wire/decode (:body (app {:uri "/api/event-subscribers" :request-method :get
+                                                                        :headers {"accept" "application/transit+json"}})))))
+            step (first (:actions registration))]
+        (is (= [:data :audio/energy] (:event-path step) (get-in step [:gate :path]))))
+      (finally (show/stop! runtime)))))

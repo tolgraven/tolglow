@@ -229,10 +229,8 @@
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
-                                             (assoc :reactive-options (merge {:trusted-source? true} (:reactive-options options)))))
-         _ (when-not (:reactive model)
-             (reactive-clock/register! (connections/reactive owned))
-             (effect-faults/register! (connections/reactive owned)))
+                                             (assoc :reactive-options (:reactive-options options)
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!))))
          worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create
@@ -381,6 +379,16 @@
 
 (declare ^:private auto-plans)
 
+(defn- edit-scoped-settings [model scope values device-id]
+  (let [current (get-in model [:settings scope] {})]
+    (cond
+      (= scope :spatial) (spatial/edit-settings current values)
+      (and (= scope :expressive) device-id)
+      (let [id (or (some #(when (= (keyword %) (keyword device-id)) %) (keys (:devices current)))
+                   (keyword device-id))]
+        (assoc-in current [:devices id] values))
+      :else (lighting/edit-settings scope current values))))
+
 (defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
@@ -389,7 +397,10 @@
     :command (command model payload time-ms)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
+    :event-subscriber (let [updated (subscribers/configure model payload)]
+                        (when-let [handler (::inline-handler payload)]
+                          (event-callbacks/register! (:event-callbacks runtime) (get-in payload [:subscriber :id]) handler))
+                        {:model updated :ack {:status :accepted}})
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
@@ -556,7 +567,7 @@
           _ (when (= :rejected (get-in published [:ack :status]))
               (throw (ex-info "Cannot publish aim path" (:ack published))))
           cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+                               :version (aim-paths/next-version (:registry model) :cues cue-id) :reload-policy :preserve-state})
           result (apply-message (:model published)
                                 {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
       (when (= :rejected (get-in result [:ack :status]))
@@ -588,8 +599,7 @@
         (output-scheduler/validate-options (:presentation values)))
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
-            settings (if (= scope :spatial) (spatial/edit-settings (get-in model [:settings scope]) values)
-                       (lighting/edit-settings scope (get-in model [:settings scope]) values))
+            settings (edit-scoped-settings model scope values (:device-id payload))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -725,7 +735,8 @@
                   (when (current?)
                     (locking (:audio-input runtime)
                       (when (= epoch (:epoch @(:audio-input runtime)))
-                        (swap! (:audio-input runtime) assoc :features features)))))
+                        (swap! (:audio-input runtime) assoc :features features
+                               :arrived-at-ms ((get-in runtime [:publisher :now-ms])))))))
      :done! (fn [result]
               (when (current?)
                 (swap! (:state runtime)
@@ -738,8 +749,9 @@
                      (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})
                      before))]
     (when (and (:features captured) (= (:epoch model) (:epoch captured)))
-      (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms time-ms
-                                         :audio/energy (get-in captured [:features :audio/energy])}))
+      (let [age (max 0 (- ((get-in runtime [:publisher :now-ms])) (:arrived-at-ms captured)))]
+        (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms (- time-ms age)
+                                           :audio/energy (get-in captured [:features :audio/energy])})))
     (if (= (:epoch model) (:epoch captured))
       (cond-> model
         (:features captured) (routing/admit-audio (:features captured))
@@ -1219,10 +1231,10 @@
                              definition (-> registration (dissoc :middleware)
                                             (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
                          (subscribers/validate-definition definition)
-                         (when (fn? middleware) (event-callbacks/register! (:event-callbacks runtime) id middleware))
                          definition)
                        registration)]
-    (submit! runtime :event-subscriber {:op :save :subscriber registration})))
+    (submit! runtime :event-subscriber (cond-> {:op :save :subscriber registration}
+                                         (fn? middleware) (assoc ::inline-handler middleware)))))
 
 (defmacro reg-event-subscriber!
   "Register a literal middleware fn as restorable REPL source. Supply lexical

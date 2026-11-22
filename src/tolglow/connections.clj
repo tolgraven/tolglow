@@ -159,9 +159,11 @@
             _ (vswap! resources assoc :reactive reactive)]
         ;; Resolve handlers before looking up credentials. Neither operation
         ;; publishes effects or starts remote chats/capture.
+        (when-let [register! (:register-reactive! options)] (register! reactive))
         (spatial/register! reactive nil)
-        (graph/restore! reactive (:reactive data) (:reactive-options options))
-        (spatial/register! reactive (:reactive data))
+        (when (:reactive model)
+          (graph/restore! reactive (:reactive data) (:reactive-options options))
+          (spatial/register! reactive (:reactive data)))
         (when-let [state (get-in data [:integrations :agents])]
           (agent-manager/restore! agents state))
         @resources)
@@ -199,6 +201,12 @@
                     :audio-state (or (get-in data [:integrations :audio-capture])
                                      {:version 1 :config nil :capture-wanted? false})
                     :cleanup-errors []})})))
+
+(defn restart-requested? [connections resource]
+  (let [state @(:state connections)]
+    (boolean (case resource
+               :audio (get-in state [:audio-state :capture-wanted?])
+               :sync (:sync-wanted? state)))))
 
 (defn status [connections]
   (select-keys @(:state connections) [:closed? :restoring? :generation :cleanup-errors]))
@@ -388,7 +396,8 @@
   [connections model]
   (let [before (live-state connections)
         data (preflight model)
-        bundle (prepare model data (:options connections))]
+        bundle (prepare model data (assoc-in (:options connections) [:reactive-options :local-system]
+                                             (get-in before [:bundle :reactive])))]
     {:owner connections :expected-generation (:generation before)
      :model-epoch (:epoch model) :model model :data data :bundle bundle
      :lifecycle (atom :prepared)}))

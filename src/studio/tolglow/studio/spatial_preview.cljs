@@ -33,4 +33,4 @@
    (fn [visible?]
      [interop/preview (cond-> show
                        (and visible? (:enabled? config) (seq (:volumes config)))
-                       (assoc :spatial-volumes (bodies config)))])])
+                       (assoc :spatial-volumes (bodies config))) :rig])])

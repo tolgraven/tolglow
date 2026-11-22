@@ -17,10 +17,17 @@ import Foundation
     private var polling: Task<Void, Never>?
     private var generation = UUID()
     private var finishRequested = false
+    private var stopCameraRequested = false
+    private struct HostRejection: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
     private var ownedSessionID: String?
     private let http: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 4; config.timeoutIntervalForResource = 6
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
     init() {
@@ -34,18 +41,21 @@ import Foundation
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: identity.merging(body) { _, new in new })
         }
-        let (bytes, response) = try await http.bytes(for: request)
+        let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
+        try StudioOperatorAccess.checkSignIn(response)
         var data = Data()
         for try await byte in bytes {
             guard data.count < 2_097_152 else { throw URLError(.dataLengthExceedsMaximum) }
             data.append(byte)
         }
         let result = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
-              result["status"] as? String != "rejected" else {
-            throw NSError(domain: "TolglowScan", code: 2, userInfo: [NSLocalizedDescriptionKey: result["message"] as? String ?? "Host rejected calibration request"])
-        }
         guard requestGeneration == generation else { throw CancellationError() }
+        if result["status"] as? String == "rejected" {
+            throw HostRejection(message: result["message"] as? String ?? "Host rejected calibration request")
+        }
+        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
         return result
     }
     private func refresh() async throws {
@@ -120,7 +130,8 @@ import Foundation
                 do {
                     let observations = scanner.takePending()
                     if !observations.isEmpty { _ = try await request(["op": "observe", "session-id": sid, "observations": observations]) }
-                    guard !finishRequested, !Task.isCancelled else { throw CancellationError() }
+                    if finishRequested { busy = false; finish(); return }
+                    try Task.checkCancellation()
                     _ = try await request(["op": "heartbeat", "session-id": sid])
                     try await refresh()
                 } catch {
@@ -138,21 +149,39 @@ import Foundation
         guard armed, let sid = scan?["session-id"] as? String else { return }
         perform {
             let previous = self.scan?["step-index"] as? Int ?? -1
-            _ = try await self.request(["op": "step", "session-id": sid, "step-index": previous + 1])
+            do {
+                _ = try await self.request(["op": "step", "session-id": sid, "step-index": previous + 1])
+            } catch let rejection as HostRejection {
+                // The host did not advance. Keep the lease and capture only if this session still owns it.
+                try await self.refresh()
+                self.status = rejection.localizedDescription
+                return
+            }
             if (previous + 1) % 3 == 0 { self.scanner.clearBeamTrack() }
             try await self.refresh()
             self.status = "Pattern accepted. Receipt evidence begins only after physical publication and motor settling."
         }
     }
-    func finish() {
-        scanner.captureEnabled = false; polling?.cancel(); polling = nil
+    func finish(stopCamera: Bool = false) {
+        stopCameraRequested = stopCameraRequested || stopCamera
+        scanner.captureEnabled = false
         finishRequested = true
-        guard !busy else { return } // defer cancellation until an in-flight upload finishes
+        guard !busy else { return } // Allow the current observation POST to finish before draining the tail.
+        polling?.cancel(); polling = nil
         finishRequested = false
-        guard let sid = ownedSessionID, (scan?["session-id"] as? String) == sid else { return }
+        let shouldStopCamera = stopCameraRequested
+        stopCameraRequested = false
+        guard let sid = ownedSessionID, (scan?["session-id"] as? String) == sid else {
+            if shouldStopCamera { scanner.stop() }
+            return
+        }
         perform {
-            let observations = self.scanner.takePending()
-            if !observations.isEmpty { _ = try await self.request(["op": "observe", "session-id": sid, "observations": observations]) }
+            defer { if shouldStopCamera { self.scanner.stop() } }
+            var observations = self.scanner.takePending()
+            while !observations.isEmpty {
+                _ = try await self.request(["op": "observe", "session-id": sid, "observations": observations])
+                observations = self.scanner.takePending()
+            }
             _ = try await self.request(["op": "cancel", "session-id": sid])
             try await self.refresh(); self.status = "Calibration overrides released. Captured evidence is retained for fitting."
         }

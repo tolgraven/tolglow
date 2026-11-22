@@ -54,10 +54,29 @@ class Contract(unittest.TestCase):
         self.assertIn("WKCompanionAppBundleIdentifier: org.tolglow.ios", manifest)
         self.assertTrue((ROOT / "Core/Package.swift").exists())
 
+    def test_native_control_and_webview_share_the_operator_auth_boundary(self):
+        access = (ROOT / "iOS/StudioOperatorAccess.swift").read_text()
+        self.assertIn("NSURLAuthenticationMethodHTTPBasic", access)
+        self.assertIn("LocalPassword.read(service: service, account:", access)
+        self.assertIn("SecureField", access)
+        for client in ["StudioRedirectPolicy.swift", "WebStudioView.swift"]:
+            self.assertIn("StudioOperatorAccess.respond(to: challenge", (ROOT / "iOS" / client).read_text())
+        self.assertIn("task.originalRequest?.url", (ROOT / "iOS/StudioRedirectPolicy.swift").read_text())
+        for client in ["StudioClient.swift", "RigCalibration/RigCalibrationClient.swift",
+                       "Photometry/BrightnessCalibrationClient.swift", "FogCalibration/FogCalibrationClient.swift"]:
+            source = (ROOT / "iOS" / client).read_text()
+            self.assertIn("config.urlCredentialStorage = nil", source)
+            self.assertIn("config.httpShouldSetCookies = false", source)
+
     def test_credentials_live_at_owned_phone_boundary(self):
         store = (ROOT / "iOS/PairingStore.swift").read_text()
         self.assertIn("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", store)
         self.assertNotRegex(store, r"UserDefaults\..*set")
+        self.assertEqual(2, store.count("service: destination.keychainService, account: device"))
+        self.assertIn("kSecAttrService as String: service", store)
+        self.assertIn("kSecAttrAccount as String: account", store)
+        osc = (ROOT / "iOS/OSCConnection.swift").read_text()
+        self.assertIn("credential.destination == destination, credential.device == observation.deviceID", osc)
         watch = (ROOT / "watchOS/TolglowWatchApp.swift").read_text()
         self.assertNotIn("pairingToken", watch)
 

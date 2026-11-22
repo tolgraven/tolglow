@@ -53,7 +53,8 @@ private struct BrightnessLease {
 }
 
 func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http: URLSession) async throws -> T {
-    let (bytes, response) = try await http.bytes(for: request)
+    let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
+    try StudioOperatorAccess.checkSignIn(response)
     var data = Data()
     for try await byte in bytes {
         guard data.count < 512 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
@@ -85,6 +86,8 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 4
         config.timeoutIntervalForResource = 6
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
 

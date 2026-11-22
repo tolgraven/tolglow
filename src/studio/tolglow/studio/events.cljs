@@ -153,6 +153,18 @@
 (rf/reg-event-fx :studio/initialize
   (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
 
+(defn- settle-connection-drafts [db old-presentation old-typed]
+  (let [show (:show db) owner ((juxt :runtime-id :epoch) show)
+        old-pause (get-in old-presentation [:settings :output :pause-look])
+        new-pause (get-in show [:settings :output :pause-look])
+        old-routing (get-in old-typed [:settings :audio-returns])
+        new-routing (get-in db [:server-projection :view :settings :audio-returns])]
+    (cond-> db
+      (and (get-in db [:connections :pause-save]) (not= old-pause new-pause))
+      (update-in [:connections :pause-save] dissoc :form)
+      (and (get-in db [:audio-returns owner]) (not= old-routing new-routing))
+      (update-in [:audio-returns owner] dissoc :baseline :submitted))))
+
 (defn- install-show [db server]
   (let [presentation (projection/presentation (:view server)
                                               (get-in db [:server-projection :view]) (:server-presentation db))
@@ -166,7 +178,9 @@
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
+        updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
                   (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
@@ -181,7 +195,7 @@
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db updated
      :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
-                                        [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]
+                                        [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
            (and (get-in db [:connections :visible?])
                 (or epoch-changed?
@@ -665,29 +679,44 @@
         {:db (update-in db [:ui :definition] merge {:source source :kind "effects" :mode :source :status "Generated EDN"})
          :studio/nvim-source source})
       (catch :default error {:dispatch [:studio/editor-error (error-message error)]}))))
+(defn- publication-current? [db token]
+  (and (some? token) (= token (get-in db [:ui :definition :publication]))
+       (= (:epoch token) (get-in db [:show :epoch])) (= (:runtime-id token) (get-in db [:show :runtime-id]))))
+
+(rf/reg-event-fx :studio/publication-error
+  (fn [{:keys [db]} [_ token error]]
+    (when (publication-current? db token)
+      {:db (update-in db [:ui :definition] merge {:publishing? false :error? true :status "Publication failed"
+                                                  :result (error-message error)})})))
+
 (rf/reg-event-fx :studio/definition-publish
   (fn [{:keys [db]} [_ automatic?]]
     (when-not (get-in db [:ui :definition :publishing?])
       (try
         (let [definition (get-in db [:ui :definition]) built? (= :form (:mode definition))
+              token (assoc (select-keys (:show db) [:runtime-id :epoch]) :id (str (random-uuid)))
+              pending (update-in db [:ui :definition] merge {:publication token :publishing? true})
               source (if built? (pr-str (builder-definition (get-in db [:ui :builder]) (:version definition))) (:source definition))]
           (if (and (= :neovim (:engine definition)) (not built?))
-            {:studio/nvim-read {:on-success [:studio/publish-source automatic? nil]}}
-            {:dispatch [:studio/publish-source automatic? (when built? (get-in db [:ui :builder])) source]}))
+            {:db pending :studio/nvim-read {:on-success [:studio/publish-source token automatic? nil]
+                                           :on-failure [:studio/publication-error token]}}
+            {:db pending :dispatch [:studio/publish-source token automatic? (when built? (get-in db [:ui :builder])) source]}))
         (catch :default error {:dispatch [:studio/editor-error (error-message error)]})))))
 (rf/reg-event-fx :studio/publish-source
-  (fn [{:keys [db]} [_ automatic? built source]]
-    (let [{:keys [kind loaded-id version]} (get-in db [:ui :definition])
+  (fn [{:keys [db]} [_ token automatic? built source]]
+    (when (publication-current? db token)
+      (let [{:keys [kind loaded-id version]} (get-in db [:ui :definition])
           kind (if built "effects" kind)
           existing (when built (effect db (:id built)))
           expected (if built (:version existing) (when loaded-id version))]
       {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
-       :studio/http {:path "/api/definition" :body (cond-> {:kind kind :source source} expected (assoc :expected-version expected))
-                     :on-success [:studio/published automatic? built kind expected]
-                     :on-failure [:studio/editor-error]}})))
+       :studio/http {:path "/api/definition" :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)} expected (assoc :expected-version expected))
+                     :on-success [:studio/published token automatic? built kind expected]
+                     :on-failure [:studio/publication-error token]}}))))
 (rf/reg-event-fx :studio/published
-  (fn [{:keys [db]} [_ automatic? built kind expected ack]]
-    (let [id (or (:id ack) (:definition-id ack) (:id built) (get-in db [:ui :definition :loaded-id]))
+  (fn [{:keys [db]} [_ token automatic? built kind expected ack]]
+    (when (publication-current? db token)
+      (let [id (or (:id ack) (:definition-id ack) (:id built) (get-in db [:ui :definition :loaded-id]))
           version (or (:version ack) (when expected (inc expected)) 1)
           existing-cue (when built (cue db (:id built)))
           cue-source (when built (pr-str {:id (keyword (:id built)) :version 1 :name (:name built)
@@ -697,9 +726,14 @@
                                                 :result "Validated and published. The running show now has this definition."})
        :fx (cond-> [] (not automatic?) (conj (notice "Definition validated and published."))
              (and built (:cue? built)) (conj [:studio/http {:path "/api/definition"
-                                                          :body (cond-> {:kind "cues" :source cue-source}
+                                                          :body (cond-> {:kind "cues" :source cue-source :runtime-id (:runtime-id token) :expected-epoch (:epoch token)}
                                                                   existing-cue (assoc :expected-version (:version existing-cue)))
-                                                          :on-success [:studio/success "Effect and matching cue published."]}]))})))
+                                                          :on-success [:studio/publication-complete token]
+                                                          :on-failure [:studio/publication-error token]}]))}))))
+
+(rf/reg-event-fx :studio/publication-complete
+  (fn [{:keys [db]} [_ token _]]
+    (when (publication-current? db token) {:fx [(notice "Effect and matching cue published.")]})))
 
 (defn auto-activity [db]
   (let [form (get-in db [:ui :auto-form])
@@ -756,10 +790,10 @@
 (rf/reg-event-fx :studio/imported
   (fn [{:keys [db]} _] {:db (assoc-in db [:ui :rig-dirty?] false) :dispatch [:studio/toast "Show imported."]}))
 (rf/reg-event-fx :studio/preview-ready
-  (fn [{:keys [db]} [_ supported?]]
+  (fn [{:keys [db]} [_ supported? owner]]
     {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
-     :fx (into [[:studio/preview [:fog (get-in db [:ui :fog])]]]
-               (when supported? (mapv (fn [[key value]] [:studio/preview [key value]])
+     :fx (into [[:studio/preview (cond-> [:fog (get-in db [:ui :fog])] owner (conj owner))]]
+               (when supported? (mapv (fn [[key value]] [:studio/preview (cond-> [key value] owner (conj owner))])
                                       (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]

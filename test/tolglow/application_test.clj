@@ -190,3 +190,24 @@
                  (select-keys (get settings scope) (conj (vec (keys config)) :enabled?)))))
         (is (number? (get-in (show/variables runtime) [:lighting/activity :scene :score]))))
       (finally (app/stop! runtime)))))
+
+(deftest backup-captures-input-intent-before-module-teardown-and-restores-once
+  (let [backup (java.io.File/createTempFile "tolglow-live-inputs" ".transit")
+        clocks (atom 0) captures (atom 0)
+        cfg {:init {:components [:show] :modules [:show-state :clock-sync :audio]}
+             :show {:workers 1 :workspace-options nil
+                    :audio-options {:open-source! (fn [_] (swap! captures inc)
+                                                    (let [released (promise)]
+                                                      {:read! (fn [& _] @released -1) :close! #(deliver released true)}))}
+                    :sync-options {:midi-factory (fn [_ _] {:open! (fn [_] (swap! clocks inc) :clock) :close! (fn [_])})}}
+             :audio {:default? true :block-frames 240}
+             :clock-sync {:midi {:enabled? true :input-index 0} :selected-source :midi-clock}
+             :show-state {:save-file (.getPath backup)}}
+        wait-for (fn [n] (loop [attempt 0] (when (and (< attempt 400) (or (< @clocks n) (< @captures n)))
+                                             (Thread/sleep 5) (recur (inc attempt)))))]
+    (try
+      (let [runtime (app/start! cfg)]
+        (try (wait-for 1) (is (= 1 @clocks @captures)) (finally (app/stop! runtime))))
+      (let [runtime (app/start! (assoc cfg :show-state {:load-file (.getPath backup)}))]
+        (try (wait-for 2) (is (= 2 @clocks @captures)) (finally (app/stop! runtime))))
+      (finally (.delete backup)))))

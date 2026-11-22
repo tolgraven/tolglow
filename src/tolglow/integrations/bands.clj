@@ -39,6 +39,23 @@
                  (if ready? 0.0 sum) (+ ls (* low low)) (+ ms (* mid mid)) (+ hs (* high high))
                  (if ready? (conj! samples (/ sum stride)) samples)))))))
 
+(defn- fundamental-present?
+  "Power in the proposed fundamental relative to total filtered signal power.
+  A tapered window rejects leakage from nearby bins and subharmonic YIN fits."
+  [^doubles samples rate hz noise-floor]
+  (let [n (alength samples)
+        phase-step (/ (* 2.0 Math/PI hz) rate)
+        window-step (/ (* 2.0 Math/PI) (dec n))]
+    (loop [i 0 real 0.0 imag 0.0 power 0.0 weight 0.0]
+      (if (= i n)
+        (let [fundamental-power (* 2.0 (+ (* real real) (* imag imag)))]
+          (and (pos? power) (> fundamental-power (* 0.01 weight power))
+               (> fundamental-power (* noise-floor noise-floor weight weight))))
+        (let [w (- 0.5 (* 0.5 (Math/cos (* i window-step))))
+              x (aget samples i) weighted (* w x) phase (* i phase-step)]
+          (recur (inc i) (+ real (* weighted (Math/cos phase))) (+ imag (* weighted (Math/sin phase)))
+                 (+ power (* weighted x)) (+ weight w)))))))
+
 (defn finish-hop [state noise-floor]
   (let [[low mid high] (mapv #(Math/sqrt (/ % (:n state))) (:squares state))
         rate (:pitch-rate state)
@@ -47,8 +64,10 @@
         pitch (cond
                 (< low noise-floor) nil
                 due? (let [[lo hi] bass-range-hz
-                           result (audio/estimate-pitch (double-array (:window state)) rate lo hi 0.12)]
-                       (when (and result (<= lo (:frequency result) hi) (>= (:confidence result) 0.88)) result))
+                           samples (double-array (:window state))
+                           result (audio/estimate-pitch samples rate lo (/ rate 2.0) 0.12)]
+                       (when (and result (<= lo (:frequency result) hi) (>= (:confidence result) 0.88)
+                                  (fundamental-present? samples rate (:frequency result) noise-floor)) result))
                 :else (:pitch state))]
     [(cond-> (assoc state :squares [0.0 0.0 0.0] :n 0 :pitch pitch)
        due? (assoc :since-pitch 0))

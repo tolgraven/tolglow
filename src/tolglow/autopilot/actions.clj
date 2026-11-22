@@ -12,7 +12,8 @@
    :scope-id scope-id :epoch (:epoch model) :serial 0 :owned {} :temporary {} :instance-gains {}})
 
 (defn- manual-controls [instance]
-  (select-keys (:system instance) [:opacity :paused? :attack :release]))
+  (cond-> (select-keys (:system instance) [:opacity :paused? :attack :release])
+    (not (== 1.0 (get-in instance [:system :gain] 1.0))) (assoc :gain (get-in instance [:system :gain]))))
 
 (defn- owner [state] {:adapter :autopilot :session-id (:owner-id state)})
 (defn- outcome [model state result] {:model model :state state :result result})

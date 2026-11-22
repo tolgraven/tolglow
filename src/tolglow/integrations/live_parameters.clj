@@ -47,7 +47,7 @@
         {:type :sync/observation
          :observation {:source-id (str "live/" (wire-id (:source-id live)) "/parameter/" (wire-id id))
                        :event-id event-id :observed-at-ms observed-at :kind :automation
-                       :value value :gate? (> value low) :confidence 1.0 :origin :live-playback
+                       :value value :gate? true :confidence 1.0 :origin :live-playback
                        :port (merge {:transport :live :signal :device-parameter
                                      :automation-state (nth [:none :playing :overridden] automation-state)}
                                     (select-keys spec [:path :name :device-name :track-name :range :quantized?]))}}))))

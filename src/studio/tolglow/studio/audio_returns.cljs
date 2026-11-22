@@ -8,7 +8,9 @@
 (defn- epoch [db] ((juxt :runtime-id :epoch) (:show db)))
 (defn- saved [db] (merge empty-config (get-in db [:server-projection :view :settings :audio-returns])))
 (defn- state [db] (get-in db [:audio-returns (epoch db)]))
-(defn- draft [db] (or (:draft (state db)) (saved db)))
+(defn- draft [db]
+  (let [{:keys [draft submitted baseline]} (state db) current (saved db)]
+    (or draft (when (= current baseline) submitted) current)))
 (defn assign-lane [config]
   (let [lanes (:lanes config)
         next-free (fn [key] (first (remove (set (map key lanes)) (range 1 (inc (:channels config))))))
@@ -43,7 +45,8 @@
     (let [identity (epoch db) request (str (random-uuid)) config (draft db)
           metadata {:runtime-id (first identity) :expected-epoch (second identity)}
           partial? (= action :mixers)]
-      {:db (assoc db :audio-returns {identity (assoc (state db) :request request :error nil)})
+      {:db (assoc db :audio-returns {identity (cond-> (assoc (state db) :request request :error nil)
+                                                         (= action :configure) (assoc :baseline (saved db)))})
        :studio/http (cond-> {:path (str "/api/audio/returns/" (name action))
                              :typed? (= action :configure)
                              :on-success [:audio-returns/result identity request action config true]
@@ -56,6 +59,7 @@
                  #(cond-> (dissoc % :request)
                     (not success?) (assoc :error reply)
                     (and success? (= :mixers action)) (assoc :mixers reply)
+                    (and success? (= :configure action) (contains? % :baseline)) (assoc :submitted submitted)
                     (and success? (= :configure action) (= submitted (:draft %))) (dissoc :draft))))))
 (defn- select-field [label value options update!]
   [:label [:span label]

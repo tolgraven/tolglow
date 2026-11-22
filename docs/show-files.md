@@ -157,7 +157,14 @@ the host can publish a blank initial output until the next regular frame.
 `tolglow.connections` owns the agent manager and local credential adapter,
 fixture cache, audio capture manager and reactive graph. `create` starts no
 capture or provider request. A saved credential reference may perform an explicit
-local lookup; the default file adapter is otherwise inert until a key operation.
+local lookup. The default file adapter resolves a provider credential only for
+the provider and complete request endpoint at which it was configured. If an
+import changes that destination, settings and conversations still load and the
+operator can enter a credential for the new destination. A provider credential
+saved before destination binding also requires one local re-entry. Custom
+credential adapters can implement `:scope` as a function returning scoped
+`:get!`, `:put!` and `:delete!` operations. An adapter without that facility
+supports runtime-only provider credentials.
 Agent state and fixture cache use `:integrations :agents` and `:fixtures`.
 Capture uses `:integrations :audio-capture` with `{:version 1 :config ...
 :capture-wanted? boolean}`; separate audio parameter-routing settings under
@@ -169,7 +176,12 @@ wanted sync connection after clock rebase. Retired callbacks are generation-gate
 The host stages a restore with `prepare-restore`, which validates data, creates
 replacement managers and resolves permitted reactive handlers. Invalid data or
 compilation failure leaves the current bundle untouched. Source handlers require
-the explicit `:reactive-options {:trusted-source? true}` option. A candidate is
+the explicit `:reactive-options {:trusted-source? true}` option on the host.
+Without that option a saved Var can still match an existing local registration,
+including one installed at the REPL before a live reload. A cold start can
+authorize a specific qualified symbol in `[:reactive-options :allowed-vars]`.
+Studio installs its built-in clock and fault subscriptions before loading a
+saved graph. A candidate is
 bound to its owner and resource generation, and carries its target model epoch.
 
 Inside the same host lock that publishes the restored model/output, call

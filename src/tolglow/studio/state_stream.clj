@@ -1,6 +1,7 @@
 (ns tolglow.studio.state-stream
   "Push committed snapshots to Studio over Transit WebSockets."
   (:require [ring.websocket :as ws]
+            [tolglow.studio.origin :as origin]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.query-stream :as queries]
             [tolglow.transit :as transit])
@@ -234,22 +235,12 @@
           (throw (ex-info "Unknown stream control" {}))))
       (catch Exception _ (retire! hub socket 1008 "Invalid stream control")))))
 
-(defn same-origin? [{:keys [headers scheme]}]
-  (if-let [origin (get headers "origin")]
-    (try
-      (let [uri (java.net.URI. origin)]
-        (and (#{"http" "https"} (.getScheme uri))
-             (or (nil? scheme) (= (name scheme) (.getScheme uri)))
-             (= (.getAuthority uri) (get headers "host"))))
-      (catch Exception _ false))
-    true))
-
 (defn response [hub request]
   (let [session (get-in request [:query-params "session"])
         lease-clock (atom nil)]
     (cond
       @(:closed? hub) {:status 503 :body "Studio stopped"}
-      (not (same-origin? request)) {:status 403 :body "Cross-origin state stream"}
+      (not (origin/same-origin? request)) {:status 403 :body "Cross-origin state stream"}
       (not (ws/upgrade-request? request)) {:status 426 :headers {"Upgrade" "websocket"} :body "WebSocket upgrade required"}
       (not (and (string? session) (<= 1 (count session) 128))) {:status 400 :body "Missing Studio session"}
       :else

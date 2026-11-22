@@ -7,9 +7,19 @@
 (defonce engines (atom {}))
 (defn- message [error] (or (.-message error) (str error)))
 
+(defn preview-engine [registered owner]
+  (let [previews (:previews registered)]
+    (if owner (get previews owner) (or (:rig previews) (:perform previews)))))
+
+(defn preview-recipients [registered action owner]
+  ;; Both views display the same saved light/camera settings. Momentary actions belong to the visible view.
+  (if (and (nil? owner) (#{:fog :worklight :lighting-mode :quality :camera :reset} action))
+    (vals (:previews registered))
+    (when-let [engine (preview-engine registered owner)] [engine])))
+
 (rf/reg-fx :studio/preview
-  (fn [[action value]]
-    (when-let [engine (:preview @engines)]
+  (fn [[action value owner]]
+    (doseq [engine (preview-recipients @engines action owner)]
       (case action
         :fog (js-invoke engine "setFog" value)
         :burst (js-invoke engine "burst")
@@ -43,12 +53,12 @@
       (-> (js-invoke engine "setText" source)
           (.catch #(rf/dispatch [:studio/editor-error (message %)]))))))
 (rf/reg-fx :studio/nvim-read
-  (fn [{:keys [on-success]}]
+  (fn [{:keys [on-success on-failure] :or {on-failure [:studio/editor-error]}}]
     (if-let [engine (:neovim @engines)]
       (-> (js-invoke engine "text")
           (.then #(rf/dispatch (conj on-success %)))
-          (.catch #(rf/dispatch [:studio/editor-error (message %)])))
-      (rf/dispatch [:studio/editor-error "Neovim is not ready."]))))
+          (.catch #(rf/dispatch (conj on-failure (message %)))))
+      (rf/dispatch (conj on-failure "Neovim is not ready.")))))
 (rf/reg-fx :studio/nvim-input
   (fn [keys]
     (when-let [engine (:neovim @engines)]
@@ -94,7 +104,8 @@
     {:display-name "room-preview"
      :component-did-mount
      (fn [this]
-       (let [root (aget this "root")]
+       (let [root (aget this "root")
+             owner (get (r/argv this) 2 :perform)]
          (aset this "alive" true)
          (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (.-detail %) :keywordize-keys true)])]
            (aset this "rig-editor-handler" handler)
@@ -108,15 +119,16 @@
                       (when (aget this "alive")
                         (let [engine (js/Reflect.construct (aget module "RoomPreview")
                                                           #js [(.querySelector root "canvas")
-                                                               (.querySelector root "#preview-status")])]
+                                                               (.querySelector root ".preview-status")])]
                           (aset this "engine" engine)
-                          (swap! engines assoc :preview engine)
+                          (swap! engines assoc-in [:previews owner] engine)
                           (when (fn? (aget engine "onNavigationChange"))
                             (aset this "navigation-unsubscribe"
                                   (js-invoke engine "onNavigationChange"
-                                             #(rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)]))))
+                                             #(when (identical? engine (preview-engine @engines nil))
+                                                (rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)])))))
                           (when-let [show (second (r/argv this))] (update-preview! this engine show))
-                          (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"])])))))
+                          (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"]) owner])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
      :component-did-update
      (fn [this old-argv]
@@ -133,17 +145,18 @@
          (.removeEventListener js/document "webkitfullscreenchange" handler))
        (when-let [engine (aget this "engine")]
          (js-invoke engine "dispose")
-         (when (identical? engine (:preview @engines)) (swap! engines dissoc :preview)))
+         (let [owner (get (r/argv this) 2 :perform)]
+           (when (identical? engine (preview-engine @engines owner)) (swap! engines update :previews dissoc owner))))
        (when-let [handler (aget this "rig-editor-handler")]
          (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler)))
      :reagent-render
-     (fn [show]
+     (fn [show & [owner]]
        (let [this (r/current-component)]
        [:div.preview-stage {:ref #(aset this "root" %)}
-        [:canvas#preview {:tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
+        [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
         [:div.preview-overlay
-         [:span#preview-status "Preparing preview"]
-         [:span#frame-time (str (.toFixed (or (get-in show [:status :frame-ms]) 0) 1) " ms")]]
+         [:span.preview-status {:id (if (= :rig owner) "rig-preview-status" "preview-status")} "Preparing preview"]
+         [:span {:id (if (= :rig owner) "rig-frame-time" "frame-time")} (str (.toFixed (or (get-in show [:status :frame-ms]) 0) 1) " ms")]]
         [:div.preview-caption "LIGHT, GIVEN SPACE."]]))}))
 
 (def neovim

@@ -17,6 +17,14 @@
   (and (string? reference) (boolean (re-matches #"credential-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" reference))))
 (defn- valid-secret? [secret]
   (and (string? secret) (not (str/blank? secret)) (<= (count secret) 16384) (not (re-find #"[\r\n]" secret))))
+(defn- valid-audience? [value]
+  (and (string? value) (not (str/blank? value)) (<= (count value) 8192)))
+
+(defn- valid-entry? [entry]
+  (or (valid-secret? entry)
+      (and (map? entry) (= #{:audience :secret} (set (keys entry)))
+           (valid-audience? (:audience entry)) (valid-secret? (:secret entry)))))
+
 (def ^:private no-links (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 (def ^:private owner-rw (PosixFilePermissions/fromString "rw-------"))
 (def ^:private owner-rwx (PosixFilePermissions/fromString "rwx------"))
@@ -37,9 +45,12 @@
                              data (edn/read options reader)]
                          (when-not (= ::end (edn/read options reader)) (throw (Exception. "trailing value"))) data))
                       (catch Exception _ (throw (failure :invalid-file "Credential store contains invalid EDN"))))]
-        (when-not (and (map? data) (= #{:version :credentials} (set (keys data))) (= 1 (:version data)) (map? (:credentials data))
+        (when-not (and (map? data) (= #{:version :credentials} (set (keys data))) (#{1 2} (:version data)) (map? (:credentials data))
                        (<= (count (:credentials data)) 1024)
-                       (every? (fn [[reference secret]] (and (valid-reference? reference) (valid-secret? secret))) (:credentials data)))
+                       (every? (fn [[reference secret]]
+                                 (and (valid-reference? reference)
+                                      ((if (= 1 (:version data)) valid-secret? valid-entry?) secret)))
+                               (:credentials data)))
           (throw (failure :invalid-file "Credential store has an invalid schema")))
         data))))
 
@@ -60,31 +71,41 @@
         (Files/move temp path (into-array StandardCopyOption [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING]))
         (finally (Files/deleteIfExists temp))))))
 
+(defn- access [path lock audience]
+  (let [lookup (fn [data reference]
+                 (when-not (valid-reference? reference)
+                   (throw (failure :invalid-reference "Invalid credential reference")))
+                 (let [entry (get-in data [:credentials reference])]
+                   (if audience
+                     (when (and (map? entry) (= audience (:audience entry))) (:secret entry))
+                     (when (string? entry) entry))))]
+    {:put! (fn [secret]
+             (when-not (valid-secret? secret) (throw (failure :invalid-secret "Credential must be a bounded single-line string")))
+             (locking lock
+               (let [data (read-store path) reference (str "credential-" (UUID/randomUUID))]
+                 (when (>= (count (:credentials data)) 1024) (throw (failure :full "Credential store is full")))
+                 (write-store! path (assoc-in (cond-> data audience (assoc :version 2)) [:credentials reference]
+                                             (if audience {:audience audience :secret secret} secret)))
+                 reference)))
+     :get! (fn [reference] (locking lock (lookup (read-store path) reference)))
+     :delete! (fn [reference]
+                (locking lock
+                  (let [data (read-store path)
+                        present? (some? (lookup data reference))]
+                    (when present? (write-store! path (update data :credentials dissoc reference)))
+                    present?)))}))
+
 (defn file-store
-  "Return {:put! [secret]->opaque-ref :get! [ref]->secret-or-nil :delete! [ref]}.
-  Explicit path must be outside show exports/Git; the host chooses its local app
-  config location. One adapter serializes its own operations. Use one adapter per
-  file; concurrent independent processes are not a supported multiwriter store.
-  POSIX private-file support is required. No real keys are generated here."
+  "An owner-only file store with :put!, :get! and :delete!. Call (:scope store)
+  with an audience to obtain an adapter that can only access that audience's
+  entries. All scopes share the same lock and atomic file replacement. Use one
+  adapter per path per process. Construction performs no IO."
   [path]
   (when-not (or (string? path) (instance? Path path))
     (throw (failure :invalid-path "Credential store requires an explicit filesystem path")))
   (let [path (.normalize (.toAbsolutePath (if (instance? Path path) path (Paths/get ^String path (make-array String 0)))))
         lock (Object.)]
-    {:kind :local-file
-     :put! (fn [secret]
-             (when-not (valid-secret? secret) (throw (failure :invalid-secret "Credential must be a bounded single-line string")))
-             (locking lock
-               (let [data (read-store path) reference (str "credential-" (UUID/randomUUID))]
-                 (when (>= (count (:credentials data)) 1024) (throw (failure :full "Credential store is full")))
-                 (write-store! path (assoc-in data [:credentials reference] secret))
-                 reference)))
-     :get! (fn [reference]
-             (when-not (valid-reference? reference) (throw (failure :invalid-reference "Invalid credential reference")))
-             (locking lock (get-in (read-store path) [:credentials reference])))
-     :delete! (fn [reference]
-                (when-not (valid-reference? reference) (throw (failure :invalid-reference "Invalid credential reference")))
-                (locking lock
-                  (let [data (read-store path) present? (contains? (:credentials data) reference)]
-                    (when present? (write-store! path (update data :credentials dissoc reference)))
-                    present?)))}))
+    (assoc (access path lock nil) :kind :local-file
+           :scope (fn [audience]
+                    (when-not (valid-audience? audience) (throw (failure :invalid-audience "Invalid credential audience")))
+                    (access path lock audience)))))

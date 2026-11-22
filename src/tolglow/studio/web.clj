@@ -1,7 +1,8 @@
 (ns tolglow.studio.web
   "Portable Ring application. Services are explicit callbacks; the HTTP adapter
   does not own the show clock, registry, provider credentials, or effect state."
-  (:require [clojure.data.json :as json]
+  (:require [tolglow.studio.origin :as origin]
+            [clojure.data.json :as json]
             [tolglow.data :as data]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -11,7 +12,7 @@
             [tolglow.studio.page-routes :as pages]
             [ring.middleware.content-type :refer [wrap-content-type]]
             [ring.middleware.head :refer [wrap-head]]
-            [ring.middleware.params :refer [wrap-params]]
+            [ring.middleware.params :refer [assoc-query-params]]
             [ring.core.protocols :as protocols]
             [ring.util.response :as response])
   (:import [java.io PipedInputStream PipedOutputStream IOException]))
@@ -91,12 +92,10 @@
 
 (defn wrap-same-origin [handler]
   (fn [request]
-    (let [origin (get-in request [:headers "origin"])
-          host (get-in request [:headers "host"])]
-      (if (and (#{:post :put :patch :delete} (:request-method request)) origin
-               (not= host (.getAuthority (java.net.URI. origin))))
-        (data-response 403 {:message "Cross-origin mutations are not accepted"})
-        (handler request)))))
+    (if (and (#{:post :put :patch :delete} (:request-method request))
+             (not (origin/same-origin? request)))
+      (data-response 403 {:message "Cross-origin mutations are not accepted"})
+      (handler request))))
 
 (defn wrap-isolation [handler]
   (fn [request]
@@ -104,7 +103,8 @@
             {"Cross-Origin-Opener-Policy" "same-origin"
              "Cross-Origin-Embedder-Policy" "require-corp"
              "Cross-Origin-Resource-Policy" "same-origin"
-             "X-Content-Type-Options" "nosniff"})))
+             "X-Content-Type-Options" "nosniff"
+             "X-Frame-Options" "SAMEORIGIN"})))
 
 (defrecord EventStreamBody [input]
   java.io.Closeable
@@ -320,12 +320,17 @@
      (ring/router route-table {::ring/default-options-endpoint nil})
      (ring/create-default-handler {:not-found not-found :method-not-allowed method-not-allowed}))))
 
+(defn- wrap-query-params [handler]
+  ;; POST bodies belong to the route's bounded JSON/Transit reader. Ring's
+  ;; form middleware eagerly slurps urlencoded bodies ahead of that limit.
+  (fn [request] (handler (assoc-query-params request "UTF-8"))))
+
 (defn app
   "Construct a Ring handler from owned application services. No server starts."
   [services]
   (-> (routes services)
+      wrap-query-params
       wrap-same-origin
-      wrap-params
       (wrap-content-type {:mime-types {"wasm" "application/wasm" "js" "text/javascript" "mjs" "text/javascript"}})
       wrap-errors
       wrap-response-format
