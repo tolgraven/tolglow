@@ -1,5 +1,6 @@
 (ns tolglow.output.pause-look
-  "Translate the saved pause look into the final ordered emission contribution.")
+  "Translate the saved pause look into the final ordered emission contribution."
+  (:require [afterglow.render.photometry :as photometry]))
 
 (def defaults {:mode :show :color [1.0 0.4 0.12] :level 0.08})
 
@@ -25,11 +26,14 @@
         w (if (and rgb? (= :extract-min rgbw-policy)) (min r g b) 0)
         ;; Explicit emitter writes take precedence over a color in the renderer.
         ;; Replace both so a cue driving individual channels cannot leak through.
-        values {:red (- r w) :green (- g w) :blue (- b w) :white (if rgb? w (min r g b))
-                :amber 0 :uv 0 :strobe 0}
+        values (merge (zipmap (keys photometry/emitter-spectrum) (repeat 0.0))
+                      {:red (- r w) :green (- g w) :blue (- b w) :white (if rgb? w (min r g b))
+                       :warm-white (if rgb? 0 (min r g b)) :cold-white (if rgb? 0 (min r g b))
+                       :cool-white (if rgb? 0 (min r g b))
+                :strobe 0})
         attributes (cond-> (select-keys values (keys channels))
                      rgb? (assoc :color color)
-                     (or (contains? channels :dimmer) (some channels [:red :green :blue :white :amber :uv]))
+                     (or (contains? channels :dimmer) (some channels (keys photometry/emitter-spectrum)))
                      (assoc :dimmer level))]
     (map (fn [[attribute value]] {:target-id id :attribute attribute :value value}) attributes)))
 
