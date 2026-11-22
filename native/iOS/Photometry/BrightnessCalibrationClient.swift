@@ -46,13 +46,13 @@ private struct BrightnessLease {
         var body: [String: Any] = ["runtime-id": runtime, "expected-epoch": epoch, "session-id": session, "op": op]
         body.merge(fields) { _, new in new }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let reply = try await brightnessJSON(BrightnessReply.self, req, http)
+        let reply = try await calibrationJSON(BrightnessReply.self, req, http)
         guard reply.status == "accepted" else { throw BrightnessCaptureFailure(reply.message ?? "Show rejected the calibration step.") }
         return reply
     }
 }
 
-private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http: URLSession) async throws -> T {
+func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http: URLSession) async throws -> T {
     let (bytes, response) = try await http.bytes(for: request)
     var data = Data()
     for try await byte in bytes {
@@ -104,7 +104,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
         }
         let endpoint = origin.appendingPathComponent("api/photometry")
         perform {
-            let result = try await brightnessJSON(PhotometryHost.self, URLRequest(url: endpoint), self.http)
+            let result = try await calibrationJSON(PhotometryHost.self, URLRequest(url: endpoint), self.http)
             try Task.checkCancellation()
             self.host = result; self.url = endpoint
             self.fixtures = result.fixtures

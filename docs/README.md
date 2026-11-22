@@ -30,6 +30,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 
 | Document | Purpose |
 | --- | --- |
+| [Measure room fog with iPhone](iphone-fog-calibration.md) | Capture clear air, fog delivery and clearance using a fixed contrast target |
 | [Relative fixture brightness](relative-fixture-brightness.md) | Measure full-white output with a locked camera and save per-type calibration |
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
