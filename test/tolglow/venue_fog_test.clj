@@ -80,3 +80,27 @@
         (is (= 2.0 (amount rt :emitted-m3)))
         (is (= 0.0 (amount rt :flow-m3-s))))
       (finally (show/stop! rt)))))
+
+(deftest both-output-paths-keep-retired-and-current-foggers-physically-off
+  (doseq [independent? [false true]]
+    (let [old (assoc fixture :universe 1 :address 512 :channels {:fog {:offset 1 :fine-offset 2 :inverted-from 0}}
+                     :fogger {:flow-m3-min 60 :dmx-range [196.5 0]})
+          new (assoc fixture :id :new :universe 3 :channels {:fog 1} :fogger {:flow-m3-min 50 :dmx-range [255 0]})
+          neighbor {:id :neighbor :universe 1 :address 7 :channels {:dimmer 1}}
+          sent (atom []) now (atom 0)
+          rt (show/create-runtime {:model (assoc-in model [:rig :fixtures] [old])
+                                   :independent-output? independent? :physical-now-ms #(deref now)
+                                   :sink {:send! (fn [packet _] (swap! sent conj packet))}})
+          tick! (fn [] (swap! now + 25) (show/tick! rt @now)
+                  (when independent? (scheduler/publish! (:publisher rt))))
+          byte-at #(bit-and 255 (get-in (last @sent) [%1 %2]))]
+      (try
+        (tick!)
+        (is (= [196 128] [(byte-at 1 511) (byte-at 2 0)]))
+        (let [ack (show/submit! rt :rig (assoc (:rig model) :fixtures [neighbor new] :expected-epoch (:epoch model)))]
+          (tick!)
+          (is (= :accepted (:status @ack)) (str @ack)))
+        (tick!)
+        (is (= [196 128 255] [(byte-at 1 511) (byte-at 2 0) (byte-at 3 11)]))
+        (finally (show/stop! rt)))
+      (is (= [196 128 255 0] [(byte-at 1 511) (byte-at 2 0) (byte-at 3 11) (byte-at 1 6)])))))

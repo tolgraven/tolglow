@@ -15,6 +15,34 @@ The show holds the last successfully delivered DMX level for the elapsed physica
 
 Read `(get-in (tolglow.show/snapshot runtime) [:output :atmosphere])` for per-source emitted and local volumes, current flow, room volume, mixed volume and mixed density. The model measures relative optical density; a value of 1 represents one room volume of fog at rated output density. This value can exceed 1, and is independent of the light output percentage. Saving a show records the quantities. Restoring rebases the physical clock and starts the pumps' estimated flow at zero until another frame is presented.
 
+## Hold a venue fog level
+
+In Studio → Connections → Venue fog, choose the desired light loss along the reference sightline, the band on either side, and the individual pumps. Arm automatic fog control to begin feedback. A target of 30% with a five-point band starts a demand below 25%, continues through the band and ends it at 35%. These are switching thresholds. Lingering plumes can carry the room above the upper threshold after a pump stops. Feedback also forecasts the highest attenuation the already released local fog can reach as it mixes and clears. If those plumes can reach the upper threshold, the controller holds further pulses, even while the current room reading is low. After a pulse each machine rests before it can pulse again.
+
+The sightline level is `1 − exp(−extinction × mixed density × reference path)`. Afterglow calculates it with the room's measured extinction and reference distance when available. It describes the well-mixed room along the reference path; a person in a concentrated jet can see substantially greater attenuation. Open the live status in Connections to see the current estimate, band and each pump's state.
+
+At the REPL, submit the same configuration to the normal show coordinator. Headless code constructing a show can call `tolglow.atmosphere.control/configure` with its model and these values.
+
+```clojure
+(tolglow.show/submit! runtime :settings
+  {:scope :fog-control
+   :values {:enabled? true :target 0.30 :hysteresis 0.05
+            :fog-fixture-ids [:floor-jet]}})
+```
+
+Read `:fog/level` and `:fog/target` in model `:variables`. A reaction can change the target. Subscribe to category `:atmosphere` or one of `:fog/below-target`, `:fog/in-band`, `:fog/above-target`, `:fog/target-changed`, `:fog/demand-started` and `:fog/demand-ended`. Subscribers get the level, target and band position with the normal stamped event. The Studio Debug event catalog includes each type.
+
+To set manufacturer duty limits, add `:duty {:max-on-s 0.4 :min-off-s 6 :max-level 0.5}` to the fixture's `:fogger` map. These are the defaults. A pulse ends on its own publisher-clock deadline, including when rendering is stalled and the publisher repeats the last frame. The capture reports delivered DMX, so a lost connection suspends feedback for that pump once its last delivery is older than 500 ms. A real machine can continue to hold its last received DMX setting during a transport failure.
+
+An authored cue can take over a pump. Music-triggered pulses use the remaining pumps, with the same device caps on profiled machines. Armed venue feedback also holds these music pulses if the room or its queued plumes have reached the high threshold, the target is zero or the observation is stale. Pause, blackout, a zero master or calibration suspends autonomous demand. A calibration operator can still drive an ordinary cue. The profile maps demand into the physical DMX range, including reversed ranges and coarse/fine inversion. When a lease expires, the publisher sends the configured off bytes for that pump. Loading a show preserves the target and selected fixtures and disarms its automatic controller.
+Fog is off at its declared physical DMX endpoint when no cue assigns the
+channel, during blackout, while the independent publisher waits for a fresh
+frame, and on shutdown. When repatching, the output continues to send that
+endpoint on the old addresses until another channel or fixture footprint owns
+them. This includes coarse/fine pairs spanning two universes.
+
+A repeatable 10-second capture-sink test drove one lighting group at a 72% target, another directly from `:fog/level`, and a fogger at a 30% target with a 3.5-point band. With the plume forecast, the final fog estimate was 29.91% and the lighting groups ended at 72.16% and 30.59%. Using only the instantaneous fog estimate, the same run finished at 35.63%. These figures describe the scripted rig and room model. A venue's measured flow, air exchange and sightline determine its response.
+
 ## Calibrate a room with the iPhone
 
 Mount the phone with a fixed view through the room to a stationary, steadily illuminated bright patch and an adjacent dark patch. Measure the distance to the patches. Start the scan in the iPhone rig screen, capture clear air, run a normal fog cue, then switch the cue off and continue recording while the room clears. The phone locks exposure and white balance. The scan endpoint does not issue a fog cue. Leave the illumination, doors, ventilation and camera position steady for that measurement.

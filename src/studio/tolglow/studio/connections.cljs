@@ -7,6 +7,7 @@
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.lighting-capacity :as capacity]
+            [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
             [tolglow.studio.events :as events]))
 
@@ -294,6 +295,11 @@
     {:db (update-in db [:connections :pending] (fnil conj #{}) :pause)
      :fx [(req db :pause "/api/settings" {:scope "output" :values {:pause-look (pause-form db)}}
                :connections/settings-saved)]}))
+
+(rf/reg-event-fx :connections/set-fog-control
+  (fn [{:keys [db]} [_ values]]
+    {:db (update-in db [:connections :pending] (fnil conj #{}) :fog-control)
+     :fx [(req db :fog-control "/api/settings" {:scope "fog-control" :values values} :connections/settings-saved)]}))
 
 (rf/reg-event-fx :connections/set-capacity
   (fn [{:keys [db]} [_ values]]
@@ -617,7 +623,7 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [sensors/panel db]
      [patchbay/panel db]]))
 (def panel

@@ -13,7 +13,8 @@
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
-    tolglow.lighting-capacity-test tolglow.integrations.analysis-test
+    tolglow.lighting-capacity-test tolglow.venue-fog-test tolglow.atmosphere.control-test
+    tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-calibration-test tolglow.venue-performance-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.composition-test tolglow.agents-test

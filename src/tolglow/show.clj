@@ -35,6 +35,7 @@
             [tolglow.composition :as composition]
             [tolglow.output :as output]
             [tolglow.studio.display :as display]
+            [afterglow.output.retirement :as retirement]
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
@@ -53,6 +54,8 @@
             [tolglow.rig.photometry :as photometry]
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
+            [tolglow.atmosphere.control :as fog-control]
+            [tolglow.atmosphere.deadline :as fog-deadline]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
             [tolglow.integrations.audio-return :as audio-return]
@@ -122,6 +125,7 @@
             :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
                      :edge-tracking (:edge-tracking output [])
                      :atmosphere (:atmosphere output)
+                     :fog-control (fog-control/view (:fog-control output))
                      :preview-only? true
                      :lighting-capacity (:lighting-capacity output)
                      :universes (vec (sort (keys (:universes output))))}
@@ -178,6 +182,7 @@
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
+         _ (when-let [opts (get-in model [:settings :fog-control])] (fog-control/settings opts))
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
          patch (render/compile-patch fixtures)
@@ -217,7 +222,7 @@
       :effect-logs (effect-faults/create {:log! (:effect-log! options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
-      :venue-fog (atom {})
+      :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
@@ -233,11 +238,11 @@
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
-      :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
       :optics-plan (atom (reflections/plan (:rig model)))
-      :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
+      :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
+                    :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
                    (or (get @cache definition)
@@ -536,7 +541,10 @@
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
-        {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
+        {:model (-> (if (= scope :fog-control)
+                      (fog-control/configure model values)
+                      (assoc-in model [:settings scope] settings))
+                    (update :revision inc))
          :ack {:status :accepted}}))
     :auto
     (let [old-state (get-in model [:auto :state])
@@ -560,7 +568,9 @@
   (let [cached @(:patch runtime)]
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
-          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)}) patch))))
+          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)
+                                  :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
+          patch))))
 
 (defn- capacity-plan! [runtime patch]
   (let [cache (:capacity-plan runtime)]
@@ -600,18 +610,12 @@
 
 (defn- send-output! [runtime universes frame-number]
   (when-let [send! (get-in runtime [:sink :send!])]
-    (let [old @(:known-universes runtime)
-          current (set (keys universes))
-          retired (remove current old)]
-      (swap! (:known-universes runtime) into current)
-      (swap! (:retired-buffers runtime)
-             (fn [buffers] (reduce #(if (contains? %1 %2) %1 (assoc %1 %2 (byte-array 512))) buffers retired)))
-      ;; Continue zeroing retired universes; UDP has no acknowledgement and a
-      ;; single blackout packet on a patch change could be lost.
-      (let [packet (merge @(:retired-buffers runtime) universes)]
-        (send! packet frame-number)
-        (when (:plan @(:venue-fog runtime))
-          (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))))))
+    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)
+          memory @(:fog-deadlines runtime)
+          packet (if memory (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms]))) packet)]
+      (send! packet frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -882,10 +886,14 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:model model
+                   {:model (cond-> model (get-in model fog-deadline/saved-ids-path)
+                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
                     :output (if restored-output
                               (update restored-output :universes
-                                      #(into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %))
+                                      #(fog-deadline/restore-packet
+                                         (patch! runtime (get-in model [:rig :fixtures]))
+                                         (get-in model fog-deadline/saved-ids-path)
+                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                     :status {:restored? true :frame-ms 0}}
                    (try
@@ -913,23 +921,31 @@
                            previous (when (= (:epoch model) (get-in before [:model :epoch]))
                                       (get-in before [:output :lighting-capacity]))
                            bypass? (or photo-session (calibration/current model) (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
+                           observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
+                           observation (if (get-in model [:settings :fog-control :enabled?])
+                                         (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
+                           previous-control (get-in before [:output :fog-control])
+                           fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            limit (when plan
                                    (capacity/control (merge capacity/defaults meter-opts)
                                      previous
                                      (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
                                      bypass?))
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
-                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit
-                                                      (or bypass? (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
                                                       (:reference-rms meter-opts (:reference-rms capacity/defaults))))
-                           extra-blocks (cond-> [] manual-aim (conj manual-aim)
-                                               (:block fog) (conj (:block fog))
-                                               (:block photo-session) (conj (:block photo-session))
-                                               pause-layer (conj pause-layer))
+                           setpoint (when (or observation previous-control (:block fog) (get-in model [:settings :fog-control :enabled?]))
+                                      (fog-control/frame model patch observation previous-control
+                                        (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
+                                        fog-bypass? (:contributions result) (:block fog)))
+                           extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
+                                          manual-aim (conj manual-aim)
+                                          (:music setpoint) (conj (:music setpoint))
+                                          (:block photo-session) (conj (:block photo-session))
+                                          pause-layer (conj pause-layer))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
-                                     #(resolve-frame
-                                     patch (into % extra-blocks)
+                                     #(resolve-frame patch (into % extra-blocks)
                                      {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
@@ -938,12 +954,14 @@
                                       :previous-compact (get-in before [:output :compact])}))
                            result (:result resolved)
                            frame (cond-> (:output resolved)
+                                   setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
                                    plan (assoc :lighting-capacity
                                                (merge limit (capacity/measure plan (get-in resolved [:output :universes]))
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (:model result) :output frame :fault-events (:fault-events result)
+                       {:model (cond-> (:model result) setpoint (fog-control/publish previous-control (:status setpoint)))
+                        :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
@@ -958,6 +976,10 @@
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
+             (when (or (seq (get-in next-state [:output :fog-demands])) @(:fog-deadlines runtime))
+               (swap! (:fog-deadlines runtime) fog-deadline/remember
+                      (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
+                      (when-not restored? (get-in next-state [:output :fog-demands]))))
              (reset! (:state runtime) next-state)
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
@@ -1012,7 +1034,7 @@
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp fog-scan/disarm photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -1103,7 +1125,7 @@
 
                               (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
-                              #(send-output! runtime (into {} (map (fn [u] [u (byte-array 512)])) @(:known-universes runtime)) 0)
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))
@@ -1192,7 +1214,7 @@
   (let [[model output] (locking (:lock runtime)
                          (let [{:keys [model output]} @(:state runtime)
                                atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))
+                           [(cond-> (fog-deadline/save-ids (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model)) output)
                               atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
