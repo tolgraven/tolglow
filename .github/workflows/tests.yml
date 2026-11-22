@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ad8021186011febc2d27768a47234219bb53c250
+          ref: 421c9692abc906887ff2b1dc4c58f3a1567d275a
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ad8021186011febc2d27768a47234219bb53c250
+          ref: 421c9692abc906887ff2b1dc4c58f3a1567d275a
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -123,7 +123,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ad8021186011febc2d27768a47234219bb53c250
+          ref: 421c9692abc906887ff2b1dc4c58f3a1567d275a
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:

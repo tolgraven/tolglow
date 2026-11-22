@@ -15,6 +15,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.atmosphere.control :as fog-control]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.signals :as signals]
             [tolglow.composition.response :as response]
@@ -241,6 +242,7 @@
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
