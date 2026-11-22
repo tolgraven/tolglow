@@ -234,6 +234,22 @@
     (is (= #{:moving-look :wash} (into #{} (keep :cue-id) commands)))
     (is (every? #(= :cue/launch (:op %)) commands))))
 
+(deftest a-new-moving-look-can-use-a-slot-occupied-by-a-retirable-look
+  (let [rig [(lamp :old 1 50 [:front]) (assoc-in (lamp :mover 2 50 [:front]) [:channels :pan] 2)]
+        defs [{:id :move-lit :targets [:mover] :outputs {:pan 0.4 :dimmer 1}}
+              {:id :existing :targets [:old] :outputs {:dimmer 1}}]
+        m (setup rig defs {:enabled? true :groups {:front {:max-active 1 :fixture-order [:old]}}})
+        owner {:adapter :auto :session-id :operator}
+        {show :model ack :ack} (launch m :existing owner 0)
+        state (auto/record-launch (auto/initial-state 1000 0 :operator) (:instance-id ack))
+        select #(auto/advance % {:scope {:cue-ids [:move-lit]}} state 1)
+        commands (:commands (select show))
+        human (:model (launch show :existing :human 0))]
+    (is (= [:instance/end :cue/launch] (mapv :op commands)))
+    (is (= (:instance-id ack) (:instance-id (first commands))))
+    (is (= :move-lit (:cue-id (last commands))))
+    (is (empty? (:commands (select human))))))
+
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}
                     {:groups {:front {:max-active -1}}} {:global {:strategy :typo}}

@@ -208,6 +208,18 @@
                 (assoc selected :retired release :unmet-watts score)))
             (assoc selected :retired retired :unmet-watts loss)))))))
 
+(defn- budget-plan [model ctx ordered config owned time-ms]
+  (let [selected (choose-with-budget model ctx ordered config time-ms)
+        ;; A previously owned look can occupy the last visible slot. Auditioning
+        ;; without it allows a new motion look to request that slot, with
+        ;; make-room retaining any owners that can coexist with the new choice.
+        retry? (and (empty? (:cues selected)) (seq owned))
+        available (when retry? (update model :instances #(apply dissoc % owned)))
+        next-look (when available (choose-with-budget available ctx ordered config time-ms))]
+    (if (seq (:cues next-look))
+      (make-room model ctx (assoc next-look :unmet-watts Double/POSITIVE_INFINITY) owned time-ms)
+      (make-room model ctx selected owned time-ms))))
+
 (defn advance
   "Select cues when the interval expires. Model supplies :registry, canonical
   patched :fixtures. Live :instances are evaluated for exact priority/lifecycle;
@@ -258,7 +270,7 @@
                            (:owned-instance-ids state))
             result (cond
                      (empty? ordered) {:cues [] :reason :empty-scope}
-                     ctx (make-room model ctx (choose-with-budget model ctx ordered config time-ms) owned time-ms)
+                     ctx (budget-plan model ctx ordered config owned time-ms)
                      :else (complete-selection model pool (vec (take count ordered)) config time-ms))
             ended (:retired result)
             releases (mapv (fn [i id] (command model state :instance/end {:instance-id id} i time-ms)) (range) ended)
