@@ -13,7 +13,8 @@ const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH
 try {
   const context = await browser.newContext({viewport: {width: 1024, height: 900}, hasTouch: true});
   const page = await context.newPage();
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  page.setDefaultTimeout(30000);
+  const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error(e.message); });
   await page.goto(origin);
   await page.locator('[data-view="rig"]').click();
   const panel = page.locator('.rig-editor'), canvas = panel.locator('canvas');
@@ -21,7 +22,12 @@ try {
   await page.evaluate(() => document.querySelector('.rig-editor canvas').tolglowPreview.setQuality('low'));
   await page.waitForFunction(() => document.querySelector('.rig-editor canvas').tolglowPreview.ready, null, {timeout: 120000});
   await panel.getByRole('button', {name: 'Aim at surface', exact: true}).tap();
-  for (const head of heads) await panel.getByLabel(head.name || head.id, {exact: true}).check();
+  for (const head of heads) {
+    const name = head.name || head.id;
+    await panel.getByRole('checkbox', {name, exact: true}).tap();
+    await page.waitForFunction(name => [...document.querySelectorAll('.rig-targets label')]
+      .find(label => label.textContent === name)?.querySelector('input').checked, name);
+  }
   async function command(action) {
     const reply = page.waitForResponse(r => new URL(r.url()).pathname === '/api/surface-aim' && r.request().method() === 'POST');
     await action();

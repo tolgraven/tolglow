@@ -26,8 +26,14 @@
     (when-not (and (vector? targets) (seq ids) (every? some? ids) (= (count selected) (count ids)))
       (reject! "Select distinct patched pan/tilt fixtures"))
     (when-not (#{:release :together :edge-to-edge :follow} mode) (reject! "Unknown surface aim mode"))
-    (when (and (not= :release mode) (not (and surface (or (= mode :follow) (surfaces/on-surface? surface point)))))
-      (reject! "The aim must lie inside the selected receiver"))
+    (when-not (case mode
+                :release true
+                :follow surface
+                :together (if (nil? surface-id)
+                            (and (surfaces/xyz? point) (every? #(<= (abs %) 10000) point))
+                            (and surface (surfaces/on-surface? surface point)))
+                :edge-to-edge (and surface (surfaces/on-surface? surface point)))
+      (reject! "Choose a valid world point or a point inside the selected receiver"))
     (when (and tracking? (not (#{:u :negative-u :v :negative-v} along))) (reject! "Choose a receiver tangent axis"))
     (when (and tracking? (< (count ids) 2)) (reject! "Select a leader and at least one follower"))
     (let [retained (filterv #(not (or (selected (:follower %)) (and (= mode :release) (selected (:leader %))))) (:edge-tracking rig))
@@ -48,10 +54,12 @@
                   (update :revision inc))
        :ack {:status :accepted :mode mode :targets ids :surface-id (:id surface)}})))
 
-(defn contribution [model]
+(defn contribution [model patch]
   (when-let [points (not-empty (get-in model [:variables :surface-aim]))]
-    (let [assignments (into [] (keep (fn [{:keys [id channels]}]
-                                       (when-let [point (and (:pan channels) (:tilt channels) (get points id))]
-                                         {:target-id id :attribute :aim :value point})))
-                            (get-in model [:rig :fixtures]))]
+    ;; A direct aim on one mover should visit one fixture even in a pixel rig.
+    (let [assignments (into [] (keep (fn [[id point]]
+                                       (let [channels (get-in patch [:by-id id :channels])]
+                                         (when (and (:pan channels) (:tilt channels) (surfaces/xyz? point))
+                                           {:target-id id :attribute :aim :value point}))))
+                            points)]
       (when (seq assignments) {:kind :assignments :assignments assignments}))))

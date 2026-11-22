@@ -82,7 +82,7 @@
       :else {:db (put-editor db (cond-> (assoc state :aim-request request :message nil)
                                   point (assoc :aim-point point :surface-id surface-id)))
              :studio/http {:path "/api/surface-aim"
-                           :body {:mode mode :targets targets :point point :surface-id surface-id
+                           :body {:mode mode :targets targets :point point :surface-id (not-empty surface-id)
                                   :along (:along state) :runtime-id (get-in db [:show :runtime-id])
                                   :expected-epoch (get-in db [:show :epoch])}
                            :on-success [:rig-editor/aim-result (identity-key db) request true]
@@ -241,7 +241,8 @@
                      "Tap the receiving surface. The leader keeps following its running movement cues."
                      "Tap a receiving surface to aim the selected heads there. Existing color and dimmer cues keep playing.")]
    [choice "Receiver" (:surface-id state)
-    (mapv (fn [{:keys [id]}] [id id]) (get-in db [:show :receiver-surfaces])) [:surface-id]]
+    (into (if (= "together" (:aim-mode state)) [["" "World coordinates"]] [])
+          (map (fn [{:keys [id]}] [id id])) (get-in db [:show :receiver-surfaces])) [:surface-id]]
    (for [[i label] (map-indexed vector ["X" "Y" "Z"])]
      ^{:key label} [number-field (str "Aim " label " · m") (get (:aim-point state) i) [:rig-editor/set [:aim-point i]]])
    [:div.rig-editor-actions
