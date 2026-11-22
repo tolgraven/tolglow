@@ -6,19 +6,19 @@
    :paths ["afterglow/src/afterglow/render/atmosphere/calibration.clj" "tolglow/src/tolglow/rig/fog_calibration.clj" "tolglow/native/iOS/FogCalibration"]
    :depends-on [:foundation/tests]
    :acceptance ["Fit effective clearance from a manual burst and clearance, mixing and extinction from metered output, then apply and save in the rig"]
-   :evidence ["Afterglow #40 recovered known synthetic optical coefficients; Tolglow #83 exercises delivered DMX, scan retry, fit, application and saved calibration. iOS acquisition is Tolglow #81. Physical fluid, room, camera and ventilation comparison is pending."]}
+   :evidence ["Afterglow #40 recovered known synthetic optical coefficients. Tolglow #83 exercises delivered DMX, scan retry, fit, application and saved calibration. #81 passed 13 Swift tests and iPhone/Watch simulator builds. #88 exercises viewing and replacing the fit in Studio. Physical fluid, room, camera and ventilation comparison is pending."]}
   {:id :show/fog-setpoint :title "Hold measured venue fog around an operator-set target"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/atmosphere/control.clj" "tolglow/test/tolglow/venue_performance_test.clj" "tolglow/docs/venue-fog.md"]
    :depends-on [:rig/stationary-fog-calibration :render/dmx-venue-atmosphere]
    :acceptance ["Expose the target and modeled fog as subscribable variables, forecast the peak after stopping output, enforce per-pump limits, and support manual control"]
-   :evidence ["Afterglow #46 and Tolglow #84 test plume coasting, pump deadlines and suspension. In a ten-second capture of both controllers the fog estimate ended at 29.91% against a 30% target."]}
+   :evidence ["Afterglow #46 and Tolglow #84 test plume coasting, pump deadlines and suspension. #43 and Tolglow #89 cover physical off on inverted or retired channels. Afterglow #47 checks the signed misting rate against independently advanced room samples. In a ten-second capture of both controllers the fog estimate ended at 29.91% against a 30% target."]}
   {:id :music/group-lighting-scenes :title "Vary independent fixture groups at a requested share of visible output"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/lighting_scenes.clj" "tolglow/docs/group-lighting-scenes.md" "tolglow/test/tolglow/venue_performance_test.clj"]
    :depends-on [:music/lighting-capacity]
    :acceptance ["Generate and adjust group effects, allow music and show variables to drive targets, and show actual output beside the target"]
-   :evidence ["Tolglow #87 tests registry selection, generated effects, group feedback and PCM energy events. #82 exercises touch controls. A captured front dimmer delivered 72.16% at a 72% target while a second group followed estimated fog."]}
+   :evidence ["Tolglow #87 tests registry selection, generated effects, group feedback and PCM energy events. #82 exercises touch controls and #90 drives a running show through chat with a simulated provider. #91 verifies that reaching 72% can launch a cue once and subsequent steady frames do not retrigger it. A captured front dimmer delivered 72.16% at a 72% target while a second group followed estimated fog."]}
   {:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
    :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence ["Afterglow #37 passed 387 JVM tests and 5 native OpenGL tests, including color, vector, beat-ratio and deferred shader results."]}
