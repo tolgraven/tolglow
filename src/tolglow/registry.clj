@@ -6,7 +6,8 @@
             [afterglow.render.layers :as layers]
             [afterglow.render.photometry :as photometry]
             [afterglow.control.categories :as categories]
-            [afterglow.control.system :as system]))
+            [afterglow.control.system :as system]
+            [afterglow.control.targets :as selection]))
 
 (defn finite-number? [x]
   (and (number? x) (Double/isFinite (double x))))
@@ -232,6 +233,8 @@
              [(error [:modulation] "Modulation must be a portable configuration map")]))
           :cues
           (concat
+           (when (and (contains? definition :selector) (not (selection/selector? (:selector definition))))
+             [(error [:selector] "Select fixture IDs, a group or a volume")])
            (when-not (identifier? (:effect-id definition)) [(error [:effect-id] "Cue needs an effect ID")])
            (when-not (or (nil? params) (map? params)) [(error [:params] "Cue parameter values must be a map")])
            (when (and (contains? definition :saved-params) (not (map? (:saved-params definition))))
