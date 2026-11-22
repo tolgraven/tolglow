@@ -1,7 +1,12 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
+ [{:id :quality/november-repository-review :title "Audit both repository baselines and account for earlier review feedback"
+   :kind :documentation :status :done :owner nil
+   :paths ["tolglow/docs/reviews"] :depends-on [:foundation/tests]
+   :acceptance ["Trace every historical inline discussion to its disposition and record security checks, source findings and verification limits."]
+   :evidence ["docs/reviews/2026-11-22.md links all 56 Tolglow discussions, the 19 Afterglow discussions, trust boundaries, dependency checks, clj-kondo findings and measured worker timing gaps."]}
+  {:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/autopilot.clj" "tolglow/src/tolglow/autopilot/controller.clj" "tolglow/src/tolglow/autopilot/statistics.clj" "tolglow/src/tolglow/autopilot/signal.clj" "tolglow/src/tolglow/autopilot/target_response.clj"]
    :depends-on [:show/concurrent-light-budget :show/perceptual-light-activity :music/audio-energy-naming]
