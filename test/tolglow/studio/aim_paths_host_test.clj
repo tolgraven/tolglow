@@ -92,6 +92,8 @@
                          (assoc aim :point [2000 0 0]) (assoc aim :mode "edge-to-edge" :along "other")]]
           (is (= "rejected" (get-in (post invalid) [:data :status])))
           (is (= (:surface-aim view) (:surface-aim (show/snapshot runtime))))))
+      (is (= "accepted" (get-in (post (assoc aim :point [-1 1.5 2] :surface-id nil)) [:data :status])))
+      (is (= [-1 1.5 2] (get-in (show/snapshot runtime) [:surface-aim :head-1])))
       (is (= "accepted" (get-in (post (assoc aim :mode "edge-to-edge" :along "negative-u")) [:data :status])))
       (let [view (show/snapshot runtime) link {:leader :head-1 :follower :head-2 :surface-id :floor :along [-1.0 0.0 0.0]}]
         (is (= [link] (get-in view [:rig :edge-tracking])))
