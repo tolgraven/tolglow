@@ -275,17 +275,15 @@
 (defn- group-measurement [plan universes ids reference]
   (let [display-ids (take 24 ids)
         global? (= :global reference)
-        rows (capacity/measure-sources plan universes (if global? ids display-ids))
-        levels (select-keys (capacity/measure plan universes) [:local-brightness :global-brightness])
+        rows (capacity/measure-sources plan universes display-ids)
+        levels (if global? (capacity/measure-group-brightness plan universes)
+                 (select-keys (capacity/measure plan universes) [:local-brightness :global-brightness]))
         sources (into [] (keep (fn [id]
                                  (when-let [row (rows id)]
                                    (assoc (select-keys row [:local-brightness :global-brightness
                                                            :global-maximum :global-color-maximum])
                                           :fixture-id id)))) display-ids)]
-    (cond-> (assoc levels :source-count (count ids) :sources sources)
-      global? (assoc :dimmest-source (reduce min 1.0 (map :global-brightness (vals rows)))
-                     :brightest-source (reduce max 0.0 (map :global-brightness (vals rows)))
-                     :lowest-ceiling (reduce min 1.0 (map #(or (:global-color-maximum %) (:global-maximum %)) (vals rows)))))))
+    (assoc levels :source-count (count ids) :sources sources)))
 
 (defn meter-frame
   "Keep plans and the last committed immutable DMX buffers at the frame owner.
@@ -348,6 +346,8 @@
                capped? (and (> error 0.015) (>= gain 0.999))
                saturated (if (and capped? (not suspended?)) (min 6 (inc (or saturated 0))) 0)
                status (cond suspended? :limited
+                            (and global? (:brightest-source measurement)
+                                 (> (:brightest-source measurement) (+ target 0.015))) :over-target
                             (and global? (:lowest-ceiling measurement)
                                  (> target (+ (:lowest-ceiling measurement) 1.0e-8))) :limited
                             close? :at-target

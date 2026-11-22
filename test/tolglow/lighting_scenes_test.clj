@@ -231,7 +231,10 @@
                        [:a :b] [1 4] [4.0 1.0])
           rig {:fixtures (conj movers {:id :spot :groups [:others] :universe 1 :address 7
                                        :channels {:dimmer 1} :measured-relative-brightness 8.0})}
-          model (-> (demo/model) (assoc :rig rig) (assoc-in [:registry :effects :tint] source))
+          model (-> (demo/model) (assoc :rig rig) (assoc-in [:registry :effects :tint] source)
+                    (assoc-in [:registry :effects :manual-red] {:id :manual-red :version 1 :params {} :targets [:a]
+                                                              :outputs {:color (demo/constant [1.0 0.0 0.0])}})
+                    (assoc-in [:registry :cues :manual-red] {:id :manual-red :version 1 :effect-id :manual-red :priority 20}))
           rt (show/create-runtime {:model model :batch? batch?})
           time (atom 0)
           edit (fn [opts] (issue! rt time :lighting-scene (merge {:op :apply :group-id :wash} opts)))
@@ -253,6 +256,12 @@
           (is (= [0 0 0] [(dmx 2) (dmx 5) (dmx 6)]))
           (is (<= (abs (- (dmx 0) (* 2 (dmx 1)))) 1))
           (is (<= (abs (- (dmx 3) (* 2 (dmx 4)))) 1)))
+        (let [{:keys [instance-id]} (issue! rt time :command {:op :cue/launch :cue-id :manual-red})]
+          (ticks! rt time 3)
+          (is (= :over-target (:status (current))))
+          (is (< 0.13 (first (signal))))
+          (is (within? 0.04 (second (signal))))
+          (issue! rt time :command {:op :instance/remove :instance-id instance-id}))
         (edit {:target 0.1})
         (ticks! rt time 12)
         (is (= [false true] (mapv :limited? (:sources (current)))) "A saturated hue runs out of headroom before full white")
@@ -304,3 +313,19 @@
                         (mapv #(bit-and 255 %) (take 6 (get-in @(:state rt) [:output :universes 1]))))
                       (finally (show/stop! rt)))))]
     (is (= (capture false) (capture true)))))
+
+(deftest a-source-outside-the-table-can-limit-the-whole-group
+  (let [fixtures (mapv (fn [i] {:id (keyword (str "lamp-" i)) :groups [:all] :universe 1
+                                :address (inc i) :channels {:dimmer 1}
+                                :measured-relative-brightness (if (= i 24) 0.1 1.0)})
+                       (range 25))
+        rt (show/create-runtime {:model (assoc (demo/model) :rig {:fixtures fixtures})}) t (atom 0)]
+    (try
+      (issue! rt t :lighting-scene {:group-id :all :op :apply :brightness-reference :global :target 0.4 :effect-ids []})
+      (ticks! rt t 4)
+      (let [group (group! rt :all)]
+        (is (= 25 (:source-count group)))
+        (is (= 24 (count (:sources group))))
+        (is (every? false? (map :limited? (:sources group))))
+        (is (= :limited (:status group))))
+      (finally (show/stop! rt)))))

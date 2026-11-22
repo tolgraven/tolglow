@@ -197,6 +197,40 @@
             (aset-double result i (* (level buffers (.-dimmer head)) (/ light weight)))))))
     result))
 
+(defn measure-group-brightness
+  "Calculate the group's two means, range and lowest attainable hue ceiling in
+  one pass. Include every source even when Studio displays a bounded selection."
+  [{:keys [meter-heads relative-capacity reference-brightness visible-heads] :as plan} universes]
+  (let [buffers (object-array (map universes (:universes plan)))
+        ^objects heads meter-heads
+        totals (double-array [0.0 1.0 0.0 1.0])]
+    (dotimes [i (alength heads)]
+      (let [^MeterHead head (aget heads i)
+            ^objects emitters (.-emitters head)
+            weight (.-weight head)]
+        (when (pos? weight)
+          (loop [j 0 unscaled 0.0 peak 0.0]
+            (if (== j (alength emitters))
+              (let [light (if (and (.-shutters head) (not (open-shutter? buffers head)))
+                            0.0 (* unscaled (level buffers (.-dimmer head))))
+                    global (/ light reference-brightness)
+                    ceiling (/ (if (pos? peak) (/ unscaled peak) weight) reference-brightness)]
+                (aset-double totals 0 (+ (aget totals 0) light))
+                (aset-double totals 1 (min (aget totals 1) global))
+                (aset-double totals 2 (max (aget totals 2) global))
+                (aset-double totals 3 (min (aget totals 3) ceiling)))
+              (let [^MeterEmitter emitter (aget emitters j)
+                    amount (level buffers (.-address emitter))
+                    brightness (.-brightness emitter)]
+                (recur (inc j) (+ unscaled (* amount brightness))
+                       (if (pos? brightness) (max peak amount) peak))))))))
+    (let [light (aget totals 0)]
+      {:local-brightness (if (pos? relative-capacity) (/ light relative-capacity) 0.0)
+       :global-brightness (if (pos? visible-heads) (/ light (* reference-brightness visible-heads)) 0.0)
+       :dimmest-source (if (pos? visible-heads) (aget totals 1) 0.0)
+       :brightest-source (aget totals 2)
+       :lowest-ceiling (if (pos? visible-heads) (aget totals 3) 0.0)})))
+
 (defn match-brightness
   "Inverse of the visible-light meter at full white. Local drive saturates
   on a weaker fixture. :achievable is expressed on the rig-wide reference."
