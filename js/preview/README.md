@@ -101,6 +101,9 @@ from the committed output. Surface textures use mean linear reflectance. The
 five samples approximate clipped and partly shadowed areas for one diffuse
 reflection. The resulting preview lights have no DMX address.
 
+`npm run preview:test` runs the browser test files sequentially so independent
+software WebGL contexts do not contend with the worker responsiveness check.
+
 The pipeline is opaque linear-HDR color plus depth → spatial fog integration →
 bilateral depth-aware fog upsample/composite → restrained bloom → ACES/sRGB.
 Fog occupies the entire room. Direct cone intervals are analytic, so narrow
