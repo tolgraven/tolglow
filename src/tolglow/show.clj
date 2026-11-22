@@ -52,6 +52,7 @@
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.photometry :as photometry]
+            [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
             [tolglow.atmosphere.control :as fog-control]
             [tolglow.atmosphere.deadline :as fog-deadline]
@@ -175,7 +176,7 @@
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
+   (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
@@ -346,6 +347,7 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
+    :fog-calibration (fog-scan/operation model payload ((:now-ms (:publisher runtime))))
     :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
                                            (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :calibration (do (when (and (= :start (:op payload)) (photometry/current model))
@@ -853,7 +855,8 @@
                          restored? restored-output])))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms)) time-ms))
                        (calibration/advance physical-receipts physical-now)
-                       (photometry/advance physical-receipts physical-now)) [] false nil] messages)
+                       (photometry/advance physical-receipts physical-now)
+                       (fog-scan/expire physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
@@ -1018,17 +1021,20 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
-                        (or (not= type :photometry) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
+                        (or (not (#{:photometry :fog-calibration} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
                          (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+               payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
+                         (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
+                         payload)
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp fog-control/disarm-restored photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -1208,7 +1214,7 @@
   (let [[model output] (locking (:lock runtime)
                          (let [{:keys [model output]} @(:state runtime)
                                atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (fog-deadline/save-ids (merge model (connections/export-state (:connections runtime) model)) output)
+                           [(cond-> (fog-deadline/save-ids (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model)) output)
                               atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
