@@ -11,6 +11,9 @@
   {:owner-id (pr-str [:energy-conductor scope-id (:epoch model) (:revision model) (:time-ms model)])
    :scope-id scope-id :epoch (:epoch model) :serial 0 :owned {} :temporary {} :instance-gains {}})
 
+(defn- manual-controls [instance]
+  (select-keys (:system instance) [:opacity :paused? :attack :release]))
+
 (defn- owner [state] {:adapter :autopilot :session-id (:owner-id state)})
 (defn- outcome [model state result] {:model model :state state :result result})
 
@@ -38,9 +41,9 @@
       (some #(= effect-id (:effect-id %)) (vals (get-in model [:registry :cues])))))
 
 (defn cleanup [model state _time-ms _command]
-  (let [owned (into {} (filter (fn [[id {:keys [params]}]]
+  (let [owned (into {} (filter (fn [[id {:keys [params controls]}]]
                                  (let [i (get-in model [:instances id])]
-                                   (and (session-source state i) (= params (:params i)))))) (:owned state))
+                                   (and (session-source state i) (= params (:params i)) (= controls (manual-controls i)))))) (:owned state))
         state (assoc state :owned owned :instance-gains
                           (select-keys (:instance-gains state) (keys (:instances model))))]
     (reduce-kv
@@ -76,11 +79,11 @@
         id (:instance-id ack)
         instance (get-in model [:instances id])]
     (outcome model (assoc-in state [:owned id]
-                             {:origin origin :params (:params instance) :cue-id (:cue-id instance)
+                             {:origin origin :params (:params instance) :controls (manual-controls instance) :cue-id (:cue-id instance)
                               :effect-id (:effect-id instance)})
              {:op :launch :instance-id id :origin origin})))
 
-(defn- launch-transient [model state req candidate origin params time-ms command]
+(defn- launch-transient [model state req candidate origin opts time-ms command]
   (let [definition (authoring/prepare req candidate)
         id (:id definition)
         _ (when (or (get-in model [:registry :effects id]) (get-in model [:registry :versions [:effects id 1]]))
@@ -88,17 +91,22 @@
         published (:model (issue model state {:op :registry/publish :kind :effects :definition definition} time-ms command))]
     (launch published (assoc-in state [:temporary id] (:version definition))
             {:op :effect/launch :effect-id id
-             :launch {:mode :one-shot :duration (or (:duration req) {:bars 1}) :params (or params {})}}
+             :launch (merge {:mode :one-shot :duration (or (:duration req) {:bars 1})} opts)}
             origin time-ms command)))
 
 (defn- launch-registry [model state decision time-ms command]
-  (if-let [{:keys [cue effect origin ids scoped?]} (candidates/choose model state decision)]
-    (if scoped?
-      (launch-transient model state (assoc (request model state decision) :fixture-ids ids) effect origin
-                        (merge (:params cue) (:saved-params cue)) time-ms command)
-      (launch model state (merge (if cue {:op :cue/launch :cue-id (:id cue)} {:op :effect/launch :effect-id (:id effect)})
-                                 {:launch {:mode :timed :duration (or (:duration decision) {:bars 1})}})
-              origin time-ms command))
+  (if-let [{:keys [cue effect origin ids scoped? brightness]} (candidates/choose model state decision)]
+    (let [emission-only? (every? (comp authoring/light-attributes :attribute) (registry/output-entries (:outputs effect)))
+          scale? (and emission-only? (= :brightness (:domain decision)) (> brightness (:amount decision)))
+          level (get (:system cue) :opacity (get-in effect [:system :opacity] 1.0))
+          opts (cond-> {}
+                 scale? (assoc :system {:opacity (* level (/ (:amount decision) brightness))}))]
+      (if scoped?
+        (launch-transient model state (assoc (request model state decision) :fixture-ids ids) effect origin
+                          (assoc opts :params (merge {} (:params cue) (:saved-params cue))) time-ms command)
+        (launch model state (merge (if cue {:op :cue/launch :cue-id (:id cue)} {:op :effect/launch :effect-id (:id effect)})
+                                   {:launch (merge opts {:mode :timed :duration (or (:duration decision) {:bars 1})})})
+                origin time-ms command)))
     (outcome model state :no-eligible-look)))
 
 (defn- scoped-instances [model state decision]

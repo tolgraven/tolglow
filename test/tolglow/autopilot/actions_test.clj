@@ -1,8 +1,11 @@
 (ns tolglow.autopilot.actions-test
   (:require [afterglow.control.model :as control]
+            [afterglow.render.frame :as frame]
+            [afterglow.runtime.engine :as engine]
             [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.agents :as agents]
+            [tolglow.compiler :as compiler]
             [tolglow.autopilot.actions :as actions]
             [tolglow.effects.authoring :as authoring]))
 
@@ -129,3 +132,53 @@
            (get-in (actions/accept-authored (assoc-in (:model pending) [:rig :fixtures] [])
                                             (:state pending) req {:outputs {:dimmer 1}} 0 command)
                    [:result :error])))))
+
+(deftest admission-ranks-visible-demand-and-scales-a-brighter-launch-to-the-deficit
+  (let [start (-> (initial)
+                  (assoc-in [:model :registry :effects :dim]
+                            {:id :dim :version 1 :params {} :outputs {:dimmer 0.15}})
+                  (assoc-in [:model :registry :effects :black]
+                            {:id :black :version 1 :params {} :outputs {:dimmer 0}}))
+        small (advance start :launch)
+        full (advance start :launch {:cue-ids [:wash-cue]})
+        id (get-in full [:result :instance-id])]
+    (is (= :dim (get-in small [:result :origin])))
+    (is (== 0.4 (get-in full [:model :instances id :system :opacity])))
+    (is (nil? (get-in full [:model :registry :cues :wash-cue :system])))))
+
+(deftest activity-alone-cannot-launch-another-steady-wash-or-boost-its-level
+  (let [start (initial)
+        already-lit (advance start :launch)
+        cmd {:domain :activity :lit-fixture-ids [:a :b]}
+        attempts (take 5 (iterate #(advance % :adjust cmd) already-lit))]
+    (is (= :no-eligible-look (:result (advance start :launch cmd))))
+    (doseq [result attempts]
+      (is (= 1 (count (get-in result [:model :instances]))))
+      (is (= (get-in already-lit [:model :instances]) (get-in result [:model :instances])))
+      (is (empty? (get-in result [:state :instance-gains]))))))
+
+(deftest manual-opacity-change-relinquishes-running-instance
+  (let [started (advance (initial) :launch)
+        id (get-in started [:result :instance-id])
+        adjusted (:model (command (:model started) {:op :instance/opacity-set :instance-id id :value 0.33} 0))
+        stopped (stop (assoc started :model adjusted))]
+    (is (== 0.33 (get-in stopped [:model :instances id :system :opacity])))
+    (is (empty? (get-in stopped [:state :owned])))))
+
+(defn packed-output [model time-ms]
+  (let [fixture-list (get-in model [:rig :fixtures])
+        patch (frame/compile-patch fixture-list)
+        clock (assoc (:transport model) :beat (/ time-ms 500.0))
+        tick (engine/advance (assoc model :transport clock) {:time-ms time-ms :fixtures (:fixtures patch) :transport clock}
+                             compiler/compile-effect)
+        output (frame/resolve-contributions patch (:contributions tick) {})]
+    (mapv #(bit-and 255 %) (take 2 (get-in output [:universes 1])))))
+
+(deftest admission-and-generator-reach-real-rendered-bytes-in-scope
+  (let [admitted (advance (initial) :launch {:fixture-ids [:b]})
+        pulsing (advance (initial) :generate {:domain :activity :fixture-ids [:b]})
+        quiet (packed-output (:model pulsing) 0)
+        peak (packed-output (:model pulsing) 60)]
+    (is (= [0 51] (packed-output (:model admitted) 0)))
+    (is (= 0 (first quiet) (first peak)))
+    (is (< 0 (second quiet) (second peak)))))
