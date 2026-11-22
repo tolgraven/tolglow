@@ -22,7 +22,7 @@ Choose **Apply target** for a first look, then **Something different** to vary i
   {:op :vary :group-id :front :brightness-reference :global :target 0.35})
 ```
 
-Use `:effect-ids` to limit the registry candidates, `:params` for explicit parameter values and `:allow-generated? false` to prevent generated fill. An empty `:effect-ids []` requests generated emission only. Read the results in `(:lighting-scenes (show/snapshot runtime))`. A source blocked by its own maximum, a saturated color or the operator master can leave a target unmet.
+Use `:effect-ids` to limit the registry candidates, `:params` for explicit parameter values and `:allow-generated? false` to prevent generated fill. An empty `:effect-ids []` requests generated emission only. Read the results in `(:lighting-scenes (show/snapshot runtime))`. Studio lists the first 24 sources. Use `(show/source-brightness runtime [:wash :spot])` to read any selected sources from the same committed frame. A source blocked by its own maximum, a saturated color or the operator master can leave a target unmet.
 
 ## Limit simultaneous light
 
@@ -90,4 +90,4 @@ A subscriber can also use the event value as the target with `:event-path [:data
 
 Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Something different** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
 
-For rig-wide utilization, read `[:lighting/rig :actual]` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Group metering benchmark](performance/group-feedback.md)
+With `:lighting-capacity` enabled, read rig-wide utilization at `[:lighting/rig :actual]` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Group metering benchmark](performance/group-feedback.md)
