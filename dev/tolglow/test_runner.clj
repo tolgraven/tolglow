@@ -21,6 +21,7 @@
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test
     tolglow.studio.fixture-host-test tolglow.rig-test tolglow.rig-surfaces-test
+    tolglow.reflected-surfaces-test tolglow.fixture-photometry-test
     tolglow.rig.rdm-test tolglow.studio.rdm-host-test
     tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
