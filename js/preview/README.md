@@ -77,6 +77,33 @@ aperture. The fog integrates the same virtual cone and attenuation. Spotlights
 use a soft field-angle/focus estimate; absent fixture photometry is not calibrated
 lux, IES, exact focus mechanics or internal strobe simulation.
 
+A fixture’s `beam-angle` is its **full included angle in degrees**. A defined
+angle stays fixed as cues change unless the fixture supplies `zoom-range-deg`.
+With no optics data, the preview uses 12° at minimum zoom and 46° at maximum.
+The fixture's projected `relative-brightness` scales lens emission, surface
+illumination and direct fog scattering once. Zero represents no visible output.
+
+With `pseudo-fixture` enabled, Afterglow’s projected `beam-footprint` gives
+Studio the center, axes and radii of the ellipse on the receiving surface.
+The top of the stage, the three opaque room walls, the floor and finite custom
+receiver panels participate. The preview tests five points on the ellipse
+against actual scene meshes. An intervening curtain, speaker, truss or other
+fixture removes the blocked sample from the reflected energy. The remaining
+area drives a colored diffuse lobe directed back into the room. Its intensity
+depends on distance, incidence, material albedo and the fog along the incident
+path. Nearby surfaces receive more of this spill. The ellipse radius bounds
+near-field irradiance. A shadow map tests visibility on the reflected path.
+
+The phone and iPad quality tiers allocate one shadowed reflection, the desktop
+tiers up to two, only for rigs opting in. A fixed light pool follows the strongest
+available patches. A changed color, occluded patch or blackout updates that pool
+from the committed output. Surface textures use mean linear reflectance. The
+five samples approximate clipped and partly shadowed areas for one diffuse
+reflection. The resulting preview lights have no DMX address.
+
+`npm run preview:test` runs the browser test files sequentially so independent
+software WebGL contexts do not contend with the worker responsiveness check.
+
 The pipeline is opaque linear-HDR color plus depth → spatial fog integration →
 bilateral depth-aware fog upsample/composite → restrained bloom → ACES/sRGB.
 Fog occupies the entire room. Direct cone intervals are analytic, so narrow

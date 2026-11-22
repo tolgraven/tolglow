@@ -76,7 +76,7 @@ export class FogField {
   }
 
   setRoom(room) {
-    if (!Array.isArray(room) || room.length !== 3 || room.some(v => !Number.isFinite(v) || v < 0.1 || v > 1000)) throw new Error('Invalid fog room');
+    if (!Array.isArray(room) || room.length !== 3 || room.some(v => !Number.isFinite(v) || v <= 0)) throw new Error('Invalid fog room');
     if (this.room?.every((v, i) => v === room[i])) return false;
     this.room = [...room]; this.spacing = room.map((v, i) => v / this.grid[i]);
     this.clear(this.initialHaze);
