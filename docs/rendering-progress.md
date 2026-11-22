@@ -179,3 +179,23 @@ layout, buffer ownership and transport sequence behavior.
 Physical Art-Net destinations, fixtures, moving-head calibration, hardware GPU,
 iPad Safari performance and longer-running full-show deadlines remain separate
 evidence gates. Tests and benchmarks here did not drive physical lighting.
+
+### Reusing declarative effects
+
+The show compiler binds numeric output calculations to the inputs in their
+validated definitions. A static color holds while the transport advances.
+An expression reading a parameter runs again when modulation, a response or
+an operator changes that parameter's effective value. Absolute and elapsed
+time or beats enter the key only when the expression reads them. Bar and
+phrase expressions also include the relevant meter. A CPU batch captures
+fixture order and positions in its rig-specific plan. Across equal inputs
+it can reuse an owned copy of the previous numeric result. Current envelopes
+are applied afterwards. The GPU session applies the same principle to the
+actual uniforms of its resident shader. Its `:draws` count can be inspected
+under the expression session in the show's compute status.
+
+For a code effect, bind a fresh `afterglow.runtime.reuse/step` when compiling
+the definition. Declare input paths such as `[:frame :beat]`,
+`[:instance :params :gain]`, `[:state :previous]`, or paths into a subscription
+snapshot. An arbitrary Clojure callback keeps its normal invocation behavior.
+[Afterglow's pure step contract](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/pure-effect-reuse.md)

@@ -25,3 +25,9 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
   functions. The show binds Afterglow’s render compute API. Keep native queue,
   draw, wait, calibration and fallback code in the fork.
   [Native show configuration](../../../docs/native-shader-show.md)
+
+The show supplies `:bind-pure` when compiling a rig. For pure outputs derive
+parameter, position and clock paths from the validated expression. Apply current
+response and modulation inputs first. Apply envelopes to the frame's owned
+arrays after the pure field evaluation. Upstream layer values are inputs to
+any compound transform that uses them. Rebind on definition or rig changes.
