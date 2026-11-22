@@ -2,7 +2,7 @@
  :hz 40
  :init {:components [:show]
         :modules [:fixtures :cue-pages :show-state :sensors :sensor-osc :osc :clock-sync :audio :waveforms :expressive
-                  :lighting-capacity :fog-control :lighting-scenes :agents :web-server]
+                  :lighting-capacity :lighting-budget :output-response :lighting-activity :fog-control :lighting-scenes :agents :web-server]
         :post []}
  :web-server {:enabled true :host "127.0.0.1" :port 8500}
  :fixtures {:enabled false}
@@ -16,6 +16,9 @@
  :waveforms {:enabled false}
  :expressive {:enabled false}
  :lighting-capacity {:enabled false}
+ :lighting-budget {:enabled false}
+ :output-response {:enabled false}
+ :lighting-activity {:enabled false}
  :fog-control {:enabled false}
  :lighting-scenes {:enabled false :groups []}
  :agents {:enabled false}}

@@ -43,6 +43,8 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
+            [tolglow.show.lighting :as lighting]
+            [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -102,6 +104,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
@@ -139,6 +142,8 @@
                      :fog-control (fog-control/view (:fog-control output))
                      :preview-only? true
                      :lighting-capacity (:lighting-capacity output)
+                     :lighting-budget (:lighting-budget output)
+                     :lighting-activity (:lighting-activity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :compute (compute/status (:compute runtime))
@@ -196,6 +201,7 @@
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
+         _ (lighting/validate! (:settings model))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
@@ -287,7 +293,7 @@
     (cond-> (-> model
                 subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
-                (update :variables dissoc :audio :sync :surface-aim)
+                (update :variables dissoc :audio :audio/energy :lighting/activity :lighting/budget :sync :surface-aim)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
       (:auto model) (update :auto assoc :enabled? false :state nil :reasons [])
       (seq configs) (assoc-in [:settings :modulation :saved-controllers] configs)
@@ -556,7 +562,7 @@
         (output-scheduler/validate-options (:presentation values)))
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
-            settings (merge (get-in model [:settings scope]) values)
+            settings (lighting/edit-settings scope (get-in model [:settings scope]) values)
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
@@ -597,12 +603,26 @@
       (vreset! cache {:patch patch :plan (capacity/prepare patch)}))
     (:plan @cache)))
 
+(defn- measure-sources [runtime {:keys [model output]} ids]
+  (when (seq (:universes output))
+    (let [fixtures (get-in model [:rig :fixtures])
+          cached @(:patch runtime)
+          patch (if (identical? fixtures (:fixtures cached)) (:compiled cached) (render/compile-patch fixtures))
+          meter @(:capacity-plan runtime)
+          plan (if (identical? patch (:patch meter)) (:plan meter) (capacity/prepare patch))]
+      (capacity/measure-sources plan (:universes output) ids))))
+
+(defn source-brightness
+  "Measure selected fixture IDs from one committed frame, on their own and rig-wide full-white references."
+  [runtime ids]
+  (measure-sources runtime @(:state runtime) ids))
+
 (defn- advance-light-scenes [runtime model patch frame now-ms bypass?]
   (if (empty? (lighting-scenes/groups model))
     (do (when (seq @(:scene-plans runtime)) (vreset! (:scene-plans runtime) {})) model)
     (let [cache (:scene-plans runtime)
           next-cache (lighting-scenes/meter-frame @cache patch (lighting-scenes/groups model) (:universes frame))
-          measured (update-vals (:plans next-cache) :actual)]
+          measured (update-vals (:plans next-cache) :measurement)]
       (vreset! cache next-cache)
       (lighting-scenes/feedback model measured now-ms bypass?))))
 
@@ -631,7 +651,7 @@
                                           (get-in model [:auto :config]) (get-in model [:auto :state]) time-ms)
           [model state] (reduce (fn [[m s] c]
                                   (let [{:keys [model ack]} (command m c time-ms)]
-                                    [model (if (and (= :accepted (:status ack)) (:instance-id ack))
+                                    [model (if (and (= :cue/launch (:op c)) (= :accepted (:status ack)) (:instance-id ack))
                                              (policy/record-launch s (:instance-id ack)) s)]))
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
@@ -679,11 +699,11 @@
                      before))]
     (when (and (:features captured) (= (:epoch model) (:epoch captured)))
       (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms time-ms
-                                         :energy-envelope (get-in captured [:features :energy-envelope])}))
+                                         :audio/energy (get-in captured [:features :audio/energy])}))
     (if (= (:epoch model) (:epoch captured))
       (cond-> model
         (:features captured) (routing/admit-audio (:features captured))
-        (:features captured) (assoc-in [:variables :audio :features] (:features captured))
+        (:features captured) (analysis/publish-features (:features captured))
         (seq (:events captured)) (as-> m (reduce
             (fn [acc event] (staging/collect acc :audio {:kind :audio :id (or (get-in event [:source :id]) :analysis)} [event]))
             m (:events captured)))
@@ -944,7 +964,8 @@
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
                            meter-opts (get-in model [:settings :lighting-capacity])
-                           plan (when (:enabled? meter-opts) (capacity-plan! runtime patch))
+                           meter-plan (when (lighting/needs-meter? (:settings model)) (capacity-plan! runtime patch))
+                           plan (when (:enabled? meter-opts) meter-plan)
                            audio @(:capacity-audio runtime)
                            previous (when (= (:epoch model) (get-in before [:model :epoch]))
                                       (get-in before [:output :lighting-capacity]))
@@ -980,18 +1001,27 @@
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
                            result (:result resolved)
-                           frame (cond-> (:output resolved)
+                           finished (when (or (get-in model [:settings :output-response :enabled?])
+                                              (get-in model [:settings :lighting-budget :enabled?])
+                                              (get-in model [:settings :lighting-activity :enabled?]))
+                                      (lighting/finish-frame before (:model result) patch meter-plan (:output resolved)
+                                        (into (:contributions result) extra-blocks) time-ms
+                                        (or photo-session (calibration/current model))
+                                        (or (pause-look/blackout? model) (zero? (:master model)))
+                                        (get limit :effective-master (:master model))))
+                           delivered (or (:frame finished) (:output resolved))
+                           frame (cond-> delivered
                                    setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
                                    plan (assoc :lighting-capacity
-                                               (merge limit (capacity/measure plan (get-in resolved [:output :universes]))
+                                               (merge limit (capacity/measure plan (:universes delivered))
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
                        {:model (let [with-fog (cond-> (:model result)
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
-                                     updated (advance-light-scenes runtime with-fog patch frame time-ms bypass?)]
+                                     updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :fault-events (:fault-events result)
+                        :output frame :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
@@ -1193,11 +1223,12 @@
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
+          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
       :inspect (project-snapshot runtime state)
-      :inspect-lighting (venue-tools/inspect state payload)
+      :inspect-lighting (venue-tools/inspect state payload #(measure-sources runtime state %))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn push-browser-display

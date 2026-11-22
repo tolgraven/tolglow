@@ -1,0 +1,74 @@
+(ns tolglow.show.lighting
+  "Settings and frame ordering for Tolglow's optical and performance controls."
+  (:require [tolglow.lighting-activity :as activity]
+            [tolglow.lighting-budget :as budget]
+            [tolglow.lighting-capacity :as capacity]
+            [tolglow.output-response :as response]))
+
+(defn activity-settings [options]
+  (when-not (and (map? options) (every? #{:enabled?} (keys options))
+                 (boolean? (:enabled? options)))
+    (throw (ex-info "Lighting activity requires a boolean :enabled?" {:settings options})))
+  options)
+
+(def validators
+  {:lighting-budget budget/settings :output-response response/settings :lighting-activity activity-settings})
+
+(defn validate! [settings]
+  (doseq [[scope validate] validators :when (contains? settings scope)]
+    (validate (get settings scope))))
+
+(defn- edit-groups [current changes]
+  (when-not (map? changes) (throw (ex-info "Group settings require a map" {})))
+  (reduce-kv (fn [groups id edit]
+               (if (nil? edit) (dissoc groups id)
+                 (assoc groups id (merge (get groups id) edit))))
+             (or current {}) changes))
+
+(defn edit-settings
+  "A group patch edits only the specified controls. A nil group removes its
+  override. Individual controls such as a duration or parameter binding are
+  replaced as a unit."
+  [scope current edit]
+  (let [scoped? (#{:lighting-budget :output-response} scope)
+        options (cond-> (merge current edit)
+                  (and scoped? (map? (:global edit)))
+                  (assoc :global (merge (:global current) (:global edit)))
+                  (and scoped? (contains? edit :groups))
+                  (assoc :groups (edit-groups (:groups current) (:groups edit))))]
+    (when-let [validate (validators scope)] (validate options))
+    options))
+
+(defn needs-meter? [settings]
+  (or (get-in settings [:lighting-capacity :enabled?]) (get-in settings [:lighting-budget :enabled?])
+      (get-in settings [:lighting-activity :enabled?])))
+
+(defn finish-frame
+  "Apply responses to the resolved look, enforce the shared budget and score
+  the actual result. Only committed frames carry temporal state forward."
+  [before model patch plan frame blocks time-ms calibration? hard-off? ceiling]
+  (let [same-rig? (and (= (:epoch model) (get-in before [:model :epoch]))
+                       (identical? (:rig model) (get-in before [:model :rig])))
+        previous (when same-rig? (:lighting-history before))
+        settings (:settings model)
+        response? (get-in settings [:output-response :enabled?])
+        shaped (when response? (response/advance (:response previous) model patch frame
+                                 (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
+                                 ceiling (when same-rig? (:output before))))
+        shaped-frame (or (:frame shaped) frame)
+        budget? (and (get-in settings [:lighting-budget :enabled?]) (not calibration?) (not hard-off?))
+        delivered (if budget? (budget/apply-frame model patch plan shaped-frame) shaped-frame)
+        scoring? (get-in settings [:lighting-activity :enabled?])
+        scored (when scoring?
+                 (let [sources (capacity/measure-sources plan (:universes delivered) (keys (:source-capacities plan)))]
+                   (activity/advance (:activity previous) patch sources delivered blocks time-ms)))]
+    {:frame (cond-> delivered scored (assoc :lighting-activity (:report scored)))
+     :state (when (or shaped scored)
+              {:response (:state shaped) :activity (:state scored)})}))
+
+(defn publish [model frame]
+  (let [usage (:lighting-budget frame)]
+    (cond-> (activity/publish model (:lighting-activity frame))
+      usage (assoc-in [:variables :lighting/budget] usage)
+      (and (nil? usage) (contains? (:variables model) :lighting/budget))
+      (update :variables dissoc :lighting/budget))))
