@@ -20,3 +20,15 @@ channel, during blackout, while the independent publisher waits for a fresh
 frame, and on shutdown. When repatching, the output continues to send that
 endpoint on the old addresses until another channel or fixture footprint owns
 them. This includes coarse/fine pairs spanning two universes.
+
+## Calibrate a room with the iPhone
+
+Mount the phone with a fixed view through the room to a stationary, steadily illuminated bright patch and an adjacent dark patch. Measure the distance to the patches. Start the scan in the iPhone rig screen, capture clear air, run a normal fog cue, then switch the cue off and continue recording while the room clears. The phone locks exposure and white balance. The scan endpoint does not issue a fog cue. Leave the illumination, doors, ventilation and camera position steady for that measurement.
+
+The **fit** operation compares the loss of image contrast with flow from the selected fogger at the actual successful DMX send times. It estimates total clearance half-life, the time for the nozzle plume to mix, and how much light a unit of this fog extinguishes per metre. The fit runs off the live render thread. An unmetered burst can yield a clearance half-life from the clearing tail. A change of fluid or ventilation calls for a new scan. Review the fitted parameters and score, then **apply** to store them in the rig and serialized show. Cancel leaves the previous calibration in place. Raw camera frames stay on the phone.
+
+The room's measured half-life includes both fluid losses and ventilation. Each render uses that total once. Read `(get-in (tolglow.show/snapshot runtime) [:output :atmosphere :fog-level])` for the estimated fraction of contrast lost in the mixed room across the measured sightline. For example, a level of 0.3 means a target retained 70% of its clear-air contrast. The near-nozzle plume can be much denser. The same projection carries `:mixed-density`, `:extinction-per-m`, `:reference-path-m`, and the timestamp of the last presented fogger value.
+
+The native app uses the Ring endpoint `/api/fog-calibration`. A GET returns the runtime, show epoch, selectable nozzles and the current session. Headless commands go through `tolglow.show/submit!` with type `:fog-calibration`, operation `:start`, `:samples`, `:fit`, `:apply` or `:cancel`, and the same session ID, runtime ID and expected epoch. Sample timestamps are elapsed milliseconds from capture start. Sending an identical batch twice is supported. Saved shows retain the applied venue and fixture calibration. In-progress capture belongs to the particular room, physical clock and phone session.
+
+During acquisition, a stable clear reference also publishes the latest direct observation as the show variable `:fog/observed-level`. `:fog/observation` supplies its sightline length, phase, scan ID, show epoch and monotonic sample time so code can distinguish a fresh reading from a historical one. The simulator and setpoint controller use the evolving room model between observations.
