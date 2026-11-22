@@ -62,6 +62,7 @@
 (rf/reg-event-fx ::enable (fn [{:keys [db]} [_ section on?]] (write-settings db section on?)))
 
 (rf/reg-sub ::report (fn [db _] (get-in db [:server-projection :view :autopilot])))
+(rf/reg-sub ::effective-enabled :<- [::report] (fn [report _] (true? (:enabled? report))))
 (rf/reg-sub ::page-ids
   (fn [db _] (mapv (juxt :id #(or (:name %) (events/wire-id (:id %))))
                     (get-in db [:server-projection :view :pages]))))
@@ -235,10 +236,10 @@
         controls (edited :autopilot settings draft)
         busy? @(rf/subscribe [::busy])
         ui @(rf/subscribe [::policy/form])
-        run @(rf/subscribe [::report])]
+        running? @(rf/subscribe [::effective-enabled])]
     [:section.panel.scene-controls.conduct {:aria-label "Energy autopilot"}
      [:header [:h2 "Energy autopilot"] [enable :autopilot "Enable autopilot" (:enabled? settings) busy?]]
-     (when (and (:enabled? run) (not (:enabled? settings)) (:enable-cue settings))
+     (when (and running? (not (:enabled? settings)) (:enable-cue settings))
        [:p.conduct-action (str "Running with cue " (events/wire-id (:enable-cue settings)))])
      [telemetry]
      [settings-panel controls draft (:signals controls {}) busy?]
