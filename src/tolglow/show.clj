@@ -212,6 +212,7 @@
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
@@ -330,13 +331,11 @@
                               (assoc p field s) p))) payload
                         [[:cue-id (get-in model [:registry :cues])]
                          [:page-id (:pages model)]])]
-    (let [payload (targets/resolve-command model payload (spatial/selection-members model payload time-ms))
-          result (control/apply-command model
+    (let [result (spatial/apply-command model
                           (merge {:command-id (str (UUID/randomUUID))
                                  :show-id (:show-id model) :epoch (:epoch model)
                                  :source {:adapter :studio :session-id "studio"}}
                                  payload {:time-ms time-ms}))
-          result (targets/remember result payload)
           result (if (and (= :accepted (get-in result [:ack :status]))
                           (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
                    (update result :model
@@ -590,6 +589,7 @@
                      (update :pause-look pause-look/normalize))
             settings (if (= scope :spatial) (spatial/edit-settings (get-in model [:settings scope]) values)
                        (lighting/edit-settings scope (get-in model [:settings scope]) values))
+            _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]

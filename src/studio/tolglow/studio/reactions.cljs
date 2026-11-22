@@ -22,7 +22,8 @@
 (defn- report! [kind id args error]
   (let [owner (some #(when (and (map? %) (or (:instance-id %) (:cue-id %)))
                        (select-keys % [:instance-id :cue-id])) args)
-        fault (merge owner {:kind kind :id id :at (.now js/Date)
+        wire-id (cond (keyword? id) id (nil? id) "unknown" :else (.slice (pr-str id) 0 128))
+        fault (merge owner {:kind kind :id wire-id :at (.now js/Date)
                             :message (.slice (str (or (.-message error) error)) 0 1024)
                             :stack (some-> (.-stack error) (.slice 0 4096))})]
     ;; Reporting itself updates app-db. Deduplicate repeated failures so a

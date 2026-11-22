@@ -8,7 +8,7 @@ A mounted Reagent component can subscribe to a named Afterglow signal for the li
     [:span (str (count members) " members")]))
 ```
 
-Use `:studio/remote-result` to distinguish a successful `{:value nil}`, loading (`nil`) and a rejected or unavailable query (`{:error ...}`). Studio exposes the musical clock and `:spatial/body` and `:spatial/members` by default. Add IDs for show-specific read models to `[:settings :studio :public-queries]` in the show model.
+Use `:studio/remote-result` to distinguish a successful `{:value nil}`, loading (`nil`) and a rejected or unavailable query (`{:error ...}`). Studio exposes the musical clock and the `:spatial/scene`, `:spatial/body` and `:spatial/members` queries by default. The visible rig preview shares one scene lease across all volumes. Add IDs for show-specific read models to `[:settings :studio :public-queries]` in the show model. Public names may be registered during the show. An existing client acquires their first valid value at the next publication.
 
 The state WebSocket carries the union of a tab’s queries using `{:op :queries :queries [[id ...] ...]}`. The server shares an Afterglow lease across tabs asking the same query, coalesces updates to at most 40 Hz, and waits for acknowledgment of each delivery. Changing a query set, reconnecting, resyncing, or replacing a show establishes a fresh baseline. Otherwise a packet contains typed changed paths relative to the acknowledged token. A full checkpoint follows 240 deltas by default. A consumer that needs only its selected signals can open `/api/state/stream?view=queries&session=<id>`; unchanged values produce no traffic on this stream. An empty query set, unmounted component, hidden tab, or closed socket releases demand on the relevant producers.
 

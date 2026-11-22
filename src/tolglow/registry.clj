@@ -9,6 +9,16 @@
             [afterglow.control.system :as system]
             [afterglow.control.targets :as selection]))
 
+(defn valid-public-query-ids?
+  "Show-configured subscriptions exposed to Studio are an explicit collection of names."
+  [ids]
+  (or (nil? ids) (and (or (vector? ids) (set? ids)) (every? keyword? ids))))
+
+(defn validate-public-query-ids! [ids]
+  (when-not (valid-public-query-ids? ids)
+    (throw (ex-info "Studio public queries must be a vector or set of keyword IDs"
+                    {:path [:settings :studio :public-queries]}))))
+
 (defn finite-number? [x]
   (and (number? x) (Double/isFinite (double x))))
 

@@ -319,3 +319,41 @@
           (finally (.abort ^WebSocket (:socket a)) (.abort ^WebSocket (:socket b)))))
       (finally (stream/close! hub) (.stop server) (rx/close! graph)
                (when-not (identical? @owner graph) (rx/close! @owner))))))
+
+(deftest live-registration-repairs-a-missing-query-without-reconnecting
+  (let [query [:custom/late]
+        model {:epoch 1 :show-id :test :settings {:studio {:public-queries [:custom/late]}}}
+        graph (rx/create-system model)
+        hub (stream/create identity (constantly nil) {:runtime-id "test" :get-graph (constantly graph)})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (stream/publish! hub {:model model})
+      (let [socket (connect server "live&view=queries")]
+        (try
+          (acknowledge socket (receive socket))
+          (send-control socket {:op :queries :queries [query]})
+          (let [absent (receive socket)]
+            (is (= :unavailable (get-in absent [:view :subscriptions query :error])))
+            (acknowledge socket absent)
+            (rx/reg-sub! graph (first query) (constantly nil) {:validate number?})
+            (stream/publish! hub {:model model})
+            ;; A registered source whose initial value fails validation also remains unavailable.
+            (let [invalid (receive socket) unavailable (apply-patch (:view absent) invalid)]
+              (is (= {:error :unavailable} (get-in unavailable [:subscriptions query])))
+              (acknowledge socket invalid)
+              (rx/reg-sub! graph (first query) (constantly 42))
+              (rx/publish! graph model)
+              (stream/publish! hub {:model model})
+              (let [updated (receive socket) fixed (apply-patch unavailable updated)]
+              (is (= {:value 42} (get-in fixed [:subscriptions query])))
+              (acknowledge socket updated)
+              ;; Custom hosts can provide projections without the show's configuration admission.
+              (stream/publish! hub {:model (assoc-in model [:settings :studio :public-queries] :custom/late)})
+              (let [bad (receive socket) denied (apply-patch fixed bad)]
+                (is (= {:error :not-exposed} (get-in denied [:subscriptions query])))
+                (acknowledge socket bad))
+              (send-control socket {:op :client-fault :fault {:kind :event :id "custom-handler" :message "changed form"}})
+              (stream/publish! hub {:model model})
+              (is (some? (receive socket))))))
+          (finally (.abort ^WebSocket (:socket socket)))))
+      (finally (stream/close! hub) (.stop server) (rx/close! graph)))))

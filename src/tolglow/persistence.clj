@@ -250,6 +250,7 @@
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
+  (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
   (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))

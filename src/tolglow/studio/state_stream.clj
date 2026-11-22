@@ -194,7 +194,8 @@
 
 (defn- client-fault! [hub client session fault]
   (when-not (and (map? fault) (#{:event :source :subscription} (:kind fault))
-                 (keyword? (:id fault)) (string? (:message fault))
+                 (or (keyword? (:id fault)) (and (string? (:id fault)) (<= 1 (count (:id fault)) 128)))
+                 (string? (:message fault))
                  (every? #(or (nil? %) (string? %) (keyword? %))
                          (map fault [:stack :cue-id :instance-id])))
     (throw (ex-info "Invalid Studio fault" {})))
