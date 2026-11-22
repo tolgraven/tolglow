@@ -18,7 +18,7 @@ uniform float amount, time, mixedDensity;
 uniform int raySteps, lightCount;
 uniform vec3 lightPosition[16], lightDirection[16], lightColor[16];
 uniform vec3 lightShape[16]; // half-angle cosine, intensity, maximum distance
-uniform float lightPenumbra[16], lightHaloCos[16];
+uniform vec4 lightProfile[16]; // inner cosine, optical tangent, halo tangent increment, halo cosine
 uniform float lightStart[16]; // virtual apex to optical lens plane
 uniform vec3 ambientSky,ambientGround;
 uniform int lightShadow[16];
@@ -75,7 +75,7 @@ vec2 coneHit(int i,float angleCos,vec3 ro,vec3 rd,float lo,float hi){
 vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
   vec3 delta=position-lightPosition[i];float distance=length(delta);vec3 travel=delta/max(distance,.001);
   float cosine=dot(travel,lightDirection[i]);float outer=lightShape[i].x;
-  float inner=cos(acos(clamp(outer,-1.,1.))*(1.-lightPenumbra[i]));
+  float inner=lightProfile[i].x;
   float spot=smoothstep(outer,max(outer+.00001,inner),cosine);
   vec3 shadowPoint=position;
   float axial=dot(delta,lightDirection[i]);
@@ -84,13 +84,13 @@ vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
    // Forward scattering can illuminate the room just outside the optical
    // field. The additional width starts at zero at the actual lens.
    vec3 lateral=delta-axial*lightDirection[i];
-   float coreRadius=axial*tan(acos(outer));
-   float width=path*max(0.,tan(acos(lightHaloCos[i]))-tan(acos(outer)));
+   float coreRadius=axial*lightProfile[i].y;
+   float width=path*lightProfile[i].z;
    float radial=length(lateral), outside=radial-coreRadius;
-   if(outside<=0.||outside>=width||width<=0.)return vec3(0.);
+   if(width<=0.||outside>=width)return vec3(0.);
    spot=.26*(1.-exp(-min(20.,path*extinction)))*(1.-smoothstep(0.,width,outside));
    // Sample the shadow on the illuminated edge that feeds this halo.
-   shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*(.98*coreRadius/max(radial,.001));
+   shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*min(1.,.98*coreRadius/max(radial,.001));
   }
   float range=lightShape[i].z;
   if(spot<.00001||(range>0.&&distance>=range))return vec3(0.);
@@ -136,7 +136,7 @@ void main(){
   lightIntervals[i]=vec4(1.,0.,1.,0.);
   if(dot(lightColor[i],lightColor[i])>.000001 && lightShape[i].y>0.)
    lightIntervals[i]=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
-                          coneHit(i,lightHaloCos[i],eye,ray,start,finish));
+                          coneHit(i,lightProfile[i].w,eye,ray,start,finish));
  }
  float stepSize=(finish-start)/float(raySteps);
  float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
@@ -235,7 +235,7 @@ export class VolumetricFog {
       amount: { value: this.amount }, time: { value: 0 }, mixedDensity:{value:0}, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
       lightPosition: { value: vectors(16) }, lightDirection: { value: vectors(16) }, lightColor: { value: vectors(16) },
       lightShape: { value: vectors(16) }, lightShadow: { value: new Int32Array(16).fill(-1) },
-      lightPenumbra: { value: new Float32Array(16).fill(.55) }, lightHaloCos: {value:new Float32Array(16)},
+      lightProfile: {value: Array.from({length:16}, () => new THREE.Vector4())},
       lightStart: { value: new Float32Array(16) },
       ambientSky: { value: new THREE.Vector3() }, ambientGround: { value: new THREE.Vector3() },
       shadowMatrix: { value: Array.from({ length: 4 }, () => new THREE.Matrix4()) },
@@ -257,7 +257,17 @@ export class VolumetricFog {
     for (let i = 0; i < this.packed.length; i++) this.packed[i] = THREE.DataUtils.toHalfFloat(Math.min(65504,this.field.data[i]));
     this.density.needsUpdate = true; this.uploads++;
   }
-  setRoom(room) { if (this.field.setRoom(room)) { this.uniforms.room.value.fromArray(room); this.field.burst(); this.upload(); } }
+  setRoom(room) {
+    if (!this.field.setRoom(room)) return;
+    this.uniforms.room.value.fromArray(room);
+    if (this.showAtmosphere) {
+      this.showAtmosphere.suspend();
+      this.field.clear();
+    } else {
+      this.field.burst();
+    }
+    this.upload();
+  }
   setAmount(amount) { if (!Number.isFinite(amount)) throw new Error('Invalid fog amount'); this.amount = Math.max(0, Math.min(1, amount)); }
   setAmbient({color, intensity = 0, groundColor = color} = {}) {
     if (!Number.isFinite(intensity) || intensity < 0) throw new Error('Invalid atmosphere ambient intensity');
@@ -310,8 +320,11 @@ export class VolumetricFog {
       u.lightPosition.value[i].copy(light.virtualPosition || light.position); u.lightDirection.value[i].copy(light.direction).normalize();
       u.lightColor.value[i].set(light.color.r, light.color.g, light.color.b);
       u.lightShape.value[i].set(Math.cos(light.angle), Math.max(0, light.intensity ?? 1), Math.max(0, light.distance ?? 0));
-      u.lightHaloCos.value[i] = Math.cos(Math.max(light.angle, Math.min(1.54,light.angle+.23)));
-      u.lightPenumbra.value[i] = Math.max(0, Math.min(1, light.penumbra ?? .55));
+      const penumbra = Math.max(0, Math.min(1, light.penumbra ?? .55));
+      const haloAngle = Math.max(light.angle, Math.min(1.54, light.angle + .23));
+      const tangent = Math.tan(light.angle);
+      u.lightProfile.value[i].set(Math.cos(light.angle * (1 - penumbra)), tangent,
+        Math.tan(haloAngle) - tangent, Math.cos(haloAngle));
       u.lightStart.value[i] = Math.max(0, light.apexDistance ?? 0);
       if (light.shadow?.map?.depthTexture && shadows < this.budget.shadows) {
         if (light.shadow.map.depthTexture.compareFunction !== THREE.LessEqualCompare)

@@ -81,3 +81,18 @@ test('one cubic metre of room haze halves in concentration at twice the venue vo
     near(f.stats().massEstimate, 1);
   }
 });
+
+test('a second presentation at the same clock time may change the delivered DMX or venue', () => {
+  const model = new ShowAtmosphere(), volume = field();
+  const off = sample(100, [fogger('nozzle', [1, 1, 1], 0, 0, 0)]);
+  const on = sample(100, [fogger('nozzle', [1, 1, 1], 0, 0, 4)]);
+  assert.ok(model.accept('venue', off));
+  assert.equal(model.accept('venue', structuredClone(off)), false);
+  assert.ok(model.accept('venue', on));
+  assert.equal(model.sample.sources[0]['flow-m3-s'], 4);
+  model.suspend();
+  assert.equal(model.accept('venue', sample(50, [])), false);
+  assert.ok(model.accept('venue', sample(100, [], .6)));
+  model.paint(volume, 0);
+  near(volume.stats().massEstimate, .6);
+});

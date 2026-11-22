@@ -4,6 +4,17 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const nonnegative = (x) => Number.isFinite(x) && x >= 0;
 const vector = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 const MAX_PARCELS = 8;
+const sameVector = (a, b) => a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
+function sameSample(a, b) {
+  return a === b || (a['volume-m3'] === b['volume-m3'] && a['mixed-m3'] === b['mixed-m3'] &&
+    a['mixed-density'] === b['mixed-density'] && a.sources.length === b.sources.length &&
+    a.sources.every((v, i) => {
+      const w = b.sources[i];
+      return v['fixture-id'] === w['fixture-id'] && v['flow-m3-s'] === w['flow-m3-s'] &&
+        v['local-m3'] === w['local-m3'] && v['emitted-m3'] === w['emitted-m3'] &&
+        sameVector(v.position, w.position) && sameVector(v.direction, w.direction);
+    }));
+}
 
 function parcel(source, time, mass) {
   return {
@@ -140,7 +151,8 @@ export class ShowAtmosphere {
       return false;
     const epoch = JSON.stringify([identity, sample.epoch]),
       prior = this.sample?.['sample-time-ms'];
-    if (epoch === this.epoch && !this.rebase && time <= prior) return false;
+    if (epoch === this.epoch && (time < prior ||
+        (!this.rebase && time === prior && sameSample(sample, this.sample)))) return false;
     const fresh = this.rebase || epoch !== this.epoch || time - prior > 1000;
     const next = new Map(),
       priorVolume = this.localVolume,
