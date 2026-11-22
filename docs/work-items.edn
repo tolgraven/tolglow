@@ -32,11 +32,11 @@
    :acceptance ["Edit scope, targets, signal bindings, response and highlight behavior using the headless settings contract, and inspect decisions and measured output."]
    :evidence ["src/studio/tolglow/studio/autopilot_test.cljs exercises scoped edits, waveform bindings, per-stage response and ownership readback. dev/studio/autopilot-browser-qa.mjs drives the Ring-hosted Studio at tablet and phone viewport sizes. Hardware touch and display timing require device verification."]}
   {:id :render/conductor-frame-budget :title "Keep the measured conductor workload within the 40 Hz frame budget"
-   :kind :implementation :status :planned :owner nil
+   :kind :implementation :status :in-progress :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
    :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
    :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
-   :evidence ["The first full-frame run exceeded 25 ms on all 160 measured frames. Mixed integer coordinates now stay on the typed path when the scalar calculation coerces them to double. All 1,440 compared ArtDMX packets matched. Afterglow #52 kept every byte across another 120 frames and 18 universes. See docs/performance/lighting-controls.md and the master performance workflow's autopilot.edn for per-lane timings and deadline misses."]}
+   :evidence ["The first full-frame run exceeded 25 ms on all 160 measured frames. Mixed integer coordinates now stay on the typed path when the scalar calculation coerces them to double. All 1,440 compared ArtDMX packets matched. Afterglow #52 kept every byte across another 120 frames and 18 universes. Hosted run 45057636738 delivered all 160 measured conductor frames within 25 ms, ordinary p95 13.71 ms and decision p95 20.91 ms. Independent shared-host runs still recorded late decisions. The master profiler archives autopilot.edn for successive runs."]}
   {:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
    :acceptance ["Unequal lamps at the same achievable global target deliver comparable estimated brightness."] :evidence ["Tolglow #94 measures the same common brightness on unequal fixtures at approximately 30% and 60% local drive. Per-source readback includes the white and color-limited ceilings."]}

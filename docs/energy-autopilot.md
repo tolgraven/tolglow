@@ -74,7 +74,7 @@ A gain of two can bring an effect authored at 0.6 past full scale. HDR carries t
             :radius 1.0 :falloff :linear}})
 ```
 
-At 1.21, a channel has 0.21 of excess. Halfway to the edge of a linear spill radius, a receiver gets up to 0.105 before its own color mix, master and caps. Measure fixture positions in metres. Choose `:linear`, `:smoothstep` or `:quadratic` falloff. Spill is single-pass, so a receiving pixel does not start another halo. With explicit HDR enabled, the default whitening amounts are one and neighbor spill starts at zero. To keep the authored tint at the source or receiver, set its whitening amount to zero.
+At 1.21, a channel has 0.21 of excess. Halfway to the edge of a linear spill radius, a receiver gets up to 0.105 before its own color mix, master and caps. Measure fixture positions in metres. Choose `:linear`, `:smoothstep` or `:quadratic` falloff. Spill is single-pass, so a receiving pixel does not start another halo. With explicit HDR enabled, the default whitening amounts are one and neighbor spill starts at zero. To keep the authored tint at the source or receiver, set its whitening amount to zero. The direct Afterglow renderer uses these same whitening defaults for nonempty HDR options. An explicit empty `:hdr {}` requests a neutral clamp for metering.
 
 Put the same controls under the conductor’s `:hdr` entry to couple highlight behavior to that performance. When standalone HDR is enabled, it supplies the highlight treatment. The conductor still controls its selected sources. Fade overlapping effects with opacity. Use emission gain for a brighter contribution from the same effect. The normal `:instance/gain-set` command also accepts a per-instance gain.
 

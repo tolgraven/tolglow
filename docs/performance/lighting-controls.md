@@ -46,3 +46,5 @@ Each pass captures 4,680 ArtDMX packets over 18 universes. Packet comparisons, f
 | 10,000 sources, median controller CPU/decision | 15.26 ms | 9.81 ms | The same seeds yielded identical saved state, gains, actions and ordering |
 
 These measurements isolate individual stages on a shared development host. The full-show report includes scheduling and garbage collection, which affect both the tail latency and the number of missed deadlines. [Operator controls](../energy-autopilot.md)
+
+The first hosted mixed-rig run before the optimizations recorded 160 late conductor frames out of 160. A subsequent hosted run delivered all 160 within 25 ms. Its 144 ordinary frames had a 7.06 ms median and 13.71 ms p95. Its 16 decision frames had a 14.15 ms median and 20.91 ms p95. All 1,432 selected sources emitted in the last frame. Independent runs under shared local load had late decision frames. Each archive identifies both Git commits and the complete timing distribution. [Before](https://github.com/tolgraven/tolglow/actions/runs/45057167476) · [After](https://github.com/tolgraven/tolglow/actions/runs/45057636738)
