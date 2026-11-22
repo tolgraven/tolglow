@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {DEFAULT_EXTINCTION_PER_M} from './show-atmosphere.js';
 import {apertureRadius} from './optics.js';
 
 // Sample the finite patch rather than giving the entire cone's power to an
@@ -7,8 +8,8 @@ const DISK_SAMPLES = [[0, 0], [.68, 0], [-.68, 0], [0, .68], [0, -.68]];
 const vector = value => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
 const peak = color => Math.max(color.r, color.g, color.b);
 
-export function incidentTransmission(field, amount, origin, hit) {
-  if (amount <= 0) return 1;
+export function incidentTransmission(field, amount, origin, hit, extinctionPerM = DEFAULT_EXTINCTION_PER_M) {
+  if (amount <= 0 || extinctionPerM <= 0) return 1;
   const steps = 6, [w, h, d] = field.room, [nx, ny, nz] = field.grid;
   let density = 0;
   for (let i = 0; i < steps; i++) {
@@ -18,7 +19,7 @@ export function incidentTransmission(field, amount, origin, hit) {
     const z = (origin.z + (hit.z - origin.z) * t) / d + .5;
     density += field.sample(x * nx - .5, y * ny - .5, z * nz - .5);
   }
-  return Math.exp(-1.25 * amount * origin.distanceTo(hit) * density / steps);
+  return Math.exp(-extinctionPerM * amount * origin.distanceTo(hit) * density / steps);
 }
 
 function candidate(entry, light, footprint) {
@@ -126,12 +127,12 @@ export class SurfaceReflections {
     }
     for (let i = 0; i < this.patches.length; i++) this.lights[i].shadow.needsUpdate = true;
   }
-  illuminate(field, amount) {
+  illuminate(field, amount, extinctionPerM) {
     this.lights.forEach((light, index) => {
       const patch = this.patches[index];
       if (!patch) {light.intensity = 0; light.color.setRGB(0,0,0); return;}
       light.color.copy(patch.reflected);
-      light.intensity = patch.power * incidentTransmission(field, amount, patch.origin, patch.position);
+      light.intensity = patch.power * incidentTransmission(field, amount, patch.origin, patch.position, extinctionPerM);
       // A finite patch has bounded near-field irradiance. Store its radius
       // for the material shader, which softens the inverse-square denominator.
       light.userData.patchRadius = patch.radius;
