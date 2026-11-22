@@ -1,6 +1,6 @@
 # Shape a change in emitted light
 
-Output response runs after effects have been composed. Attack controls each rising emitter and release controls each falling emitter. A moving head can pan immediately while its color continues to fade. A cue can end while its last light remains visible. The shared output budget still caps the result.
+Output response runs after effects have been composed. Attack controls each rising emitter and release controls each falling emitter. A moving head can pan immediately while its color continues to fade. A cue can end while its last light remains visible. A shutter that closes can cut off that light immediately. The shared output budget still caps the result.
 
 In Studio, open the performance controls and choose a **Response** for attack and release independently.
 

@@ -1,6 +1,7 @@
 (ns tolglow.output-response.scopes
   "Resolve output response scopes against the actual patch and composed writers."
   (:require [afterglow.render.emission :as emission]
+            [afterglow.render.frame :as frame]
             [clojure.set :as set]
             [tolglow.lighting-activity :as activity]
             [tolglow.lighting-scenes :as scenes]))
@@ -18,24 +19,23 @@
            (contains? (:compositions config) run) (update [:compositions run] set/union heads))))
      {} targets)))
 
-(defn- still-falling? [patch prior-frame frame id]
-  (when-let [fixture (and prior-frame (get-in patch [:by-id id]))]
-    (let [old (emission/emitted-levels fixture prior-frame)
-          goal (emission/emitted-levels fixture frame)]
-      (some (fn [[k x]] (> x (get goal k 0.0))) old))))
-
 (defn- release-tails [patch previous config active prior-frame frame]
-  (reduce-kv
-   (fn [tails key before]
-     (if-not (get-in config key) tails
-       (let [departed (set/difference before (get active key #{}))
-             ongoing (into #{} (filter #(still-falling? patch prior-frame frame %)) departed)]
-         (cond-> tails (seq ongoing) (assoc key ongoing)))))
-   {} (merge-with set/union (:active previous) (:tails previous))))
+  (when (and prior-frame (or (seq (:tails previous)) (not= active (:active previous))))
+    (let [falling (delay (emission/falling-heads patch prior-frame frame))
+          retained? (fn [id]
+                      (when-let [i (get-in patch [:by-id id ::frame/index])]
+                        (aget ^booleans @falling (int i))))]
+      (reduce-kv
+       (fn [tails key before]
+         (if-not (:release (get-in config key)) tails
+           (let [present (get active key #{}) departed (if (= before present) #{} (set/difference before present))
+                 ongoing (into #{} (filter retained?) departed)]
+             (cond-> tails (seq ongoing) (assoc key ongoing)))))
+       {} (merge-with set/union (:active previous) (:tails previous))))))
 
 (defn- patch-members [model config]
   (let [scenes (scenes/groups model)]
-    (merge (into {} (map (fn [id] [[:groups id] (set (:fixture-ids (get scenes id)))])) (keys (:groups config)))
+    (merge (into {} (map (fn [id] [[:groups id] (:fixture-ids (get scenes id))])) (keys (:groups config)))
            (into {} (map (fn [id] [[:fixtures id] #{id}])) (keys (:fixtures config))))))
 
 (defn- invert [members]

@@ -72,7 +72,8 @@
               (reduce-kv #(assoc %1 [kind %2] (rates %3)) m (get configured kind)))
             {:global (rates (:global configured))} scopes/scopes)))
 
-(defn- slower [a b] (if (<= (first a) (first b)) a b))
+(defn- slower [[a linear-a :as left] [b _ :as right]]
+  (cond (< a b) left (> a b) right linear-a right :else left))
 
 (defn- stage-pair [rates [current tails]]
   (let [local (reduce #(merge-with slower %1 (get rates %2)) {} current)
