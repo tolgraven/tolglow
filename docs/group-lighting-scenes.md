@@ -13,7 +13,7 @@ In Studio, select a fixture group and choose its brightness reference. A source�
 
 For example, if a wash produces twice the full-white light of a spot, the wash at half and the spot at full can match. A higher common target takes the spot to its maximum. The source readback shows its local brightness, global brightness, highest achievable global brightness and whether it is limited. Measured full-white calibration gives the best comparison. Lamp wattage and emitter type supply estimates for unmeasured fixtures. [Fixture calibration](relative-fixture-brightness.md)
 
-Choose **Apply** for a first look or **Vary** for a different effect. Tolglow chooses an eligible emission effect for the group, varies allowed parameters within their recommended ranges, and measures the resulting output. A steady group target controls a low-priority scene instance. **Release** stops that instance. You can use patch groups or explicit fixture IDs. Simultaneously regulated scene groups must be disjoint. Manual cues keep their usual priorities.
+Choose **Apply target** for a first look, then **Something different** to vary it. Tolglow chooses an eligible emission effect for the group, varies allowed parameters within their recommended ranges, and measures the resulting output. A steady group target controls a low-priority scene instance. **Release group** stops that instance. You can use patch groups or explicit fixture IDs. Simultaneously regulated scene groups must be disjoint. Manual cues keep their usual priorities.
 
 ```clojure
 (require '[tolglow.show :as show])
@@ -26,7 +26,7 @@ Use `:effect-ids` to limit the registry candidates, `:params` for explicit param
 
 ## Limit simultaneous light
 
-Apply a lighting budget when a composition calls for a few bright sources and the rest at a dim standby level. A budget is a ceiling. A sparse effect can use less. The allocator considers the combined frame, including manual launches and overlapping cues. Its wattage estimate uses rated emitter capacity and requested light output. Use the estimate to balance a look. Electrical circuit loading requires a power measurement.
+Apply a lighting budget when a composition calls for a few bright sources and the rest at a dim standby level. A sparse effect can use less than the budget. The allocator considers the combined frame, including manual launches and overlapping cues. Its wattage estimate uses rated emitter capacity and requested light output. Use the estimate to balance a look. Electrical circuit loading requires a power measurement.
 
 ```clojure
 (show/submit! runtime :settings
@@ -41,12 +41,12 @@ Apply a lighting budget when a composition calls for a few bright sources and th
 In this example, up to four sources can run above standby, including up to two in the front group. Three cues can address six of nine heads and still share that one limit. Auto mode considers the combined demand when it chooses a cue and can retire its own earlier cues to make room. Manual launches also pass through the final cap.
 
 - **Which sources stay bright?** The allocator admits them in fixture order. Supply `:fixture-order` to put particular heads first. Among admitted sources, `:proportional` shares the remaining watts and `:priority` spends those watts on the first heads in order.
-- **What happens to the others?** The default `:standby-mode :shed` preserves the tint of sources reduced to standby and leaves unused heads dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Authored black, zero master and blackout still take effect. If the standby look alone would exceed the watt budget, its level falls too.
+- **What happens to the others?** `:standby-level` sets a fraction of emitter drive. The default `:standby-mode :shed` preserves the tint of sources reduced to standby and leaves unused heads dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Authored black, zero master and blackout still take effect. If the standby look alone would exceed the watt budget, its level falls too.
 - **What did the show actually use?** Read `(get-in (show/variables runtime) [:lighting/budget :global])` for the active and shed counts, requested watts and delivered watts. The same fields are available under `[:lighting/budget :groups group-id]`. A powered lamp behind a closed shutter consumes estimated watts and leaves its visible-source slot free.
 
 ## Shape visual activity
 
-Enable `:lighting-activity` to read scores from the final lighting output. A sustained wash, a fast strobe and a moving sparkle can have similar average brightness and very different scores. Coverage matters. A single sparkling head contributes less to the whole scene than a bank of heads flashing together. The readback includes brightness, coverage, flashing, movement and strobe components. Inspect `[:lighting/activity :scene]`, `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups group-id]` in `(show/variables runtime)`.
+Enable `:lighting-activity` to read scores from the final lighting output. A sustained wash, a fast strobe and a moving sparkle can have similar average brightness and very different scores. Coverage matters. A single sparkling head contributes less to the whole scene than a bank of heads flashing together. The readback includes brightness, coverage, flashing, movement and strobe components. Inspect `[:lighting/activity :scene]`, `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups patch-group-id]` in `(show/variables runtime)`.
 
 To soften the look, set response durations on the rig or a group. Attack smooths rises in emitted light. Release smooths falling levels, including the tail when a cue ends. Longer values also soften abrupt waveform edges in a running cue. After one duration, the output has moved about 63% toward a held input. The activity meter sees the smoothed result. A physical strobe channel continues to flash at its commanded rate. A longer attack delays how quickly the flashes reach full brightness. Change the shutter command to alter their rate.
 
@@ -70,7 +70,7 @@ Auto mode can use the visual score when choosing its next cue. For a restrained 
 
 ## Trigger a look from sound
 
-`:audio/energy` names the normalized, smoothed RMS signal from the configured audio capture. The show variable uses that key, the patchbay source is `audio/energy`, and a subscriber to the `:audio/energy` event reads the same key in its event data. Silence measures zero and above-full-scale input saturates the control signal at one. The analyzer publishes the variable per measurement and throttles event delivery separately.
+`:audio/energy` names the normalized, smoothed RMS signal from the configured audio capture. The show variable uses that key, the patchbay source is `audio/energy`, and a subscriber to the `:audio/energy` event reads the same key in its event data. During silence the envelope decays toward zero. Its published value saturates at one. The analyzer publishes the variable per measurement and throttles event delivery separately.
 
 For continuous control, add `:target-var [:audio/energy]` to a lighting-scene request. For a new look on each loud passage, use a threshold with a lower rearm point. This example waits for audio energy to cross 0.4 and varies the front group once. A later reading at or below 0.15 rearms it.
 
@@ -88,6 +88,6 @@ A subscriber can also use the event value as the target with `:event-path [:data
 
 ## Ask Studio chat for a different look
 
-Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Vary** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
+Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Something different** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
 
-For rig-wide utilization, read `:lighting/rig` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Group metering benchmark](performance/group-feedback.md)
+For rig-wide utilization, read `[:lighting/rig :actual]` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Group metering benchmark](performance/group-feedback.md)

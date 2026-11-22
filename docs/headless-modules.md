@@ -28,10 +28,13 @@ The original show authoring namespaces remain available, including `tolglow.conf
 
 ## Start a calibrated performance from configuration
 
-The default application configuration registers three optional modules after fixture patching and show restore. Enable them in the same EDN file that defines the rig. The following entries assume the rig contains a profiled fogger named `:stage-jet` and a group of lights named `:front`.
+The default application configuration registers optional performance modules after fixture patching and show restore. Enable them in the same EDN file that defines the rig. The following entries assume the rig contains a profiled fogger named `:stage-jet` and a group of lights named `:front`.
 
 ```clojure
 {:lighting-capacity {:enabled true}
+ :lighting-budget {:enabled true :global {:limit 0.55 :max-active 4 :standby-level 0.025}}
+ :output-response {:enabled true :global {:attack {:beats 1/4} :release {:beats 1}}}
+ :lighting-activity {:enabled true}
  :fog-control {:enabled true :target 0.30 :hysteresis 0.035 :fog-fixture-ids [:stage-jet]}
  :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.45}]}}
 ```
