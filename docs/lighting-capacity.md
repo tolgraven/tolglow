@@ -8,7 +8,7 @@ settings and show snapshot as Studio.
 
 The meter reads the actual coarse/fine DMX bytes across every patched universe.
 It decodes channel inversion and applies the physical dimmer once. It includes
-RGB, white (including warm and cold emitters), amber, UV and dimmer-only lamps. Fog channels and other utility
+RGB, white (including warm and cold emitters), amber, cyan, lime, UV and dimmer-only lamps. Fog channels and other utility
 channels do not add any light. A head with a pure UV emitter contributes to
 rated emitter drive and has zero modeled visible output. Heads with a measured
 relative full-white brightness use the calibrated value. Other rated fixtures

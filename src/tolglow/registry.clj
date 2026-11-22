@@ -129,8 +129,11 @@
         (map #(update % :path (fn [path] (assoc path 0 :saved-params))))
         (validate-params (:params effect {}) (:saved-params cue {}))))
 
-(def attributes #{:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
-                  :red :green :blue :white :amber :uv :shutter :iris :frost :speed})
+(def emitter-attributes (set (keys photometry/emitter-spectrum)))
+(def attributes (into emitter-attributes
+                      [:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
+                       :shutter :iris :frost :speed]))
+
 (def blends #{:replace :max :add})
 
 (defn output-entries
