@@ -169,7 +169,7 @@
         settings @(rf/subscribe [::settings scope])
         draft (get-in @(rf/subscribe [::form]) [:drafts [scope location]])
         saved (get-in settings location)
-        controls (merge {:limit 1.0 :strategy :proportional :standby-level 0.0} saved draft)
+        controls (merge {:limit 1.0 :strategy :proportional :standby-level 0.0 :standby-mode :shed} saved draft)
         edit #(edit! scope location %1 %2)]
     [:section.output-policy {:aria-label "Light output budget"}
      [:header [:h3 "Output budget"] [toggle scope "Enable budgets" (:enabled? settings) disabled?]]
@@ -186,7 +186,12 @@
         [:select {:value (name (:strategy controls))
                   :on-change #(edit :strategy (keyword (.. % -target -value)))}
          [:option {:value "proportional"} "Dim sources proportionally"]
-         [:option {:value "priority"} "Keep higher-priority sources"]]]]
+         [:option {:value "priority"} "Keep higher-priority sources"]]]
+       [:label "Standby behavior"
+        [:select {:value (name (:standby-mode controls))
+                  :on-change #(edit :standby-mode (keyword (.. % -target -value)))}
+         [:option {:value "shed"} "Dim shed sources"]
+         [:option {:value "all"} "Standby glow on idle sources"]]]]
       (when (= :priority (:strategy controls)) [fixture-priority location (:fixture-order controls []) edit])
       [apply-buttons scope location (seq draft) (some? saved) "Apply budget"]]]))
 

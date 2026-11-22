@@ -80,9 +80,11 @@ try {
   await policyEdit(() => budget.getByLabel('Enable budgets').check());
   await budget.getByLabel('Maximum active sources').fill('2');
   await budget.getByLabel('When over budget').selectOption('priority');
+  await budget.getByLabel('Standby behavior').selectOption('all');
   let saved = await apply(budget, 'Apply budget');
   assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
   assert.equal(saved.settings['lighting-budget'].global.strategy, 'priority');
+  assert.equal(saved.settings['lighting-budget'].global['standby-mode'], 'all');
 
   await controls.getByLabel('Budget and envelope scope').selectOption({ label: applied['group-id'] });
   await budget.getByLabel('Maximum active sources').fill('1');
