@@ -205,7 +205,7 @@
         policy (if (string? policy) (keyword policy) policy)
         calibration (merge (:calibration definition) (:calibration options))
         footprint (:footprint definition (reduce max 0 (filter integer? offsets)))
-        properties (into [:name :emission-color] photometry/fixture-keys)
+        properties (into [:name :emission-color :fogger] photometry/fixture-keys)
         candidate (merge (select-keys definition properties)
                          (select-keys options properties)
                          {:id (:id options) :fixture-type-id (:id definition) :fixture-type-version (:version definition)

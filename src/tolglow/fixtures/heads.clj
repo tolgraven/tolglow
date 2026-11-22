@@ -62,7 +62,7 @@
                         (fn [i head]
                           {:id (let [parent (:id options) id (str (name parent) "-head-" (inc i))]
                                  (if (keyword? parent) (keyword (namespace parent) id) id))
-                           :optics (select-keys head [:beam-angle :zoom-range-deg :lens-radius-m :pseudo-fixture])
+                           :optics (select-keys head [:beam-angle :zoom-range-deg :lens-radius-m :pseudo-fixture :fogger])
                            :local (mapv #(get head % 0) [:x :y :z]) :channels (channel-map (:channels head))})
                         heads)
             parts (cond->> head-parts (seq channels) (cons {:id (:id options) :channels channels}))
@@ -95,6 +95,7 @@
                                (assoc :position (world-position (:position options [0 0 0])
                                                                 (:rotation-deg options [0 0 0]) local)))]
                    (cond-> (instance authored where)
+                     (not (contains? channels :fog)) (dissoc :fogger)
                      (pos? emitters) (assoc :emission-share (if (emits? part) (/ 1.0 emitters) 0.0))
                      local (assoc :fixture-id (:id options)))))
                (range) sorted)}))))

@@ -76,7 +76,7 @@ in Studio’s fixture library. A placement can override the type. For example,
 
 `:beam-angle` is the full opening angle in degrees. Both it and the two optional
 `:zoom-range-deg` endpoints must be strictly between 0° and 180°. Give the zoom
-angles in DMX order. The lens radius is in metres. A head can have its own beam
+angles in DMX order. The lens radius is in metres. Set it to zero for a point aperture. A head can have its own beam
 angle, zoom range, lens radius and reflected-light setting. Omitting the
 reflection setting preserves the preview default.
 

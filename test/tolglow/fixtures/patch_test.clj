@@ -69,3 +69,11 @@
     (is (= [2.0 2.0 2.0] (mapv :measured-relative-brightness [master h1 h2])))
     (is (thrown? clojure.lang.ExceptionInfo
                  (patch/expand {:one single} {:spots {:universe 1 :list [[:one {:beam-angle -3}]]}})))))
+
+(deftest grouped-fogger-properties-follow-the-target-that-owns-its-fog-channel
+  (let [profile {:flow-m3-min 4.0 :mixing-seconds 8 :direction [0 1 0]}
+        fixture {:id :hybrid :version 1 :fogger profile
+                 :channels {:fog 1} :heads [{:channels {:red 2}}]}
+        [machine led] (patch/expand {:hybrid fixture} {:rig {:universe 1 :list [:hybrid]}})]
+    (is (= profile (:fogger machine)))
+    (is (not (contains? led :fogger)))))
