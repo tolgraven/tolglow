@@ -9,7 +9,7 @@
 
 (def rig {:fixtures
           (mapv (fn [id type address] {:id id :fixture-type-id type :universe 1 :address address
-                                       :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :amber 6 :uv 7}
+                                       :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :amber 6 :uv 7 :cold-white 8}
                                        :rgbw-policy :extract-min})
                 [:ref :spot :other-spot] [:wash :beam :beam] [1 11 21])})
 
@@ -41,14 +41,14 @@
       (is (= :rejected (:status (issue (assoc start :fixture-ids ["spot" "other-spot"])))))
       (is (= :accepted (:status (issue start))))
       (is (= :rejected (:status (issue {:op :apply :distance-m 1 :readings (readings)}))))
-      (is (every? zero? (take 7 (step "ref" "dark"))))
+      (is (every? zero? (take 8 (step "ref" "dark"))))
       (let [bytes (step "ref" "white")]
-        (is (= [255 255 255 255 255 255 0] (subvec bytes 0 7)))
-        (is (every? zero? (subvec bytes 10 17))))
+        (is (= [255 255 255 255 255 255 0 255] (subvec bytes 0 8)))
+        (is (every? zero? (subvec bytes 10 18))))
       (step "spot" "dark")
       (let [bytes (step "spot" "white")]
-        (is (every? zero? (subvec bytes 0 7)))
-        (is (= [255 255 255 255 255 255 0] (subvec bytes 10 17))))
+        (is (every? zero? (subvec bytes 0 8)))
+        (is (= [255 255 255 255 255 255 0 255] (subvec bytes 10 18))))
       (is (= :rejected (:status (issue {:op :apply :distance-m 1 :readings (assoc-in (readings) [1 :white] 1)}))))
       (is (= :accepted (:status (issue {:op :apply :distance-m 1 :readings (readings)}))))
       (let [m (:model @(:state rt))]
