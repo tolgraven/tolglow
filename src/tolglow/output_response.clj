@@ -55,60 +55,71 @@
     {:global (rates (:global configured))
      :groups (update-vals (:groups configured) rates)}))
 
-(defn- custom-memberships [model groups]
-  (reduce-kv
-   (fn [m group-id _]
-     (reduce #(update %1 %2 (fnil conj []) group-id) m (get-in (scenes/groups model) [group-id :fixture-ids])))
-   {} groups))
+(defn- scope-layout [model patch groups cached]
+  (when (seq groups)
+    (let [fixtures (:fixtures patch)
+          scenes (scenes/groups model)
+          members (into {} (map (fn [id] [id (:fixture-ids (get scenes id))])) (keys groups))]
+      (if (and (identical? fixtures (:fixtures cached)) (= members (:members cached))) cached
+        (let [custom (reduce-kv (fn [m id fixture-ids]
+                                  (reduce #(update %1 %2 (fnil conj #{}) id) m fixture-ids))
+                                {} members)
+              by-scope (reduce-kv
+                        (fn [m i fixture]
+                          (let [ids (into (get custom (:id fixture) #{}) (filter #(contains? groups %)) (:groups fixture))]
+                            (update m ids (fnil conj []) i)))
+                        {} fixtures)]
+          {:fixtures fixtures :members members :indices (update-vals by-scope int-array)})))))
 
-(defn- fixture-rates [rates group-ids]
-  ;; A local stage overrides the corresponding global stage. When patched
-  ;; groups overlap, their slowest specified stage wins independently.
-  (let [local (reduce (fn [a id] (merge-with min a (get-in rates [:groups id]))) {} group-ids)]
-    (merge (:global rates) local)))
+(defn- stage-pair [rates group-ids]
+  ;; A local stage overrides the global stage. If groups overlap, use their
+  ;; slowest specified stage independently for attack and release.
+  (let [local (reduce (fn [a id] (merge-with min a (get-in rates [:groups id]))) {} group-ids)
+        stages (merge (:global rates) local)]
+    (if (seq stages) [(:attack stages 1.0) (:release stages 1.0)] [-1.0 -1.0])))
 
-(defn- follow [current target attack release ceiling]
-  (reduce-kv
-   (fn [m attr goal]
-     (let [old (get current attr 0.0)
-           a (if (> goal old) attack release)
-           x (+ old (* a (- goal old)))
-           value (min ceiling (if (< (abs (- x goal)) 1.0e-9) goal x))]
-       (assoc m attr value)))
-   {} target))
+(defn- stage-coefficients [rates layout]
+  (let [indices (:indices layout)]
+    (if (<= (count indices) 1)
+      (stage-pair rates (first (keys indices)))
+      (let [n (count (:fixtures layout))
+            attack (double-array n)
+            release (double-array n)]
+        (doseq [[ids ^ints rows] indices]
+          (let [[rise fall] (stage-pair rates ids)]
+            (dotimes [j (alength rows)]
+              (let [i (aget rows j)]
+                (aset-double attack i (double rise))
+                (aset-double release i (double fall))))))
+        [attack release]))))
 
 (defn advance
-  "Return {:frame ... :state ...}. prior-frame is the previous committed output
-  from the same patch when enabling a new scope mid-show. The ceiling is the effective operator
-  master. Upper limits and hard blackout win over any remaining release tail.
-  Each state contains portable channel drives and the last logical clock only."
+  "Follow physical emitter output at the supplied show time. prior-frame is
+  the previous committed output from the same patch when enabling a new scope
+  mid-show. Hard blackout and the effective master take precedence over tails.
+  Retain the returned runtime history only for the same rig and epoch."
   ([previous model patch frame bypass?]
    (advance previous model patch frame bypass? (:master model 1.0) nil))
   ([previous model patch frame bypass? ceiling prior-frame]
    (let [opts (get-in model [:settings :output-response])]
-     (if (or (not (:enabled? opts)) bypass? (:blackout? model) (zero? ceiling))
+     (if (or (not (:enabled? opts)) (and (empty? (:global opts)) (empty? (:groups opts)))
+             bypass? (:blackout? model) (zero? ceiling))
        {:state nil :frame frame}
        (let [clock (time/frame-clock model)
-             prior (when (= (:epoch previous) (:epoch model)) previous)
-             clock-back? (and prior (or (< (:time-ms clock) (get-in prior [:clock :time-ms]))
-                                         (< (:beat clock) (get-in prior [:clock :beat]))))
-             prior (when-not clock-back? prior)
+             reset? (and previous
+                         (or (not= (:epoch previous) (:epoch model))
+                             (< (:time-ms clock) (get-in previous [:clock :time-ms]))
+                             (< (:beat clock) (get-in previous [:clock :beat]))))
+             prior (when-not reset? previous)
              rates (group-rates opts model (:clock prior clock) clock)
-             members (custom-memberships model (:groups opts))
-             ;; The caller supplies a prior packet only for the same compiled rig.
-             seed? (and prior-frame (= (:target-order patch) (:target-order prior-frame)))
-             [history changes]
-             (reduce
-              (fn [[history changes :as result] fixture]
-                (let [id (:id fixture)
-                      r (fixture-rates rates (concat (:groups fixture) (members id)))]
-                  (if (empty? r) result
-                    (if-let [target (emission/emitted-levels fixture frame)]
-                      (let [old (or (get-in prior [:levels id])
-                                    (when seed? (emission/emitted-levels fixture prior-frame)))
-                            filtered (follow old target (:attack r 1.0) (:release r 1.0) ceiling)]
-                        [(assoc history id filtered) (cond-> changes (not= target filtered) (assoc id filtered))])
-                      result))))
-              [{} {}] (:fixtures patch))]
-         {:frame (emission/with-emitted-levels patch frame changes)
-          :state {:epoch (:epoch model) :clock clock :levels history}})))))
+             layout (scope-layout model patch (:groups opts) (:layout prior))
+             coefficients (if (and (identical? layout (:layout prior)) (= rates (:rates prior)))
+                            (:coefficients prior)
+                            (stage-coefficients rates layout))
+             [attack release] coefficients
+             seed (when (and (not reset?) prior-frame (= (:target-order patch) (:target-order prior-frame)))
+                    prior-frame)
+             result (emission/follow-frame patch frame (:levels prior) seed attack release ceiling)]
+         {:frame (:frame result)
+          :state {:epoch (:epoch model) :clock clock :levels (:levels result)
+                  :layout layout :rates rates :coefficients coefficients}})))))
