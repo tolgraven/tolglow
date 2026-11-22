@@ -18,7 +18,7 @@
   (let [s (merge defaults opts)]
     (when-not (and (or (nil? opts) (map? opts)) (every? (set (keys defaults)) (keys opts))
                    (every? #(unit? (s %)) [:step :tolerance :standby-level :overshoot])
-                   (pos? (:step s)) (time/finite-number? (:max-gain s)) (<= 1 (:max-gain s))
+                   (time/finite-number? (:max-gain s)) (<= 1 (:max-gain s))
                    (integer? (:seed s)) (boolean? (:rotate? s))
                    (#{:gradual :instant} (:strategy s))
                    (#{:parameters :cues :generate :author} (:preference s))
@@ -75,7 +75,7 @@
         slack (* total extra)
         floor-scale (if (pos? floor) (min 1.0 (/ desired floor)) 1.0)
         boost? (> desired (reduce (fn [sum s] (+ sum (* (:level s) (:capacity s)))) 0.0 sources))
-        ; Scale all the way to physical full white where max-gain permits it.
+        ;; Scale all the way to physical full white where max-gain permits it.
         limit (if boost? max-gain 1.0)]
     (loop [remaining order left (max 0.0 (- desired floor)) gains (transient {})]
       (if-let [id (first remaining)]
@@ -89,10 +89,10 @@
           (recur (next remaining) (max 0.0 (- left grant)) (assoc! gains id (clamp 0.0 max-gain gain))))
         (persistent! gains)))))
 
-(defn- pending-at [pending clock]
+(defn- pending-at [pending clock coverage]
   (into [] (keep (fn [{:keys [timer] :as correction}]
                    (let [{:keys [done? progress]} (time/sample timer clock)]
-                     (when-not done? (assoc correction :remaining (- 1.0 progress)))))) pending))
+                     (when-not done? (assoc correction :remaining (max 0.0 (- 1.0 (/ progress coverage)))))))) pending))
 
 (defn- predicted [statistics pending axis]
   (clamp 0.0 1.0 (+ (double (get-in statistics [axis :mean] 0.0))
@@ -111,7 +111,7 @@
                  (and up? (or (= :cues prefer) dark?)) :launch
                  (and (not up?) (not= :parameters prefer)) :retire
                  :else :adjust)]
-    (cond-> {:op op :domain axis :direction (if up? :up :down) :amount (abs delta)
+    (cond-> {:op op :domain axis :direction (if up? :up :down) :amount (min 1.0 (abs delta))
              :fixture-ids ids :lit-fixture-ids lit-ids :max-gain (:max-gain options) :duration (:duration options)}
       (some? cue-ids) (assoc :cue-ids cue-ids))))
 
@@ -124,6 +124,98 @@
       (and (= 2 (count requests)) (every? create? requests)) [(first requests)]
       :else (vec requests))))
 
+(defn- active-ids [sources gains floor]
+  (into #{} (comp (filter #(> (level % (get gains (:id %) 1.0)) (+ floor 1e-9))) (map :id)) sources))
+
+(defn- allocate-order [sources state order wanted slack total opts]
+  (let [gains (allocate sources order wanted slack total opts)
+        active (active-ids sources gains (:standby-level opts))
+        previous (:active state)]
+    ;; A shuffled prefix can contain exactly the same lamps. Give one waiting,
+    ;; emitting source first pick when another selection is physically possible.
+    (if-let [id (when (and (:rotate? opts) (seq active) (= previous active))
+                  (let [waiting (into #{} (comp (remove #(active (:id %)))
+                                                (filter #(> (:level %) (:standby-level opts))) (map :id)) sources)]
+                    (some waiting order)))]
+      (let [order (into [id] (remove #{id}) order)
+            gains (allocate sources order wanted slack total opts)]
+        [order gains (active-ids sources gains (:standby-level opts))])
+      [order gains active])))
+
+(defn- light-plan [state sources brightness target opts]
+  (let [ids (mapv :id sources)
+        total (reduce + 0.0 (map :capacity sources))
+        seed (if (= (:initial-seed state) (:seed opts)) (:seed state) (:seed opts))
+        [seed order] (shuffled ids (:order state) seed (:rotate? opts))
+        delta (change brightness target opts)
+        now (weighted sources (:gains state) total)
+        ;; Preserve an authored pulse's duty cycle when translating average light
+        ;; to the instantaneous level at the top of that pulse.
+        duty (if (and (pos? now) (pos? brightness)) (min 1.0 (/ brightness now)) 1.0)
+        wanted (if (and (zero? target) (= :instant (:strategy opts))) 0.0
+                   (clamp 0.0 1.0 (+ now (/ delta duty))))
+        [order gains active] (cond
+                               (and (= :gradual (:strategy opts)) (zero? (:step opts)))
+                               (let [gains (into {} (map (fn [id] [id (get (:gains state) id 1.0)])) ids)]
+                                 [(:order state ids) gains (active-ids sources gains (:standby-level opts))])
+                               (some #(pos? (:level %)) sources)
+                               (allocate-order sources state order wanted (/ (:overshoot opts) duty) total opts)
+                               :else
+                               ;; An unlit sample can be the trough of a dimmer LFO.
+                               ;; Keep selected gains ready to respond to its next rise.
+                               [order (into {} (map (fn [id] [id (if (zero? target) 0.0
+                                                                        (get (:gains state) id 1.0))])) ids) #{}])
+        delivered (weighted sources gains total)
+        achieved (* duty (- delivered now))
+        residual (- delta achieved)
+        residual (if (= (pos? residual) (pos? delta)) residual 0.0)
+        request (cond (empty? ids) 0.0
+                      (> (abs residual) (:tolerance opts)) residual
+                      (not= :parameters (:preference opts)) delta
+                      :else 0.0)]
+    {:ids ids :gains gains :active active :order order :seed seed :before now
+     :lit (into [] (comp (filter #(pos? (level % (gains (:id %))))) (map :id)) sources)
+     :achieved achieved :residual residual :request request
+     :raw (weighted sources {} total) :wanted wanted :delivered delivered}))
+
+(defn- actions [light activity-change opts cue-ids]
+  (let [{:keys [ids lit before]} light
+        make-request #(request %1 %2 (zero? before) opts ids lit cue-ids)]
+    (if (empty? ids) []
+        (choose-actions (cond-> []
+                          (not (zero? (:request light))) (conj (make-request :brightness (:request light)))
+                          (not (zero? activity-change)) (conj (make-request :activity activity-change)))
+                        (:strategy opts)))))
+
+(defn- check-input! [sources targets]
+  (when-not (and (every? #(unit? (get targets %)) [:brightness :activity])
+                 (every? (fn [{:keys [id level capacity]}]
+                           (and (some? id) (unit? level)
+                                (time/finite-number? capacity) (not (neg? capacity)))) sources))
+    (throw (ex-info "Expected resolved energy targets and calibrated sources" {:targets targets})))
+  (when-not (= (count sources) (count (into #{} (map :id) sources)))
+    (throw (ex-info "Duplicate source IDs" {}))))
+
+(defn- append-correction [pending correction]
+  (let [pending (vec pending)]
+    (if (< (count pending) 64) (conj pending correction)
+        ;; Retain the aggregate pending response even at sub-beat decision rates
+        ;; where many more than 64 moves fit inside the averaging window.
+        (let [[a b] pending
+              scale (if (pos? (:remaining b)) (/ (:remaining a) (:remaining b)) 0.0)
+              merged (reduce (fn [m axis] (update m axis + (* scale (axis a)))) b [:brightness :activity])]
+          (conj (into [merged] (subvec pending 2)) correction)))))
+
+(defn- retain-correction [pending clock window light activity-change requested]
+  ;; Already issued changes enter a trailing window progressively. Account for
+  ;; the unobserved part before issuing another adjustment or launching a cue.
+  (let [axes (set (map :domain requested))
+        correction {:brightness (+ (:achieved light) (if (axes :brightness) (:residual light) 0))
+                    :activity (if (axes :activity) activity-change 0.0)
+                    :timer (time/start window clock) :remaining 1.0}]
+    (if (every? zero? ((juxt :brightness :activity) correction)) pending
+        (append-correction pending correction))))
+
 (defn advance
   "Consume resolved scalar targets and the rolling statistics of the delivered
   frame. Each raw source is {:id … :capacity full-white-weight :level 0..1}.
@@ -133,63 +225,25 @@
     (if-not (due? previous clock epoch options)
       {:state previous :gains (:gains previous {}) :actions [] :due? false :report (:report previous)}
       (let [opts (settings options)
+            _ (check-input! sources targets)
             state (when-not (restarted? previous clock epoch) previous)
-            _ (when-not (and (every? #(unit? (get targets %)) [:brightness :activity])
-                             (every? (fn [{:keys [id level capacity]}]
-                                       (and (some? id) (unit? level)
-                                            (time/finite-number? capacity) (not (neg? capacity)))) sources))
-                (throw (ex-info "Expected resolved energy targets and calibrated sources" {:targets targets})))
-            ids (mapv :id sources)
-            _ (when-not (= (count ids) (count (set ids))) (throw (ex-info "Duplicate source IDs" {})))
-            total (reduce + 0.0 (map :capacity sources))
-            [seed order] (shuffled ids (:order state) (get state :seed (:seed opts)) (:rotate? opts))
             window (or (:window statistics) (:interval opts))
-            pending (if (= window (:window state)) (pending-at (:pending state) clock) [])
+            membership (into {} (map (juxt :id (comp double :capacity))) sources)
+            pending (when (and (= window (:window state)) (= membership (:membership state)))
+                      (pending-at (:pending state) clock (max 1e-9 (:coverage statistics 1.0))))
             brightness (predicted statistics pending :brightness)
             activity (predicted statistics pending :activity)
-            light-change (change brightness (:brightness targets) opts)
+            light (light-plan state sources brightness (:brightness targets) opts)
             activity-change (change activity (:activity targets) opts)
-            now (weighted sources (:gains state) total)
-            ; Mean/instant is the observed duty factor for a repeating look.
-            ; Scaling a once-per-bar flash must preserve its authored dark time.
-            duty (if (and (pos? now) (pos? brightness)) (min 1.0 (/ brightness now)) 1.0)
-            wanted (clamp 0.0 1.0 (+ now (/ light-change duty)))
-            gains (if (some #(pos? (:level %)) sources)
-                    (allocate sources order wanted (/ (:overshoot opts) duty) total opts)
-                    ;; While all shutters/LFOs are dark, keep the previous selection
-                    ;; available for its next pulse, including a newly launched cue.
-                    (into {} (map (fn [id] [id (get (:gains state) id (if (pos? (:brightness targets)) 1.0 0.0))])) ids))
-            lit-ids (into [] (comp (filter #(pos? (level % (get gains (:id %) 1.0)))) (map :id)) sources)
-            delivered (weighted sources gains total)
-            change-achieved (* duty (- delivered now))
-            residual (- light-change change-achieved)
-            ; Keep a falling or mismatched axis from triggering a second raise.
-            residual (if (= (pos? residual) (pos? light-change)) residual 0.0)
-            ; Cue-driven looks can also replace lamps whose middleware gains fell.
-            plan-light (cond
-                         (empty? ids) 0.0
-                         (> (abs residual) (:tolerance opts)) residual
-                         (not= :parameters (:preference opts)) light-change
-                         :else 0.0)
-            actions (if (empty? ids) []
-                        (choose-actions
-                        (cond-> []
-                          (not (zero? plan-light))
-                          (conj (request :brightness plan-light (zero? now) opts ids lit-ids cue-ids))
-                          (not (zero? activity-change))
-                          (conj (request :activity activity-change (zero? now) opts ids lit-ids cue-ids))) (:strategy opts)))
-            ; Remaining, unobserved response of each decision in a rectangular
-            ; trailing window prevents repeated corrections to the same error.
-            correction {:brightness change-achieved :activity (if (some #(= :activity (:domain %)) actions) activity-change 0.0)
-                        :timer (time/start window clock) :remaining 1.0}
-            pending (if (every? zero? ((juxt :brightness :activity) correction)) pending
-                        (conj (vec (take-last 63 pending)) correction))
+            requested (actions light activity-change opts cue-ids)
+            decision (inc (:decision state 0))
             report {:targets targets :forecast {:brightness brightness :activity activity}
-                    :raw-brightness (weighted sources {} total) :requested-brightness wanted
-                    :estimated-brightness delivered :active-count (count (filter (fn [s]
-                        (> (level s (gains (:id s))) (+ (:standby-level opts) 1e-9))) sources))
-                    :decision (inc (:decision state 0)) :time-ms (:time-ms clock)}
-            next-state {:clock clock :epoch epoch :seed seed :order order :window window :pending pending
-                        :gains gains :timer (next-timer (:timer state) (:interval opts) clock)
-                        :report report :decision (:decision report)}]
-        {:state next-state :report report :actions actions :gains gains :due? true}))))
+                    :raw-brightness (:raw light) :requested-brightness (:wanted light)
+                    :estimated-brightness (:delivered light) :active-count (count (:active light))
+                    :decision decision :time-ms (:time-ms clock)}
+            next-state (merge (select-keys light [:order :gains :active :seed])
+                              {:clock clock :epoch epoch :initial-seed (:seed opts) :membership membership
+                               :window window :pending (retain-correction pending clock window light activity-change requested)
+                               :timer (next-timer (:timer state) (:interval opts) clock)
+                               :report report :decision decision})]
+        {:state next-state :report report :actions requested :gains (:gains light) :due? true}))))

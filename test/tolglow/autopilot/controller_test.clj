@@ -1,7 +1,8 @@
 (ns tolglow.autopilot.controller-test
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.autopilot.controller :as control]
-            [tolglow.autopilot.scope :as scope]))
+            [tolglow.autopilot.scope :as scope]
+            [tolglow.autopilot.statistics :as stats]))
 
 (defn- inputs [beat levels brightness activity]
   {:clock {:beat beat :time-ms (* 500.0 beat) :playing? true}
@@ -116,3 +117,70 @@
     (is (thrown? Exception (control/scope-ids model {:group-id :missing})))
     (is (thrown? Exception (control/scope-ids model {:fixture-ids [:missing]})))
     (is (<= 1 (count (scope/page-cue-ids model :front))))))
+
+(deftest rotating-look-changes-membership-and-zero-step-holds-the-mix
+  (let [in (assoc (inputs 0 [1.0 1.0 1.0 1.0] 1.0 0.4) :options {:strategy :instant :seed 17})
+        a (control/advance nil in)
+        ; The averaging window has filled with the already-corrected level.
+        follow (-> in (assoc :clock {:beat 4 :time-ms 2000}) (assoc-in [:statistics :brightness :mean] 0.5))
+        b (control/advance (:state a) follow)
+        hold (control/advance (:state b) (-> follow (assoc :clock {:beat 5 :time-ms 2500})
+                                             (assoc :options {:step 0 :strategy :gradual})
+                                             (assoc :targets {:brightness 0.1 :activity 0.9})))]
+    (is (not= (get-in a [:state :active]) (get-in b [:state :active])))
+    (is (near? 0.5 (get-in b [:report :estimated-brightness])))
+    (is (= (:gains b) (:gains hold)))
+    (is (empty? (:actions hold)))))
+
+(deftest closes-the-feedback-loop-over-measured-musical-time
+  (let [in (inputs 0 [1.0 1.0 0.4 0.4] 0.7 0.61)
+        target (:targets in)
+        measure (fn [state beat values]
+                  (stats/advance state {:beat beat :time-ms (* 500 beat) :epoch 4}
+                                 {:bars 1} values target 0.001))
+        start {:brightness 0.7 :activity 0.61}
+        old (measure nil -4 start)]
+    (loop [i 0 s nil history (:state old) values start requests []]
+      (let [beat (/ i 8)
+            measured (measure history beat values)
+            out (control/advance s (assoc in :clock {:beat beat :time-ms (* beat 500)}
+                                            :statistics (:report measured)))
+            next-values {:brightness (get-in out [:report :estimated-brightness])
+                         :activity (reduce (fn [v {:keys [domain direction amount]}]
+                                             (if (= domain :activity)
+                                               ((if (= :up direction) + -) v amount) v))
+                                           (:activity values) (:actions out))}
+            fresh (measure (:state measured) beat next-values)
+            requests (into requests (:actions out))]
+        (is (near? 0.5 (:brightness next-values)))
+        (is (near? 0.4 (:activity next-values)))
+        (if (< i 40)
+          (recur (inc i) (:state out) (:state fresh) next-values requests)
+          (do
+            (is (near? 0.5 (get-in fresh [:report :brightness :mean])))
+            (is (near? 0.4 (get-in fresh [:report :activity :mean])))
+            (is (= 1 (count requests)))))))))
+
+(deftest warming-window-uses-its-actual-coverage
+  (let [in (inputs 0 [0.75 0.75] 0.75 0.4)
+        initial (assoc-in in [:statistics :coverage] 0.0)
+        a (control/advance nil initial)
+        partial (-> in (assoc :clock {:beat 1 :time-ms 500})
+                    (assoc :statistics {:window {:bars 1} :coverage 0.25
+                                        :brightness {:mean 0.5} :activity {:mean 0.4}}))
+        b (control/advance (:state a) partial)]
+    (is (near? 0.5 (get-in a [:report :estimated-brightness])))
+    (is (near? 0.5 (get-in b [:report :estimated-brightness])))
+    (is (empty? (:actions b)))))
+
+(deftest pending-launch-prevents-firing-again-into-rolling-lag
+  (let [in (-> (inputs 0 [0.0 0.0] 0.0 0.0)
+               (assoc :targets {:brightness 0.5 :activity 0.0}))
+        a (control/advance nil in)
+        b (control/advance (:state a) (-> in (assoc :clock {:beat 1 :time-ms 500})
+                                         (assoc :sources [{:id 0 :capacity 1 :level 0.5}
+                                                          {:id 1 :capacity 1 :level 0.5}])
+                                         (assoc-in [:statistics :brightness :mean] 0.125)))]
+    (is (= [:launch] (mapv :op (:actions a))))
+    (is (empty? (:actions b)))
+    (is (near? 0.5 (get-in b [:report :estimated-brightness])))))
