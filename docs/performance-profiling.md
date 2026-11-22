@@ -141,13 +141,12 @@ independent runner before merge. These jobs retain the same oracle gates and
 artifact-only timings and do not share a concurrency group with master runs.
 Push runs check out the exact pushed master SHA. Scheduled/reusable calls check
 out master, even though the caller's event SHA may belong to effects. Manual
-calls default to master and can select the explicit revisions described below. Each
+calls default to Tolglow master and the immutable Afterglow revision pinned alongside the CI tests. An explicit Afterglow candidate can be selected for upstream comparisons. Each
 run resolves both checkouts
 once and records their immutable SHAs before running the matrix on Java 21. Raw
 EDN and logs for both the complete show and connected subscriber matrices are
 retained for 90 days, including failed runs. Oracle failures fail
-the job; timings have no pass/fail threshold. Weekly runs also catch independent
-Afterglow master changes without requiring a Tolglow commit. Compare artifacts
+the job; timings have no pass/fail threshold. Scheduled runs also run a separate upstream job against Afterglow master, with a distinct artifact name. To run that comparison manually, dispatch the workflow with `afterglow_ref=master`. Compare artifacts
 only after checking their source and machine metadata.
 
 On every merged change to the engine, compiler, renderer, host middleware or
