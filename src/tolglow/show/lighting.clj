@@ -43,10 +43,17 @@
   (or (get-in settings [:lighting-capacity :enabled?]) (get-in settings [:lighting-budget :enabled?])
       (get-in settings [:lighting-activity :enabled?])))
 
+(defn prepare-budget [before model patch meter-plan calibration? hard-off?]
+  (when (and (budget/enabled? model) (not calibration?) (not hard-off?))
+    (budget/prepare-frame-context (get-in before [:lighting-history :budget]) model patch meter-plan)))
+
+(defn contributions [standby authored extra]
+  (if standby (into (into [standby] authored) extra) (into authored extra)))
+
 (defn finish-frame
   "Apply responses to the resolved look, enforce the shared budget and score
   the actual result. Only committed frames carry temporal state forward."
-  [before model patch plan frame blocks time-ms calibration? hard-off? ceiling]
+  [before model patch plan budget-context frame blocks time-ms calibration? hard-off? ceiling]
   (let [same-rig? (and (= (:epoch model) (get-in before [:model :epoch]))
                        (identical? (:rig model) (get-in before [:model :rig])))
         previous (when same-rig? (:lighting-history before))
@@ -56,15 +63,14 @@
                                  (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
                                  ceiling (when same-rig? (:output before))))
         shaped-frame (or (:frame shaped) frame)
-        budget? (and (get-in settings [:lighting-budget :enabled?]) (not calibration?) (not hard-off?))
-        delivered (if budget? (budget/apply-frame model patch plan shaped-frame) shaped-frame)
+        delivered (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)
         scoring? (get-in settings [:lighting-activity :enabled?])
         scored (when scoring?
                  (let [sources (capacity/measure-sources plan (:universes delivered) (keys (:source-capacities plan)))]
                    (activity/advance (:activity previous) patch sources delivered blocks time-ms)))]
     {:frame (cond-> delivered scored (assoc :lighting-activity (:report scored)))
-     :state (when (or shaped scored)
-              {:response (:state shaped) :activity (:state scored)})}))
+     :state (when (or budget-context shaped scored)
+              {:budget budget-context :response (:state shaped) :activity (:state scored)})}))
 
 (defn publish [model frame]
   (let [usage (:lighting-budget frame)]

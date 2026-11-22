@@ -969,7 +969,11 @@
                            audio @(:capacity-audio runtime)
                            previous (when (= (:epoch model) (get-in before [:model :epoch]))
                                       (get-in before [:output :lighting-capacity]))
-                           bypass? (or photo-session (calibration/current model) (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
+                           calibrating? (or photo-session (calibration/current model))
+                           bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
+                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
+                           budget (lighting/prepare-budget before model patch meter-plan calibrating? hard-off?)
+                           standby (when-not bypass? (:standby-block budget))
                            observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
                            observation (if (get-in model [:settings :fog-control :enabled?])
                                          (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
@@ -993,7 +997,7 @@
                                           pause-layer (conj pause-layer))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
-                                     #(resolve-frame patch (into % extra-blocks)
+                                     #(resolve-frame patch (lighting/contributions standby % extra-blocks)
                                      {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
@@ -1004,10 +1008,9 @@
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])
                                               (get-in model [:settings :lighting-activity :enabled?]))
-                                      (lighting/finish-frame before (:model result) patch meter-plan (:output resolved)
-                                        (into (:contributions result) extra-blocks) time-ms
-                                        (or photo-session (calibration/current model))
-                                        (or (pause-look/blackout? model) (zero? (:master model)))
+                                      (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
+                                        (lighting/contributions standby (:contributions result) extra-blocks) time-ms
+                                        calibrating? hard-off?
                                         (get limit :effective-master (:master model))))
                            delivered (or (:frame finished) (:output resolved))
                            frame (cond-> delivered
