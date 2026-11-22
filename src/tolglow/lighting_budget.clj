@@ -67,13 +67,12 @@
 
 (defn- target-gains [ctx ^doubles requested ^doubles granted]
   (when-not (java.util.Arrays/equals requested granted)
-    (let [order (get-in ctx [:patch :target-order])
-          ^ints targets (:target-indices ctx)]
-      (persistent!
-       (loop [i 0 out (transient {})]
-         (if (= i (alength requested)) out
-           (let [req (aget requested i) grant (aget granted i)]
-             (recur (inc i) (if (< grant req) (assoc! out (nth order (aget targets i)) (/ grant req)) out)))))))))
+    (let [n (alength requested) gains (double-array (count (get-in ctx [:patch :target-order])) 1.0)
+          ^ints target-indices (:target-indices ctx)]
+      (dotimes [i n]
+        (let [a (aget requested i) b (aget granted i)]
+          (when (< b a) (aset gains (aget target-indices i) (/ b a)))))
+      gains)))
 
 (defn apply-frame
   "Apply caps after ordinary effects, response and master. The reported watts
@@ -95,9 +94,10 @@
   (when (enabled? model) (prepare-frame-context nil model patch (capacity/prepare patch))))
 
 (defn unmet-watts [ctx frame]
-  (let [requested (capacity/emitter-drives (:meter ctx) (:universes frame))
-        granted (allocation/allocate (:scopes ctx) (:watts ctx) requested)]
-    (allocation/shortfall (:watts ctx) requested granted)))
+  (when-not (::prediction/failed? frame)
+    (let [requested (capacity/emitter-drives (:meter ctx) (:universes frame))
+          granted (allocation/allocate (:scopes ctx) (:watts ctx) requested)]
+      (allocation/shortfall (:watts ctx) requested granted))))
 
 (defn- unused-id [registry]
   (first (remove #(or (contains? (:effects registry) %) (contains? (:cues registry) %))
@@ -118,6 +118,19 @@
           score (fn [{:keys [effect outputs params]}]
                   (let [target-ids (if-some [specified (:targets effect)] (filterv (set specified) targets) targets)
                         effect (assoc effect :id id :outputs outputs :targets target-ids)
-                        shadow (assoc-in model [:registry :effects id] effect)]
-                    (unmet-watts ctx (prediction/frame shadow patch [(assoc cue :params params)] (:time-ms model 0) (:standby-block ctx)))))]
-      (mapv second (sort-by first (mapv (fn [choice] [(score choice) choice]) choices))))))
+                        shadow (assoc-in model [:registry :effects id] effect)
+                        sample (prediction/frame shadow patch [(assoc cue :params params)] (:time-ms model 0) (:standby-block ctx))]
+                    (unmet-watts ctx sample)))]
+      ;; Group Vary requests the first viable look. Don't evaluate more look
+      ;; definitions once its initial choice already fits.
+      (letfn [(ordered [pending limited]
+                (lazy-seq
+                 (loop [pending (seq pending) limited limited]
+                   (if-not pending
+                     (map second (sort-by first limited))
+                     (let [choice (first pending) watts (score choice)]
+                       (cond
+                         (nil? watts) (recur (next pending) limited)
+                         (<= watts 1e-9) (cons choice (ordered (next pending) limited))
+                         :else (recur (next pending) (conj limited [watts choice]))))))))]
+        (ordered choices [])))))

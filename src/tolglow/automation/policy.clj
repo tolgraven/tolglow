@@ -120,7 +120,8 @@
                         (if (empty? choices) best
                           (let [loss (cost model ctx choices time-ms)
                                 option (assoc with-dependencies :unmet-watts loss)]
-                            (cond (<= loss 1e-9) (reduced option)
+                            (cond (nil? loss) best
+                                  (<= loss 1e-9) (reduced option)
                                   (or (nil? best) (< loss (:unmet-watts best))) option
                                   :else best))))) nil remaining)]
         (if best
@@ -134,7 +135,7 @@
       (let [id (first pending)
             without (update model :instances dissoc id)
             next-loss (cost without ctx (:cues selected) time-ms)]
-        (if (< next-loss (- loss 1e-9))
+        (if (and next-loss (< next-loss (- loss 1e-9)))
           (recur without next-loss (next pending) (conj retired id))
           (recur model loss (next pending) retired))))))
 

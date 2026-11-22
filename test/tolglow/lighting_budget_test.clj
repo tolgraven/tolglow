@@ -132,7 +132,7 @@
         dark (:output (simulate (assoc m :blackout? true) [:on]))
         low (:output (simulate (assoc m :master 0.5) [:black]))]
     (is (zero? (first (dmx out))))
-    (is (pos? (nth (dmx out) 1)) "Idle lamp receives a warm standby look")
+    (is (pos? (nth (dmx out) 1)) "Idle lamp receives the standby look")
     (is (< (nth (dmx out) 1) (nth (dmx out) 2)))
     (is (<= (get-in out [:lighting-budget :global :used-watts]) 6.0))
     (is (= 1 (get-in out [:lighting-budget :global :active-count])))
@@ -149,6 +149,17 @@
     (is (identical? ctx (budget/prepare-frame-context ctx (assoc-in custom (conj path :gain) 0.8) patch plan)))
     (let [changed (budget/prepare-frame-context ctx (assoc-in custom (conj path :fixture-ids) [:lamp1]) patch plan)]
       (is (= [:lamp1] (get-in changed [:scopes 0 :ids]))))))
+
+(deftest a-failing-candidate-cannot-win-by-requesting-no-power
+  (let [broken {:id :broken :params {:k {:type :number :default 0.0 :bounds [0 1]}}
+                :outputs {:dimmer {:op :divide :args [{:op :const :value 0.25} {:op :param :key :k}]}}}
+        good {:id :working :outputs {:dimmer 0.8}}
+        rig [(lamp :a 1 40 [])]
+        m (setup rig [broken good] {:enabled? true :global {:limit 0.3}})
+        choices (mapv (fn [id] (let [e (get-in m [:registry :effects id])]
+                                 {:effect e :outputs (registry/output-entries (:outputs e))})) [:broken :working])]
+    (is (= [:working] (mapv (comp :id :effect) (budget/rank-candidates m rig choices))))
+    (is (= :working (get-in (auto/advance m {} (auto/initial-state 0 0 :auto) 0) [:commands 0 :cue-id])))))
 
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}

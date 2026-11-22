@@ -42,6 +42,10 @@
                                 :transport (dissoc sample-clock :time-ms)}
                                compiler/compile-effect)
         background (when (and (empty? (:instances model)) (seq (:assignments model)))
-                     [{:kind :assignments :assignments (:assignments model)}])]
-    (render/resolve-contributions patch (into (cond-> [] standby-block (conj standby-block) background (into background)) (:contributions result))
-                                  {:master (:master model 1) :blackout? (:blackout? model false)}))))
+                     {:kind :assignments :assignments (:assignments model)})
+        blocks (into (cond-> [] standby-block (conj standby-block) background (conj background)) (:contributions result))
+        frame (render/resolve-contributions patch blocks {:master (:master model 1) :blackout? (:blackout? model false)})
+        proposed (into #{} (map :id) cues)]
+    (cond-> frame
+      (some #(and (= :effect/failed (:type %)) (proposed (:cue-id %))) (:fault-events result))
+      (assoc ::failed? true)))))
