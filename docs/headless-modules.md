@@ -36,4 +36,6 @@ The default application configuration registers three optional modules after fix
  :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.72}]}}
 ```
 
-The lighting-capacity module measures the rig. The fog controller uses the calibrated reference sightline and the selected nozzle's delivered flow. The lighting-scenes module chooses and parameterizes an emission effect for each group. For a later change, call `(tolglow.show/submit! runtime :lighting-scene {:op :vary :group-id :front :target 0.72})`. Audio energy events can request the same operation. [Group scenes and event bindings](group-lighting-scenes.md) · [Fog calibration and control](venue-fog.md)
+The lighting-capacity module measures the rig. The fog controller uses the calibrated reference sightline and the selected nozzle's delivered flow. Set the manufacturer's pulse and rest limits on the fixture profile, for example `:fogger {:flow-m3-min 60 :mixing-seconds 3 :duty {:max-on-s 0.4 :min-off-s 6 :max-level 0.5}}`. The duty values limit the length and strength of each pulse even when a render is late.
+
+The lighting-scenes module chooses and parameterizes an emission effect for each group. For a later change, call `(tolglow.show/submit! runtime :lighting-scene {:op :vary :group-id :front :target 0.72})`. Audio energy events can request the same operation. [Group scenes and event bindings](group-lighting-scenes.md) · [Fog calibration and control](venue-fog.md)

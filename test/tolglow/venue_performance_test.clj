@@ -48,7 +48,7 @@
             [fog front back] (peek @packets)]
         (is (some #(pos? (first %)) @packets))
         (is (some #(zero? (first %)) (drop 20 @packets)))
-        (is (< 0.15 level 0.50))
+        (is (<= (abs (- level 0.30)) 0.035) "The room settles within its requested fog band")
         (is (< (abs (- 0.72 (:actual (group :front)))) 0.02))
         (is (< (abs (- (/ front 255.0) 0.72)) 0.02))
         (is (< (abs (- level (:target (group :back)))) 0.025))

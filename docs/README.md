@@ -32,6 +32,8 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | --- | --- |
 | [Relative fixture brightness](relative-fixture-brightness.md) | Measure full-white output with a locked camera and save per-type calibration |
 | [Venue fog](venue-fog.md) | Rated fogger output, elapsed DMX time, mixing and venue ventilation |
+| [Measure fog from an iPhone](iphone-fog-calibration.md) | Record a stationary sightline, inspect the fit and apply the measured room settings |
+| [Fixture-group lighting scenes](group-lighting-scenes.md) | Generate and vary effects at a target share of each group's visible output, including musical triggers |
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
