@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
@@ -418,6 +419,7 @@
          [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :disabled (= "macro" (:mode composition))
                                                        :on-change #(set-ui! [:composition :loop] (input-value %))}
                              [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]]]
+        [layers/opacity-control (:opacity composition)]
         [:div.slots-heading [:span.section-label "YOUR SLOTS"] [:span.muted.small "Use the cue picker or “Add to composition” on the grid."]]
         [:ol#composition-slots.composition-slots
          (if (seq slots)
@@ -434,7 +436,8 @@
                  ^{:key offset} [:button.icon-button {:aria-label (str title ": step " (inc index)) :title title
                                                       :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) (= index (dec (count slots)))))
                                                       :on-click #(send! (if (zero? offset) [:studio/composition-remove index] [:studio/composition-move index offset]))} caption])]
-              [slot-parameter-editor db index slot]])
+              [slot-parameter-editor db index slot]
+              [layers/slot-controls index slot]])
            [:li.empty-state "An open canvas. Add your first cue below."])]
         [:div.form-row.add-slot
          [:select#slot-cue {:aria-label "Cue to add" :value (or selected-cue "") :on-change #(set-ui! [:slot-cue] (input-value %))}
