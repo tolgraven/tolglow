@@ -106,7 +106,12 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (preview/values output (get-in model [:rig :fixtures]))
+            :output {:values (let [fixtures (get-in model [:rig :fixtures])
+                                   cached @(:patch runtime)]
+                               (preview/values output fixtures
+                                               (if (identical? fixtures (:fixtures cached))
+                                                 (:brightness-gains cached)
+                                                 (preview/brightness-gains fixtures))))
                      :atmosphere (:atmosphere output)
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
@@ -219,7 +224,7 @@
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
-      :patch (atom {:fixtures (get-in model [:rig :fixtures]) :compiled patch})
+      :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
                    (or (get @cache definition)
@@ -534,7 +539,7 @@
   (let [cached @(:patch runtime)]
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
-          (reset! (:patch runtime) {:fixtures fixtures :compiled patch}) patch))))
+          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)}) patch))))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
