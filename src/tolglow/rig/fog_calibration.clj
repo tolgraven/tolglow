@@ -48,6 +48,19 @@
     (if (= readings (:readings s)) s
         (-> s (assoc :readings readings) (dissoc :fit)))))
 
+(defn- observed-level [{:keys [readings started-at-ms path-m session-id epoch]}]
+  (let [ordered (vals readings)
+        contrast #(- (:bright %) (:dark %))
+        clear (sort (map contrast (take-while #(= :baseline (:phase %)) ordered)))
+        n (count clear)]
+    (when (>= n 4)
+      (let [reference (* 0.5 (+ (nth clear (quot n 2)) (nth clear (quot (dec n) 2))))
+            [_ latest] (first (rseq readings))]
+        (when (and (> reference 0.04) (< (- (last clear) (first clear)) (* 0.1 reference)))
+          {:level (max 0.0 (- 1.0 (min 1.0 (/ (contrast latest) reference))))
+           :sample-time-ms (+ started-at-ms (:elapsed-ms latest))
+           :phase (:phase latest) :path-m path-m :session-id session-id :epoch epoch})))))
+
 (defn prepare-fit
   "Called by the submitting thread. No curve fitting takes place on the live frame owner."
   [model session-id trace]
@@ -77,7 +90,11 @@
   (let [s (when-not (= :start op) (verify model session-id))
         result (case op
                  :start (start model cmd now)
-                 :samples (assoc-in model session-path (add-readings s samples now))
+                 :samples (let [scan (add-readings s samples now)
+                                measurement (observed-level scan)]
+                            (cond-> (assoc-in model session-path scan)
+                              measurement (assoc-in [:variables :fog/observed-level] (:level measurement))
+                              measurement (assoc-in [:variables :fog/observation] measurement)))
                  :fit (do (check (and fit (identical? readings-used (:readings s))) "Scan changed during fitting; fit again")
                           (assoc-in model (conj session-path :fit) fit))
                  :apply (accept-fit model s)

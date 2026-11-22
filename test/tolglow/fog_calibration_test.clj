@@ -49,6 +49,10 @@
       (let [samples (camera-readings) group {:op :samples :samples samples}]
         (is (= :accepted (:status (scan! group))))
         (is (= :accepted (:status (scan! group))))
+        (let [m (:model @(:state rt))]
+          (is (< 0.0 (get-in m [:variables :fog/observed-level]) 1.0))
+          (is (= {:sample-time-ms 84000 :phase :clearing :path-m 3 :session-id "phone" :epoch (:epoch model)}
+                 (dissoc (get-in m [:variables :fog/observation]) :level))))
         (is (= :rejected (:status (scan! (assoc-in group [:samples 0 :bright] 0.7)))))
         (let [reply (scan! {:op :fit :fit {:clearance-half-life-s 999}})
               fit (:fit reply)]
