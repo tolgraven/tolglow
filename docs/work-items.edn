@@ -1,7 +1,28 @@
 {:schema-version 1,
- :updated "2026-11-21",
+ :updated "2026-11-22",
  :items
- [{:id :build/leiningen-canonical-workflows
+ [{:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
+   :paths ["afterglow/src/afterglow/render/optics.cljc"] :depends-on [:foundation/tests]
+   :acceptance ["Calibrated cone footprints and tangential tracking on finite surfaces through the production entry point and regression tests"] :evidence []}
+  {:id :fixtures/optical-definitions :title "Fixture beam angle, lamp power, and measured white response" :kind :implementation :status :in-progress :owner "fixture-photometry"
+   :paths ["afterglow/src/afterglow/render/photometry.cljc"] :depends-on [:foundation/tests]
+   :acceptance ["Fixture beam angle, lamp power, and measured white response through the production entry point and regression tests"] :evidence []}
+  {:id :studio/reflected-beams :title "Preview finite beams, receiving surfaces, and reflected light" :kind :implementation :status :in-progress :owner "studio-optics"
+   :paths ["tolglow/js/preview/optics.js"] :depends-on [:foundation/tests]
+   :acceptance ["Preview finite beams, receiving surfaces, and reflected light through the production entry point and regression tests"] :evidence []}
+  {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :in-progress :owner "studio-picking"
+   :paths ["tolglow/src/tolglow/rig/surfaces.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence []}
+  {:id :rig/photometry-session :title "One-metre output-confirmed relative brightness calibration" :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/rig/photometry.clj"] :depends-on [:foundation/tests]
+   :acceptance ["One-metre output-confirmed relative brightness calibration through the production entry point and regression tests"] :evidence ["test/tolglow/fixture_photometry_test.clj verifies physical publisher receipts, cross-type measurements, full RGBWA channels, UV suppression, registry publication and lease expiry with an in-memory capture sink"]}
+  {:id :native/photometry-camera :title "Capture locked-exposure dark and white calibration pairs on iPhone" :kind :implementation :status :in-progress :owner "iphone-photometry"
+   :paths ["tolglow/native/iOS/Photometry"] :depends-on [:foundation/tests]
+   :acceptance ["Capture locked-exposure dark and white calibration pairs on iPhone through the production entry point and regression tests"] :evidence []}
+  {:id :runtime/pure-step-reuse :title "Reuse immutable pure step results against declared injected inputs" :kind :implementation :status :in-progress :owner "effect-purity"
+   :paths ["afterglow/src/afterglow/runtime/memo.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Reuse immutable pure step results against declared injected inputs through the production entry point and regression tests"] :evidence []}
+  {:id :build/leiningen-canonical-workflows
    :title "Use one Leiningen project for backend, frontend, tests and profiling"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"

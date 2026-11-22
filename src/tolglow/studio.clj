@@ -7,6 +7,7 @@
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.photometry :as photometry]
             [tolglow.studio.debug-stream :as debug-stream]
             [tolglow.development :as development]
             [tolglow.expressive :as expressive]
@@ -63,6 +64,10 @@
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
+            :photometry! #(let [model (:model @(:state runtime))]
+                            {:runtime-id (:id runtime) :epoch (:epoch model)
+                             :output-capable? (boolean (and (:independent-output? runtime) (get-in runtime [:sink :send!])))
+                             :fixtures (photometry/fixtures model)})
             :calibration! #(let [model (:model @(:state runtime))]
                              {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)
                               :physical-now-ms ((:now-ms (:publisher runtime)))
