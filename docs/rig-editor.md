@@ -96,3 +96,47 @@ passed 164 frontend tests / 882 assertions, 516 JVM pure tests / 4,080 assertion
 Observed results and scope are also recorded in the work ledger. Chromium touch and
 viewport emulation do not verify physical iPad Safari, moving-head mechanics,
 room calibration, or high-refresh performance on a hardware GPU.
+
+## Aim at a surface
+
+Open **Rig & space → Aim at surface**. Select patched pan/tilt heads in the desired
+order, then tap the floor, back wall, side walls, stage top or a configured receiving
+plane. The current camera ray picks the nearest front-facing receiver rectangle.
+Decorative room meshes have no picking proxy. To enter an exact point, choose the
+receiver, enter world X/Y/Z in metres and press **Apply aim**. For an aim point
+in open space, choose **World coordinates** with **Aim at one point**. Only a completed
+tap changes a head. A drag, cancelled touch or tap outside the receivers has no
+effect. Save a placement draft before applying live aim.
+
+* **Aim at one point** assigns the picked world position to each selected head.
+  That manual aim overrides its movement cues. Its intensity and color still
+  come from the show.
+* **Place beams edge to edge** aims the first selected head at the point and
+  links the other heads in order along the chosen receiver axis.
+* **Follow the moving leader** releases the selected heads' manual aims and
+  creates the same links. The first head now follows its movement cues.
+* **Release selected** removes their manual aims and each edge link incident
+  to a selected head. Their ordinary movement cues continue to run.
+
+Headless hosts use the same queued `:surface-aim` operation. The corresponding
+Ring path is `POST /api/surface-aim`. Supply `:targets` in selection order,
+`:mode` (`:together`, `:edge-to-edge`, `:follow`, or `:release`), `:surface-id`,
+and the world `:point` for a point placement. Edge modes accept `:along` as
+`:u`, `:negative-u`, `:v` or `:negative-v`. The show stores links in
+`:rig :edge-tracking` and direct targets under `:variables :surface-aim`. Show files retain both.
+Restarting a show releases the manual point override. Removing a head from
+the patch also releases its manual aim.
+
+Add a receiver to the rig with a unique ID, center, normal, horizontal axis,
+and width/height in metres. The vertical axis is the normal crossed with the
+projected horizontal axis. The five standard room IDs are reserved.
+
+```clojure
+{:surfaces [{:id :scenery/screen :point [0 2 -3] :normal [0 0 1]
+             :u-axis [1 0 0] :size [4 2]}]
+ :edge-tracking [{:leader :spot-left :follower :spot-right
+                  :surface-id :scenery/screen :along [1 0 0]}]}
+```
+
+Define links in leader-first order. Each follower has one leader. The show
+rejects cycles, unpatched heads and links whose direction leaves the plane.

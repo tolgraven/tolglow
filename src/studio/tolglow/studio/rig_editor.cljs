@@ -8,6 +8,7 @@
 (defn identity-key [db]
   (js/JSON.stringify (clj->js (mapv #(get-in db [:show %]) [:runtime-id :show-id :epoch]))))
 (def defaults {:tool "navigate" :plane "xz" :plane-value 0 :snap 0.1 :points [] :targets [] :undo []
+               :aim-mode "together" :along "u" :surface-id "floor" :aim-point [0 0 0]
                :path {:id "drawn-path" :name "Drawn path" :duration-value 4 :duration-unit "bars" :mode "loop" :curve "linear" :closed? false}})
 (defn editor [db]
   (let [state (get-in db [:ui :rig-editor])]
@@ -67,7 +68,45 @@
                    (restore-checkpoint db (-> state (dissoc :gesture) (update :undo pop)) (:before gesture)) db)
         db))))
 (rf/reg-event-db :rig-editor/open (fn [db _] (put-editor db (editor db))))
-(rf/reg-event-db :rig-editor/interaction (fn [db [_ detail]] (interaction db detail)))
+(defn surface-command [db mode point surface-id]
+  (let [state (editor db) targets (:targets state)
+        request (str (random-uuid))
+        error (cond
+                (get-in db [:ui :rig-dirty?]) "Save or discard your rig edits before aiming."
+                (empty? targets) "Choose at least one moving head."
+                (and (#{"edge-to-edge" "follow"} mode) (< (count targets) 2)) "Choose the leader first, then its followers."
+                (and (not= mode "release") (not (finite-point? point))) "Enter a finite world coordinate.")]
+    (cond
+      (:aim-request state) {}
+      error {:db (put-editor db (assoc state :message error))}
+      :else {:db (put-editor db (cond-> (assoc state :aim-request request :message nil)
+                                  point (assoc :aim-point point :surface-id surface-id)))
+             :studio/http {:path "/api/surface-aim"
+                           :body {:mode mode :targets targets :point point :surface-id (not-empty surface-id)
+                                  :along (:along state) :runtime-id (get-in db [:show :runtime-id])
+                                  :expected-epoch (get-in db [:show :epoch])}
+                           :on-success [:rig-editor/aim-result (identity-key db) request true]
+                           :on-failure [:rig-editor/aim-result (identity-key db) request false]}})))
+(rf/reg-event-fx :rig-editor/interaction
+  (fn [{:keys [db]} [_ {:keys [type point surface-id identity] :as detail}]]
+    (cond
+      (not= identity (identity-key db)) {}
+      (= type "surface") (if (= "aim" (:tool (editor db))) (surface-command db (:aim-mode (editor db)) point surface-id) {})
+      (= type "missed-surface") {:db (put-editor db (assoc (editor db) :message "Tap a receiving surface within the room."))}
+      :else {:db (interaction db detail)})))
+(rf/reg-event-fx :rig-editor/aim
+  (fn [{:keys [db]} [_ mode]]
+    (let [state (editor db)]
+      (surface-command db (or mode (:aim-mode state)) (:aim-point state) (:surface-id state)))))
+(rf/reg-event-db :rig-editor/aim-result
+  (fn [db [_ identity request success? result]]
+    (let [state (editor db)]
+      (if (and (= identity (identity-key db)) (= request (:aim-request state)))
+        (put-editor db (-> state (dissoc :aim-request)
+                           (assoc :message (if success? (case (:mode result)
+                                                        "release" "Surface aim released."
+                                                        "follow" "Tracking the leader’s beam on this surface."
+                                                        "Surface aim applied.") result)))) db))))
 (rf/reg-event-db :rig-editor/set
   (fn [db [_ path value]] (put-editor db (assoc-in (editor db) path value))))
 (rf/reg-event-db :rig-editor/pose
@@ -180,8 +219,39 @@
         [:div.rig-nudge {:role "group" :aria-label "Move selected object"}
          (for [[label axis amount] [["← X" 0 -0.1] ["X →" 0 0.1] ["↓ Y" 1 -0.1] ["Y ↑" 1 0.1] ["− Z" 2 -0.1] ["+ Z" 2 0.1]]]
            ^{:key label} [:button.button {:on-click #(dispatch! [:rig-editor/nudge axis amount])} label])]])]))
+(defn- target-fields [db state]
+  (let [fixtures (filter #(and (get-in % [:channels :pan]) (get-in % [:channels :tilt])) (get-in db [:ui :rig-draft :fixtures]))]
+    [:fieldset.rig-targets [:legend "Moving heads to aim"]
+      (if (seq fixtures)
+        (for [fixture fixtures] ^{:key (:id fixture)} [:label.rig-checkbox [:input {:type "checkbox" :checked (boolean (some #{(:id fixture)} (:targets state)))
+                                                                                 :on-change #(dispatch! [:rig-editor/target (:id fixture) (.. % -target -checked)])}] (or (:name fixture) (:id fixture))])
+        [:p.small.muted "Patch a fixture with pan and tilt below to add a target."])]))
+
+(defn- aim-fields [db state]
+  [:section.rig-path-form
+   [:div.panel-top [:span.section-label "SURFACE AIM"]]
+   [choice "Aiming mode" (:aim-mode state) [["together" "Aim at one point"] ["edge-to-edge" "Place beams edge to edge"]
+                                           ["follow" "Follow the moving leader"]] [:aim-mode]]
+   (when (not= "together" (:aim-mode state))
+     [:<> [choice "Spread along surface" (:along state) [["u" "Across +U"] ["negative-u" "Across −U"] ["v" "Across +V"] ["negative-v" "Across −V"]] [:along]]
+      [:p.small.muted "Select heads in order. The first leads and each following beam meets the edge of the previous one."]])
+   [target-fields db state]
+   (when (seq (:targets state)) [:p.small (apply str (interpose " → " (:targets state)))])
+   [:p.small.muted (if (= "follow" (:aim-mode state))
+                     "Tap the receiving surface. The leader keeps following its running movement cues."
+                     "Tap a receiving surface to aim the selected heads there. Existing color and dimmer cues keep playing.")]
+   [choice "Receiver" (:surface-id state)
+    (into (if (= "together" (:aim-mode state)) [["" "World coordinates"]] [])
+          (map (fn [{:keys [id]}] [id id])) (get-in db [:show :receiver-surfaces])) [:surface-id]]
+   (for [[i label] (map-indexed vector ["X" "Y" "Z"])]
+     ^{:key label} [number-field (str "Aim " label " · m") (get (:aim-point state) i) [:rig-editor/set [:aim-point i]]])
+   [:div.rig-editor-actions
+    [:button.button.primary {:disabled (boolean (:aim-request state)) :on-click #(rf/dispatch [:rig-editor/aim])} "Apply aim"]
+    [:button.button {:disabled (boolean (:aim-request state)) :on-click #(rf/dispatch [:rig-editor/aim "release"])} "Release selected"]]
+   (when (:message state) [:p.rig-editor-message {:role "status"} (:message state)])])
+
 (defn- path-fields [db state]
-  (let [path (:path state) fixtures (filter #(and (get-in % [:channels :pan]) (get-in % [:channels :tilt])) (get-in db [:ui :rig-draft :fixtures]))]
+  (let [path (:path state)]
     [:section.rig-path-form
      [:div.panel-top [:span.section-label "MOVEMENT PATH"] [:span (str (count (:points state)) " / 256 points")]]
      [:label "Saved paths"
@@ -197,11 +267,7 @@
       [choice "Playback" (:mode path) [["loop" "Loop"] ["ping-pong" "Back and forth"] ["once" "Once"]] [:path :mode]]
       [choice "Curve" (:curve path) [["linear" "Linear"] ["smoothstep" "Smooth"] ["sine" "Sine"] ["ease-in" "Ease in"] ["ease-out" "Ease out"]] [:path :curve]]]
      [:label.rig-checkbox [:input {:type "checkbox" :checked (:closed? path) :on-change #(dispatch! [:rig-editor/set [:path :closed?] (.. % -target -checked)])}] "Close the path"]
-     [:fieldset.rig-targets [:legend "Moving heads to aim"]
-      (if (seq fixtures)
-        (for [fixture fixtures] ^{:key (:id fixture)} [:label.rig-checkbox [:input {:type "checkbox" :checked (boolean (some #{(:id fixture)} (:targets state)))
-                                                                                 :on-change #(dispatch! [:rig-editor/target (:id fixture) (.. % -target -checked)])}] (or (:name fixture) (:id fixture))])
-        [:p.small.muted "Patch a fixture with pan and tilt below to add a target."])]
+     [target-fields db state]
      [:div.rig-editor-actions
       [:button.button {:on-click #(dispatch! [:rig-editor/add-point]) :disabled (>= (count (:points state)) 256)} "Add point"]
       [:button.button {:on-click #(dispatch! [:rig-editor/clear]) :disabled (empty? (:points state))} "Clear path"]]
@@ -223,7 +289,7 @@
      [:div.panel-top [:span.section-label "PLACE & CHOREOGRAPH"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
-       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"]]]
+       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["aim" "Aim at surface"]]]
          ^{:key tool} [:button.button {:aria-pressed (= tool (:tool state)) :on-click #(dispatch! [:rig-editor/set [:tool] tool])} label])]
       [:div.rig-editor-actions
        [:button.button {:disabled (empty? (:undo state)) :on-click #(dispatch! [:rig-editor/undo])} "Undo"]
@@ -245,7 +311,7 @@
         [number-field "Snap · m" (:snap state) [:rig-editor/set [:snap]] {:min 0 :step 0.05}]]
        [:p.small.muted "Move keeps an object's depth in the chosen plane. Rotate turns around the plane normal. Choose Explore to move the camera; Escape cancels a drag."]
        [pose-fields db state]]
-      [path-fields db state]]]))
+      (if (= "aim" (:tool state)) [aim-fields db state] [path-fields db state])]]))
 
 
 (def panel
