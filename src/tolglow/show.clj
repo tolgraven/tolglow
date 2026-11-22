@@ -1122,9 +1122,10 @@
   ;; Model/output come from one commit. Serialize after releasing the frame
   ;; owner so that large pixel runs can keep rendering during a download.
   (let [[model output] (locking (:lock runtime)
-                         (let [{:keys [model output]} @(:state runtime)]
+                         (let [{:keys [model output]} @(:state runtime)
+                               atmosphere (venue-fog/for-save runtime output)]
                            [(cond-> (merge model (connections/export-state (:connections runtime) model))
-                              (:atmosphere output) (assoc-in venue-fog/saved-path (:atmosphere output))) output]))]
+                              atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
 (defn export-show

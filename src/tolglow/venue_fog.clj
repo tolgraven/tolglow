@@ -26,30 +26,39 @@
       (locking owner
         (let [{old-plan :plan old :state} @owner
               saved (get-in model saved-path)
-              prior (if restored? saved (if old (state-at old-plan old now) saved))
+              prior (if (and old (not restored?)) (state-at old-plan old now) saved)
               enabled? (or prior (some :fogger (:fixtures rig)))
               plan (when enabled? (fog/plan (:room rig) compiled-patch))
-              state (when plan (if prior (fog/reconfigure plan prior epoch now
-                                                         (or restored? (not= (:epoch prior) epoch)))
-                                 (fog/initial plan epoch now)))]
+              state (when plan
+                      (if prior
+                        (fog/reconfigure plan prior epoch now (or restored? (not= (:epoch prior) epoch)))
+                        (fog/initial plan epoch now)))]
           (reset! owner {:rig rig :epoch epoch :plan plan :state state}))))))
 
 (defn presented! [owner now universes]
   (when (:plan @owner)
     (locking owner
       (let [{:keys [plan state] :as current} @owner]
-        (when plan (reset! owner (assoc current :state (fog/present plan state
-                             (max now (:sample-time-ms state)) universes))))))))
+        (when plan
+          (let [t (max now (:sample-time-ms state))]
+            (reset! owner (assoc current :state (fog/present plan state t universes)))))))))
 
 (defn sample [owner now]
   (let [{:keys [plan state]} @owner]
     (when plan (state-at plan state now))))
 
+(defn for-save [runtime output]
+  (let [last-sample (:atmosphere output)]
+    (if (= :sent-dmx (:basis last-sample))
+      (assoc (sample (:venue-fog runtime) ((get-in runtime [:publisher :now-ms]))) :basis :sent-dmx)
+      last-sample)))
+
 (defn commit!
   "A physical show integrates the last successfully delivered bytes. A preview
   show integrates its completed DMX buffer on the injected show clock."
   [runtime next-state compiled-patch restored?]
-  (let [{:keys [model output]} next-state physical? (some? (get-in runtime [:sink :send!]))
+  (let [{:keys [model output]} next-state
+        physical? (some? (get-in runtime [:sink :send!]))
         now (if physical? ((get-in runtime [:publisher :now-ms])) (:time-ms model))
         owner (:venue-fog runtime)]
     (configure! owner model compiled-patch now restored?)

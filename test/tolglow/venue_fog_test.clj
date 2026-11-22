@@ -1,5 +1,6 @@
 (ns tolglow.venue-fog-test
   (:require [afterglow.control.model :as control]
+            [afterglow.output.scheduler :as scheduler]
             [clojure.test :refer [deftest is]]
             [tolglow.persistence :as files]
             [tolglow.show :as show]
@@ -37,7 +38,29 @@
           (show/tick! rt 90000)
           (is (= :accepted (:status @p)) (str @p))
           (is (= 0.0 (amount rt :flow-m3-s)))
-          (is (= (:mixed-m3 saved) (:mixed-m3 (state rt)))) ))
+          (is (= (:mixed-m3 saved) (:mixed-m3 (state rt))))))
+      (finally (show/stop! rt)))))
+
+(deftest an-independent-publisher-and-save-use-the-physical-clock
+  (let [wall (atom 0)
+        rt (show/create-runtime {:model model :independent-output? true
+                                 :sink {:send! (fn [_ _])} :physical-now-ms #(deref wall)})
+        saved #(get-in (files/read-string (show/export-show-source rt)) (into [:model] venue/saved-path))]
+    (try
+      (let [launch (command! rt {:op :cue/launch :cue-id :go} 0)]
+        (is (= :accepted (:status launch)))
+        (reset! wall 1000)
+        (is (zero? (get-in (saved) [:sources 0 :emitted-m3])))
+        (scheduler/publish! (:publisher rt))
+        (reset! wall 4000)
+        (let [fog (saved)]
+          (is (= :sent-dmx (:basis fog)))
+          (is (= 3.0 (get-in fog [:sources 0 :emitted-m3])))
+          (is (pos? (:mixed-density fog))))
+        (is (= :accepted (:status (command! rt {:op :instance/remove :instance-id (:instance-id launch)} 25))))
+        (scheduler/publish! (:publisher rt))
+        (reset! wall 10000)
+        (is (= 3.0 (get-in (saved) [:sources 0 :emitted-m3]))))
       (finally (show/stop! rt)))))
 
 (deftest a-failed-dmx-send-keeps-the-last-successful-pump-setting
