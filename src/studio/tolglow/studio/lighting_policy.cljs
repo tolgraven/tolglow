@@ -9,7 +9,7 @@
 
 (defn- view [db] (get-in db [:server-projection :view]))
 
-(defn- form [db]
+(defn form [db]
   (let [identity (projection/identity-of (view db))
         saved (:lighting-policy-ui db)]
     (if (= identity (:identity saved)) saved {:identity identity})))
@@ -24,6 +24,7 @@
       (reduce-kv (fn [updated key value]
                    (case key
                      :global (update updated key merge value)
+                     (:targets :hdr :signals :cue-gains :instance-gains :source-gains) (update updated key merge value)
                      :groups (update updated key
                                      #(reduce-kv (fn [m id rule]
                                                    (if (nil? rule) (dissoc m id) (update m id merge rule))) % value))
