@@ -29,7 +29,8 @@ try {
   await choices.selectOption('custom');
   await panel.getByLabel('Group name').fill('Browser wash');
   const first = panel.getByRole('checkbox').first();
-  await first.check();
+  await first.tap();
+  await page.waitForFunction(() => document.querySelector('.scene-custom input[type=checkbox]')?.checked);
   const target = panel.getByRole('slider', { name: 'Group light target' });
   await target.focus();
   await target.press('ArrowLeft');
@@ -51,7 +52,7 @@ try {
   });
   assert.equal(await choices.inputValue(), 'group:studio.scene/browser-wash');
   await choices.selectOption('group:studio/all-lights');
-  assert.equal(await panel.getByRole('button', { name: 'Apply target' }).isDisabled(), true);
+  await panel.getByRole('button', { name: 'Apply target', disabled: true }).waitFor();
   await choices.selectOption('group:studio.scene/browser-wash');
   const [varied] = await submit('Something different');
   assert.ok(varied.generation > applied.generation);
