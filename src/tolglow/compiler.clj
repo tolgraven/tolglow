@@ -50,7 +50,7 @@
   "World positions and directions accept signed coordinates outside the unit interval."
   #{:aim :direction})
 
-(defn- compile-output [schemas i output]
+(defn- compile-output [schemas bind-pure i output]
   (let [path [:outputs i :value]
         value (:value output)
         tween? (= :tween (:op value))
@@ -71,9 +71,11 @@
     (when (and (geometry-attributes (:attribute output))
                (not= :replace (:blend output :replace)))
       (fail! [:outputs i :blend] "Geometry assignments require replace blending"))
-    (assoc output :blend (:blend output :replace) :frame-only? tween? :expression expression
-           :evaluate (if tween? (fn [env] (:value (sample env)))
-                         (ir/compile-expression expression)))))
+    (let [calculate (if tween? (fn [env] (:value (sample env))) (ir/compile-expression expression))
+          inputs (if tween? [[:elapsed-beats] [:elapsed-ms] [:meter]] (ir/input-paths expression))]
+      (assoc output :blend (:blend output :replace) :frame-only? tween? :expression expression
+             :inputs inputs
+             :evaluate (if bind-pure (bind-pure {:pure? true :inputs inputs} calculate) calculate)))))
 
 (defn- normalized-output? [attribute value]
   (cond
@@ -89,7 +91,8 @@
   Prepared output :expression trees have parameter types resolved; tween outputs
   have nil :expression and :frame-only? true. Functions in this plan are runtime
   artifacts, never serializable show state or registry definitions."
-  [definition]
+  ([definition] (compile-plan definition nil))
+  ([definition bind-pure]
   (let [errors (registry/validate-definition :effects definition)]
     (when (seq errors) (throw (ex-info "Invalid effect definition" {:errors errors}))))
   (when (contains? definition :modulation)
@@ -99,7 +102,7 @@
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
-        outputs (mapv (partial compile-output schemas) (range)
+        outputs (mapv (partial compile-output schemas bind-pure) (range)
                       (registry/output-entries (:outputs definition)))
         selected (when (contains? definition :targets) (set (:targets definition)))
         envelope-spec (:envelope definition)
@@ -112,7 +115,7 @@
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
     {:schemas schemas :defaults defaults :outputs outputs :selected selected
-     :envelope-fn envelope-fn :envelope-attributes envelope-attributes}))
+     :envelope-fn envelope-fn :envelope-attributes envelope-attributes})))
 
 (defn compile-effect
   "Return a context -> context middleware function. :outputs accepts an
@@ -123,9 +126,10 @@
   Scalar outputs and linear RGB components are normalized to [0,1], while
   :aim/:direction use finite 3D world coordinates/vectors;
   invalid computed values throw before any caller can publish a frame."
-  [definition]
+  ([definition] (compile-effect definition nil))
+  ([definition bind-pure]
   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]}
-        (compile-plan definition)]
+        (compile-plan definition bind-pure)]
     (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
@@ -185,7 +189,7 @@
         (-> context
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % [])))))))
+            (update :intents #(or % []))))))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

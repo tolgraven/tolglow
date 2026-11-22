@@ -26,7 +26,7 @@
                                 (or (nil? targets) (contains? targets (:id %)))) fixtures)]
     {:target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures)}))
 
-(defn- output-groups [fixtures selected outputs prepare-group]
+(defn- output-groups [fixtures selected outputs prepare-group bind-pure]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
   (let [groups (reduce (fn [groups output]
@@ -42,9 +42,15 @@
                                                :expressions {(:attribute output) (:expression output)}})))))
                        [] outputs)]
     (mapv (fn [{:keys [expressions positions] :as group}]
-            (let [plan (ir/compile-batch expressions)]
-              (cond-> (assoc group :plan plan)
-                prepare-group (assoc :prepared (prepare-group expressions positions plan)))))
+            (let [plan (ir/compile-batch expressions)
+                  evaluate (fn [env] (ir/evaluate-batch plan env positions))]
+              (if prepare-group
+                (assoc group :prepared (prepare-group expressions positions plan))
+                (let [inputs (into [] (comp (mapcat ir/input-paths)
+                                            (remove #{[:position]}) (distinct)) (vals expressions))]
+                  (assoc group :evaluate (if bind-pure
+                                           (bind-pure {:pure? true :inputs inputs} evaluate)
+                                           evaluate))))))
           groups)))
 
 (defn- finish-fields!
@@ -65,7 +71,7 @@
           (when scale? (aset-double values index value))))))
   outputs)
 
-(defn- contribution [{:keys [target-ids positions plan blend prepared expressions]} env envelope-result envelope-attributes]
+(defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes]
   (let [batch {:target-ids target-ids :blend blend}]
     {:kind :batch
      :batch
@@ -75,7 +81,7 @@
                :scales (when envelope-result
                          (into {} (for [attribute (keys expressions) :when (envelope-attributes attribute)]
                                     [attribute (:value envelope-result)])))})
-       (let [result (ir/evaluate-batch plan env positions)]
+       (let [result (evaluate env)]
          (finish-fields! (:outputs result) envelope-result envelope-attributes)
          (merge result batch)))}))
 
@@ -132,7 +138,7 @@
   Responses work unchanged: (comp (compile-effect definition fixtures)
   response-middleware). The canonical model's parameters are not modified."
   ([definition fixtures] (compile-effect definition fixtures {}))
-  ([definition fixtures {:keys [enabled? prepare-group] :or {enabled? true}}]
+  ([definition fixtures {:keys [enabled? prepare-group bind-pure] :or {enabled? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
    (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
@@ -141,9 +147,9 @@
                    (not enabled?) (conj :disabled)
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
-       (with-meta (compiler/compile-effect definition) {:backend :ordinary :fallback-reasons reasons})
-       (let [groups (output-groups fixtures selected outputs prepare-group)
-             scalar-step (compiler/compile-effect definition)
+       (with-meta (compiler/compile-effect definition bind-pure) {:backend :ordinary :fallback-reasons reasons})
+       (let [groups (output-groups fixtures selected outputs prepare-group bind-pure)
+             scalar-step (compiler/compile-effect definition bind-pure)
              envelope-attributes (set envelope-attributes)]
          (with-meta
            (fn [{:keys [frame instance state] :as context}]
