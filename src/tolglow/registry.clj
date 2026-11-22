@@ -2,6 +2,7 @@
   "Pure, versioned authoring definitions. This namespace never starts a show."
   (:require [clojure.string :as str]
             [afterglow.time :as time]
+            [afterglow.render.photometry :as photometry]
             [afterglow.control.categories :as categories]
             [afterglow.control.system :as system]))
 
@@ -218,6 +219,7 @@
           :fixtures
           (let [channels (:channels definition)]
             (concat
+             (photometry/errors definition)
              (when-not (map? channels) [(error [:channels] "Fixture channels must be an attribute-to-offset map")])
              (when (map? channels)
                (mapcat (fn [[attribute offset]]
