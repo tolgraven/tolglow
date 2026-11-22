@@ -870,12 +870,13 @@
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
-                           manual-aim (surface-aim/contribution model)
+                           compiled-patch (patch! runtime (get-in model [:rig :fixtures]))
+                           manual-aim (surface-aim/contribution model compiled-patch)
                            pause-layer (pause-layer! runtime model)
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
                                      #(resolve-frame
-                                     (patch! runtime (get-in model [:rig :fixtures]))
+                                     compiled-patch
                                      (cond-> %
                                        manual-aim (conj manual-aim)
                                        (:block photo-session) (conj (:block photo-session))

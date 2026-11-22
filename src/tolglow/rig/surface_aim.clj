@@ -54,10 +54,12 @@
                   (update :revision inc))
        :ack {:status :accepted :mode mode :targets ids :surface-id (:id surface)}})))
 
-(defn contribution [model]
+(defn contribution [model patch]
   (when-let [points (not-empty (get-in model [:variables :surface-aim]))]
-    (let [assignments (into [] (keep (fn [{:keys [id channels]}]
-                                       (when-let [point (and (:pan channels) (:tilt channels) (get points id))]
-                                         {:target-id id :attribute :aim :value point})))
-                            (get-in model [:rig :fixtures]))]
+    ;; A direct aim on one mover should visit one fixture even in a pixel rig.
+    (let [assignments (into [] (keep (fn [[id point]]
+                                       (let [channels (get-in patch [:by-id id :channels])]
+                                         (when (and (:pan channels) (:tilt channels) (surfaces/xyz? point))
+                                           {:target-id id :attribute :aim :value point}))))
+                            points)]
       (when (seq assignments) {:kind :assignments :assignments assignments}))))
