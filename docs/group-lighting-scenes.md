@@ -96,3 +96,59 @@ Inspection returns the musical energy envelope and its measurement time, the est
 For a continuously modulated look, ask to bind the group’s light target to the music energy envelope. The tool accepts `"target-var": ["audio", "features", "energy-envelope"]`; built-in fog paths are `["fog/level"]` for the modeled room level and `["fog/observed-level"]` for the last camera reading. An existing user-defined show variable whose value is in 0–1 can also supply the target. A fixed target disconnects that binding. These tools operate on the current show.
 
 A one-off variation and a repeating event are separate controls. For example, **“Whenever audio energy rises above 50% after dropping below 20%, vary the left movers to 72%.”** Chat can save or remove that group's `configure_energy_scene` binding. It uses the same `:audio/energy` subscriber and crossing action shown above. Inspection reports its thresholds and target. The operator's configured audio source supplies the measured energy.
+
+## Steady-frame metering cost
+
+Group feedback reads the committed bytes of its selected fixtures. A cached
+reading remains valid only while the patch, group membership and all affected
+universe bytes match. A changed fine byte forces a new measurement. Groups on
+unrelated universes can retain their last reading. A steady target preserves the
+model and instance identity. The controller still observes changed target
+variables and operator settings on each frame.
+
+Reproduce the software comparison from the project root.
+
+```sh
+lein run -m tolglow.bench-group-feedback 2048 60
+```
+
+Two warmed preview owners ran the same generated look on 2,048 RGB heads at a
+72% target. One owner kept the group feedback enabled. The other continued the
+same owned cue at its settled opacity. Sampling order alternated and the final
+DMX universes had to match byte-for-byte. On the shared JDK 21 host, the
+difference between the two median owner-thread CPU readings fell from 0.39 ms
+to 0.10 ms after reusing unchanged measurements and publishing the observed show
+variables. The corresponding median allocation difference fell from 8,192 to
+2,952 bytes per frame. With reuse, wall p50/p95 were 4.06/26.10 ms with feedback
+and 3.77/14.64 ms with the same look
+alone. The benchmark includes the complete software tick, runs unpaced, and
+reports CPU/allocation for the owner thread. It does not measure physical
+output or universal 40 Hz delivery. A first scene still compiles the generated
+effect and prepares its calibrated meter.
+
+## Use measured light as a show signal
+
+The accepted frame publishes `{:actual 0.713 :target 0.72 :status :at-target}`
+under `[:variables :lighting/groups group-id]`. With rig metering enabled,
+`[:variables :lighting/rig]` holds the rig’s actual fraction, target, follow mode
+and status. These are ordinary show variables. Use
+`[:lighting/groups :wash :actual]` as another group’s `:target-var` to mirror
+the wash group’s measured energy. Releasing the wash removes its measurement.
+Disabling the rig meter removes its variable.
+
+Group state changes emit `:lighting/group-seeking`, `:lighting/group-at-target`,
+`:lighting/group-limited` or `:lighting/group-released`. Limited events include
+the specific status, such as `:over-target`. Rig changes emit
+`:lighting/rig-level` when the rounded percentage, mode or status changes.
+Continuous values remain available in the variable at frame precision. The
+rig emits `:lighting/rig-unavailable` when metering stops.
+
+This subscriber starts a look in another fixture group when the wash reaches
+its own requested level. A steady wash at 72% triggers once.
+
+```clojure
+{:id :when-wash-settles
+ :match {:type :lighting/group-at-target :emitter-id :wash}
+ :actions [{:op :lighting/scene
+            :scene {:op :vary :group-id :front :target 0.4}}]}
+```

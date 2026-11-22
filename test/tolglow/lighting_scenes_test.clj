@@ -1,8 +1,11 @@
 (ns tolglow.lighting-scenes-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.render.frame :as frame]
+            [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as subs]
             [tolglow.lighting-scenes :as scenes]
+            [tolglow.lighting-levels :as levels]
+            [afterglow.runtime.events :as staging]
             [tolglow.persistence :as persistence]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.show :as show]))
@@ -13,8 +16,10 @@
    {:id :other :groups [:foh] :universe 1 :address 5 :channels {:dimmer 1}}
    {:id :pump :groups [:wash] :universe 1 :address 6 :channels {:fog 1}}])
 
-(defn local [batch?]
-  (let [model (-> (demo/model)
+(defn local
+  ([batch?] (local batch? {}))
+  ([batch? options]
+   (let [model (-> (demo/model)
                   (assoc-in [:rig :fixtures] fixtures)
                   (assoc-in [:variables :energy] 0.72)
                   (assoc-in [:registry :effects :ember :targets] [:left])
@@ -22,7 +27,7 @@
                   (assoc-in [:registry :effects :manual] {:id :manual :version 1 :targets [:other] :params {}
                                                            :outputs {:dimmer (demo/constant 0.35)}})
                   (assoc-in [:registry :cues :manual] {:id :manual :effect-id :manual :version 1}))]
-    (show/create-runtime {:model model :batch? batch?})))
+    (show/create-runtime (assoc options :model model :batch? batch?)))))
 
 (defn issue! [rt time type payload]
   (let [ack (show/submit! rt type payload)] (show/tick! rt (swap! time + 25)) @ack))
@@ -128,3 +133,82 @@
     (is (thrown? clojure.lang.ExceptionInfo (scenes/apply-request repeated (assoc request :target 0.4) 2)))
     (is (= 2 (get-in (scenes/groups (scenes/apply-request repeated (assoc request :command-id "turn-2") 3))
                       [:wash :generation])))))
+
+(deftest committed-meter-cache-invalidates-by-rig-membership-and-universe-bytes
+  (let [fixtures [{:id :a :universe 1 :address 512 :channels {:dimmer [1 2]}}
+                  {:id :b :universe 9 :address 1 :channels {:dimmer 1}}]
+        patch (frame/compile-patch fixtures)
+        groups {:a {:fixture-ids [:a]} :b {:fixture-ids [:b]}}
+        full #(into {} (map (fn [u] [u (byte-array 512)]) [1 2 9]))
+        one (full) two (full)
+        a (scenes/meter-frame {} patch groups one)
+        b (scenes/meter-frame a patch groups two)
+        changed (full)
+        _ (aset-byte ^bytes (changed 2) 0 (unchecked-byte 255))
+        c (scenes/meter-frame b patch groups changed)
+        d (scenes/meter-frame c patch {:a {:fixture-ids [:b]}} changed)
+        repatched (frame/compile-patch [(assoc (first fixtures) :measured-relative-brightness 2) (second fixtures)])
+        e (scenes/meter-frame c repatched groups changed)]
+    (is (identical? (get-in a [:plans :a]) (get-in b [:plans :a])) "Fresh equal buffers reuse the last measurement")
+    (is (identical? (get-in b [:plans :b]) (get-in c [:plans :b])) "Another group's fine universe did not change this group")
+    (is (< 0 (get-in c [:plans :a :actual])) "The fine byte alone changes the measured dimmer")
+    (is (zero? (get-in d [:plans :a :actual])) "Reassigning membership invalidates a byte-identical frame")
+    (is (not (identical? (get-in c [:plans :a :plan]) (get-in e [:plans :a :plan]))) "Calibration rebuilds the plan")
+    (is (= #{:a} (set (keys (:plans d)))))))
+
+(deftest stable-feedback-preserves-the-model-and-instance
+  (let [rt (local true) t (atom 0)]
+    (try
+      (issue! rt t :lighting-scene {:op :apply :group-id :wash :target 0.72 :effect-ids []})
+      (ticks! rt t 40)
+      (let [m (:model @(:state rt))
+            g (:wash (scenes/groups m))
+            value (:actual g)
+            next-model (scenes/feedback m {:wash value} @t false)]
+        (is (= :at-target (:status g)))
+        (is (identical? m next-model))
+        (is (identical? (:instances m) (:instances next-model)))
+        (is (= :limited (:status (:wash (scenes/groups (scenes/feedback m {:wash value} @t true))))))
+        (is (not (identical? next-model (scenes/feedback m {:wash 0.1} @t false)))))
+      (finally (show/stop! rt)))))
+
+(deftest reaching-a-measured-target-launches-a-subscriber-and-publishes-vars
+  (let [captured (atom [])
+        rt (local true {:event-admit (fn [m batch]
+                                       (swap! captured into (filter #(= :lighting (:category %)) batch))
+                                       (subs/admit m batch))})
+        t (atom 0)
+        act #(issue! rt t %1 %2)
+        model #(get @(:state rt) :model)
+        variable (fn [& path] (get-in (model) (into [:variables] path)))]
+    (try
+      (is (= :accepted (:status (act :event-subscriber
+             {:op :save :subscriber {:id :on-wash-target :match {:type :lighting/group-at-target :emitter-id :wash}
+                                     :actions [{:op :lighting/scene :scene {:op :vary :group-id :foh :target 0.4 :effect-ids []}}]}}))))
+      (is (= :accepted (:status (act :settings {:scope :lighting-capacity :values {:enabled? true}}))))
+      (act :lighting-scene {:op :apply :group-id :wash :target 0.72 :effect-ids []})
+      (ticks! rt t 50)
+      (is (= 1 (:generation (group! rt :foh))))
+      (is (= {:actual (:actual (group! rt :wash)) :target 0.72 :status :at-target} (variable :lighting/groups :wash)))
+      (is (= (get-in (show/snapshot rt) [:output :lighting-capacity :utilization]) (variable :lighting/rig :actual)))
+      (is (= :manual (variable :lighting/rig :status)))
+      (let [m (staging/begin (model))
+            meter (get-in @(:state rt) [:output :lighting-capacity])
+            stable (levels/publish m (scenes/groups m) meter)]
+        (is (identical? m stable))
+        (is (empty? (staging/pending stable))))
+      (ticks! rt t 30)
+      (is (= 1 (:generation (group! rt :foh))) "Holding the measured target never retriggers its subscriber")
+      (act :command {:op :master/set :value 0.01})
+      (ticks! rt t 20)
+      (is (= :limited (variable :lighting/groups :wash :status)))
+      (act :lighting-scene {:op :release :group-id :wash})
+      (is (nil? (variable :lighting/groups :wash)))
+      (act :settings {:scope :lighting-capacity :values {:enabled? false}})
+      (is (nil? (variable :lighting/rig)))
+      (let [types (set (map :type @captured))
+            reached (filter #(and (= :lighting/group-at-target (:type %)) (= :wash (get-in % [:emitter :id]))) @captured)]
+        (is (= 1 (count reached)))
+        (is (= 0.72 (get-in (first reached) [:data :target])))
+        (is (every? types [:lighting/group-limited :lighting/group-released :lighting/rig-level :lighting/rig-unavailable])))
+      (finally (show/stop! rt)))))
