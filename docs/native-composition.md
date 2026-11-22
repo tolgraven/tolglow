@@ -80,3 +80,6 @@ Use `:field` to chain the result of one operation into the next. Member opacity
 mixes the changed fields with their prior values. Layer opacity then mixes the
 finished compound with the underlying lighting once. Show files save the programs
 and restore the identity and order of active members and release tails.
+
+The [64-head compound benchmark](performance/compound-layers.md) compares
+individual launches, an opaque macro and a translucent transformed macro.
