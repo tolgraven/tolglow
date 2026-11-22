@@ -11,7 +11,8 @@
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn encode [s] (.encodeToString (Base64/getEncoder) (.getBytes ^String s StandardCharsets/UTF_8)))
-(defn decoded [response] (String. (.decode (Base64/getDecoder) ^String (:data response)) StandardCharsets/UTF_8))
+(defn output-bytes ^bytes [response] (.decode (Base64/getDecoder) ^String (:data response)))
+(defn decoded [response] (String. (output-bytes response) StandardCharsets/UTF_8))
 (declare poll)
 (defn with-container [options f]
   (fixtures/with-workspace {}
@@ -70,12 +71,16 @@
         (terminal/input! terminal id (encode "printf '\\nPTY_%s\\n' READY\r"))
         (let [output (poll #(terminal/read-output terminal id 0) #(str/includes? (decoded %) "PTY_READY") 10000)]
           (is (str/includes? (decoded output) "PTY_READY") (decoded output))
-          (is (= (:data output) (:data (terminal/read-output terminal id 0))))
-          (is (= "" (:data (terminal/read-output terminal id (:cursor output))))))
-        (terminal/resize! terminal id 31 101)
-        (terminal/input! terminal id (encode "stty size\r"))
-        (let [output (poll #(terminal/read-output terminal id 0) #(str/includes? (decoded %) "31 101") 5000)]
-          (is (str/includes? (decoded output) "31 101") (decoded output)))
+          (terminal/resize! terminal id 31 101)
+          (terminal/input! terminal id (encode "stty size\r"))
+          (let [resumed (poll #(terminal/read-output terminal id (:cursor output))
+                              #(str/includes? (decoded %) "31 101") 5000)
+                replay (terminal/read-output terminal id 0)]
+            (is (str/includes? (decoded resumed) "31 101") (decoded resumed))
+            (is (= (:cursor resumed) (+ (:cursor output) (alength (output-bytes resumed)))))
+            ;; zsh may append prompt bytes after either read. Compare the shared interval.
+            (is (= (concat (output-bytes output) (output-bytes resumed))
+                   (take (:cursor resumed) (output-bytes replay))))))
         (terminal/input! terminal id (encode "python3 -c \"print('x'*30000)\"\r"))
         (let [output (poll #(terminal/read-output terminal id 0) :dropped? 5000)]
           (is (:dropped? output)) (is (<= (alength (.decode (Base64/getDecoder) ^String (:data output))) 8192)))
