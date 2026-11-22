@@ -9,7 +9,7 @@
             [tolglow.registry :as registry]))
 
 (def ^:private location [:extensions ::control :groups])
-(def ^:private light-fields #{:color :dimmer :red :green :blue :white :amber :uv :warm-white :cold-white})
+(def ^:private light-fields (conj registry/emitter-attributes :color :dimmer))
 (def ^:private special-tags #{:code :code-cue :utility :show-control :control :system :modulation :scene})
 (defn- fail [message data] (throw (ex-info message data)))
 (defn- identifier? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
