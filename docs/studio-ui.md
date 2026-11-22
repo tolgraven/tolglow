@@ -432,3 +432,18 @@ hide; keyboard holds; master/blackout output; copy/paste and empty-cell placemen
 sequence save/run/stop; invalid definitions and conflicting versions; rig address
 rejection; import epoch changes; editor switch preserving the WASM buffer;
 worker failure; resize/rotation; preview context loss and zero-density fog.
+
+## Group lighting
+
+In **Perform → Live → Group lighting**, select a patch group or **All lights**,
+adjust **Light target**, and tap **Apply target**. For a subset, choose **Custom
+fixture group**, name it, and select the fixtures by name or ID. The fixture
+picker lists emitters from the live rig, and existing scene groups reappear
+when a saved show is opened.
+
+The output readout comes from the committed show frame. It displays the
+requested level alongside the group's actual fraction of available light and
+reports when another light source or the rig's output limits prevent the
+requested level. **Something different** varies the scene at the chosen
+target. **Release group** gives up the scene's fixtures. Active groups have
+disjoint membership.
