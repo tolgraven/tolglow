@@ -31,6 +31,8 @@ try {
   const first = panel.getByRole('checkbox').first();
   await first.tap();
   await page.waitForFunction(() => document.querySelector('.scene-custom input[type=checkbox]')?.checked);
+  await panel.locator('.scene-custom input[type=checkbox]').nth(1).tap();
+  await page.waitForFunction(() => document.querySelectorAll('.scene-custom input:checked').length === 2);
   const target = panel.getByRole('slider', { name: 'Group light target' });
   await target.focus();
   await target.press('ArrowLeft');
@@ -45,7 +47,7 @@ try {
   }
   const [applied] = await submit('Apply target');
   assert.equal(applied.target, requested);
-  assert.equal(applied['fixture-ids'].length, 1);
+  assert.equal(applied['fixture-ids'].length, 2);
   await page.waitForFunction(() => {
     const text = document.querySelector('.scene-reading')?.textContent || '';
     return /Output \d+% · requested \d+%/.test(text);
@@ -70,14 +72,15 @@ try {
   const response = controls.getByRole('region', { name: 'Output response envelope', exact: true });
   const intensity = controls.getByRole('region', { name: 'Perceived lighting intensity', exact: true });
   async function policyEdit(action) {
-    const ack = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings');
-    await action();
-    const reply = await ack;
+    const [reply] = await Promise.all([
+      page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings'),
+      action(),
+    ]);
     assert.equal(reply.status(), 200, await reply.text());
     return snapshot();
   }
   const apply = (section, name) => policyEdit(() => section.getByRole('button', { name, exact: true }).tap());
-  await policyEdit(() => budget.getByLabel('Enable budgets').check());
+  await policyEdit(() => budget.getByLabel('Enable budgets').tap());
   await budget.getByLabel('Maximum active sources').fill('2');
   await budget.getByLabel('When over budget').selectOption('priority');
   await budget.getByLabel('Standby behavior').selectOption('all');
@@ -86,7 +89,9 @@ try {
   assert.equal(saved.settings['lighting-budget'].global.strategy, 'priority');
   assert.equal(saved.settings['lighting-budget'].global['standby-mode'], 'all');
 
-  await controls.getByLabel('Budget and envelope scope').selectOption({ label: applied['group-id'] });
+  const chooser = controls.getByLabel('Budget and envelope scope');
+  await chooser.selectOption({ label: applied['group-id'] });
+  await page.waitForFunction(location => document.querySelector('[aria-label="Light output budget"]')?.dataset.location === location, await chooser.inputValue());
   await budget.getByLabel('Maximum active sources').fill('1');
   const standby = budget.getByRole('slider', { name: 'Standby brightness' });
   await standby.focus();
@@ -97,12 +102,12 @@ try {
   assert.equal(selected['max-active'], 1);
   assert.equal(selected['standby-level'], 0.01);
   assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
-  await policyEdit(() => response.getByLabel('Enable envelopes').check());
+  await policyEdit(() => response.getByLabel('Enable envelopes').tap());
   await response.getByLabel('Attack duration').fill('1/2');
   await response.getByLabel('Attack unit').selectOption('beats');
   saved = await apply(response, 'Apply response');
   assert.equal(saved.settings['output-response'].groups[applied['group-id']].attack.beats, 0.5);
-  await policyEdit(() => intensity.getByLabel('Meter activity').check());
+  await policyEdit(() => intensity.getByLabel('Meter activity').tap());
   await page.waitForFunction(() => {
     const panel = document.querySelector('[aria-label="Perceived lighting intensity"]');
     return /Lighting intensity\d+%/.test(panel?.textContent || '');
@@ -112,9 +117,9 @@ try {
   assert.ok(!saved.settings['lighting-budget'].groups?.[applied['group-id']]);
   assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
   await apply(response, 'Remove group override');
-  await policyEdit(() => budget.getByLabel('Enable budgets').uncheck());
-  await policyEdit(() => response.getByLabel('Enable envelopes').uncheck());
-  await policyEdit(() => intensity.getByLabel('Meter activity').uncheck());
+  await policyEdit(() => budget.getByLabel('Enable budgets').tap());
+  await policyEdit(() => response.getByLabel('Enable envelopes').tap());
+  await policyEdit(() => intensity.getByLabel('Meter activity').tap());
   await page.setViewportSize({ width: 390, height: 843 });
   if (await live.isVisible()) await live.tap();
   for (const region of [panel, controls]) {

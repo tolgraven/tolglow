@@ -16,7 +16,21 @@
 
 (rf/reg-sub ::form (fn [db _] (form db)))
 (rf/reg-sub ::online (fn [db _] (true? (get-in db [:connection :connected?]))))
-(rf/reg-sub ::settings (fn [db [_ section]] (get-in (view db) [:settings section])))
+(defn visible-settings [db section]
+  (let [server (view db) ui (form db) edit (:submitted ui)
+        settings (get-in server [:settings section])]
+    (if (and (= section (:section edit))
+             (or (:pending ui) (= (:revision server) (:revision edit))))
+      (reduce-kv (fn [updated key value]
+                   (case key
+                     :global (update updated key merge value)
+                     :groups (update updated key
+                                     #(reduce-kv (fn [m id rule]
+                                                   (if (nil? rule) (dissoc m id) (update m id merge rule))) % value))
+                     (assoc updated key value)))
+                 settings (:values edit))
+      settings)))
+(rf/reg-sub ::settings (fn [db [_ section]] (visible-settings db section)))
 (rf/reg-sub ::output (fn [db [_ section]] (get-in (view db) [:output section])))
 (rf/reg-sub ::audio (fn [db _] (:audio/energy (view db))))
 (rf/reg-sub ::scope-fixtures :<- [::scenes/fixtures] :<- [::scenes/members]
@@ -65,7 +79,8 @@
         {:keys [runtime-id epoch]} (view db)
         token [(:identity ui) (str (random-uuid))]]
     (when (and runtime-id (get-in db [:connection :connected?]) (nil? (:pending ui)))
-      {:db (assoc db :lighting-policy-ui (assoc ui :pending token :error nil))
+      {:db (assoc db :lighting-policy-ui (assoc ui :pending token :error nil
+                                                 :submitted {:section section :values values :revision (:revision (view db))}))
        :studio/http {:path "/api/settings" :typed? true
                      :body {:scope section :values values :expected-epoch epoch :runtime-id runtime-id}
                      :on-success [::saved token draft-key (get-in ui [:drafts draft-key])]
@@ -92,7 +107,7 @@
 (rf/reg-event-db ::failed
   (fn [db [_ token error]]
     (let [ui (form db)]
-      (if (= token (:pending ui)) (assoc db :lighting-policy-ui (assoc ui :pending nil :error (str error))) db))))
+      (if (= token (:pending ui)) (assoc db :lighting-policy-ui (-> ui (dissoc :pending :submitted) (assoc :error (str error)))) db))))
 
 (defn- percent [n] (if (number? n) (str (js/Math.round (* n 100)) "%") "—"))
 (defn- watt-label [n]
@@ -171,7 +186,7 @@
         saved (get-in settings location)
         controls (merge {:limit 1.0 :strategy :proportional :standby-level 0.0 :standby-mode :shed} saved draft)
         edit #(edit! scope location %1 %2)]
-    [:section.output-policy {:aria-label "Light output budget"}
+    [:section.output-policy {:aria-label "Light output budget" :data-location (pr-str location)}
      [:header [:h3 "Output budget"] [toggle scope "Enable budgets" (:enabled? settings) disabled?]]
      [budget-reading location]
      [:fieldset {:disabled disabled?}

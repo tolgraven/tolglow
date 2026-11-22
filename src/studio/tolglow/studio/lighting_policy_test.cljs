@@ -27,3 +27,11 @@
     (is (nil? (policy/save-request (assoc-in db [:connection :connected?] false) :lighting-activity {:enabled? true} nil)))
     (is (some? (policy/save-request (assoc-in (:db req) [:server-projection :view :epoch] 3)
                                     :lighting-activity {:enabled? false} nil)))))
+
+(deftest acknowledged-settings-follow-the-next-authoritative-projection
+  (let [live (assoc-in db [:server-projection :view :revision] 4)
+        state (:db (policy/save-request live :lighting-budget {:enabled? true} nil))
+        acked (update state :lighting-policy-ui dissoc :pending)]
+    (is (true? (:enabled? (policy/visible-settings acked :lighting-budget))))
+    (is (nil? (policy/visible-settings (assoc-in acked [:server-projection :view :revision] 5) :lighting-budget)))
+    (is (nil? (policy/visible-settings (assoc-in state [:server-projection :view :epoch] 3) :lighting-budget)))))
