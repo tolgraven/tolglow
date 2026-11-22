@@ -488,7 +488,19 @@
   (fn [db [_ index offset]]
     (update-in db [:ui :composition :slots]
       (fn [slots] (let [target (+ index offset)] (if (<= 0 target (dec (count slots))) (assoc slots index (nth slots target) target (nth slots index)) slots))))))
-(rf/reg-event-db :studio/composition-open (fn [db [_ composition]] (assoc-in db [:ui :composition] composition)))
+(rf/reg-event-db :studio/composition-open
+  (fn [db [_ composition]]
+    ;; Presentation converts beat ratios to JS numbers. Keep the typed program
+    ;; when opening a composition so editing its title or slots preserves ratios.
+    (let [typed (some #(when (= (wire-id (:id %)) (wire-id (:id composition))) %)
+                      (get-in db [:server-projection :view :compositions]))
+          slots (mapv (fn [i slot]
+                        (cond-> slot
+                          (= "previous" (:targets slot)) (assoc :targets :previous)
+                          (some? (get-in typed [:slots i :transforms]))
+                          (assoc :transforms (get-in typed [:slots i :transforms]))))
+                      (range) (:slots composition))]
+      (assoc-in db [:ui :composition] (assoc (dissoc composition :running? :playback) :slots slots)))))
 (rf/reg-event-db :studio/composition-new [(rf/inject-cofx :studio/unique)]
   (fn [db _] (assoc-in db [:ui :composition] {:id "new-composition" :name "New composition" :mode "sequence" :loop "once" :slots []})))
 (rf/reg-event-fx :studio/composition-save

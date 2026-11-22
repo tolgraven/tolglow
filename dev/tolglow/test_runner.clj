@@ -8,7 +8,7 @@
     tolglow.compiler-test tolglow.compiler.batch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
-    tolglow.composition.response-test
+    tolglow.composition.response-test tolglow.native-composition-test
     tolglow.automation.random-test tolglow.automation.policy-test
     tolglow.integrations.fixtures-test tolglow.integrations.ableton-test
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test

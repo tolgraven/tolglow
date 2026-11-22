@@ -26,6 +26,7 @@
     (map? value) (into {} (map (fn [[k v]] [k (cond
                                                 (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
                                                 (and (= k :params) (= v "all")) :all
+                                                (and (= k :targets) (= v "previous")) :previous
                                                 (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :verified-axis-fixture-ids :categories} k))
                                                 (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
                                                 :else (normalize-json v))])) value)

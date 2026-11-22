@@ -72,8 +72,12 @@
                               (throw (ex-info "Fixture head needs positive channel offsets" {:id (:id part)})))
                             (assoc part :first (apply min offsets) :last (apply max offsets)))) parts)
             sorted (vec (sort-by :first parts))
+            _ (when (and (or (:fogger definition) (:fogger options))
+                         (not-any? #(contains? (:channels %) :fog) sorted))
+                (throw (ex-info "Grouped fogger needs a target with a fog channel" {:id (:id options)})))
             emits? (fn [{:keys [local channels]}]
-                     (or (some #(contains? channels %) [:red :green :blue :white :amber :uv])
+                     (or (some #(contains? channels %) [:red :green :blue :white :amber :uv
+                                                        :warm-white :cold-white :cool-white :cyan :lime])
                          (and local (contains? channels :dimmer))))
             emitters (count (filter emits? sorted))
             occupied (apply max (map :last sorted))
@@ -87,15 +91,17 @@
                        delta (dec start)
                        address (+ slot delta)
                        end (get-in sorted [(inc i) :first] (inc footprint))
+                       owns-fog? (contains? channels :fog)
                        authored (-> definition (dissoc :channel-definitions :heads)
+                                    (cond-> (not owns-fog?) (dissoc :fogger))
                                     (assoc :channels (rebase channels delta) :footprint (- end start))
                                     (merge optics))
-                       where (assoc options :id id :address (inc (mod address 512)) :universe (inc (quot address 512)))
+                       where (cond-> (assoc options :id id :address (inc (mod address 512)) :universe (inc (quot address 512)))
+                               (not owns-fog?) (dissoc :fogger))
                        where (cond-> where local
                                (assoc :position (world-position (:position options [0 0 0])
                                                                 (:rotation-deg options [0 0 0]) local)))]
                    (cond-> (instance authored where)
-                     (not (contains? channels :fog)) (dissoc :fogger)
                      (pos? emitters) (assoc :emission-share (if (emits? part) (/ 1.0 emitters) 0.0))
                      local (assoc :fixture-id (:id options)))))
                (range) sorted)}))))
