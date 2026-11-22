@@ -41,3 +41,9 @@ Numeric amounts can come from a running cue parameter or a show variable. The fa
 ```
 
 Hardware testing and venue brightness measurements are separate from software timing. See [scope and budget controls](group-lighting-scenes.md) and [render measurements](performance/lighting-controls.md).
+
+## Slew the conductor’s desired energy
+
+Autopilot can move its *setpoints* over time before deciding which fixtures or cues to adjust. Within the autopilot settings use, for example, `:target-response {:attack {:bars 1} :release {:blend 0.25}}`. An upward change reaches a held request in one bar. A downward change closes a quarter of the gap on each distinct running frame. Brightness and visual activity progress independently, so one can rise while the other falls.
+
+Timed setpoint stages reach their endpoints exactly. The initial setpoint comes from the last measured level in the selected scope when available. A changed request continues from the existing trajectory. A transport pause freezes both axes and time spent paused adds no movement on resume. Missing stages apply immediately.
