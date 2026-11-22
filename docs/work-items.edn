@@ -1,7 +1,43 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
+ [{:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/autopilot.clj" "tolglow/src/tolglow/autopilot/controller.clj" "tolglow/src/tolglow/autopilot/statistics.clj" "tolglow/src/tolglow/autopilot/signal.clj" "tolglow/src/tolglow/autopilot/target_response.clj"]
+   :depends-on [:show/concurrent-light-budget :show/perceptual-light-activity :music/audio-energy-naming]
+   :acceptance ["Count the actual song time spent at each level and steer scoped delivered output toward independent brightness and activity targets."
+                "Support musical decision intervals, automation inputs, setpoint attack and release and operator-controlled activation."]
+   :evidence ["test/tolglow/autopilot covers sparse flashes, song-time windows, seeded rotation, overshoot allowance, window lag, audio or oscillator bindings, pause and setpoint retargeting."
+              "test/tolglow/autopilot_host_test.clj launches the conductor through a cue, captures DMX and checks release of its controls."
+              "docs/energy-autopilot.md"]}
+  {:id :show/conductor-cue-actions :title "Admit and retire looks against the measured deficit while a human performs"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/autopilot/actions.clj" "tolglow/src/tolglow/autopilot/candidates.clj" "tolglow/src/tolglow/autopilot/scope.clj"]
+   :depends-on [:show/energy-autopilot]
+   :acceptance ["Select a light-producing registered cue, adjust or retire an owned look, or request a scoped transient definition."
+                "Preserve manual takeovers and reject stale replies following a scope change or reversal."]
+   :evidence ["test/tolglow/autopilot/actions_test.clj checks bounded admission, actual rendered channels for generated and registered looks, shutter ranges, manual takeover and delayed provider replies through the common authoring interface. An external provider session is a separate field check."]}
+  {:id :render/spatial-highlight-spill :title "Whiten overdriven sources and spill excess light to nearby heads"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/hdr.clj" "tolglow/test-native/tolglow/native_show_test.clj"]
+   :depends-on [:show/emission-response]
+   :acceptance ["Preserve finite overrange emission through native composition, whiten its source and nearby receivers with configurable radius and falloff, and deliver valid DMX under final output constraints."]
+   :evidence ["Afterglow #51 implements bounded single-pass spill and gates it on shutter and edge-tracking decisions."
+              "Tolglow native-show-test used a 1.25 red shader result, a close and a distant receiver and an independent invalid focus. CPU and Mesa OpenGL produced identical DMX bytes with zero GPU fallbacks. The full native suite passed 7 tests and 93 assertions."
+              "docs/energy-autopilot.md"]}
+  {:id :studio/energy-autopilot-controls :title "Perform and inspect the energy autopilot in Studio"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/autopilot.cljs" "tolglow/src/studio/tolglow/studio/autopilot_signal.cljs"]
+   :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
+   :acceptance ["Edit scope, targets, signal bindings, response and highlight behavior using the headless settings contract, and inspect decisions and measured output."]
+   :evidence ["src/studio/tolglow/studio/autopilot_test.cljs exercises scoped edits, waveform bindings, per-stage response and ownership readback. dev/studio/autopilot-browser-qa.mjs drives the Ring-hosted Studio at tablet and phone viewport sizes. Hardware touch and display timing require device verification."]}
+  {:id :render/conductor-frame-budget :title "Keep the measured conductor workload within the 40 Hz frame budget"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
+   :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
+   :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
+   :evidence ["Initial shared-host full-frame run exceeded 25 ms on all 160 measured frames. The ordinary-tick median was 41.77 ms and the decision-tick median was 59.43 ms, with 18 captured universes."]}
+  {:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
    :acceptance ["Unequal lamps at the same achievable global target deliver comparable estimated brightness."] :evidence ["Tolglow #94 measures the same common brightness on unequal fixtures at approximately 30% and 60% local drive. Per-source readback includes the white and color-limited ceilings."]}
   {:id :show/concurrent-light-budget :title "Budget concurrent sources and choose cues using their emitting footprints" :kind :implementation :status :done
