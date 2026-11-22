@@ -30,7 +30,8 @@
   (let [patch (frame/compile-patch (:fixtures model))
         power (meter/prepare patch)
         cues (mapv #(get-in model [:registry :cues %]) cue-ids)
-        raw (prediction/frame model patch cues 0)]
+        ctx (budget/prepare-frame-context nil model patch power)
+        raw (prediction/frame model patch cues 0 (:standby-block ctx))]
     {:raw raw :output (budget/apply-frame model patch power raw) :patch patch :meter power}))
 
 (defn- dmx [frame] (mapv #(bit-and % 255) (get-in frame [:universes 1])))
@@ -118,6 +119,36 @@
     (is (= :rapid (choose m 0.8)))
     (is (= :soft (choose (assoc-in m [:settings :lighting-budget]
                                    (budget/settings {:enabled? true :global {:limit 0.3}})) 0.95)))))
+
+(deftest standby-on-idle-lamps-is-paid-for-and-authored-darkness-wins
+  (let [rig [(lamp :a 1 5 [:left]) (lamp :b 2 5 [:left]) (lamp :c 3 10 [])]
+        defs [{:id :black :targets [:a] :outputs {:dimmer 0}}
+              {:id :on :targets [:c] :outputs {:dimmer 1}}]
+        m (setup rig defs {:enabled? true
+                           :groups {:left {:standby-mode :all :standby-level 0.2}}
+                           :global {:limit 0.3 :standby-mode :all :standby-level 0.1 :max-active 1
+                                    :fixture-order [:c]}})
+        out (:output (simulate m [:black :on]))
+        dark (:output (simulate (assoc m :blackout? true) [:on]))
+        low (:output (simulate (assoc m :master 0.5) [:black]))]
+    (is (zero? (first (dmx out))))
+    (is (pos? (nth (dmx out) 1)) "Idle lamp receives a warm standby look")
+    (is (< (nth (dmx out) 1) (nth (dmx out) 2)))
+    (is (<= (get-in out [:lighting-budget :global :used-watts]) 6.0))
+    (is (= 1 (get-in out [:lighting-budget :global :active-count])))
+    (is (<= 0 (nth (dmx low) 1) 26))
+    (is (= [0 0 0] (subvec (dmx dark) 0 3)))))
+
+(deftest prepared-budgets-keep-static-patch-work-out-of-frames
+  (let [m (setup lamps [] {:enabled? true :groups {:left {:limit 0.5}}})
+        patch (frame/compile-patch lamps)
+        plan (meter/prepare patch)
+        path [:extensions :tolglow.lighting-scenes/control :groups :left]
+        custom (assoc-in m path {:fixture-ids [:lamp1 :lamp2] :gain 0.25})
+        ctx (budget/prepare-frame-context nil custom patch plan)]
+    (is (identical? ctx (budget/prepare-frame-context ctx (assoc-in custom (conj path :gain) 0.8) patch plan)))
+    (let [changed (budget/prepare-frame-context ctx (assoc-in custom (conj path :fixture-ids) [:lamp1]) patch plan)]
+      (is (= [:lamp1] (get-in changed [:scopes 0 :ids]))))))
 
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}

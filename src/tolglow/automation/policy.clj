@@ -107,7 +107,7 @@
       (mapv second (sort-by first (mapv (fn [cue] [(distance cue) cue]) candidates))))))
 
 (defn- cost [model ctx choices time-ms]
-  (budget/unmet-watts ctx (prediction/frame model (::patch model) choices time-ms)))
+  (budget/unmet-watts ctx (prediction/frame model (::patch model) choices time-ms (:standby-block ctx))))
 
 (defn- choose-with-budget [model ctx ordered config time-ms]
   (loop [result {:cues [] :reason :empty-scope} remaining ordered]

@@ -9,7 +9,8 @@
 (defn frame
   "Sample the existing show and proposed launches once using the actual compiler
   and resolver. The supplied patch can be reused across a planning decision."
-  [model patch cues time-ms]
+  ([model patch cues time-ms] (frame model patch cues time-ms nil))
+  ([model patch cues time-ms standby-block]
   (let [clock (time/frame-clock (assoc model :time-ms time-ms))
         bpm (:bpm clock 120)
         ;; This is a same-tempo hypothetical sample for dependency planning,
@@ -42,5 +43,5 @@
                                compiler/compile-effect)
         background (when (and (empty? (:instances model)) (seq (:assignments model)))
                      [{:kind :assignments :assignments (:assignments model)}])]
-    (render/resolve-contributions patch (into (vec background) (:contributions result))
-                                  {:master (:master model 1) :blackout? (:blackout? model false)})))
+    (render/resolve-contributions patch (into (cond-> [] standby-block (conj standby-block) background (into background)) (:contributions result))
+                                  {:master (:master model 1) :blackout? (:blackout? model false)}))))
