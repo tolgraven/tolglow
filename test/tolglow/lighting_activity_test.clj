@@ -153,3 +153,14 @@
            (:report (mapped
                      (mapped nil 0 [(block :wash ids {:color full :dimmer 0})])
                      25 [(block :wash ids {:color full :dimmer 1})]))))))
+
+(deftest operator-look-replaces-a-steady-source-at-the-same-level
+  (let [tick (capture [(first lamps)]) id (:id (first lamps))
+        wash (block :wash [id] {:color full :dimmer 1})
+        prior (tick nil 0 [wash])
+        operator-look (dissoc wash :source)
+        pause-look (tick prior 25 [operator-look])
+        halfway (tick prior 25 [wash (update operator-look :assignments #(mapv (fn [a] (assoc a :opacity 0.5)) %))])]
+    (is (= 1.0 (get-in pause-look [:report :scene :brightness])))
+    (is (empty? (get-in pause-look [:report :effects])))
+    (is (= 0.5 (get-in halfway [:report :effects :wash :brightness])))))

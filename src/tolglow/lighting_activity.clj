@@ -14,7 +14,7 @@
 (def ^:private measured-fields (set/union motion-fields shutter-fields light-fields))
 (def ^:private components [:brightness :coverage :flashing :movement :strobe])
 
-(defn- unit ^double [x] (min 1.0 (max 0.0 (double x))))
+(defn- unit ^double [^double x] (min 1.0 (max 0.0 x)))
 
 (defn- channel-value [universes {:keys [coarse fine inverted-from]}]
   (when coarse
@@ -43,8 +43,9 @@
     (let [old (get-in by-target [id field])
           next (cond
                  (and (= blend :replace) (>= opacity 1.0)) (if owner {owner 1.0} {})
+                 (= blend :replace) (cond-> (update-vals old #(* % (- 1.0 opacity)))
+                                      owner (update owner (fnil + 0.0) opacity))
                  (nil? owner) old
-                 (= blend :replace) (update (update-vals old #(* % (- 1.0 opacity))) owner (fnil + 0.0) opacity)
                  :else (update old owner (fnil max 0.0) opacity))]
       (assoc-in by-target [id field] next))
     by-target))
@@ -96,14 +97,17 @@
   (let [channels (:compiled-channels fixture)
         physical (filter #(and (channels %) (not= :uv %)) registry/emitter-attributes)
         rgb (cond-> [:red :green :blue] (= :extract-min (:rgbw-policy fixture)) (conj :white))
-        use-color? (some #(and (channels %) (not (contains? writers %))) rgb)]
-    (shares writers (cond-> (conj physical :dimmer) use-color? (conj :color)))))
+        use-color? (some #(and (channels %) (not (contains? writers %))) rgb)
+        used (cond-> (conj physical :dimmer) use-color? (conj :color))]
+    ;; An opaque, unattributed operator look ({}) replaces a former writer.
+    ;; An ended cue with no new assignment (nil) can still own its release tail.
+    (when (some #(contains? writers %) used) (shares writers used))))
 
-(defn- score [brightness flashing movement strobe]
+(defn- score ^double [^double brightness ^double flashing ^double movement ^double strobe]
   (- 1.0 (* (- 1.0 (* 0.23 brightness)) (- 1.0 (* 0.80 flashing))
             (- 1.0 (* 0.65 movement)) (- 1.0 (* 0.98 strobe)))))
 
-(defn- motion [direction previous dt]
+(defn- motion ^double [direction previous dt]
   (if (and direction previous dt)
     (let [dot (reduce + (map * direction previous))]
       ;; Speed of the beam in world space, one half-turn per second saturates.
@@ -112,12 +116,14 @@
     0.0))
 
 (defn- add! [^doubles totals w count-weight light flashing movement strobe]
-  (aset totals 0 (+ (aget totals 0) (* w light)))
-  (when (> light (/ 1.0 255.0)) (aset totals 1 (+ (aget totals 1) count-weight)))
-  (aset totals 2 (+ (aget totals 2) (* w flashing)))
-  (aset totals 3 (+ (aget totals 3) (* w movement)))
-  (aset totals 4 (+ (aget totals 4) (* w strobe)))
-  (aset totals 5 (+ (aget totals 5) (* w (score light flashing movement strobe)))))
+  (let [w (double w) light (double light) flashing (double flashing)
+        movement (double movement) strobe (double strobe)]
+    (aset totals 0 (+ (aget totals 0) (* w light)))
+    (when (> light (/ 1.0 255.0)) (aset totals 1 (+ (aget totals 1) (double count-weight))))
+    (aset totals 2 (+ (aget totals 2) (* w flashing)))
+    (aset totals 3 (+ (aget totals 3) (* w movement)))
+    (aset totals 4 (+ (aget totals 4) (* w strobe)))
+    (aset totals 5 (+ (aget totals 5) (* w (score light flashing movement strobe))))))
 
 (defn- summary [^doubles totals]
   (assoc (zipmap components (map #(unit (aget totals %)) (range (count components))))
@@ -150,18 +156,35 @@
                                         [id (if (pos? sum) (/ global-maximum sum) 0.0) (/ 1.0 n)]))
                                     (distinct (:groups fixture)))})) levels)}))
 
+;; Compile the fixed patch and current writers once. The render loop reads
+;; these primitive coefficients for every pixel and reads the share maps only
+;; when an outgoing writer has a visible release or flash tail.
+(deftype GroupShare [id ^double weight ^double fraction])
+(deftype WriterShare [id ^double light ^double movement ^double strobe])
+(deftype SampleTarget [id fixture ^long index ^long meterIndex ^double weight
+                       ^boolean moving ^boolean shutter ^objects groups ^objects writers
+                       lightShares motionShares strobeShares ownerIds])
+
 (defn- with-writers [layout blocks]
   (let [fields (owners blocks)]
     (update layout :rows
             (fn [rows]
-              (mapv (fn [{:keys [id fixture] :as row}]
-                      (let [writers (fields id)
-                            light (not-empty (light-shares writers fixture))
-                            movement (if (or (:aim writers) (:direction writers))
-                                       (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
-                            strobe (shares writers shutter-fields)]
-                        (assoc row :light-share light :motion-share movement :strobe-share strobe
-                               :owners (into #{} (mapcat keys) [light movement strobe])))) rows)))))
+              (object-array
+               (for [{:keys [id fixture index meter-index weight moving? shutter? groups]} rows]
+                 (let [writers (fields id)
+                       light (light-shares writers fixture)
+                       movement (if (or (:aim writers) (:direction writers))
+                                  (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
+                       strobe (shares writers shutter-fields)
+                       ids (into #{} (mapcat keys) [light movement strobe])]
+                   (SampleTarget. id fixture index (or meter-index -1) weight (boolean moving?) (boolean shutter?)
+                                  (object-array (map (fn [[group part n]] (GroupShare. group part n)) groups))
+                                  (object-array (map #(WriterShare. % (get light % 0.0) (get movement % 0.0)
+                                                                   (get strobe % 0.0)) ids))
+                                  light movement strobe ids))))))))
+
+(defn- writer-totals ^doubles [^java.util.HashMap effects id]
+  (or (.get effects id) (let [a (double-array 6)] (.put effects id a) a)))
 
 (defn- same-packets? [a b]
   (or (identical? a b)
@@ -174,27 +197,30 @@
   (let [group-totals (zipmap (:groups layout) (repeatedly #(double-array 6)))
         scene (double-array 6)
         effects (java.util.HashMap.)
-        rows (:rows layout)
-        n (count rows)
-        ; Each snapshot owns its arrays. Read the previous sample without
-        ; mutating it even if the host later rejects this frame.
+        ^objects rows (:rows layout)
+        n (alength rows)
+        count-weight (double (:count-weight layout))
+        ;; Each snapshot owns its arrays. Read the previous sample without
+        ;; mutating it even if the host later rejects this frame.
         samples (double-array (* 5 n))
         ^doubles before (:levels prior)
         poses (object-array n)
         ^objects old-poses (:poses prior)
         writers (object-array n)
         ^objects old-writers (:writers prior)
-        fade (if dt (Math/exp (/ (- dt) 0.18)) 0.0)
-        slope-scale (if dt (/ 1.0 (* 8.0 dt)) 0.0)
+        fade (if dt (Math/exp (/ (- (double dt)) 0.18)) 0.0)
+        slope-scale (if dt (/ 1.0 (* 8.0 (double dt))) 0.0)
         compact-color (get-in frame [:compact :fields :emitted-color])
         ^doubles rgb (:values compact-color)
         ^booleans valid (:valid compact-color)]
     (dotimes [i n]
-      (let [{:keys [id fixture index meter-index weight groups light-share motion-share strobe-share owners moving? shutter?]}
-            (nth rows i)
-            [open? strobing] (if shutter? (shutter fixture (:universes frame)) [true 0.0])
+      (let [^SampleTarget row (aget rows i)
+            id (.-id row) fixture (.-fixture row) index (.-index row)
+            weight (.-weight row) moving? (.-moving row)
+            light-share (.-lightShares row)
+            [open? strobing] (if (.-shutter row) (shutter fixture (:universes frame)) [true 0.0])
             j (* 5 i)
-            light (if open? (unit (if measured (aget measured (int meter-index))
+            light (if open? (unit (if measured (aget measured (int (.-meterIndex row)))
                                     (get-in source-levels [id :local-brightness]))) 0.0)
             old-light (if before (aget before j) light)
             ;; Reuse the compact field's flat RGB column directly; dense strips
@@ -207,8 +233,8 @@
             b (if packed? (aget rgb (+ ci 2)) (double (get color 2 0.0)))
             change (if before (max (abs (- light old-light)) (abs (- r (aget before (inc j))))
                                    (abs (- g (aget before (+ j 2)))) (abs (- b (aget before (+ j 3))))) 0.0)
-            ; A recent steep edge has a short perception tail. The observed
-            ; edge itself remains proportional to how much light was visible.
+            ;; A recent steep edge has a short perception tail. The observed
+            ;; edge itself remains proportional to how much light was visible.
             edge (* (max old-light light) (min 1.0 (* change slope-scale)))
             trail (if before (* (aget before (+ j 4)) fade) 0.0)
             flash (max edge (if (< trail 0.0001) 0.0 trail))
@@ -220,21 +246,29 @@
             light-share (or light-share inherited)
             tail (when (and (> flash 0.005) (not (identical? light-share previous-share))) previous-share)
             flash-share (if tail (merge-with max light-share tail) light-share)
-            contributors (if (or tail inherited) (into owners (keys flash-share)) owners)]
-        (aset-double samples j light)
-        (aset-double samples (inc j) r)
-        (aset-double samples (+ j 2) g)
-        (aset-double samples (+ j 3) b)
-        (aset-double samples (+ j 4) flash)
+            ^objects groups (.-groups row)
+            ^objects shares (.-writers row)]
+        (aset samples j light)
+        (aset samples (inc j) r)
+        (aset samples (+ j 2) g)
+        (aset samples (+ j 3) b)
+        (aset samples (+ j 4) flash)
         (aset poses i pose)
         (aset writers i light-share)
-        (add! scene weight (:count-weight layout) light flash movement strobe)
-        (doseq [[group part n] groups] (add! (group-totals group) part n light flash movement strobe))
-        (doseq [owner contributors]
-          (let [a (or (.get effects owner) (let [a (double-array 6)] (.put effects owner a) a))]
-            (add! a weight (:count-weight layout)
-                  (* light (get light-share owner 0.0)) (* flash (get flash-share owner 0.0))
-                  (* movement (get motion-share owner 0.0)) (* strobe (get strobe-share owner 0.0)))))))
+        (add! scene weight count-weight light flash movement strobe)
+        (dotimes [k (alength groups)]
+          (let [^GroupShare group (aget groups k)]
+            (add! (group-totals (.-id group)) (.-weight group) (.-fraction group) light flash movement strobe)))
+        (if (or inherited tail)
+          (doseq [id (into (.-ownerIds row) (keys flash-share))]
+            (add! (writer-totals effects id) weight count-weight
+                  (* light (get light-share id 0.0)) (* flash (get flash-share id 0.0))
+                  (* movement (get (.-motionShares row) id 0.0)) (* strobe (get (.-strobeShares row) id 0.0))))
+          (dotimes [k (alength shares)]
+            (let [^WriterShare writer (aget shares k)]
+              (add! (writer-totals effects (.-id writer)) weight count-weight
+                    (* light (.-light writer)) (* flash (.-light writer))
+                    (* movement (.-movement writer)) (* strobe (.-strobe writer))))))))
     (let [by-effect (reduce (fn [m [[id version] values]]
                               (if (and (contains? m id) (< (or version 0) (or (get-in m [id :version]) 0))) m
                                 (assoc m id (assoc (summary values) :version version)))) {} effects)]
