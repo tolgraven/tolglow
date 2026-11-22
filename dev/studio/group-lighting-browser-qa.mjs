@@ -92,7 +92,11 @@ try {
   const chooser = controls.getByLabel('Budget and envelope scope');
   await chooser.selectOption({ label: applied['group-id'] });
   await page.waitForFunction(location => document.querySelector('[aria-label="Light output budget"]')?.dataset.location === location, await chooser.inputValue());
-  await budget.getByLabel('Maximum active sources').fill('1');
+  const groupCount = budget.getByLabel('Maximum active sources');
+  await groupCount.focus();
+  await groupCount.press('ControlOrMeta+A');
+  await groupCount.press('1');
+  await budget.getByRole('button', { name: 'Apply budget', disabled: false }).waitFor();
   const standby = budget.getByRole('slider', { name: 'Standby brightness' });
   await standby.focus();
   await standby.press('Home');
@@ -160,8 +164,28 @@ try {
   assert.equal(manual.target, 0.43);
   assert.ok(!manual['target-var']);
   assert.deepEqual(await submit('Release group'), []);
+  const auto = page.locator('details').filter({ has: page.locator('#auto-start') });
+  await auto.locator('summary').tap();
+  await auto.getByLabel('Choose cues by lighting intensity').tap();
+  const activityTarget = auto.getByRole('slider', { name: 'Target lighting intensity' });
+  await activityTarget.focus();
+  await activityTarget.press('ArrowLeft');
+  const goal = Number(await activityTarget.inputValue()) / 100;
+  async function autoCommand(name) {
+    const [reply] = await Promise.all([
+      page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/auto'),
+      auto.getByRole('button', { name, exact: true }).tap(),
+    ]);
+    assert.equal(reply.status(), 200, await reply.text());
+    return (await snapshot()).auto;
+  }
+  assert.equal((await autoCommand('Start auto')).config['activity-target'], goal);
+  assert.equal((await autoCommand('Stop auto'))['enabled?'], false);
+  await auto.getByLabel('Choose cues by lighting intensity').tap();
+  assert.ok(!Object.hasOwn((await autoCommand('Start auto')).config, 'activity-target'));
+  await autoCommand('Stop auto');
   assert.deepEqual(problems, []);
-  console.log('Touch and keyboard verified common-reference brightness, rig and group budgets, response duration, intensity monitoring, and independent group override removal through Ring. The phone layout fit both performance panels.');
+  console.log('Touch and keyboard verified common-reference brightness, rig and group budgets, fixed and bound response times, intensity metering, optional intensity-based cue selection and independent group override removal through Ring. The phone layout fit both performance panels.');
 } finally {
   await browser.close();
 }

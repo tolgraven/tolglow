@@ -46,9 +46,9 @@
   (some #(when (= (pr-str %) value) %) choices))
 
 (defn stage-field [stage stored draft write!]
-  (let [{:keys [source unit value cue-id param path] :as shown} (merge (stage-form stored) draft)
+  (let [{:keys [source unit value cue-id param path]} (merge (stage-form stored) draft)
         title (if (= stage :attack) "Attack" "Release")
-        edit #(write! (assoc shown %1 %2))]
+        edit #(write! {%1 %2})]
     [:div.policy-stage
      [:label title [:input {:type "text" :input-mode "decimal" :value value
                             :aria-label (str title (if (= source :fixed) " duration" " fallback duration"))
@@ -72,7 +72,7 @@
                [:label "Cue"
                 [:select {:value (if (some? cue-id) (pr-str cue-id) "") :aria-label (str title " control cue")
                           :on-change #(let [id (keyed-option (map :id options) (.. % -target -value))]
-                                        (write! (assoc shown :cue-id id :param nil)))}
+                                        (write! {:cue-id id :param nil}))}
                  [:option {:value ""} "Choose cue…"]
                  (when (and cue-id (nil? selected)) [:option {:value (pr-str cue-id)} (events/wire-id cue-id)])
                  (for [{:keys [id name]} options] ^{:key (pr-str id)} [:option {:value (pr-str id)} name])]]

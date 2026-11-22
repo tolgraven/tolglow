@@ -315,7 +315,9 @@
                                        :on-click #(send! [:studio/preview-reset])} "⟳"]]])
 
 (defn- auto-panel [db]
-  (let [form (get-in db [:ui :auto-form])]
+  (let [form (get-in db [:ui :auto-form])
+        {:keys [enabled? target]} (events/auto-activity db)
+        percent (js/Math.round (* 100 target))]
     [:details.panel.auto-panel
      [:summary [:span.section-label "LET IT WANDER"] [:span#auto-status.muted.small (if (get-in db [:show :auto :enabled?]) "Auto mode · on" "Auto mode · off")]]
      [:div.form-body [:p.small.muted "Let the show choose cues at an interval. Movement cues are paired with light when the rig needs it."]
@@ -333,6 +335,15 @@
       [duration-control "auto-duration" "Cue duration" (:duration-value form 4) (:duration-unit form "beats")
        (fn [value unit] (when (some? value) (set-ui! [:auto-form :duration-value] value))
          (when unit (set-ui! [:auto-form :duration-unit] unit)))]
+      [:label.policy-toggle [:input {:type "checkbox" :checked enabled?
+                                    :on-change #(set-ui! [:auto-form :target-activity?] (checked? %))}]
+       "Choose cues by lighting intensity"]
+      (when enabled?
+        [:label.scene-target
+         [:span "Target lighting intensity" [:output (str percent "%")]]
+         [:input {:type "range" :min 0 :max 100 :step 1 :value percent
+                  :aria-label "Target lighting intensity" :aria-valuetext (str percent "%")
+                  :on-change #(set-ui! [:auto-form :activity-target] (/ (js/Number (input-value %)) 100))}]])
       [:div.button-row [button "auto-start" "Start auto" [:studio/auto-start] "button primary"] [button "auto-stop" "Stop auto" [:studio/auto-stop]]]
       [:p.small.muted "Persistent cues remain active until released. You can keep playing the grid while auto mode runs."]]]))
 

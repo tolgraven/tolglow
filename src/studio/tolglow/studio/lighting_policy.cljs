@@ -56,6 +56,14 @@
     (assoc db :lighting-policy-ui
            (-> (form db) (assoc-in [:drafts [section location] field] value) (dissoc :error)))))
 
+(rf/reg-event-db ::edit-stage
+  (fn [db [_ location stage stored changes]]
+    (let [path [:drafts [:output-response location] stage]]
+      (assoc db :lighting-policy-ui
+             (-> (form db)
+                 (update-in path #(merge (response-editor/stage-form stored) % changes))
+                 (dissoc :error))))))
+
 (defn- checked-count [value]
   (when-not (= "" value)
     (let [n (js/Number value)]
@@ -220,7 +228,7 @@
       [:div.policy-grid
        (for [stage [:attack :release]]
          ^{:key stage} [response-editor/stage-field stage (get effective stage) (get draft stage)
-                        #(edit! scope location stage %)])]
+                        #(rf/dispatch-sync [::edit-stage location stage (get effective stage) %])])]
       [apply-buttons scope location (seq draft) (some? saved) "Apply response"]]]))
 
 (defn- activity [disabled?]

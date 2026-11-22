@@ -1,5 +1,6 @@
 (ns tolglow.studio.lighting-policy-test
   (:require [cljs.test :refer-macros [deftest is]]
+            [tolglow.studio.events-test :refer [transition]]
             [tolglow.studio.lighting-policy :as policy]
             [tolglow.studio.lighting-response :as response]))
 
@@ -45,3 +46,12 @@
          (response/stage-duration {:source :variable :unit "beats" :path "[:audio/energy]" :value "1/4"})))
   (is (thrown? js/Error (response/stage-duration {:source :cue :unit "beats" :value "0" :cue-id :rig/feel})))
   (is (thrown? js/Error (response/stage-duration {:source :variable :unit "beats" :value "1" :path ":audio/energy"}))))
+
+(deftest rapid-stage-changes-edit-the-latest-draft-between-renders
+  (let [section [:groups :front]
+        input (fn [state fields]
+                (:db (transition state [::policy/edit-stage section :release {:beats 0} fields])))
+        state (-> db (input {:source :variable}) (input {:path "[:audio/energy]"})
+                  (input {:value "3/8"}) (input {:unit "bars"}))
+        stage (get-in state [:lighting-policy-ui :drafts [:output-response section] :release])]
+    (is (= {:bars {:variable [:audio/energy] :default 0.375}} (response/stage-duration stage)))))

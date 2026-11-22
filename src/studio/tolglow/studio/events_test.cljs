@@ -103,6 +103,17 @@
     (is (= 0.9 (get-in (first-command flushed) [:fields :value])))
     (is (= 7 (:epoch (first-command flushed))))))
 
+(deftest automatic-cue-selection-respects-optional-visual-intensity
+  (let [start #(get-in (transition % [:studio/auto-start]) [:studio/http :body])
+        saved (assoc-in base [:show :auto :config] {:activity-target 0.18 :seed 154})
+        edited (-> saved (assoc-in [:ui :auto-form :target-activity?] true)
+                         (assoc-in [:ui :auto-form :activity-target] 0))]
+    (is (not (contains? (start base) :activity-target)))
+    (is (= 0.18 (:activity-target (start saved))))
+    (is (= 154 (:seed (start saved))))
+    (is (= 0 (:activity-target (start edited))))
+    (is (not (contains? (start (assoc-in edited [:ui :auto-form :target-activity?] false)) :activity-target)))))
+
 (deftest musical-authoring-remains-data
   (let [definition (events/builder-definition (get-in base [:ui :builder]) 3)
         added (transition base [:studio/composition-add "ember"])
