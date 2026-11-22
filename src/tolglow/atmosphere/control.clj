@@ -95,6 +95,9 @@
                          [id (pump (get-in patch [:by-id id]) (get sources id) (prior-pump previous id)
                                    now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))]
     {:epoch epoch :enabled? enabled? :target target :level level :lower low :upper high :zone zone
+     :level-change-per-s (:fog-level-change-per-s observation)
+     :clearance-half-life-s (or (:clearance-half-life-s observation)
+                               (get-in model [:rig :room :measured-fog :clearance-half-life-s]))
      :coasting? (boolean coasting?) :coasting-peak peak
      :fresh? (boolean fresh?) :request? (boolean (and request? enabled? (not bypass?))) :pumps pumps}))
 
@@ -107,8 +110,10 @@
                   (not= (boolean (:request? previous)) (:request? status))
                   (conj {:type (if (:request? status) :fog/demand-started :fog/demand-ended)}))]
     (-> model
-        (assoc-in [:variables :fog/level] level)
-        (assoc-in [:variables :fog/target] target)
+        (update :variables assoc
+                :fog/level level :fog/target target
+                :fog/level-change-per-s (:level-change-per-s status)
+                :fog/clearance-half-life-s (:clearance-half-life-s status))
         (staging/collect :atmosphere {:kind :venue :id :fog-control}
                          (mapv #(assoc % :level level :target target :zone zone :enabled? enabled?) changed)))))
 
@@ -185,7 +190,8 @@
     observation))
 
 (defn frame [model patch observation previous now bypass? blocks music-block]
-  (when (or observation previous music-block (get-in model [:settings :fog-control :enabled?]))
+  (when (or observation previous music-block (get-in model [:settings :fog-control :enabled?])
+            (get-in model [:rig :room :measured-fog]))
     (let [prior (when (= (:epoch model) (:epoch previous)) previous)
           control (arbitrate (advance model patch observation prior now bypass?) blocks)
           feedback (when (:request? control) (demands control))

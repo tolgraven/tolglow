@@ -123,8 +123,10 @@ release against actual audio devices. External provider configuration and
 streaming chat need live service verification; Codex session embedding remains
 a feasibility item, while the shared REPL/control API is already usable.
 
-Realistic shaped fog injection, advection/diffusion/dissipation, fixture optics
-and mobile quality tiers remain simulator work beyond the rudimentary preview.
+The Studio preview renders optically sized beams, local fog plumes, diffuse room haze and reflected light. Fogger output, elapsed physical time, room volume and measured clearance determine the atmosphere. A stationary iPhone scan can fit the room and fluid from contrast loss across a measured sightline. A metered scan can also fit nozzle mixing and optical extinction. Calibration and mobile frame rates still need comparison in a real venue. See [venue fog and calibration](venue-fog.md) and [the captured room preview](studio-atmosphere.md#reading-the-room-preview).
+
+The lighting-capacity meter and per-group scenes operate on the patched rig. A music-energy crossing can request a different look at a chosen percentage on a fixture group. The show chooses the sources and parameter values and reports the resulting measured output. Fog has its own calibrated setpoint and band. See [group lighting scenes](group-lighting-scenes.md) and [lighting capacity](lighting-capacity.md).
+
 Club environment presets need licensed/provenanced geometry. Phone/LiDAR/splat
 capture needs scale and geometry reconstruction. The trainable dancing robot
 duck remains later research: confirm its identity/SDK, read timestamped movement

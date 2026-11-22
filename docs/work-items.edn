@@ -6,7 +6,19 @@
    :paths ["afterglow/src/afterglow/render/atmosphere/calibration.clj" "tolglow/src/tolglow/rig/fog_calibration.clj" "tolglow/native/iOS/FogCalibration"]
    :depends-on [:foundation/tests]
    :acceptance ["Fit effective clearance from a manual burst and clearance, mixing and extinction from metered output, then apply and save in the rig"]
-   :evidence ["Afterglow #40 recovered known synthetic optical coefficients; Tolglow #83 exercises delivered DMX, scan retry, fit, application and saved calibration. iOS acquisition is Tolglow #81. Physical fluid, room, camera and ventilation comparison is pending."]}
+   :evidence ["Afterglow #40 recovered known synthetic optical coefficients. Tolglow #83 exercises delivered DMX, scan retry, fit, application and saved calibration. #81 passed 13 Swift tests and iPhone/Watch simulator builds. #88 exercises viewing and replacing the fit in Studio. Physical fluid, room, camera and ventilation comparison is pending."]}
+  {:id :show/fog-setpoint :title "Hold measured venue fog around an operator-set target"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/atmosphere/control.clj" "tolglow/test/tolglow/venue_performance_test.clj" "tolglow/docs/venue-fog.md"]
+   :depends-on [:rig/stationary-fog-calibration :render/dmx-venue-atmosphere]
+   :acceptance ["Expose the target and modeled fog as subscribable variables, forecast the peak after stopping output, enforce per-pump limits, and support manual control"]
+   :evidence ["Afterglow #46 and Tolglow #84 test plume coasting, pump deadlines and suspension. #43 and Tolglow #89 cover physical off on inverted or retired channels. Afterglow #47 checks the signed misting rate against independently advanced room samples. In a ten-second capture of both controllers the fog estimate ended at 29.91% against a 30% target."]}
+  {:id :music/group-lighting-scenes :title "Vary independent fixture groups at a requested share of visible output"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/lighting_scenes.clj" "tolglow/docs/group-lighting-scenes.md" "tolglow/test/tolglow/venue_performance_test.clj"]
+   :depends-on [:music/lighting-capacity]
+   :acceptance ["Generate and adjust group effects, allow music and show variables to drive targets, and show actual output beside the target"]
+   :evidence ["Tolglow #87 tests registry selection, generated effects, group feedback and PCM energy events. #82 exercises touch controls and #90 drives a running show through chat with a simulated provider. #91 verifies that reaching 72% can launch a cue once and subsequent steady frames do not retrigger it. A captured front dimmer delivered 72.16% at a 72% target while a second group followed estimated fog."]}
   {:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
    :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence ["Afterglow #37 passed 387 JVM tests and 5 native OpenGL tests, including color, vector, beat-ratio and deferred shader results."]}
@@ -16,12 +28,12 @@
   {:id :render/dmx-venue-atmosphere :title "Integrate delivered fogger output with venue diffusion and air exchange" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/atmosphere.clj"] :depends-on [:foundation/tests]
    :acceptance ["Integrate delivered fogger output with venue diffusion and air exchange in the normal show path with regression coverage"] :evidence ["Afterglow #38 and #39 and Tolglow #73 cover rated flow, independently held coarse and fine universe data, plume mixing, ventilation, held physical output after failed sends, and Transit save with a stalled render clock."]}
-  {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :in-progress :owner "studio-atmosphere"
+  {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/show-atmosphere.js"] :depends-on [:foundation/tests]
-   :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence []}
-  {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :in-progress :owner "energy-coupling"
+   :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence ["Tolglow #74 and #85 verified and captured the local jet and dispersed room with the production Transit stream and offscreen WebGL worker. Calibrated light loss across the 7 m sightline matched the show at 0%, 10.58% and 50.13%."]}
+  {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Map audio energy to the fraction of calibrated rig light output in use in the normal show path with regression coverage"] :evidence []}
+   :acceptance ["Map audio energy to the fraction of calibrated rig light output in use in the normal show path with regression coverage"] :evidence ["Tolglow #75 samples final packed light channels, estimates weighted visible capacity, exposes active writers, and verifies independent lighting and fog responses to captured audio."]}
   {:id :studio/fog-machine-and-room-properties
    :title "Edit fog output profiles and venue ventilation in Studio"
    :kind :implementation :status :done :owner nil
@@ -52,9 +64,9 @@
   {:id :studio/reflected-beams :title "Preview finite beams, receiving surfaces, and reflected light" :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/reflections.js"] :depends-on [:foundation/tests]
    :acceptance ["Preview finite beams, receiving surfaces, and reflected light through the production entry point and regression tests"] :evidence ["Tolglow #67 verifies a visible reflected colored patch in real WebGL outside the main cone and verifies occlusion on both paths."]}
-  {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :in-progress :owner "studio-picking"
+  {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/rig/surfaces.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence []}
+   :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence ["Tolglow #68 and #70 cover touch/world aiming, continuously animated leaders, tangent followers, release and physical constrained footprints on both rich and compact paths."]}
   {:id :rig/photometry-session :title "One-metre output-confirmed relative brightness calibration" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/rig/photometry.clj"] :depends-on [:foundation/tests]
    :acceptance ["One-metre output-confirmed relative brightness calibration through the production entry point and regression tests"] :evidence ["test/tolglow/fixture_photometry_test.clj verifies physical publisher receipts, cross-type measurements, full RGBWA channels, UV suppression, registry publication and lease expiry with an in-memory capture sink"]}
@@ -2209,7 +2221,7 @@
    :depends-on [:render/frame-v1],
    :owner "room_renderer_fog_fixture_optics"}
   {:evidence
-   ["Eight CPU tests and one SwiftShader GPU suite passed before latest visual corrections; rerun pending"],
+   ["Tolglow #74 and #85 exercised dry air, a concentrated plume and mixed room haze in Chromium on the live Studio stream. The operator guide includes all three captures. Physical venue comparison and device-specific frame-time measurements remain open."],
    :paths
    ["tolglow/js/preview/fog.js"
     "tolglow/js/preview/fog-field.js"

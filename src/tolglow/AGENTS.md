@@ -8,7 +8,7 @@ Code that configures lights, devices, saves or providers belongs in the owning s
 
 ## Module boundaries
 
-- `fixtures.clj` expands legacy declarative maps into actual Afterglow channels
+- `fixtures.clj` expands the original declarative patch maps into actual Afterglow channels
   and pixel heads. Preserve physical units, sparse/fine offsets, calibration and
   channel footprints. `config.clj` is user setup, not a fixture schema library.
 - `fx.clj`, `param.clj`, `color.clj`, `vars.clj`, `cue.clj` and `page.clj` retain

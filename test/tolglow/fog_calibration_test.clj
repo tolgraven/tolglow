@@ -47,12 +47,15 @@
         (is (zero? (last @out))))
       (reset! now 85000)
       (let [samples (camera-readings) group {:op :samples :samples samples}]
+        (is (= :accepted (:status (scan! {:op :samples :samples (subvec samples 0 10)}))))
+        (is (pos? (:fog/observed-change-per-s (show/variables rt))))
         (is (= :accepted (:status (scan! group))))
         (is (= :accepted (:status (scan! group))))
         (let [m (:model @(:state rt))]
           (is (< 0.0 (get-in m [:variables :fog/observed-level]) 1.0))
+          (is (neg? (get-in m [:variables :fog/observed-change-per-s])))
           (is (= {:sample-time-ms 84000 :phase :clearing :path-m 3 :session-id "phone" :epoch (:epoch model)}
-                 (dissoc (get-in m [:variables :fog/observation]) :level))))
+                 (dissoc (get-in m [:variables :fog/observation]) :level :level-change-per-s))))
         (is (= :rejected (:status (scan! (assoc-in group [:samples 0 :bright] 0.7)))))
         (let [reply (scan! {:op :fit :fit {:clearance-half-life-s 999}})
               fit (:fit reply)]

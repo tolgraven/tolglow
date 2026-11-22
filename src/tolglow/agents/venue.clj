@@ -82,12 +82,14 @@
                  (select-keys capacity [:utilization :relative-capacity :relative-output :rated-watts
                                         :used-rated-watts :headroom :color :target :mode :operator-master]))
      :fog {:estimate (when-let [atmosphere (:atmosphere output)]
-                       (select-keys atmosphere [:fog-level :mixed-density :volume-m3 :sample-time-ms
+                       (select-keys atmosphere [:fog-level :fog-level-change-per-s :clearance-half-life-s
+                                                :mixed-density :volume-m3 :sample-time-ms
                                                 :last-presented-ms :reference-path-m :extinction-per-m :basis]))
            :controller (when-let [controller (:fog-control output)]
-                         (select-keys controller [:enabled? :target :level :zone :lower :upper :fresh? :request?]))
+                         (select-keys controller [:enabled? :target :level :zone :lower :upper :fresh? :request?
+                                                  :clearance-half-life-s]))
            :observation (when observation
-                          (assoc (select-keys observation [:level :sample-time-ms :epoch :phase :path-m])
+                          (assoc (select-keys observation [:level :level-change-per-s :sample-time-ms :epoch :phase :path-m])
                                  :current-epoch? (= epoch (:epoch observation))))}
      :show-time-ms time-ms}))
 
