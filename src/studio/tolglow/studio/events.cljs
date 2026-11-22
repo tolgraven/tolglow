@@ -779,8 +779,8 @@
 (rf/reg-event-fx :studio/preview-ready
   (fn [{:keys [db]} [_ supported? owner]]
     {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
-     :fx (into [[:studio/preview [:fog (get-in db [:ui :fog]) owner]]]
-               (when supported? (mapv (fn [[key value]] [:studio/preview [key value owner]])
+     :fx (into [[:studio/preview (cond-> [:fog (get-in db [:ui :fog])] owner (conj owner))]]
+               (when supported? (mapv (fn [[key value]] [:studio/preview (cond-> [key value] owner (conj owner))])
                                       (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]
