@@ -204,6 +204,36 @@
     (is (= [:other] (into [] (keep :cue-id) commands)))
     (is (= [:cue/launch] (mapv :op (:commands (choose with-human)))))))
 
+(deftest movement-companions-need-deliverable-light-under-the-budget
+  (let [shutter {:offset 3 :functions [{:start 0 :end 127 :type :closed} {:start 128 :end 255 :type :open}]}
+        rig [(-> (lamp :mover 1 40 []) (assoc-in [:channels :pan] 2) (assoc-in [:channels :shutter] shutter))]
+        defs [{:id :move :outputs {:pan 0.5}} {:id :on :outputs {:dimmer 1}} {:id :open :outputs {:shutter 1}}]
+        m (setup rig defs {:enabled? true :global {:limit 1}})
+        lit (:model (launch m :on :human 0))
+        choose (fn [model allowed]
+                 (:commands (auto/advance model {:scope {:cue-ids allowed}} (auto/initial-state 1000 0 :show) 1)))]
+    (is (empty? (choose lit [:move])) "An electrically driven lamp with its shutter closed is dark")
+    (is (= #{:move :open} (set (map :cue-id (choose lit [:move :open])))))
+    (let [open (:model (launch lit :open :human 0))
+          black (assoc-in open [:settings :lighting-budget :global :max-active] 0)]
+      (is (= [:move] (mapv :cue-id (choose open [:move]))))
+      (is (empty? (choose black [:move]))))
+    (is (= #{:move :on :open} (into #{} (keep :cue-id) (choose m [:move :on :open])))
+        "Separate shutter and dimmer cues can provide light together")))
+
+(deftest retiring-owned-light-keeps-movement-visible
+  (let [rig [(assoc-in (lamp :mover 1 50 []) [:channels :pan] 2) (lamp :wash 3 50 [])]
+        defs [{:id :moving-look :targets [:mover] :outputs {:pan 0.5}}
+              {:id :on :targets [:mover] :outputs {:dimmer 1}}
+              {:id :wash :targets [:wash] :outputs {:dimmer 1}}]
+        m (setup rig defs {:enabled? true :global {:limit 0.6}})
+        owned {:adapter :auto :session-id :operator}
+        {show :model ack :ack} (launch m :on owned 0)
+        state (auto/record-launch (auto/initial-state 1000 0 :operator) (:instance-id ack))
+        commands (:commands (auto/advance show {:scope {:cue-ids [:moving-look :wash]} :count 2} state 1))]
+    (is (= #{:moving-look :wash} (into #{} (keep :cue-id) commands)))
+    (is (every? #(= :cue/launch (:op %)) commands))))
+
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}
                     {:groups {:front {:max-active -1}}} {:global {:strategy :typo}}

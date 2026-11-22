@@ -7,6 +7,7 @@
             [afterglow.render.frame :as render]
             [tolglow.automation.prediction :as prediction]
             [tolglow.lighting-budget :as budget]
+            [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]
             [tolglow.automation.random :as random]))
@@ -78,26 +79,68 @@
                          (into #{} (mapcat #(:targets % (vec all))) movement) all)]
     (set/intersection all (set (:targets effect (vec all))) output-targets)))
 
-(defn- emitting-targets [model cues time-ms]
-  (let [output (prediction/frame model (::patch model) cues time-ms)]
-    (into #{} (keep (fn [[id value]]
-                     (when (some pos? (:emitted-color value)) id))) (:values output))))
+(defn- light-forecast [model cues time-ms]
+  (let [ctx (::budget model)
+        raw (prediction/frame model (::patch model) cues time-ms (:standby-block ctx))
+        frame (if ctx (budget/apply-frame ctx raw) raw)
+        meter (or (:meter ctx) (force (::meter model)))
+        ^doubles levels (capacity/local-brightnesses meter (:universes frame))]
+    (cond-> {:emitting (into #{} (keep (fn [[id [index _]]]
+                                         (when (pos? (aget levels (int index))) id))) (:writers-by-head meter))}
+      ctx (assoc :unmet-watts (budget/unmet-watts ctx raw)))))
+
+(defn- movement-needs [model cues config]
+  (when-not (= :darkness (:intent config))
+    (into #{} (mapcat #(when (movement? (definition model %))
+                        (target-ids (:fixtures model) (definition model %)))) cues)))
+
+(def ^:private light-controls (into registry/emitter-attributes [:color :dimmer :shutter :strobe]))
+
+(defn- light-control? [model missing cue]
+  (let [effect (definition model cue)
+        intersects? (fn [targets] (or (nil? targets) (some missing targets)))]
+    (and (intersects? (:targets effect))
+         (some #(and (light-controls (:attribute %))
+                     (intersects? (:targets %)))
+               (registry/output-entries (:outputs effect))))))
+
+(defn- combined-light [model required missing chosen pool time-ms]
+  ;; A dimmer, an emitter and a shutter can be separate cues. When none of them
+  ;; alone lights the fixture, audition the group once, then prune redundant cues.
+  (let [selected (set chosen)
+        helpers (filterv #(and (not (selected %)) (light-control? model missing %)) pool)]
+    (when (> (count helpers) 1)
+      (let [all (into chosen helpers)
+            trial (light-forecast model all time-ms)]
+        (when (set/subset? required (:emitting trial))
+          (reduce (fn [{:keys [cues] :as result} helper]
+                    (let [subset (filterv #(not= helper %) cues)
+                          trial (light-forecast model subset time-ms)]
+                      (if (set/subset? required (:emitting trial))
+                        {:cues subset :forecast trial} result)))
+                  {:cues all :forecast trial} (rseq helpers)))))))
 
 (defn- complete-selection [model pool selected config time-ms]
-  (if (= :darkness (:intent config)) {:cues selected :reason :intentional-darkness}
-      (let [required (into #{}
-                           (mapcat #(when (movement? (definition model %))
-                                      (target-ids (:fixtures model) (definition model %)))) selected)]
-        (loop [chosen selected remaining (remove (set selected) pool)]
-          (let [missing (when (seq required) (set/difference required (emitting-targets model chosen time-ms)))]
-            (cond
-              (empty? missing) {:cues chosen :reason (if (= chosen selected) :eligible :added-emission)}
-              (empty? remaining) {:cues [] :reason :unsatisfied-emission :missing missing}
-              :else
-              (let [candidate (first remaining)
-                    after (emitting-targets model (conj chosen candidate) time-ms)]
-                (recur (if (seq (set/intersection missing after)) (conj chosen candidate) chosen)
-                       (rest remaining)))))))))
+  (let [required (movement-needs model selected config)
+        result (fn [chosen forecast]
+                 (merge (select-keys forecast [:unmet-watts])
+                        {::required required :cues chosen :reason (if (= chosen selected) :eligible :added-emission)}))]
+    (if (empty? required)
+      {:cues selected :reason (if (= :darkness (:intent config)) :intentional-darkness :eligible)}
+      (loop [chosen selected remaining (remove (set selected) pool)
+             forecast (light-forecast model selected time-ms)]
+        (let [missing (set/difference required (:emitting forecast))]
+          (cond
+            (empty? missing) (result chosen forecast)
+            (empty? remaining)
+            (if-let [{:keys [cues forecast]} (combined-light model required missing chosen pool time-ms)]
+              (result cues forecast)
+              {:cues [] :reason :unsatisfied-emission :missing missing})
+            :else (let [proposal (conj chosen (first remaining))
+                        after (light-forecast model proposal time-ms)]
+                    (if (seq (set/intersection missing (:emitting after)))
+                      (recur proposal (next remaining) after)
+                      (recur chosen (next remaining) forecast)))))))))
 
 (defn- activity-order [model target candidates]
   (if (nil? target) candidates
@@ -118,7 +161,8 @@
                       (let [with-dependencies (complete-selection model ordered (conj (:cues result) candidate) config time-ms)
                             choices (:cues with-dependencies)]
                         (if (empty? choices) best
-                          (let [loss (cost model ctx choices time-ms)
+                          (let [loss (if (contains? with-dependencies :unmet-watts)
+                                       (:unmet-watts with-dependencies) (cost model ctx choices time-ms))
                                 option (assoc with-dependencies :unmet-watts loss)]
                             (cond (nil? loss) best
                                   (<= loss 1e-9) (reduced option)
@@ -130,7 +174,11 @@
 
 (defn- make-room [model ctx selected owned time-ms]
   (let [initial (:unmet-watts selected 0.0)
-        cost #(cost % ctx (:cues selected) time-ms)
+        cost (fn [trial]
+               (if-let [required (::required selected)]
+                 (let [forecast (light-forecast trial (:cues selected) time-ms)]
+                   (when (set/subset? required (:emitting forecast)) (:unmet-watts forecast)))
+                 (cost trial ctx (:cues selected) time-ms)))
         ;; A later opaque cue can hide an earlier owner's contribution. If no
         ;; single removal helps, try releasing their combination. Restore each
         ;; unnecessary instance in reverse age order, preserving human writes.
@@ -198,8 +246,8 @@
       {:state state :commands [] :reasons []}
       :else
       (let [patch (render/compile-patch (:fixtures model []))
-            model (assoc model ::patch patch)
             ctx (budget/planning-context model patch)
+            model (assoc model ::patch patch ::budget ctx ::meter (delay (capacity/prepare patch)))
             pool (candidates model config)
             [seed ordered] (random/shuffle-values (:seed state) pool)
             ordered (activity-order model (:activity-target config) ordered)
@@ -227,4 +275,4 @@
                   ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
                   (= :ms unit) (assoc :next-at-ms next-at)
                   (= :beats unit) (assoc :next-at-beat next-at))
-         :commands commands :reasons [(dissoc result :cues)]}))))
+         :commands commands :reasons [(dissoc result :cues ::required)]}))))
