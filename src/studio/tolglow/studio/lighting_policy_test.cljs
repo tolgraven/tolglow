@@ -1,0 +1,29 @@
+(ns tolglow.studio.lighting-policy-test
+  (:require [cljs.test :refer-macros [deftest is]]
+            [tolglow.studio.lighting-policy :as policy]))
+
+(def identity-key {:epoch 2 :runtime-id "show-process" :show-id :club})
+(def db {:connection {:connected? true} :server-projection {:view identity-key}})
+
+(deftest budget-edits-are-typed-and-local-to-the-selected-scope
+  (is (= {:groups {"side" {:max-active 0 :standby-level 0.04 :strategy :priority :fixture-order [:rig/wash "head"]}}}
+         (policy/patch-values :lighting-budget [:groups "side"]
+                              {:max-active "0" :standby-level 0.04 :strategy :priority :fixture-order [:rig/wash "head"]})))
+  (is (= {:global {:max-active nil}} (policy/patch-values :lighting-budget [:global] {:max-active ""})))
+  (doseq [value ["-1" "0.5" "all"]]
+    (is (thrown? js/Error (policy/patch-values :lighting-budget [:global] {:max-active value})))))
+
+(deftest only-edited-response-stages-are-sent
+  (is (= {:groups {:side {:release {:beats 0.375}}}}
+         (policy/patch-values :output-response [:groups :side] {:release {:value "3/8" :unit "beats"}})))
+  (is (thrown? js/Error (policy/patch-values :output-response [:global] {:attack {:value "-1" :unit "beats"}}))))
+
+(deftest policy-writes-use-the-show-identity-and-discard-stale-requests
+  (let [req (policy/save-request db :lighting-budget {:groups {:wash nil}} nil)]
+    (is (= {:scope :lighting-budget :values {:groups {:wash nil}} :expected-epoch 2 :runtime-id "show-process"}
+           (get-in req [:studio/http :body])))
+    (is (true? (get-in req [:studio/http :typed?])))
+    (is (nil? (policy/save-request (:db req) :lighting-activity {:enabled? true} nil)))
+    (is (nil? (policy/save-request (assoc-in db [:connection :connected?] false) :lighting-activity {:enabled? true} nil)))
+    (is (some? (policy/save-request (assoc-in (:db req) [:server-projection :view :epoch] 3)
+                                    :lighting-activity {:enabled? false} nil)))))

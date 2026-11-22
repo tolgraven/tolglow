@@ -35,7 +35,7 @@ try {
   await target.focus();
   await target.press('ArrowLeft');
   await target.press('ArrowRight');
-  assert.equal(await target.inputValue(), '72');
+  const requested = Number(await target.inputValue()) / 100;
   async function submit(label) {
     const response = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/lighting-scene');
     await panel.getByRole('button', { name: label, exact: true }).tap();
@@ -44,11 +44,11 @@ try {
     return (await snapshot())['lighting-scenes'].groups;
   }
   const [applied] = await submit('Apply target');
-  assert.equal(applied.target, 0.72);
+  assert.equal(applied.target, requested);
   assert.equal(applied['fixture-ids'].length, 1);
   await page.waitForFunction(() => {
     const text = document.querySelector('.scene-reading')?.textContent || '';
-    return /Output \d+% · requested 72%/.test(text);
+    return /Output \d+% · requested \d+%/.test(text);
   });
   assert.equal(await choices.inputValue(), 'group:studio.scene/browser-wash');
   await choices.selectOption('group:studio/all-lights');
@@ -56,14 +56,73 @@ try {
   await choices.selectOption('group:studio.scene/browser-wash');
   const [varied] = await submit('Something different');
   assert.ok(varied.generation > applied.generation);
+
+  await panel.getByLabel('Brightness reference').selectOption('global');
+  const [matched] = await submit('Apply target');
+  assert.equal(matched['brightness-reference'], 'global');
+  const comparison = panel.locator('.source-readings');
+  await comparison.locator('summary').tap();
+  await comparison.getByRole('columnheader', { name: 'Rig scale' }).waitFor();
+  await comparison.getByRole('rowheader').first().waitFor();
+
+  const controls = page.getByRole('region', { name: 'Lighting policies', exact: true });
+  const budget = controls.getByRole('region', { name: 'Light output budget', exact: true });
+  const response = controls.getByRole('region', { name: 'Output response envelope', exact: true });
+  const intensity = controls.getByRole('region', { name: 'Perceived lighting intensity', exact: true });
+  async function policyEdit(action) {
+    const ack = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/settings');
+    await action();
+    const reply = await ack;
+    assert.equal(reply.status(), 200, await reply.text());
+    return snapshot();
+  }
+  const apply = (section, name) => policyEdit(() => section.getByRole('button', { name, exact: true }).tap());
+  await policyEdit(() => budget.getByLabel('Enable budgets').check());
+  await budget.getByLabel('Maximum active sources').fill('2');
+  await budget.getByLabel('When over budget').selectOption('priority');
+  let saved = await apply(budget, 'Apply budget');
+  assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
+  assert.equal(saved.settings['lighting-budget'].global.strategy, 'priority');
+
+  await controls.getByLabel('Budget and envelope scope').selectOption({ label: applied['group-id'] });
+  await budget.getByLabel('Maximum active sources').fill('1');
+  const standby = budget.getByRole('slider', { name: 'Standby brightness' });
+  await standby.focus();
+  await standby.press('Home');
+  await standby.press('ArrowRight');
+  saved = await apply(budget, 'Apply budget');
+  const selected = saved.settings['lighting-budget'].groups[applied['group-id']];
+  assert.equal(selected['max-active'], 1);
+  assert.equal(selected['standby-level'], 0.01);
+  assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
+  await policyEdit(() => response.getByLabel('Enable envelopes').check());
+  await response.getByLabel('Attack duration').fill('1/2');
+  await response.getByLabel('Attack unit').selectOption('beats');
+  saved = await apply(response, 'Apply response');
+  assert.equal(saved.settings['output-response'].groups[applied['group-id']].attack.beats, 0.5);
+  await policyEdit(() => intensity.getByLabel('Meter activity').check());
+  await page.waitForFunction(() => {
+    const panel = document.querySelector('[aria-label="Perceived lighting intensity"]');
+    return /Lighting intensity\d+%/.test(panel?.textContent || '');
+  });
+
+  saved = await apply(budget, 'Remove group override');
+  assert.ok(!saved.settings['lighting-budget'].groups?.[applied['group-id']]);
+  assert.equal(saved.settings['lighting-budget'].global['max-active'], 2);
+  await apply(response, 'Remove group override');
+  await policyEdit(() => budget.getByLabel('Enable budgets').uncheck());
+  await policyEdit(() => response.getByLabel('Enable envelopes').uncheck());
+  await policyEdit(() => intensity.getByLabel('Meter activity').uncheck());
   await page.setViewportSize({ width: 390, height: 843 });
   if (await live.isVisible()) await live.tap();
-  assert.equal(await panel.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true);
+  for (const region of [panel, controls]) {
+    assert.equal(await region.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true);
+  }
   assert.deepEqual(await submit('Release group'), []);
   const bound = await fetch(origin + '/api/lighting-scene', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ op: 'apply', 'group-id': 'qa-energy', 'fixture-ids': applied['fixture-ids'],
-      target: 0.42, 'target-var': ['audio', 'energy'], 'expected-epoch': initial.epoch, 'runtime-id': initial['runtime-id'] }),
+      target: 0.42, 'target-var': ['audio/energy'], 'expected-epoch': initial.epoch, 'runtime-id': initial['runtime-id'] }),
   });
   assert.ok(bound.ok, await bound.text());
   const boundOption = choices.locator('option').filter({ hasText: /^qa energy/ });
@@ -73,13 +132,13 @@ try {
   await target.focus();
   await target.press('ArrowRight');
   const [following] = await submit('Something different');
-  assert.deepEqual(following['target-var'], ['audio', 'energy']);
+  assert.deepEqual(following['target-var'], ['audio/energy']);
   const [manual] = await submit('Set manual target');
   assert.equal(manual.target, 0.43);
   assert.ok(!manual['target-var']);
   assert.deepEqual(await submit('Release group'), []);
   assert.deepEqual(problems, []);
-  console.log('Touch and keyboard set a 72% target, verified measured output, prevented an overlapping group, varied the scene and released it at phone width. Vary retained an audio binding until an explicit manual takeover.');
+  console.log('Touch and keyboard verified common-reference brightness, rig and group budgets, response duration, intensity monitoring, and independent group override removal through Ring. The phone layout fit both performance panels.');
 } finally {
   await browser.close();
 }

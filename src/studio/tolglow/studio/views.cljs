@@ -23,6 +23,7 @@
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
             [tolglow.studio.lighting-scenes :as lighting-scenes]
+            [tolglow.studio.lighting-policy :as lighting-policy]
             [tolglow.studio.workspace :as workspace]))
 
 (defn- send! [event] (rf/dispatch event))
@@ -382,7 +383,7 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [performance/board db parameter-control] [lighting-scenes/panel]]
+      [:div.performance-live [performance/board db parameter-control] [lighting-scenes/panel] [lighting-policy/panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 
