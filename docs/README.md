@@ -32,6 +32,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | --- | --- |
 | [Relative fixture brightness](relative-fixture-brightness.md) | Measure full-white output with a locked camera and save per-type calibration |
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
+| [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |

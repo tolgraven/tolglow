@@ -1,7 +1,15 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :fixtures/optical-properties
+ [{:id :studio/fog-machine-and-room-properties
+   :title "Edit fog output profiles and venue ventilation in Studio"
+   :kind :implementation :status :in-progress :owner "fixture-definition-photometry"
+   :paths ["tolglow/src/studio/tolglow/studio/fog_fields.cljs" "tolglow/docs/studio-atmosphere.md"]
+   :depends-on [:fixtures/optical-properties]
+   :acceptance ["Publish a fog machine profile from the fixture library with rate, mixing time, world nozzle and reversible DMX range"
+                "Save or clear optional ventilation and half-life without replacing other room properties"]
+   :evidence []}
+  {:id :fixtures/optical-properties
    :title "Keep beam optics and relative brightness from fixture definitions through Studio projection"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/photometry.cljc" "tolglow/src/tolglow/fixtures/library.clj"
