@@ -26,6 +26,13 @@
    {:name "set_parameter" :description "Set a bounded parameter on an exact active instance."
     :parameters {:type "object" :properties {:instance-id {:type "string"} :param {:type "string"} :value {}}
                  :required ["instance-id" "param" "value"] :additionalProperties false}}
+   {:name "set_lighting_scene"
+    :description "Create or vary a look at a fraction of a fixture group's calibrated visible capacity. Example: something different at 72% means vary with target 0.72. Accepts existing fixture IDs, optional allowed effect IDs or parameters; release only the group's owned look."
+    :parameters {:type "object" :properties {:op {:type "string" :enum ["apply" "vary" "release"]}
+                 :group-id {:type "string"} :target {:type "number" :minimum 0 :maximum 1}
+                 :fixture-ids {:type "array" :items {:type "string"}} :effect-ids {:type "array" :items {:type "string"}}
+                 :params {:type "object"} :allow-generated? {:type "boolean"}}
+                 :required ["op" "group-id"]}}
    {:name "configure_auto" :description "Configure automatic show selection policy using validated cue ids, timing and constraints."
     :parameters {:type "object" :properties {:configuration {:type "object"}}
                  :required ["configuration"] :additionalProperties false}}])

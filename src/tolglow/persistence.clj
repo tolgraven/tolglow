@@ -15,6 +15,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.signals :as signals]
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
@@ -405,13 +406,14 @@
         owners (into {} (map-indexed (fn [i owner] [owner (str "restore:" epoch ":" i)])
                                     (distinct (concat (map :owner-id (vals (:composition-runs saved)))
                                                       (when-let [owner (get-in saved [:auto :state :owner-id])] [owner])))))
-        model (assoc saved :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
+        model (assoc (lighting-scenes/restore saved ids) :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
         instances (into {} (for [instance ordered
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
-                                       source (if-let [new-owner (owners owner)]
+                                       source (or (lighting-scenes/session-source saved instance)
+                                                  (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
-                                                {:adapter :restore :epoch epoch})]]
+                                                {:adapter :restore :epoch epoch}))]]
                              [id (-> (reduce (fn [entry field]
                                                (if (get entry field)
                                                  (update entry field #(assoc % :instance-id id :epoch epoch)) entry))

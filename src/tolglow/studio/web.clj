@@ -151,7 +151,7 @@
 
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/photometry" :photometry "/api/calibration" :calibration "/api/command" :command "/api/definition" :definition "/api/rig" :rig "/api/aim-path" :aim-path
-   "/api/audio/returns/configure" :audio-return-configure
+   "/api/lighting-scene" :lighting-scene "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/run" :composition-run
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release

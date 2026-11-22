@@ -14,7 +14,7 @@
       value)))
 
 (def keyword-fields
-  #{:op :kind :mode :loop :scope :intent :provider :reload-policy :blend :attribute
+  #{:group-id :op :kind :mode :loop :scope :intent :provider :reload-policy :blend :attribute
     :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
     :timebase :operation :retrigger :unit :distribution :match})
 

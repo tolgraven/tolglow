@@ -5,9 +5,10 @@
             [afterglow.reactive.registry :as reactive]
             [afterglow.time :as time]
             [tolglow.automation.random :as random]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry]
+            [tolglow.lighting-scenes :as lighting-scenes]))
 
-(def actions [:cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
+(def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
   {:audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
    :show [:show/restored]
@@ -38,11 +39,20 @@
 (defn validate-action [{:keys [op select delay implementation launch value] :as action}]
   (check (and (some #{op} actions)
               (only-keys? action (case op
+                                   :lighting/scene #{:op :scene :event-path :gate :delay}
                                    :callback #{:op :implementation :delay}
                                    (:cue/launch :effect/launch) #{:op :select :launch :delay}
                                    :instance/opacity #{:op :select :value :delay}
                                    #{:op :select :delay})))
          "Unknown event action or option" {:op op})
+  (when (= op :lighting/scene)
+    (lighting-scenes/validate-request (:scene action))
+    (when-let [{:keys [path above below] :as gate} (:gate action)]
+      (check (and (map? gate) (vector? path) (seq path) (every? keyword? path)
+                  (registry/finite-number? above) (registry/finite-number? below) (< below above))
+             "A scene gate needs an event path and distinct upper/lower thresholds" {:gate gate}))
+    (when-let [path (:event-path action)]
+      (check (and (vector? path) (seq path) (every? keyword? path)) "Use a path within the emitted event" {:path path})))
   (when (contains? action :delay) (musical delay))
   (when (contains? action :select)
     (check (and (only-keys? select #{:ids :categories :page-id :pick})
@@ -216,7 +226,7 @@
   (assoc-in model [:event-subscribers :last-error]
             {:subscriber (:subscriber run) :run (:id run) :step (:index run) :message (subs message 0 (min 256 (count message)))}))
 
-(defn- perform [model run action now budget]
+(defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
         [seed targets] (if (:targets run) [seed (:targets run)]
                          (chosen seed (candidates model action) (get-in action [:select :pick])))
@@ -233,6 +243,28 @@
                       (assoc-in model [:event-subscribers :seed] seed) (range offset stop))]
     [model (when (< stop (count targets)) (assoc run :targets targets :offset stop))
      (- budget (max 1 (- stop offset)))]))
+
+(defn- perform [model run action now budget]
+  (if (= :lighting/scene (:op action))
+    [(try
+       (let [{:keys [event subscriber index]} run
+             {:keys [event-path gate scene]} action
+             target (when event-path (get-in event event-path))
+             request (if event-path (assoc scene :target target) scene)
+             {:keys [path above below]} gate
+             value (when path (get-in event path))
+             latch [:extensions ::lighting-gates [subscriber index (:group-id scene)]]
+             armed? (not (true? (get-in model latch)))]
+         (cond
+           (and event-path (not (registry/finite-number? target))) model
+           (nil? gate) (lighting-scenes/apply-request model request now)
+           (not (registry/finite-number? value)) model
+           (and armed? (>= value above)) (assoc-in (lighting-scenes/apply-request model request now) latch true)
+           (<= value below) (assoc-in model latch false)
+           :else model))
+       (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
+     nil (dec budget)]
+    (select-and-perform model run action now budget)))
 
 (defn- following [run meter]
   (let [i (inc (:index run))]

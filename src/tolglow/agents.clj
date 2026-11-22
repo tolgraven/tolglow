@@ -385,6 +385,7 @@
    "Then launch_cue: {\"cue-id\":\"agent-red-cue\",\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}}}. "
    "Persistent, held, timed and one-shot modes are distinct; timed/one-shot need a positive duration. Stop exact instance IDs, not cue IDs. "
    "set_parameter arguments are {instance-id,param,value}. inspect_show returns fuller current data. If a saved tool outcome is unknown after interruption, inspect current show state before retrying any action. "
+   "Use set_lighting_scene for a measured group target. For 'something different at 72%', use op vary, a group-id, and target 0.72. Supply fixture-ids for a custom group. Inspect lighting-scenes for actual output or an unmet target; the human master and other cues take precedence. "
    "Example configure_auto: {\"configuration\":{\"enabled?\":true,\"interval\":{\"bars\":1},\"count\":1,\"scope\":{\"cue-ids\":[\"agent-red-cue\"]},"
    "\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}},\"seed\":42}}. Scope may instead be \"all\" or {\"page-id\":\"actual-page-id\"}; "
    "scope also constrains any required emission companion. Disable auto with {\"configuration\":{\"enabled?\":false}}.\n\n"
