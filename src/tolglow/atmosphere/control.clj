@@ -81,7 +81,9 @@
         fresh? (and (= epoch (:epoch observation)) (unit? level)
                     (recent? now (:last-presented-ms observation)))
         zone (when (and fresh? valid?) (cond (and (pos? target) (<= level low)) :below (>= level high) :above :else :in-band))
-        request? (and fresh? valid? (pos? target) (or (= zone :below)
+        peak (:coasting-peak observation)
+        coasting? (and fresh? valid? (< level high) (>= (:fog-level peak 0.0) high))
+        request? (and fresh? valid? (not coasting?) (pos? target) (or (= zone :below)
                      (and (= zone :in-band) (:request? previous) (< level high))))
         enabled? (:enabled? s)
         sources (into {} (map (juxt :fixture-id identity)) (:sources observation))
@@ -92,6 +94,7 @@
                          [id (pump (get-in patch [:by-id id]) (get sources id) (prior-pump previous id)
                                    now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))]
     {:epoch epoch :enabled? enabled? :target target :level level :lower low :upper high :zone zone
+     :coasting? (boolean coasting?) :coasting-peak peak
      :fresh? (boolean fresh?) :request? (boolean (and request? enabled? (not bypass?))) :pumps pumps}))
 
 (defn publish [model previous status]
@@ -170,6 +173,11 @@
     {:pumps pumps :leases managed
      :block (when (or (seq managed) (seq ordinary))
               {:kind :assignments :assignments (into managed ordinary)})}))
+
+(defn with-forecast [plan observation]
+  (if (and plan observation)
+    (assoc observation :coasting-peak (atmosphere/coasting-peak plan observation))
+    observation))
 
 (defn frame [model patch observation previous now bypass? blocks music-block]
   (when (or observation previous music-block (get-in model [:settings :fog-control :enabled?]))

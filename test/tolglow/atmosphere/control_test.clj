@@ -145,3 +145,21 @@
     (is (= :invalid-duty (get-in setpoint [:status :pumps :jet :mode])))
     (is (= :invalid-duty (get-in music [:status :music-pumps :jet :mode])))
     (is (every? empty? (map :leases [setpoint music])))))
+
+(deftest slow-mixing-jets-stop-on-queued-volume-before-the-room-crosses-the-band
+  (let [rt (show/create-runtime {:model (assoc base :rig (-> rig
+                         (assoc-in [:room :fog-half-life-s] 180)
+                         (assoc-in [:fixtures 0 :fogger :flow-m3-min] 300)
+                         (assoc-in [:fixtures 0 :fogger :mixing-seconds] 20)))})]
+    (try
+      (let [ack (show/submit! rt :settings {:scope :fog-control :values (assoc options :target 0.15 :hysteresis 0.025)})
+            frames (mapv (fn [t]
+                           (show/tick! rt (double t))
+                           (let [out (:output @(:state rt))] [(:fog-control out) (bit-and 255 (aget ^bytes (get-in out [:universes 1]) 0))]))
+                         (range 0 2200 25))
+            held (filter #(and (get-in % [0 :coasting?]) (< (get-in % [0 :level]) 0.125)) frames)]
+        (is (= :accepted (:status @ack)))
+        (is (some #(pos? (second %)) frames))
+        (is (> (count held) 20))
+        (is (every? #(and (zero? (second %)) (>= (get-in % [0 :coasting-peak :fog-level]) 0.175)) held)))
+      (finally (show/stop! rt)))))

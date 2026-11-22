@@ -31,7 +31,7 @@
 (defn panel [pending?]
   (let [{:keys [enabled? target hysteresis fog-fixture-ids]
          :or {target 0.2 hysteresis 0.05 fog-fixture-ids []}} @(rf/subscribe [:fog-control/settings])
-        {:keys [level lower upper zone fresh? pumps]} @(rf/subscribe [:fog-control/live])
+        {:keys [level lower upper zone fresh? pumps coasting? coasting-peak]} @(rf/subscribe [:fog-control/live])
         fixtures @(rf/subscribe [:fog-control/fixtures])]
     [:section.panel {:aria-label "Venue fog control"}
      [:div.panel-top [:span.section-label "VENUE FOG"]]
@@ -40,7 +40,10 @@
         [:div [:strong (str (percent level) " estimated light loss")]
          [:meter {:min 0 :max 1 :value level :aria-label "Estimated fog level" :style {:width "100%"}}]
          [:p.small (if (and fresh? zone) (str (name zone) " · target band " (percent lower) "–" (percent upper))
-                       "Waiting for fresh fogger output")]]
+                       "Waiting for fresh fogger output")]
+         (when coasting? [:p.small (str "Released fog is still mixing · estimated peak "
+                                        (percent (:fog-level coasting-peak)) " in "
+                                        (js/Math.ceil (:after-s coasting-peak)) " s")])]
         [:p.small "Awaiting an output frame from a profiled fogger."])
       [bound "Target light loss" :target target 0 1 pending?]
       [bound "Band either side" :hysteresis hysteresis 0.01 1 pending?]

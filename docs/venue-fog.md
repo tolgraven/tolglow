@@ -17,7 +17,7 @@ Read `(get-in (tolglow.show/snapshot runtime) [:output :atmosphere])` for per-so
 
 ## Hold a venue fog level
 
-In Studio → Connections → Venue fog, choose the desired light loss along the reference sightline, the band on either side, and the individual pumps. Arm automatic fog control to begin feedback. A target of 30% with a five-point band starts a demand below 25%, continues through the band and ends it at 35%. After a pulse, each machine rests before it can pulse again. Flow already in the room continues diffusing.
+In Studio → Connections → Venue fog, choose the desired light loss along the reference sightline, the band on either side, and the individual pumps. Arm automatic fog control to begin feedback. A target of 30% with a five-point band starts a demand below 25%, continues through the band and ends it at 35%. These are switching thresholds. Lingering plumes can carry the room above the upper threshold after a pump stops. Feedback also forecasts the highest attenuation the already released local fog can reach as it mixes and clears. If those plumes can reach the upper threshold, the controller holds further pulses, even while the current room reading is low. After a pulse each machine rests before it can pulse again.
 
 The sightline level is `1 − exp(−extinction × mixed density × reference path)`. Afterglow calculates it with the room's measured extinction and reference distance when available. It describes the well-mixed room along the reference path; a person in a concentrated jet can see substantially greater attenuation. Open the live status in Connections to see the current estimate, band and each pump's state.
 

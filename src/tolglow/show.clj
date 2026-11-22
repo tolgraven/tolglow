@@ -915,6 +915,8 @@
                                       (get-in before [:output :lighting-capacity]))
                            bypass? (or photo-session (calibration/current model) (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
                            observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
+                           observation (if (get-in model [:settings :fog-control :enabled?])
+                                         (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
                            previous-control (get-in before [:output :fog-control])
                            fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            limit (when plan
