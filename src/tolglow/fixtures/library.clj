@@ -5,6 +5,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [afterglow.render.frame :as render]
+            [afterglow.render.photometry :as photometry]
             [tolglow.registry :as registry]
             [tolglow.fixtures.definitions :as library])
   (:import [java.nio.charset StandardCharsets] [java.security MessageDigest] [java.util Base64]))
@@ -204,8 +205,9 @@
         policy (if (string? policy) (keyword policy) policy)
         calibration (merge (:calibration definition) (:calibration options))
         footprint (:footprint definition (reduce max 0 (filter integer? offsets)))
-        candidate (merge (select-keys definition [:name :emission-color])
-                         (select-keys options [:name :emission-color])
+        properties (into [:name :emission-color :fogger] photometry/fixture-keys)
+        candidate (merge (select-keys definition properties)
+                         (select-keys options properties)
                          {:id (:id options) :fixture-type-id (:id definition) :fixture-type-version (:version definition)
                           :position (:position options [0 0 0]) :rotation-deg (:rotation-deg options [0 0 0])
                           :universe (:universe options) :address (:address options)
