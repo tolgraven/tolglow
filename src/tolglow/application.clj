@@ -220,6 +220,6 @@
         app (:application runtime)]
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable #(stop! runtime)))
     (println "Started Tolglow" (:loaded-components app))
-    (when-let [{:keys [host port]} (get-in app [:modules :web-server])]
-      (println "Tolglow Studio listening on" (str "http://" host ":" port)))
+    (when-let [{:keys [host port scheme public-origin]} (get-in app [:modules :web-server])]
+      (println "Tolglow Studio listening on" (or public-origin (str (name (or scheme :http)) "://" host ":" port))))
     @(promise)))

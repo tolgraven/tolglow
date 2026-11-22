@@ -157,25 +157,52 @@ not hidden simulated functionality.
 
 ## API and lifecycle
 
-Studio gives connected operators control of the show, including the Clojure
-REPL when available. The default Jetty listener binds to loopback and accepts
-local HTTP hostnames. To use a named local proxy, include its hostname in
-`:web-server {:host "127.0.0.1" :allowed-hosts ["studio.local"]}`. Browser
-mutations and WebSocket upgrades require matching HTTP scheme, hostname and
-effective port. Configure a TLS proxy to preserve the public Host and expose
-the authenticated scheme to Ring at the trusted proxy boundary. A wildcard
-bind on a trusted venue network accepts LAN hostnames unless restricted by
-`:allowed-hosts`. This deployment grants connected clients operator access.
+The local Studio listens on loopback. Connected operators can use the show's
+REPL and any enabled workspace, terminal or agent facilities. A LAN bind needs
+either authenticated access or the explicit `:trusted-lan? true` setting.
 
-`src/studio/tolglow/studio/events.cljs` has one outstanding `/api/state?session=…` request at a time, normally
-every 100 ms, with a request timeout and reconnection notice. Hidden tabs poll
-less frequently. Polls include the last accepted runtime identity, epoch and
-revision. Unchanged revisions return a partial projection; the browser merges
-dynamic fields into existing authoring data only when all three identifiers
-match. A mismatched partial response triggers a full fetch. The HTTP projection
-bounds preview output to sixteen fixtures; the internal runtime snapshot retains
-all fixture output. This reduces idle traffic but does not establish a measured
-large-rig mobile performance guarantee.
+### Connecting an iPad
+
+Keep Studio on loopback and forward a dedicated HTTPS hostname to that listener
+using a TLS reverse proxy. Preserve the public Host header. Set the following
+module options in your local Tolglow configuration. Use the actual HTTPS origin
+where the iPad will connect.
+
+```clojure
+:web-server {:enabled true :host "127.0.0.1" :port 8500
+             :public-origin "https://lighting.example.net"
+             :auth {:token-env "TOLGLOW_STUDIO_TOKEN"}}
+```
+
+Set the named environment variable to a random password of at least 24
+characters before starting Tolglow. Open the public URL in Safari, sign in as
+`studio` and enter that password. The browser receives an HTTP-only, same-site
+session cookie for all Studio routes and WebSocket upgrades. Sessions expire
+after twelve hours and restarting the listener invalidates them. For a native
+client, send `Authorization: Bearer <operator token>` to the same HTTPS origin.
+Keep the token out of show files and URLs.
+
+A venue host can also terminate TLS in Jetty. Point `:tls` at a PKCS12 keystore
+with a certificate the iPad trusts for the chosen hostname. Jetty uses the
+configured port exclusively for HTTPS in this mode.
+
+```clojure
+:web-server {:enabled true :host "0.0.0.0" :port 8500
+             :allowed-hosts ["lighting.local"]
+             :auth {:token-env "TOLGLOW_STUDIO_TOKEN"}
+             :tls {:keystore "/etc/tolglow/studio.p12"
+                   :password-env "TOLGLOW_KEYSTORE_PASSWORD"}}
+```
+
+For an explicitly trusted, isolated network, `:trusted-lan? true` allows an
+anonymous listener, granting every connected client full operator privileges.
+Browser mutations and both WebSocket upgrades check scheme, hostname and port.
+
+Studio opens one state WebSocket for each connected tab. The first frame is a
+full Transit projection. The server coalesces subsequent changes to the
+configured output cadence, with a 40 Hz ceiling, and sends typed path patches
+against the last acknowledged state. A reconnect or missing base requests a
+fresh snapshot. The HTTP state route also serves explicit inspection requests.
 
 Commands carry unique command IDs, `{adapter:"web",session-id}` source, runtime
 identity and the current show epoch. Delayed held releases retain their original

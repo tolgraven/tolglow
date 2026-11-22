@@ -53,3 +53,21 @@
         (if (and host (or (empty? allowed) (contains? allowed host)))
           (handler request)
           {:status 403 :headers {"Content-Type" "text/plain"} :body "Unrecognized Studio host"})))))
+
+(defn loopback-host? [host]
+  (contains? loopback-names (hostname host)))
+
+(defn https-proxy [uri]
+  (let [parsed (http-origin uri)]
+    (when-not (= "https" (first parsed))
+      (throw (ex-info "The public Studio origin must be a complete HTTPS origin" {})))
+    parsed))
+
+(defn wrap-proxy
+  "Only the operator-configured authority receives the TLS scheme. This
+  middleware is installed exclusively behind an explicitly loopback listener."
+  [handler public]
+  (fn [request]
+    (handler (if (= public (http-origin (str "https://" (get-in request [:headers "host"]))))
+               (assoc request :scheme :https)
+               request))))
