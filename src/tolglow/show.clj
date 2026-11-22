@@ -11,6 +11,7 @@
             [tolglow.event-subscribers :as subscribers]
             [tolglow.events.callbacks :as event-callbacks]
             [afterglow.runtime.executor :as executor]
+            [afterglow.runtime.reuse :as reuse]
             [afterglow.render.compute :as compute]
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
@@ -45,6 +46,7 @@
             [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.photometry :as photometry]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
             [tolglow.integrations.audio-return :as audio-return]
@@ -138,7 +140,7 @@
     ((:close! observer))))
 
 (defn- compiler-context [fixtures batch? compute-owner]
-  (let [options (cond-> {:enabled? batch?}
+  (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
                   (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
@@ -153,7 +155,7 @@
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (calibration/disarm-restored (or model (demo/model)))
+   (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (rig/validate-rig (:rig model))
@@ -318,8 +320,12 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
-    :calibration (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
-                                              (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
+    :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
+                                           (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
+    :calibration (do (when (and (= :start (:op payload)) (photometry/current model))
+                       (throw (ex-info "Finish photometry calibration first" {})))
+                     (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
+                                              (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!])))))
     :sensor-configure
     {:model (apply-sensor-result
              (sensors/configure model (:device-id payload)
@@ -780,6 +786,8 @@
                      (.add messages {:type :command :reply (promise) :expected-epoch (get-in before [:model :epoch])
                                      :payload (assoc action :command-id (str (UUID/randomUUID))
                                                      :source {:adapter :reactive :session-id (:id runtime)})}))
+                 physical-receipts (output-scheduler/drain-receipts! (:publisher runtime))
+                 physical-now ((:now-ms (:publisher runtime)))
                  [model receipts restored? restored-output]
                  (reduce
                   (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
@@ -799,9 +807,9 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(calibration/advance
-                    (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms))))
-                    (output-scheduler/drain-receipts! (:publisher runtime)) ((:now-ms (:publisher runtime)))) [] false nil] messages)
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms))))
+                       (calibration/advance physical-receipts physical-now)
+                       (photometry/advance physical-receipts physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
@@ -818,13 +826,16 @@
                                             (= :running (:phase instance)) (> (- time-ms seen) 10000))
                                      (:model (command m {:op :instance/end :instance-id (:id instance)} time-ms)) m)))
                                model (vals (:instances model)))
+                 photo-session (photometry/current model)
+                 model (if (and photo-session (not= (:base-rig photo-session) (:rig model))) (photometry/disarm model) model)
+                 photo-session (photometry/current model)
                  presentation-token (when (:independent-output? runtime)
                                       (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
                                                                  (patch! runtime (get-in model [:rig :fixtures]))
                                                                  (get-in model [:settings :output :presentation] {})
                                                                  (or (pause-look/blackout? model) (zero? (:master model)))))
                  presentation-token (cond-> presentation-token
-                                      presentation-token (assoc :calibration (calibration/marker model)))
+                                      presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
                  started (System/nanoTime)
                  next-state
                  (if restored?
@@ -854,7 +865,7 @@
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
                                      #(resolve-frame
-                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % pause-layer (conj pause-layer))
+                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % (:block photo-session) (conj (:block photo-session)) pause-layer (conj pause-layer))
                                      {:master (:master model) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
@@ -915,15 +926,17 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
+                        (or (not= type :photometry) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
                          (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
-                               calibration-armed? (get-in document (into [:model] (conj calibration-session/artifact-path :armed?)))
+                               calibration-armed? (or (photometry/current (:model document))
+                                                      (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model calibration/disarm-restored)
+                               document (update document :model (comp photometry/disarm calibration/disarm-restored))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
                                prepared (connections/prepare-restore (:connections runtime) restored)]
