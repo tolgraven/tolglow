@@ -4,10 +4,10 @@
   real output; the planner is intentionally outside the rendering deadline."
   (:require [clojure.set :as set]
             [afterglow.time :as time]
-            [afterglow.control.model :as control]
             [afterglow.render.frame :as render]
-            [afterglow.runtime.engine :as engine]
-            [tolglow.compiler :as compiler]
+            [tolglow.automation.prediction :as prediction]
+            [tolglow.lighting-budget :as budget]
+            [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]
             [tolglow.automation.random :as random]))
 
@@ -78,42 +78,8 @@
                          (into #{} (mapcat #(:targets % (vec all))) movement) all)]
     (set/intersection all (set (:targets effect (vec all))) output-targets)))
 
-(defn- launch-assignments [model cues time-ms]
-  (let [clock (time/frame-clock (assoc model :time-ms time-ms))
-        bpm (:bpm clock 120)
-        ;; This is a same-tempo hypothetical sample for dependency planning,
-        ;; never conversion of a musical runtime deadline to milliseconds.
-        offset (reduce max 1
-                       (map #(time/estimate-ms
-                              (time/normalize-duration
-                               (or (get-in (definition model %) [:envelope :attack])
-                                   {:ms (get-in (definition model %) [:envelope :attack-ms] 0)})
-                               (:meter clock)) bpm) cues))
-        sample-time (+ time-ms offset)
-        sample-clock (cond-> (assoc clock :time-ms sample-time)
-                       (number? (:beat clock)) (update :beat + (* offset (/ bpm 60000.0))))
-        prediction-model
-        (reduce (fn [show [i cue]]
-                  (let [launch (update (:prediction-launch cue) :params #(merge {} (:params cue) %))
-                        {:keys [model ack]}
-                        (control/apply-command show
-                          {:op :cue/launch :show-id (:show-id show) :epoch (:epoch show)
-                           :command-id (str "auto-prediction:" (:revision show) ":" i)
-                           :source :auto-prediction :time-ms time-ms :cue-id (:id cue) :launch launch})]
-                    (when (= :rejected (:status ack))
-                      (throw (ex-info "Auto prediction launch rejected" {:cue-id (:id cue) :ack ack})))
-                    model))
-                (merge (control/new-show {:show-id (:show-id model)}) model {:time-ms time-ms})
-                (map-indexed vector cues))
-        assignments (:assignments (engine/advance (assoc prediction-model :transport (dissoc sample-clock :time-ms))
-                                                  {:time-ms sample-time :fixtures (:fixtures model)
-                                                   :transport (dissoc sample-clock :time-ms)}
-                                                  compiler/compile-effect))]
-    (into (if (seq (:instances model)) [] (vec (:assignments model []))) assignments)))
-
 (defn- emitting-targets [model cues time-ms]
-  (let [output (render/resolve-frame (:fixtures model) (launch-assignments model cues time-ms)
-                                     {:master (:master model 1) :blackout? (:blackout? model false)})]
+  (let [output (prediction/frame model (::patch model) cues time-ms)]
     (into #{} (keep (fn [[id value]]
                      (when (some pos? (:emitted-color value)) id))) (:values output))))
 
@@ -123,7 +89,7 @@
                            (mapcat #(when (movement? (definition model %))
                                       (target-ids (:fixtures model) (definition model %)))) selected)]
         (loop [chosen selected remaining (remove (set selected) pool)]
-          (let [missing (set/difference required (emitting-targets model chosen time-ms))]
+          (let [missing (when (seq required) (set/difference required (emitting-targets model chosen time-ms)))]
             (cond
               (empty? missing) {:cues chosen :reason (if (= chosen selected) :eligible :added-emission)}
               (empty? remaining) {:cues [] :reason :unsatisfied-emission :missing missing}
@@ -132,6 +98,45 @@
                     after (emitting-targets model (conj chosen candidate) time-ms)]
                 (recur (if (seq (set/intersection missing after)) (conj chosen candidate) chosen)
                        (rest remaining)))))))))
+
+(defn- activity-order [model target candidates]
+  (if (nil? target) candidates
+    (let [distance (fn [cue]
+                     (if-some [score (activity/predicted-score model cue)]
+                       (abs (- target score)) Double/POSITIVE_INFINITY))]
+      (mapv second (sort-by first (mapv (fn [cue] [(distance cue) cue]) candidates))))))
+
+(defn- cost [model ctx choices time-ms]
+  (budget/unmet-watts ctx (prediction/frame model (::patch model) choices time-ms)))
+
+(defn- choose-with-budget [model ctx ordered config time-ms]
+  (loop [result {:cues [] :reason :empty-scope} remaining ordered]
+    (if (or (empty? remaining) (>= (count (:cues result)) (:count config 1)))
+      result
+      (let [best
+            (reduce (fn [best candidate]
+                      (let [with-dependencies (complete-selection model ordered (conj (:cues result) candidate) config time-ms)
+                            choices (:cues with-dependencies)]
+                        (if (empty? choices) best
+                          (let [loss (cost model ctx choices time-ms)
+                                option (assoc with-dependencies :unmet-watts loss)]
+                            (cond (<= loss 1e-9) (reduced option)
+                                  (or (nil? best) (< loss (:unmet-watts best))) option
+                                  :else best))))) nil remaining)]
+        (if best
+          (recur best (remove (set (:cues best)) remaining))
+          (if (seq (:cues result)) result {:cues [] :reason :unsatisfied-emission}))))))
+
+(defn- make-room [model ctx selected owned time-ms]
+  (loop [model model loss (:unmet-watts selected 0.0) pending owned retired []]
+    (if (or (<= loss 1e-9) (empty? pending))
+      (assoc selected :retired retired :unmet-watts loss)
+      (let [id (first pending)
+            without (update model :instances dissoc id)
+            next-loss (cost without ctx (:cues selected) time-ms)]
+        (if (< next-loss (- loss 1e-9))
+          (recur without next-loss (next pending) (conj retired id))
+          (recur model loss (next pending) retired))))))
 
 (defn advance
   "Select cues when the interval expires. Model supplies :registry, canonical
@@ -151,7 +156,9 @@
         timer (:interval-timer state)
         unit (:unit normalized)]
     (when-not (and (registry/finite-number? time-ms) (pos? (:value normalized))
-                   (integer? count) (<= 1 count 64))
+                   (integer? count) (<= 1 count 64)
+                   (or (nil? (:activity-target config))
+                       (and (registry/finite-number? (:activity-target config)) (<= 0 (:activity-target config) 1))))
       (throw (ex-info "Invalid auto-mode time, interval or count" {:config config :time-ms time-ms})))
     (time/coordinate clock unit)
     (cond
@@ -168,19 +175,34 @@
       (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
       {:state state :commands [] :reasons []}
       :else
-      (let [pool (candidates model config)
+      (let [patch (render/compile-patch (:fixtures model []))
+            model (assoc model ::patch patch)
+            ctx (budget/planning-context model patch)
+            pool (candidates model config)
             [seed ordered] (random/shuffle-values (:seed state) pool)
-            selected (vec (take count ordered))
-            result (if (empty? selected) {:cues [] :reason :empty-scope}
-                       (complete-selection model pool selected config time-ms))
+            ordered (activity-order model (:activity-target config) ordered)
+            owned (filterv (fn [id]
+                             (let [instance (get-in model [:instances id])]
+                               (and (= :running (:phase instance))
+                                    (= {:adapter :auto :session-id (:owner-id state)} (:source instance)))))
+                           (:owned-instance-ids state))
+            result (cond
+                     (empty? ordered) {:cues [] :reason :empty-scope}
+                     ctx (make-room model ctx (choose-with-budget model ctx ordered config time-ms) owned time-ms)
+                     :else (complete-selection model pool (vec (take count ordered)) config time-ms))
+            ended (:retired result)
+            releases (mapv (fn [i id] (command model state :instance/end {:instance-id id} i time-ms)) (range) ended)
             launch (launch-options config)
-            commands (mapv (fn [i cue]
-                             (command model state :cue/launch {:cue-id (:id cue) :launch launch} i time-ms))
-                           (range) (:cues result))
+            commands (into releases
+                           (map-indexed (fn [i cue]
+                                          (command model state :cue/launch {:cue-id (:id cue) :launch launch}
+                                                   (+ (clojure.core/count releases) i) time-ms)))
+                           (:cues result))
             timer (time/start duration clock)
             next-at (+ (:started-at timer) (get-in timer [:duration :value]))]
         {:state (cond-> (assoc state :seed seed :epoch (:epoch model) :interval-timer timer
                                :tick (inc (:tick state)))
+                  ctx (assoc :owned-instance-ids (into [] (remove (set ended)) owned))
                   (= :ms unit) (assoc :next-at-ms next-at)
                   (= :beats unit) (assoc :next-at-beat next-at))
          :commands commands :reasons [(dissoc result :cues)]}))))
