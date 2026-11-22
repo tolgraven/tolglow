@@ -83,6 +83,21 @@
 (defn hdr-values [model config context]
   (let [bounded (reduce-kv (fn [m k [lo hi]] (assoc m k (resolve-level model (config k) context lo hi)))
                            {:falloff (:falloff config)} hdr-ranges)]
-    (reduce (fn [m k] (if-let [g (get config k)]
-                        (assoc m k (update-vals g #(resolve-level model % context 0.0 Double/MAX_VALUE))) m))
-            bounded [:source-gains :cue-gains :instance-gains])))
+    (reduce-kv
+      (fn [m k gains]
+        (if (= k :cue-gains)
+          (reduce-kv
+            (fn [m cue spec]
+              (if (number? spec)
+                (assoc-in m [:cue-gains cue] spec)
+                (reduce (fn [m instance]
+                          (if (= cue (:cue-id instance))
+                            (update-in m [:instance-gains (:id instance)] (fnil * 1.0)
+                                       (resolve-level model spec (assoc context :instance-id (:id instance)) 0.0 Double/MAX_VALUE))
+                            m)) m (vals (:instances model)))))
+            m gains)
+          (reduce-kv (fn [m id spec]
+                       (let [ctx (if (= k :instance-gains) (assoc context :instance-id id) context)]
+                         (update-in m [k id] (fnil * 1.0) (resolve-level model spec ctx 0.0 Double/MAX_VALUE))))
+                     m gains)))
+      bounded (select-keys config [:cue-gains :source-gains :instance-gains]))))

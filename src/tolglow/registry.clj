@@ -221,7 +221,7 @@
                        (concat (when-not (keyword? k) [(error [:params k] "Parameter IDs must be keywords")])
                                (validate-parameter schema [:params k]))) params))
            (when (contains? definition :layer) (validate-layer (:layer definition)))
-           (if (and (or (map? (:modulation definition))
+           (if (and (or (true? (:show-control? definition)) (map? (:modulation definition))
                         (and (vector? (get-in definition [:layer :transforms]))
                              (seq (get-in definition [:layer :transforms]))))
                     (or (nil? (:outputs definition))

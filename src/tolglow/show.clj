@@ -123,7 +123,7 @@
             :instances (mapv #(-> % (dissoc :state)
                                   (assoc :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
-                                                               (select-keys s [:opacity :paused? :attack :release])))))
+                                                               (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
@@ -291,13 +291,16 @@
             (try (compute/close! owner) (catch Throwable cleanup (.addSuppressed error cleanup)))
             (throw error))))))
 
+(declare ^:private command)
+
 (defn- restart-model [model time-ms]
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
                 subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
-                (update :extensions dissoc :tolglow.autopilot/run)
+                (autopilot/clear-session time-ms command)
+                (update :extensions dissoc :tolglow.autopilot/hdr-clock)
                 (update :variables dissoc :lighting/autopilot :audio :audio/energy :lighting/activity :lighting/budget :sync :surface-aim)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
       (:auto model) (update :auto assoc :enabled? false :state nil :reasons [])
@@ -983,10 +986,10 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 (:output before))) command (:modulation-view before)))
-                           model (or (:model prepared) model)
+                                                 (:output before))) command (:modulation-view before) (when (identical? (:rig model) (get-in before [:model :rig])) (:output before))))
+                           model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
-                           hdr-opts (when hdr? (or (autopilot/render-options model prepared suspended?) {}))
+                           hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended? (:modulation-view before)) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
@@ -1032,7 +1035,7 @@
                                                    :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                                    :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
                                                                     (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
-                                                   :previous-values (get-in before [:output :values] {})
+                                                   :previous-values (or (get-in before [:output :values]) {})
                                                    :previous-compact (get-in before [:output :compact])}
                                             hdr? (assoc :hdr hdr-opts))
                            resolved (effect-faults/resolve-output result

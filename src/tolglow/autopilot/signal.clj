@@ -84,11 +84,13 @@
                                  (ir/compile-expression (:expression definition)))]))})))
 
 (defn- cue-parameter [model options {:keys [cue-id param]}]
-  (when-let [instance (reduce (fn [found instance]
+  (when-let [instance (or (let [selected (get-in model [:instances (:instance-id options)])]
+                            (when (= cue-id (:cue-id selected)) selected))
+                          (reduce (fn [found instance]
                                 (if (and (= cue-id (:cue-id instance)) (= :running (:phase instance))
                                          (or (nil? found) (> (:order instance 0) (:order found 0))))
                                   instance found))
-                              nil (vals (:instances model)))]
+                              nil (vals (:instances model))))]
     (let [view (:modulation-view options)
           params (if (seq (:responses model))
                    (waveforms/effective-params {:model model :modulation-view view} instance)

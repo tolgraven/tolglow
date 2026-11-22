@@ -56,11 +56,14 @@
         (update :variables dissoc :lighting/autopilot))
     model))
 
+(defn clear-session [model time-ms command]
+  (stop-run model (run model) time-ms command))
+
 (defn prepare
   "Decide and edit the model before effects run. raw-frame is delayed: a vetoed
   or non-due decision never renders a forecast. A cue launched by this decision
   participates in this tick's ordinary composition."
-  [model previous-cache patch meter time-ms suspended? raw-frame command modulation-view]
+  [model previous-cache patch meter time-ms suspended? raw-frame command modulation-view last-frame]
   (let [prior (run model)]
     (if-not (config/enabled? model)
       {:model (stop-run model prior time-ms command)}
@@ -80,7 +83,13 @@
             knobs (config/policy-values model opts context)
             previous-state (:controller prior)
             due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
-            previous-report (:statistics prior)
+            previous-report (or (:statistics prior)
+                                (when (and due? (:universes last-frame))
+                                  (let [baseline (get-in (activity/advance-meter nil patch (:scoped-meter plan)
+                                                           last-frame [] time-ms) [:report :scene])]
+                                    {:window (:window opts)
+                                     :brightness {:mean (:brightness baseline) :instant (:brightness baseline)}
+                                     :activity {:mean (:score baseline) :instant (:score baseline)}})))
             sources (when due? (source-rows meter (:ids plan) (force raw-frame)))
             result (when due?
                      (controller/advance previous-state
@@ -99,7 +108,13 @@
 (defn- multiply-gains [base more]
   (if (seq more) (merge-with * base more) base))
 
-(defn render-options [model prepared blocked?]
+(defn start-hdr-clock [model time-ms]
+  (if (get-in model [:settings :hdr :enabled?])
+    (if (get-in model [:extensions ::hdr-clock]) model
+      (assoc-in model [:extensions ::hdr-clock] (time/frame-clock (assoc model :time-ms time-ms))))
+    (if (get-in model [:extensions ::hdr-clock]) (update model :extensions dissoc ::hdr-clock) model)))
+
+(defn render-options [model prepared blocked? modulation-view]
   (let [standalone (get-in model [:settings :hdr])
         managed? (and (:plan prepared) (not blocked?))
         independent? (and (:enabled? standalone) (not blocked?))]
@@ -107,7 +122,10 @@
       (let [current (run model)
             opts (if independent? standalone (get-in prepared [:options :hdr]))
             opts (merge config/hdr-defaults opts)
-            fields (config/hdr-values model opts (:context prepared))
+            context (if independent? {:start-clock (get-in model [:extensions ::hdr-clock])
+                                      :modulation-view modulation-view}
+                               (:context prepared))
+            fields (config/hdr-values model opts context)
             scope (if independent? (:scope opts :global) (:scope current))
             ids (when-not (= :global scope)
                   (if independent? (live-scope model scope) (get-in prepared [:plan :ids])))]
