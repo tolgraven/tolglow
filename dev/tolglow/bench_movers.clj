@@ -144,7 +144,9 @@
             (recur (inc i) (:preview frame) (conj frames (assoc frame :proof proof))))))
     (finally ((:close runner)))))
 
-(defn- allocation-reader []
+(defn allocation-reader
+  "Read aggregate allocated bytes for the coordinator and the current show worker threads."
+  []
   (let [bean (ManagementFactory/getThreadMXBean)
         ids (filterv (fn [id] (let [info (.getThreadInfo bean id)]
                                (and info (or (= id (.getId (Thread/currentThread)))
