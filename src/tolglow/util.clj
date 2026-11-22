@@ -298,12 +298,13 @@
  [lfo-name]
  (resolve (symbol "afterglow.effects.oscillators" lfo-name)))
 
-(defn patch! ;fix/wrap this to grab defs straight from cfg...
- [k f universe offset & [[x y z] args]]
- (let [pos [:x (or x 0.0) :y (or y 0.0) :z (or z 0.0)]
-       args (filter #(not= nil %) (merge pos args))]
-  ;; (println pos) (println args)
-  (apply show/patch-fixture! k (f) universe offset args)))
+(defn patch!
+  "Patch one fixture at an optional XYZ position with a map or key/value sequence of patch options."
+  [k fixture universe offset & [[x y z] options]]
+  (let [position {:x (or x 0.0) :y (or y 0.0) :z (or z 0.0)}
+        options (if (map? options) options (apply hash-map options))
+        patch (merge position (into {} (remove (comp nil? val)) options))]
+    (show/patch-fixture! k (fixture) universe offset patch)))
 
 (defn patch-group! "FIXME"
  [group f universe offset & [pos args]]

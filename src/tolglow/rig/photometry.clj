@@ -45,7 +45,7 @@
     model))
 
 (defn- phase-output [rig active phase]
-  (let [fixtures (filterv can-light? (:fixtures rig))
+  (let [fixtures (filterv #(some controlled (keys (:channels %))) (:fixtures rig))
         selected? #(and (= phase :white) (= active (:id %)))
         assignments (vec (for [f fixtures
                                attr (keys (:channels f)) :when (controlled attr)]

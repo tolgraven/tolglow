@@ -19,6 +19,11 @@
 
 (defn- wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
 
+(defn next-version [registry kind id]
+  (inc (reduce max (get-in registry [kind id :version] 0)
+               (for [[[k entry-id revision] _] (:versions registry)
+                     :when (and (= k kind) (= entry-id id))] revision))))
+
 (defn definition
   "Create a revision of an aim-only effect for selected moving heads.
   Points are world-space metres; chord distance determines musical keyframe
@@ -63,9 +68,7 @@
         [unit span] (first duration)
         frames (mapv (fn [point length]
                        {:at {unit (* span (/ length total))} :value point :curve curve}) points lengths)
-        version (inc (reduce max (:version previous 0)
-                             (for [[[kind entry-id v] _] (get-in model [:registry :versions])
-                                   :when (and (= kind :effects) (= entry-id id))] v)))]
+        version (next-version (:registry model) :effects id)]
     (cond-> {:id id :version version :name (or name (wire-id id)) :params {}
              :targets targets :categories [:movement]
              :outputs {:aim {:op :tween :spec {:mode mode :keyframes frames}}}

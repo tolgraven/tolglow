@@ -40,6 +40,11 @@
                                                        (str "HTTP " (.-status response))))))))))))
         (.catch #(rf/dispatch (conj fail (.-message %)))))))
 
+(rf/reg-event-fx :subscribers/runtime-change
+  (fn [{:keys [db]} _]
+    (cond-> {:db (update db :debug dissoc :saving? :form :editing-show :original :saved :catalog :catalog-error)}
+      (get-in db [:debug :handle]) (assoc :dispatch [:subscribers/load]))))
+
 (rf/reg-event-fx :subscribers/load
   (fn [{:keys [db]} _]
     (when (get-in db [:debug :handle])

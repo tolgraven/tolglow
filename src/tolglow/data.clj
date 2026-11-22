@@ -18,18 +18,25 @@
     :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
     :brightness-reference :standby-mode :strategy :timebase :operation :retrigger :unit :distribution :match})
 
+(defn- keyword-path [path]
+  (mapv #(if (string? %) (keyword %) %) path))
+
 (defn normalize-json [value]
   ;; Studio widgets emit textual enum choices. Keep typed extension values
   ;; (particularly thi.ng.color records) intact while converting those choices.
   (cond
     (record? value) value
-    (map? value) (into {} (map (fn [[k v]] [k (cond
+    (map? value) (let [scene-action? (#{:lighting/scene "lighting/scene"} (:op value))]
+                   (into {} (map (fn [[k v]] [k (cond
                                                 (and (string? v) (or (keyword-fields k) (= k :id))) (keyword v)
+                                                (and scene-action? (= k :gate) (map? v) (vector? (:path v)))
+                                                (update (normalize-json v) :path keyword-path)
+                                                (and scene-action? (= k :event-path) (vector? v)) (keyword-path v)
                                                 (and (= k :params) (= v "all")) :all
                                                 (and (= k :targets) (= v "previous")) :previous
                                                 (and (vector? v) (#{:params :attributes :targets :effect-ids :cue-ids :fixture-ids :fog-fixture-ids :verified-axis-fixture-ids :categories} k))
                                                 (mapv #(if (string? %) (keyword %) (normalize-json %)) v)
-                                                :else (normalize-json v))])) value)
+                                                :else (normalize-json v))])) value))
     (vector? value) (mapv normalize-json value)
     :else value))
 

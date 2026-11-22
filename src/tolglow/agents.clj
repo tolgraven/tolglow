@@ -169,6 +169,12 @@
             :closed? closed? :active-runs (+ (count runs) (count @(:background-jobs manager)))
             :capacity (+ (get-in manager [:options :workers]) (get-in manager [:options :queue-size]))})))
 
+(defn- provider-store [manager config]
+  (when-let [scope (get-in manager [:options :credential-store :scope])]
+    ;; Use the canonical request URL, including its path. A show can carry the
+    ;; opaque reference across machines, but cannot reassign the local secret.
+    (scope (pr-str [:show-provider (:provider config) (:endpoint config)]))))
+
 (defn configure!
   "Validate and save provider settings without network access. Accepts keyword
   or string :provider, :model, full :endpoint and provider generation settings.
@@ -216,7 +222,7 @@
                                                 (or secret "configuration-validation-only"))
                              (catch Exception _ (throw (failure :invalid-config "Invalid provider, model, endpoint or generation settings"))))
               proposed (assoc proposed :endpoint (:url validated))
-              store (get-in manager [:options :credential-store])
+              store (provider-store manager proposed)
               reference (try
                           (cond
                             (nil? secret) nil
@@ -226,8 +232,9 @@
                           (catch Exception _ (throw (failure :credential-store "Credential store could not save the key"))))]
           (when (and reference (not (credentials/valid-reference? reference)))
             (throw (failure :credential-store "Credential store returned an invalid reference")))
-          (when (and (true? (:clear-credential? payload)) store credential-ref)
-            (try ((:delete! store) credential-ref)
+          (when-let [old-store (and (true? (:clear-credential? payload)) credential-ref
+                                    (provider-store manager config))]
+            (try ((:delete! old-store) credential-ref)
                  (catch Exception _ (throw (failure :credential-store "Credential store could not remove the key")))))
           (swap! (:state manager) assoc :config proposed
                  :credential-ref reference :credential-error nil :credential (when secret (RuntimeCredential. secret)))))))
@@ -293,7 +300,7 @@
         (when closed? (throw (failure :closed "Agent manager is closed")))
         (when (or (seq runs) (seq @(:background-jobs manager)))
           (throw (failure :busy "Stop agent runs before restoring their configuration and history")))
-        (let [store (get-in manager [:options :credential-store])
+        (let [store (when credential-ref (provider-store manager config))
               lookup (when credential-ref
                        (if store
                          (try (let [value ((:get! store) credential-ref)]

@@ -61,15 +61,15 @@
       (let [context
             (reduce (fn [ctx {:keys [id enabled? options setup]}]
                       (if-not enabled? ctx
-                        (let [{:keys [value stop! abort!] :as result} (setup ctx options)]
-                          (when-not (and (map? result) (every? ifn? (remove nil? [stop! abort!])))
+                        (let [{:keys [value before-stop! stop! abort!] :as result} (setup ctx options)]
+                          (when-not (and (map? result) (every? ifn? (remove nil? [before-stop! stop! abort!])))
                             (throw (ex-info "Setup must return a map with callable :stop! and :abort! cleanups when supplied" {:module id})))
-                          (when (or stop! abort!) (swap! cleanups conj {:stop! stop! :abort! (or abort! stop!)}))
+                          (when (or before-stop! stop! abort!) (swap! cleanups conj {:before-stop! before-stop! :stop! stop! :abort! (or abort! stop!)}))
                           (-> ctx (assoc-in [:modules id] value) (update :loaded-components conj id)))))
                     {:config config :modules {} :loaded-components []} plan)]
         (assoc context :stop! (fn []
                                 (let [[stops _] (swap-vals! cleanups (constantly []))
-                                      errors (unwind! stops :stop!)]
+                                      errors (into (unwind! stops :before-stop!) (unwind! stops :stop!))]
                                   (when (seq errors)
                                     (let [cause (ex-info "Module shutdown failed" {:failures (count errors)})]
                                       (doseq [e errors] (.addSuppressed cause e))

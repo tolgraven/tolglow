@@ -96,8 +96,10 @@
 
 (deftest credential-references-resolve-locally-without-exporting-secrets
   (let [calls (atom []) secret "test-only-private-key"
-        opts (assoc-in (no-io-options calls) [:credential-store :get!]
-                       (fn [_] (swap! calls conj :lookup) secret))
+        opts (assoc-in (no-io-options calls) [:credential-store :scope]
+                       (fn [audience]
+                         {:get! (fn [_] (swap! calls conj :lookup)
+                                  (when (= (first (edn/read-string audience)) :show-provider) secret))}))
         saved (-> agent-state (assoc :credential-ref "credential-00000000-0000-0000-0000-000000000001")
                   (assoc :config {:provider :openai :model "test-model"}))
         conn (connections/create (assoc (show) :integrations {:agents saved}) opts)]

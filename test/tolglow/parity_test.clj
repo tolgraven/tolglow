@@ -3,6 +3,7 @@
             [afterglow.core :as application]
             [afterglow.channels :as channels]
             [afterglow.effects :as effects]
+            [afterglow.effects.dimmer :as dimmer]
             [afterglow.effects.params :as params]
             [afterglow.rhythm :as rhythm]
             [afterglow.show :as show]
@@ -13,6 +14,7 @@
             [tolglow.cue :as cue]
             [tolglow.fixtures :as fixtures]
             [tolglow.fx :as fx]
+            [tolglow.osc :as osc]
             [tolglow.param :as param]
             [tolglow.util :as util]
             [tolglow.vars :as vars]))
@@ -142,3 +144,88 @@
           snapshot (rhythm/metro-snapshot (:metronome *show*))]
       (is (= [255 0 0 0]
              (subvec (resolve-effect-to-buffer effect *show* snapshot) 0 4))))))
+
+(deftest color-base-and-alpha-participate-in-parameter-resolution
+  (with-show (show/show :universes [1])
+    (let [snapshot (rhythm/metro-snapshot (:metronome *show*))
+          base (params/build-variable-param :source-color :type params/color-type :default params/default-color)
+          opacity (params/build-variable-param :opacity :frame-dynamic false)
+          red (clr/hsla 0.0 1.0 0.5)
+          blue (clr/hsla 0.67 1.0 0.5)]
+      (show/set-variable! :source-color red)
+      (show/set-variable! :opacity 0.25)
+      (let [dynamic (param/color :base-color base)
+            fixed (param/color :base-color red :a opacity)]
+        (is (params/frame-dynamic-param? dynamic))
+        (is (= red (params/resolve-param dynamic *show* snapshot)))
+        (show/set-variable! :source-color blue)
+        (is (= blue (params/resolve-param dynamic *show* snapshot)))
+        (is (= 0.25 (clr/alpha fixed)))))))
+
+(deftest oscillator-picker-uses-named-wave-order-and-bounds
+  (with-show (show/show :universes [1])
+    (let [snapshot (rhythm/->MetronomeSnapshot 0 120 4 4 125 1 1 1 0.25 0.0625 0.015625)
+          selected (param/lfo-chooser {:max 1} [:square :sawtooth] :picker-param :pick)
+          sample (fn [position]
+                   (show/set-variable! :pick position)
+                   (params/resolve-param selected *show* snapshot))]
+      (is (== 1 (sample -1)))
+      (is (== 1 (sample 0.9)))
+      (is (== 0.25 (sample 1)))
+      (is (== 0.25 (sample 2))))
+    (cue/multi-lfo nil 0 0 [:sine :square] dimmer/dimmer-effect :color :blue)
+    (let [[cue] (show/find-cue-grid-active-effect *show* 0 0)]
+      (is (= (params/interpret-color "blue") (:color cue)))
+      (is (some #(= "alpha" (:key %)) (:variables cue)))
+      (is (integer? (cue/launch! 0 0))))))
+
+(deftest random-picker-holds-for-the-requested-musical-interval
+  (with-show (show/show :universes [1])
+    (let [draws (atom 0)
+          sample (param/rng :interval :bar :fade-fraction 0)
+          snapshot (rhythm/metro-snapshot (:metronome *show*))]
+      (with-redefs [param/pick-new-value (fn [& _] (swap! draws inc))]
+        (doseq [[beat bar] [[1 1] [2 1] [3 1] [4 1] [5 2]]]
+          (params/resolve-param sample *show* (assoc snapshot :beat beat :bar bar)))
+        (is (= 2 @draws))))))
+
+(deftest patch-helper-passes-position-and-options-to-the-show
+  (with-redefs [show/patch-fixture! (fn [id fixture universe address & {:as options}]
+                                      [id fixture universe address options])]
+    (is (= [:wash {} 2 19 {:x 0.0 :y 0.0 :z 0.0}]
+           (util/patch! :wash (constantly {}) 2 19)))
+    (is (= [:wash {} 2 19 {:x 4 :y 2 :z 3 :heading 90}]
+           (util/patch! :wash (constantly {}) 2 19 [1 2 3] [:x 4 :y nil :heading 90])))))
+
+(deftest generated-assigners-receive-head-specific-resolved-values
+  (with-show (show/show :universes [1])
+    (let [snapshot (rhythm/metro-snapshot (:metronome *show*))
+          head-param (params/->Param "Head ID" true Number (fn [_ _ head] (:id head)) nil)
+          make-effect (fx/get-fx-maker "Scale" {:vars {:level 0}} (fn [] {:id head-param})
+                                       (fn [_ _ _ previous values] (assoc values :previous previous))
+                                       vector)
+          assign (first (effects/generate (make-effect [] :level 3) *show* snapshot))]
+      (is (map? ((get-in fx/fx-data [:bloom :arg-spec]))))
+      (is (= {:level 3 :id 7 :previous 9} (assign *show* snapshot {:id 7} 9))))))
+
+(deftest osc-registers-argument-handlers-and-applies-variable-updates-on-delivery
+  (let [handlers (atom {})
+        values (atom {})]
+    (with-redefs [osc/start-server (fn [])
+                  osc/listen (fn [& _])
+                  overtone.osc/zero-conf-on (fn [])
+                  osc/handle #(swap! handlers assoc %1 %2)
+                  osc/var-out (fn [& _])
+                  show/set-variable! #(swap! values assoc %1 %2)]
+      (with-out-str (osc/demo))
+      (is (= #{"/1/aim-a" "/1/aim-b" "/1/aim-a-y" "/1/aim-b-y"} (set (keys @handlers))))
+      (is (empty? @values))
+      ((get @handlers "/1/aim-a-y") {:args [0.5]})
+      (is (= (* 0.5 (config/venue :ceiling)) (:aim-a-y @values)))
+      (osc/to-vars! :strip {:x 1 :y 2})
+      (is (= {:strip-x 1 :strip-y 2} (select-keys @values [:strip-x :strip-y])))
+      (osc/var-binding :gain "/gain")
+      ((get @handlers "/gain") {:args [0.75]})
+      (is (= 0.75 (:gain @values)))
+      (osc/receiver "/gain" :done)
+      (is (= :done ((get @handlers "/gain") {:args [1]}))))))

@@ -16,8 +16,7 @@
                                                                DwFlowField]
          [com.thomasdiewald.pixelflow.java.imageprocessing.filter  DwFilter DwLiquidFX Merge]
          [com.thomasdiewald.pixelflow.java.flowfieldparticles  DwFlowFieldParticles
-                                                               DwFlowFieldParticles$SpawnRadial]
-         [Dw.filter.DwFilter]))
+                                                               DwFlowFieldParticles$SpawnRadial]))
 
 (defmacro pass-live-fn "Guard fn in var so stays hot-reloadable inside fx, chases etc..."
  [v]

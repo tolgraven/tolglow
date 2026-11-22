@@ -11,6 +11,7 @@ import TolglowSensorCore
     @Published private(set) var sent = 0
     @Published private(set) var dropped = 0
     var onFailure: (() -> Void)?
+    private(set) var destination: PairingDestination?
     private var connection: NWConnection?
     private var generation = UUID()
     private var busy = false
@@ -20,11 +21,12 @@ import TolglowSensorCore
 
     func connect(host: String, port: UInt16) {
         close()
-        guard !host.isEmpty, port > 0, let endpoint = NWEndpoint.Port(rawValue: port) else {
+        guard let audience = PairingDestination(host: host, port: port), let endpoint = NWEndpoint.Port(rawValue: port) else {
             status = "Choose host and UDP port"; return
         }
         let token = generation
-        let owned = NWConnection(host: NWEndpoint.Host(host), port: endpoint, using: .udp)
+        let owned = NWConnection(host: NWEndpoint.Host(audience.host), port: endpoint, using: .udp)
+        destination = audience
         connection = owned
         owned.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
@@ -45,10 +47,13 @@ import TolglowSensorCore
             self.fail("UDP connection timed out; disarmed")
         }
     }
-    func send(_ observation: Observation, token: String) {
+    func send(_ observation: Observation, credential: SensorCredential) {
         guard ready else { dropped += 1; return }
+        guard credential.destination == destination, credential.device == observation.deviceID else {
+            fail("Pair this device with the current OSC destination"); return
+        }
         do {
-            let authenticated = try observation.authenticated(with: token)
+            let authenticated = try observation.authenticated(with: credential.token)
             _ = try SensorOSC.encode(authenticated) // validate before admission
             dropped += try mailbox.offer(authenticated)
             flush()
@@ -78,6 +83,6 @@ import TolglowSensorCore
     func discardPending() { mailbox = ObservationMailbox() }
     func close() {
         generation = UUID(); deadline?.cancel(); deadline = nil; connection?.cancel(); connection = nil
-        ready = false; busy = false; mailbox = ObservationMailbox(); status = "OSC disconnected"
+        destination = nil; ready = false; busy = false; mailbox = ObservationMailbox(); status = "OSC disconnected"
     }
 }

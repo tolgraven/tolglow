@@ -49,6 +49,7 @@
         first (projection/project! cache view nil)
         second (projection/project! cache (update view "frame-number" inc) (:token first))
         third (projection/project! cache (update view "frame-number" + 2) (:token second))]
+    (is (instance? clojure.lang.PersistentVector (:order @(:state cache))))
     (is (= "full" (:kind (projection/project! cache view "unknown-token"))))
     (is (= "full" (:kind (projection/project! cache view (:token first)))))
     (is (= "full" (:kind (projection/project! cache (assoc view "epoch" 1) (:token third)))))

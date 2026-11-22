@@ -76,6 +76,15 @@
       (is (empty? (:instances (:model @(:state runtime)))))
       (finally (show/stop! runtime)))))
 
+(deftest deleted-path-cue-can-be-recreated-with-original-id
+  (let [runtime (show/create-runtime {:workspace-options nil})]
+    (try
+      (is (= "accepted" (get-in (post! runtime "/api/aim-path" path-spec 0) [:data :status])))
+      (is (= :accepted (:status (submit-at! runtime :command {:op :cue/delete :cue-id :drawn-path} 0))))
+      (is (= "accepted" (get-in (post! runtime "/api/aim-path" path-spec 0) [:data :status])))
+      (is (= 2 (get-in @(:state runtime) [:model :registry :cues :drawn-path :version])))
+      (finally (show/stop! runtime)))))
+
 (deftest tapped-surface-controls-use-the-current-patch-and-normal-frame-packing
   (let [runtime (show/create-runtime {:workspace-options nil})
         aim {:targets ["head-1" "head-2"] :surface-id "floor" :point [2 0 1] :mode "together"}

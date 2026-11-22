@@ -70,3 +70,11 @@ protocol lifecycles passed on the same Temurin 17.0.21+9 used by CI (Node 24);
 fifty also passed on Java 21, followed by fifty on Java 17 with pinned Node 26.
 These local repetitions do not establish the cause
 of the intermittent CI startup timeout; CI now pins Node 26 for JVM jobs.
+
+For an authenticated Studio listener, set `:auth-token-env` on the capture
+backend to the same local variable name as Studio's `:auth :token-env`. The
+worker reads the secret from its environment and restricts browser credentials
+to the configured loopback URL's origin. With direct Jetty TLS, set the
+capture `:url` to the HTTPS loopback endpoint and configure a certificate
+trusted by the local Chromium with the matching name. A loopback listener
+behind a public HTTPS proxy can keep the default HTTP capture URL.

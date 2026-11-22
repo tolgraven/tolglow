@@ -7,9 +7,9 @@ on:
         type: string
         default: master
       afterglow_ref:
-        description: Candidate Afterglow revision to measure
+        description: Optional Afterglow candidate (defaults to the pinned companion)
         type: string
-        default: master
+        default: ''
       compare_afterglow_ref:
         description: Optional baseline Afterglow revision; run baseline then repeat candidate
         type: string
@@ -54,6 +54,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   profile:
+    name: Profile ${{ matrix.companion }}
+    strategy:
+      fail-fast: false
+      matrix:
+        companion: ${{ fromJSON(github.event_name == 'schedule' && '["paired", "upstream"]' || '["paired"]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -67,7 +72,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || 'master' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '4a0ddd17bc39e289f2b243e2e3d8f4b312bd4ded' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
@@ -203,6 +208,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: master-show-performance-${{ github.run_id }}
+          name: master-show-performance-${{ github.run_id }}${{ matrix.companion == 'upstream' && '-upstream' || '' }}
           path: performance-artifact/
           retention-days: 90

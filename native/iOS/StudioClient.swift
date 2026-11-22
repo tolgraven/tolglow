@@ -38,6 +38,8 @@ struct StudioSnapshot: Decodable {
     private let http: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5; config.timeoutIntervalForResource = 8
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
 
@@ -60,7 +62,8 @@ struct StudioSnapshot: Decodable {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (bytes, response) = try await http.bytes(for: request)
+        let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
+        try StudioOperatorAccess.checkSignIn(response)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             throw URLError(.badServerResponse)
         }

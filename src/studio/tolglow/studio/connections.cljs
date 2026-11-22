@@ -9,7 +9,8 @@
             [tolglow.studio.lighting-capacity :as capacity]
             [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.projection :as projection]))
 
 (def sync-defaults
   {:selected-source "manual"
@@ -29,6 +30,7 @@
 (defn- req [db key path body success]
   [:studio/http (cond-> {:path path :on-success [success (token db) key]
                          :on-failure [:connections/failed (token db) key] :timeout-ms 6000}
+                  (= key :configure) (assoc :raw-response? true)
                   (some? body) (assoc :body body))])
 (defn- text [event] (.. event -target -value))
 (defn- edit! [path value] (rf/dispatch-sync [:connections/edit path value]))
@@ -56,6 +58,12 @@
             (merge mapping {:control (events/wire-id control) :duration-value value :duration-unit unit
                             :low (str (first (:bounds mapping [0 1]))) :high (str (second (:bounds mapping [0 1])))})))
         (sort-by (comp str first) (get-in config [:live key]))))
+(defn parameter-rows [form typed-config]
+  (let [values (into {} (keep (fn [[control mapping]] (when-let [choices (:values mapping)] [(events/wire-id control) choices])))
+                     (get-in typed-config [:live :parameters]))]
+    (mapv (fn [row] (if-let [choices (get values (:control row))] (assoc row :values choices) row))
+          (mapping-rows form :parameters))))
+
 (defn- mappings! [rows kind]
   (let [pairs (mapv (fn [row]
                       (let [control (integer! (:control row) "MIDI note/controller" 0 127)
@@ -164,7 +172,7 @@
                           (merge {:sync-form-loaded? true
                                   :sync-form (reduce (fn [out k] (update out k (partial merge (get sync-defaults k))))
                                                      (merge sync-defaults config) [:midi :beat-link :link :live])
-                                  :notes (mapping-rows config :mappings) :parameters (mapping-rows config :parameters)})
+                                  :notes (mapping-rows config :mappings) :parameters (parameter-rows config (get-in db [:server-projection :view :connection-status :sync :config]))})
                           initialize-audio? (assoc :audio-form (audio-form (:config audio)) :audio-form-loaded? true)
                           enumerate? (assoc :devices-requested? true)))}
           enumerate? (assoc :dispatch [:connections/refresh-devices]))))))
@@ -177,7 +185,8 @@
     (when (current? db request-token)
       {:db (-> db (assoc-in [:connections :errors key] (str error))
                (update-in [:connections :pending] disj key)
-               (cond-> (= key :lighting-capacity) (update :connections dissoc :capacity-draft)))})))
+               (cond-> (= key :pause) (update :connections dissoc :pause-save)
+                       (= key :lighting-capacity) (update :connections dissoc :capacity-draft)))})))
 (rf/reg-event-fx :connections/configure
   (fn [{:keys [db]} [_ start?]]
     (try
@@ -185,14 +194,15 @@
                 (update-in [:connections :errors] dissoc :configure))
        :fx [(req db :configure "/api/sync/configure" (cond-> {:config (sync-payload db)} (get-in db [:ui :page-id]) (assoc :page-id (get-in db [:ui :page-id]))) (if start? :connections/configured-start :connections/configured))]}
       (catch :default error {:db (assoc-in db [:connections :errors :configure] (events/error-message error))}))))
-(defn configured [db request-token data]
+(defn configured [db request-token typed-data]
   (when (current? db request-token)
-    {:db (-> db (assoc-in [:connections :sync-dirty?] false)
+    (let [data (projection/presentation typed-data)]
+      {:db (-> db (assoc-in [:connections :sync-dirty?] false)
                 (assoc-in [:connections :sync-form-loaded?] true)
                 (assoc-in [:connections :unmapped] (:unmapped data))
                 (assoc-in [:connections :notes] (mapping-rows (:config data) :mappings))
-                (assoc-in [:connections :parameters] (mapping-rows (:config data) :parameters))
-                (update-in [:connections :pending] disj :configure))}))
+                (assoc-in [:connections :parameters] (parameter-rows (:config data) (:config typed-data)))
+                (update-in [:connections :pending] disj :configure))})))
 (rf/reg-event-fx :connections/configured
   (fn [{:keys [db]} [_ request-token _ data]] (configured db request-token data)))
 (rf/reg-event-fx :connections/configured-start
@@ -280,6 +290,8 @@
 (defn pause-form [db]
   (merge {:mode "show" :color [1.0 0.4 0.12] :level 0.08}
          (get-in db [:show :settings :output :pause-look])
+         (let [{:keys [baseline form]} (get-in db [:connections :pause-save])]
+           (when (= baseline (get-in db [:show :settings :output :pause-look])) form))
          (get-in db [:connections :pause-form])))
 
 (rf/reg-sub :connections/pause-look (fn [db _] (pause-form db)))
@@ -292,7 +304,9 @@
 
 (rf/reg-event-fx :connections/save-pause
   (fn [{:keys [db]} _]
-    {:db (update-in db [:connections :pending] (fnil conj #{}) :pause)
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :pause)
+             (assoc-in [:connections :pause-save] {:baseline (get-in db [:show :settings :output :pause-look])
+                                                   :form (pause-form db) :draft (get-in db [:connections :pause-form])}))
      :fx [(req db :pause "/api/settings" {:scope "output" :values {:pause-look (pause-form db)}}
                :connections/settings-saved)]}))
 
@@ -326,7 +340,9 @@
   (fn [{:keys [db]} [_ request-token key _ack]]
     (when (current? db request-token)
       {:db (-> db (update-in [:connections :pending] disj key) (update-in [:connections :errors] dissoc key)
-               (cond-> (= key :pause) (update :connections dissoc :pause-form)
+               (cond-> (and (= key :pause) (= (get-in db [:connections :pause-save :draft])
+                                               (get-in db [:connections :pause-form])))
+                       (update :connections dissoc :pause-form)
                        (= key :lighting-capacity) (update :connections dissoc :capacity-draft)))})))
 
 (defn- pause-panel [pending?]

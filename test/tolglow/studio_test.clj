@@ -325,3 +325,17 @@
     (is (thrown? Exception (venue/scene-request (:model state) {:group-id "two" :target-var ["config" "secret"]})))
     (is (thrown? Exception (venue/inspect state {:limit 1000})))
     (is (thrown? Exception (venue/inspect state {:group-id "stage/missing"})))))
+
+(deftest rejected-inline-replacement-preserves-the-live-callback
+  (with-runtime [r]
+    (let [original identity replacement (fn [_] nil)
+          descriptor {:id :test/inline :enabled? true :match {:type :audio/kick}}
+          register #(show/register-event-subscriber! r (assoc descriptor :middleware %))
+          accepted (register original)]
+      (show/tick! r 10)
+      (is (= :accepted (:status @accepted)))
+      (let [queue (java.util.concurrent.LinkedBlockingQueue. 1)
+            full (assoc r :queue queue)]
+        (.add queue :occupied)
+        (is (= :rejected (:status @(show/register-event-subscriber! full (assoc descriptor :middleware replacement)))))
+        (is (identical? original (get @(get-in r [:event-callbacks :handlers]) :test/inline)))))))

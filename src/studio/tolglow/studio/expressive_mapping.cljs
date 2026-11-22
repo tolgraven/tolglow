@@ -39,7 +39,7 @@
     (assoc db :expressive-mapping
            (if reset? (assoc defaults :context (context db) :device-id device :cue-id cue
                             :generation (inc (:generation s)))
-               (-> s (assoc :error nil) (update :generation inc))))))
+               (cond-> (assoc s :error nil) (not (:saving? s)) (update :generation inc))))))
 (defn edit-policy [db path value remove?]
   (let [s (state db) id (keyword (:device-id s)) policy (device-policy db)
         policy (if remove?
@@ -77,7 +77,7 @@
     (if (compound-size schema) values (first values))))
 (defn save-request [db]
   {:path "/api/settings"
-   :body {:scope "expressive" :values {:devices (wire-data (assoc (saved-devices db) (keyword (:device-id (state db))) (device-policy db)))}}
+   :body {:scope "expressive" :device-id (:device-id (state db)) :values (wire-data (device-policy db))}
    :on-success [:expressive/saved (request-token db)] :on-failure [:expressive/failed (request-token db) :save]})
 (defn- change-binding [db param index f]
   (let [s (state db) path (into (scope-path s) [:params param]) raw (get-in (device-policy db) path)
@@ -155,7 +155,7 @@
       (if (or (false? (:accepted? ack)) (= "rejected" (:status ack)))
         {:db (update db :expressive-mapping assoc :saving? false :error (events/error-message ack))}
         {:db (update db :expressive-mapping #(-> % (assoc :saving? false :saved? true) (update :dirty disj (keyword (:device-id %)))))
-         :dispatch [:studio/poll]}))))
+         :dispatch [:expressive/preview (request-token db)]}))))
 (rf/reg-event-fx :expressive/discard
   (fn [{:keys [db]} _]
     (when-not (:saving? (state db))

@@ -28,12 +28,9 @@
  [listener key]
  (oosc/osc-listen @(:server binds) listener key))
 
-(defn pass-args "Extract args from message map, add logger" ;XXX make a macro so even easier?
- [{[one two] :args :as msg} f]
- (f one two)
- (when (cfg :osc :debug)
-  (timbre/info msg)))
-
+(defn pass-args [{:keys [args] :as message} f]
+  (when (cfg :osc :debug) (timbre/info message))
+  (apply f args))
 
 (defn cue-sender "Setup cue send bind and attach controller update fn"
  [x y path f]
@@ -41,16 +38,11 @@
   (swap! (:cues binds) conj [x y f path])
   (ct/add-cue-fn! (:cue-grid *show*) x y f)))
 
-(defn receiver "Setup handler at path, wrapping f to straight pass :args from message map"
- [path f]
- (print path f )
- (println (f 1 2))
-
- #_(when (or (not= f :none) f) ; passing :none skips handler (as passing nil means default in other fns)
-  (if (= f :done) ;so can pass :done straight to wrap up, instead of a fn returning it.
-   (handle path (fn [msg] :done))
-   (handle path (fn [msg] (pass-args msg f)))))) ;^ since would get stuck extracting args otherwise
-
+(defn receiver
+  "Install a handler for the OSC arguments received on path."
+  [path f]
+  (when (and f (not= :none f))
+    (handle path (if (= :done f) done #(pass-args % f)))))
 
 (defn default-cue-send-fn
  [path state & _]
@@ -103,16 +95,10 @@
  If you want this binding to not affect reception of messages on the OSC path (for example because you have another variable binding set up which processes these messages, since they contain values for multiple show variables), then pass `:none` as the value for `:receive-fn`."
  [var-key path & {:keys [send-fn receive-fn]}]
  (let [be-receiver (not= receive-fn :none)
-       send-fn (or send-fn (fn [_ v] (send-msg path v)))
-       receive-fn (or receive-fn #(set-variable! var-key %1))]
-
-  (var-out var-key path send-fn (not= receive-fn :none))
-  (receiver path receive-fn) ; :none handled bby receiver
-   ;; (when be-receiver (receiver path receive-fn))
-   ;; (swap! (:vars binds) conj [var-key send-fn path be-receiver])
-   ;; (show/add-variable-set-fn! var-key send-fn)
-   #_(when be-receiver (handle path receive-fn))))
-
+       send-fn (or send-fn (fn [_ v] (send-msg path v)))]
+   (var-out var-key path send-fn be-receiver)
+   (when be-receiver
+     (handle path (or receive-fn #(set-variable! var-key (first (:args %))))))))
 
 (defn clear-var-bindings "Clear out any OSC var bindings which have been established."
  []
@@ -166,16 +152,12 @@
   (swap! (:client binds) #(when % (osc-close %) nil)))
 
 
-(defn to-vars! "Set show vars from map"
- [prefix m]
- (let [m (zipmap (map #(keyword (str prefix "-" %1)) (keys m)) (vals m))]
-;;  (map set-variable! (keys m) (vals m)))
-;;  (map #(apply set-variable! (keyword (str prefix "-" %1)) %2)
- (map set-variable! m)
- #_(map #(apply set-variable! (keyword (str prefix "-" %1)) %2)
-      m)))
-
-
+(defn to-vars!
+  "Set the show variables in values, optionally prefixing each name."
+  ([values] (to-vars! nil values))
+  ([prefix values]
+   (doseq [[id value] values]
+     (set-variable! (if prefix (keyword (str (name prefix) "-" (name id))) (keyword id)) value))))
 
 (defn demo "Make examples demo functional"
  []
@@ -191,19 +173,8 @@
                             :aim-b-z (+ stage (* depth %2))})
             :b-y #(to-vars! {:aim-b-y (* ceiling %1)})}]
 
-  (map (fn [k f] (receiver (str "/1/aim-" (name k)) f))
-       (keys fns) (vals fns))
-
-  (receiver (str "/1/aim-a")
-            #(to-vars! {:aim-a-x (+ left (* width %1))
-                         :aim-a-z (+ stage (* depth %2))}))
-
- #_(let [f #(if (pos? %1)
-           (show/add-effect!
-            :sparkle (fun/sparkle (all-fixtures) :chance (/ %1 256.0) :fade-time 20))
-           (show/end-effect! :sparkle))]
-  (receiver "/1/sparkle" f))
-
+  (doseq [[id f] fns]
+    (receiver (str "/1/aim-" (name id)) f))
  (listen (fn [msg] (timbre/info msg)) :debug)
  (oosc/zero-conf-on)
  (print "osc up")))
@@ -226,10 +197,10 @@
                                 key-z (+ stage (* depth %2))})]
    (var-binding key-x addr-x :send-fn send-fn :receive-fn #(pass-args % receive-fn)))
 
- (let [send-fn (fn [_ v] (send-msg "/1/aim-a"
+ (let [send-fn (fn [_ v] (send-msg addr-x
                                    (/ (- (get-variable key-x) left) width)
                                    (/ (- v stage) depth)))]
-  (var-binding key-z "/1/aim-a" :send-fn send-fn :receive-fn :none))
+  (var-binding key-z addr-x :send-fn send-fn :receive-fn :none))
 
  (let [send-fn (fn [_ v] (send-msg addr-y (/ v ceiling)))
        receive-fn #(set-variable! key-y (* ceiling %1))]

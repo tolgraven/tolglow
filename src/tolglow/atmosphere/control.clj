@@ -38,9 +38,8 @@
 (defn- recent? [now stamp] (and (finite? stamp) (<= 0 (- now stamp) 500)))
 
 (defn- prior-pump [previous id]
-  (let [a (get-in previous [:pumps id])
-        b (get-in previous [:music-pumps id])]
-    (if (> (:rest-until-ms b 0) (:rest-until-ms a 0)) b a)))
+  (reduce (fn [prior state] (if (> (:rest-until-ms state -1) (:rest-until-ms prior -1)) state prior))
+          nil (map #(get-in previous [% id]) [:pumps :music-pumps :resting-pumps])))
 
 (defn- pump [fixture source previous now request? ready?]
   (let [{:keys [fogger compiled-channels]} fixture
@@ -93,13 +92,18 @@
                                         (let [alias (if (keyword? configured) (subs (str configured) 1) (keyword configured))]
                                           (if (contains? index alias) alias configured)))]]
                          [id (pump (get-in patch [:by-id id]) (get sources id) (prior-pump previous id)
-                                   now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))]
+                                   now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))
+        parked (into {} (keep (fn [[id prior]]
+                                (when (and (not (contains? pumps id))
+                                           (or (:flowing? prior) (> (:rest-until-ms prior 0) now)))
+                                  [id (pump (get-in patch [:by-id id]) (get sources id) prior now false false)])))
+                     (merge (:resting-pumps previous) (:pumps previous)))]
     {:epoch epoch :enabled? enabled? :target target :level level :lower low :upper high :zone zone
      :level-change-per-s (:fog-level-change-per-s observation)
      :clearance-half-life-s (or (:clearance-half-life-s observation)
                                (get-in model [:rig :room :measured-fog :clearance-half-life-s]))
      :coasting? (boolean coasting?) :coasting-peak peak
-     :fresh? (boolean fresh?) :request? (boolean (and request? enabled? (not bypass?))) :pumps pumps}))
+     :resting-pumps parked :fresh? (boolean fresh?) :request? (boolean (and request? enabled? (not bypass?))) :pumps pumps}))
 
 (defn publish [model previous status]
   (let [{:keys [target level zone enabled?]} status

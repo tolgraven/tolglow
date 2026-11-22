@@ -48,6 +48,36 @@
         (is (= 160 (:time-ms (show/snapshot r))))
         (is (= (inc (:frame-number before)) (:frame-number (show/snapshot r))))))))
 
+(deftest cold-and-live-restores-use-locally-installed-built-in-handlers
+  (with-runtime [original {}]
+    (let [document (show/export-show original)]
+      (with-runtime [fresh {:model (:model document)}]
+        (letfn [(check-graph! []
+                  (is (= 0 @(reactive/subscribe (show/reactions fresh) [:clock/beat])))
+                  (is (= {} @(reactive/subscribe (show/reactions fresh) [:runtime/effect-faults]))))]
+          (check-graph!)
+          (let [prior (show/reactions fresh)
+                reply (show/submit! fresh :import {:source (pr-str document)})]
+            (show/tick! fresh 0)
+            (is (= :accepted (:status @reply)))
+            (is (not (identical? prior (show/reactions fresh))))
+            (check-graph!)))))))
+
+(deftest saved-source-requires-the-runtime-owner-to-opt-in
+  (doseq [trusted? [false true]]
+    (with-runtime [r {:reactive-options {:trusted-source? trusted?}}]
+      (let [saved (show/export-show r)
+            descriptor {:kind :sub :id ::constant
+                        :implementation {:type :source :namespace "user"
+                                         :form "(fn [_ _] 7)" :bindings {}}}
+            data (update-in saved [:model :reactive :registrations] conj descriptor)
+            receipt (show/submit! r :import {:source (pr-str data)})]
+        (show/tick! r 0)
+        (is (= (if trusted? :accepted :rejected) (:status @receipt)))
+        (if trusted?
+          (is (= 7 @(reactive/subscribe (show/reactions r) [::constant])))
+          (is (= 0 (:epoch (show/snapshot r)))))))))
+
 (deftest reactive-actions-are-applied-on-the-next-frame-and-survive-save-restore-once
   (with-runtime [r {}]
     (let [graph (show/reactions r)]

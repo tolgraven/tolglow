@@ -298,6 +298,7 @@
     (is (= config (:config (live-sync/validate-state {:version 1 :config config}))))
     (is (= {:source-id "live/performance/live/parameter/cutoff" :value 305.25 :kind :automation}
            (select-keys (observation sample) [:source-id :value :kind])))
+    (is (true? (:gate? (observation (assoc sample :value (first (:range spec)))))))
     (is (= :playing (get-in (observation sample) [:port :automation-state])))
     (is (= [20 20000] (get-in (observation sample) [:port :range])))
     (is (nil? (observation (assoc sample :value ##NaN))))

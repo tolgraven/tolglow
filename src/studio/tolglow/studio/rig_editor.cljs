@@ -296,7 +296,7 @@
        [:button.button {:on-click #(dispatch! [:rig-editor/cancel])} "Discard draft"]]]
      [:div.rig-editor-layout
       [:div.rig-editor-scene
-       [interop/preview show]
+       [interop/preview show :rig]
        [camera/controls]
        [:div.rig-view-controls
         [:label "Camera view" [:select {:aria-label "Rig camera view" :value (get-in db [:ui :preview-settings :camera] "audience")

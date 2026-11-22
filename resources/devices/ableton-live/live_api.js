@@ -216,7 +216,10 @@
       if (!request || typeof request.id !== "string" || !request.id.length) fault("request-id", "A request ID is required");
       var payload = request.payload || {}, result;
       switch (request.op) {
-        case "inspect": result = this.inspect(); break;
+        case "inspect":
+          result = this.inspect();
+          if (this.parameters && this.parameters.refresh) this.parameters.refresh();
+          break;
         case "configure-destination": result = this.pair(payload); break;
         case "describe-selected-parameter": case "watch-parameters":
           if (!this.parameters) fault("parameter-observers-unavailable", "Load the parameter observer script in the device");

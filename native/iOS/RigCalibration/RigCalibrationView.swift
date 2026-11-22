@@ -27,7 +27,7 @@ struct RigCalibrationView: View {
                     HStack {
                         Button("Connect") { client.connect(origin) }.disabled(client.busy || client.armed)
                         Button(scanner.running ? "Stop camera" : "Start LiDAR camera") {
-                            if scanner.running { client.finish(); scanner.stop() } else { scanner.start() }
+                            if scanner.running { client.finish(stopCamera: true) } else { scanner.start() }
                         }
                     }.buttonStyle(.bordered).controlSize(.large)
                     if scanner.running {

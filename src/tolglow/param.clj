@@ -385,25 +385,25 @@
    ;; To change lfo just link new show var...
   (fn [snapshot] (/ (params/resolve-param p show snapshot nil) scale))))
 
-(defn lfo-chooser "run lfo params into a picker whoosing which one to use. SHOULD also allow mixing. XY thing with them in the corners?"; {{{
- [vm lfo-names & {:keys [picker-param lfo-params]}] ;picker could be in var-map as well...
- (let [[min max] (map #(bind-keyword-param (%1 vm) Number %2) [:min :max] [0 255])
-       lfo-syms (map #(ns-resolve @(at :ns) (symbol "lfo" %)) lfo-names)
-       lfos (map (fn [param-name]
-             (build-oscillated-param
-              (param-name :interval-ratio (ratio vm)
-                          :phase (:phase vm) :down? (:down vm)
-                          :width (fraction vm :width)) ;maybe clear out the nil ones tho. but no real harm either way
-              ;; (param-name :interval-ratio 4 :phase 0.5
-              ;;           :down? true :width 0.25) ;maybe clear out the nil ones tho. but no real harm either way
-              :min min :max max))
-                 lfo-syms)
-       picker (bind-keyword-param (or picker-param (:lfo-picker vm)) Number 0)
-
-       f (fn [picker & params]
-          ((auto-resolve picker) params))] ;picker should resolve to number, used to index vector. needs checks obvs...
- (apply build-param-formula Number f picker lfos)))
-
+(defn lfo-chooser
+  "Select one of the named oscillators by its zero-based picker position."
+  [vm lfo-names & {:keys [picker-param]}]
+  (let [oscillators {:sawtooth lfo/sawtooth :square lfo/square :sine lfo/sine :triangle lfo/triangle}
+        low (bind-keyword-param (or (:min vm) 0) Number 0)
+        high (bind-keyword-param (or (:max vm) 255) Number 255)
+        build-wave (fn [id]
+                     (if-let [build (get oscillators (keyword id))]
+                       (let [options (cond-> {:interval-ratio (or (ratio vm) 1)}
+                                       (:phase vm) (assoc :phase (:phase vm))
+                                       (:down vm) (assoc :down? (:down vm))
+                                       (:width vm) (assoc :width (fraction vm :width)))]
+                         (build-oscillated-param (build options) :min low :max high))
+                       (throw (ex-info "Unknown oscillator" {:oscillator id}))))
+        waves (mapv build-wave lfo-names)
+        choose (fn [position & values] (nth values (min (dec (count values)) (max 0 (long position)))))]
+    (when (empty? waves)
+      (throw (IllegalArgumentException. "At least one oscillator is required")))
+    (apply build-param-formula Number choose (bind-keyword-param (or picker-param (:lfo-picker vm) 0) Number 0) waves)))
 
 (defn variable "Create variable parameter from var-map"
  [vm]
@@ -476,8 +476,10 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
 (defn rng "Returns a dynamic number parameter which gets a new random value each interval."
  [& {:keys [min max min-change interval interval-ratio fade-fraction fade-curve] :as args}] ;to skip or not skip listing possible keys...
  {:pre [(some? *show*)]}
- (let [pm (assemble args or-rng)
-       step (apply build-step-param (flatten (seq pm)))
+ (let [pm (cond-> (assemble args or-rng)
+            (#{:beat :bar :phrase} interval) (assoc :interval interval)
+            (#{:linear :sine} fade-curve) (assoc :fade-curve fade-curve))
+       step (build-step-param pm)
        [current-step last-value coming-value] (map ref (repeat nil)) ;why not atoms? also haha mapv got it stuck, i need to pay more attention...
        eval-fn (fn [show snapshot _]
                 (let [pm (auto-resolve pm :show show :snapshot snapshot)
@@ -625,6 +627,26 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
 ; alpha as a first class member influencing any assignments
 ; optimize if possible - likely switch color lib? this one recreates on each adjustment
 ; (which given spatial stuff, bloom... can be lots of) running through whole dispatch thing
+(defn- color-component [value fallback]
+  (if (some? value) (cmath/clamp value 0.0 1.0) fallback))
+
+(defn- apply-color-components [[base r g b h s l a hue-shift saturation-shift luminance-shift]]
+  (let [alpha (color-component a (clr/alpha base))
+        rgb (if (some some? [r g b])
+              (clr/as-hsla (clr/rgba (color-component r (clr/red base))
+                                     (color-component g (clr/green base))
+                                     (color-component b (clr/blue base)) alpha))
+              base)
+        hsl (if (some some? [h s l a])
+              (clr/hsla (color-component h (clr/hue rgb))
+                        (color-component s (clr/saturation rgb))
+                        (color-component l (clr/luminance rgb)) alpha)
+              rgb)]
+    (cond-> hsl
+      hue-shift (clr/rotate-hue hue-shift)
+      saturation-shift (clr/adjust-saturation saturation-shift)
+      luminance-shift (clr/adjust-luminance luminance-shift))))
+
 (defn color
   "Send a color (name, object...) and create a base param to which other
   arguments are applied. The default base color is black, in the form
@@ -637,58 +659,22 @@ The compound dynamic parameter will be frame dynamic if any of its input paramet
   [& {:keys [base-color r g b h s l a adjust-hue adjust-saturation adjust-lightness frame-dynamic]
       :or {base-color params/default-color frame-dynamic :default}}]
   {:pre [(some? *show*)]}
-   (pspy :color-param
-       (let [c (bind-keyword-param (params/interpret-color base-color) params/color-type params/default-color "color")
-         [r g b, h s l, a ah as al :as params]
-         (mapv-fast #(bind-keyword-param % Number 0) [r g b, h s l, a adjust-hue adjust-saturation adjust-lightness])
-         clamp (fn [n] (when n (cmath/clamp n 0.0 1.0)))
-         update-color (fn [current [run? f]] (if run? (f current) current))
-         dyn (boolean (if (= :default frame-dynamic)
-                       (some frame-dynamic-param? params) ;; Default means incoming args control how dynamic we should be
-                       frame-dynamic)) ;; We were given an explicit val e for frame-dynamic
-         eval-fn (fn [show snapshot head]
-                  (pspy :color-param-eval
-                 (reduce
-                   update-color (resolve-param c show snapshot head)
-                   [[(seq (filter some? [r g b]))
-                     (fn [c]
-                      (let [[r g b] (mapv-fast #(when % (clamp (resolve-param % show snapshot head))) [r g b])] ;slightly less optimal I guess cause nil vals get an extra fn call and check but eh
-                       (clr/as-hsla (clr/rgba (or r (clr/red c)) (or g (clr/green c))
-                                              (or b (clr/blue c)) (or a (clr/alpha c))))))]
-                    [(seq (filter some? [h s l]))
-                     (fn [c]
-                      (let [[h s l] (mapv-fast #(when % (clamp (resolve-param % show snapshot head))) [h s l])]
-                       (clr/hsla (or h (clr/hue c)) (or s (clr/saturation c))
-                                 (or l (clr/luminance c)) (or a (clr/alpha c)))))]
-                    [ah #(clr/rotate-hue % (resolve-param ah show snapshot head))]
-                    [as #(clr/adjust-saturation % (resolve-param as show snapshot head))]
-                    [al #(clr/adjust-luminance % (resolve-param al show snapshot head))]])))
+  (let [base (bind-keyword-param (params/interpret-color base-color) params/color-type params/default-color "color")
+        components (mapv #(bind-keyword-param % Number 0)
+                         [r g b h s l a adjust-hue adjust-saturation adjust-lightness])
+        inputs (into [base] components)
+        dynamic? (boolean (if (= :default frame-dynamic) (some frame-dynamic-param? inputs) frame-dynamic))
+        evaluate (fn [show snapshot head]
+                   (apply-color-components (mapv #(resolve-param % show snapshot head) inputs)))
+        simplify (fn [show snapshot head]
+                   (let [[c r g b h s l a ah as al] (mapv #(resolve-unless-frame-dynamic % show snapshot head) inputs)]
+                     (with-show show
+                       (color :base-color c :r r :g g :b b :h h :s s :l l :a a
+                              :adjust-hue ah :adjust-saturation as :adjust-lightness al :frame-dynamic dynamic?))))]
+    (if (some frame-dynamic-param? inputs)
+      (Param. "Color" dynamic? params/color-type evaluate simplify)
+      (evaluate *show* (rhythm/metro-snapshot (:metronome *show*)) nil))))
 
-         resolve-fn (fn [show snapshot head]
-                     (let [[c r g b h s l a ah as al]
-                           (mapv-fast #(resolve-unless-frame-dynamic % show snapshot head) (into [c] params))]
-                      (color :base-color c :r r :g g :b b :h h :s s :l l :a a
-                             :adjust-hue ah :adjust-saturation as :adjust-lightness al
-                             :frame-dynamic dyn)))] ;shouldn't this just be built-in on creation?
-  (cond
-   (not-any? param? params) ;3x slower creation - how big deal?
-   (eval-fn *show* (rhythm/metro-snapshot (:metronome *show*)) nil)
-   (not-any? params/frame-dynamic-param? params)
-   (resolve-fn (rhythm/metro-snapshot (:metronome *show*)) nil)
-   :else
-   (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
-  ;; (if (not-any? param? params) ;3x slower creation - how big deal?
-  ;;  (eval-fn *show* (rhythm/metro-snapshot (:metronome *show*)) nil)
-  ;;  (Param. "Color" dyn params/color-type eval-fn resolve-fn)))))
-;however slow going from 80-90 to  <40 loc is pretty nice
-
-
-; add to Param. probably:
-; whether has / potentially can be further optimized? then no need for reify/return self
-; also maybe remove resolve-non-frame-dynamic? just always handle that on creation?
-; - whether is spatial / varies per head -> rest can ignore that completely
-;
-;
 (defprotocol Resolver "disappointing - 5x slower than auto-resolve on vec of 1000 arams..."
  (resolv [this]))
 (extend-protocol Resolver

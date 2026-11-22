@@ -1,6 +1,7 @@
 (ns tolglow.studio.events-test
   (:require [cljs.test :refer-macros [deftest is testing]]
             [cljs.reader :as reader]
+            [tolglow.studio.audio-returns :as returns]
             [clojure.string :as str]
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
@@ -127,7 +128,13 @@
 
 (deftest existing-definition-publication-is-optimistic
   (let [db (update-in base [:ui :definition] merge {:loaded-id "ember" :kind "effects" :version 2})
-        publish (transition db [:studio/publish-source false nil "{:id :ember :version 2}"])]
+        opened (transition db [:studio/definition-publish false])
+        event (assoc (:dispatch opened) 4 "{:id :ember :version 2}")
+        publish (transition (:db opened) event)
+        stale (assoc-in (:db publish) [:show :epoch] 999)]
+    (is (empty? (transition stale event)))
+    (is (empty? (transition stale (conj (get-in publish [:studio/http :on-success]) {:id "ember"}))))
+    (is (empty? (transition stale (conj (get-in publish [:studio/http :on-failure]) "late"))))
     (is (= 2 (get-in publish [:studio/http :body :expected-version])))
     (is (= "{:id :ember :version 2}" (get-in publish [:studio/http :body :source])))
     (is (true? (get-in publish [:db :ui :definition :publishing?])))))
@@ -643,3 +650,43 @@
     (is (nil? (get-in idle [:ui :rig-draft :room :measured-fog])))
     (is (= newer (:measured-fog saved)) "Saving placement retains a concurrent phone calibration")
     (is (= 15 (:width saved)))))
+
+(deftest transport-mapping-controls-keep-keyword-string-and-structured-enum-choices
+  (let [values [:ember "ember" {:oscillator :square}]
+        typed {:live {:parameters {22 {:type :enum :param :wave :cue-id :one :values values}}}}
+        rows (connections/parameter-rows (projection/presentation typed) typed)]
+    (is (= values (:values (first rows))))))
+
+(defn- advance-settings [db view revision]
+  (stream-event db {:protocol projection/protocol :kind :full :token (str "revision-" revision)
+                    :identity (projection/identity-of view) :view (assoc view :revision revision)}))
+
+(deftest pause-ack-keeps-edit-until-stream-arrives-and-preserves-subsequent-edit
+  (let [old {:level 0.1 :mode "show"} requested {:level 0.35 :mode "show"}
+        view (-> (:show base) (assoc :runtime-id "run" :show-id :main) (assoc-in [:settings :output :pause-look] old))
+        db (:db (full-frame base view))
+        db (assoc-in db [:connections :pause-form] requested)
+        sent (:db (transition db [:connections/save-pause]))
+        token (connections/token sent)
+        acked (:db (transition sent [:connections/settings-saved token :pause {}]))
+        modified (assoc-in sent [:connections :pause-form :level] 0.8)
+        changed (:db (transition modified [:connections/settings-saved token :pause {}]))
+        accepted (:db (advance-settings acked (assoc-in view [:settings :output :pause-look] requested) 4))
+        restored (:db (advance-settings accepted view 5))]
+    (is (= 0.35 (:level (connections/pause-form acked))))
+    (is (= 0.8 (:level (connections/pause-form changed))))
+    (is (= 0.35 (:level (connections/pause-form accepted))))
+    (is (= 0.1 (:level (connections/pause-form restored))))))
+
+(deftest audio-ack-retains-submitted-routing-only-until-the-authoritative-update
+  (let [view (-> (:show base) (assoc :runtime-id "run" :show-id :main) (assoc-in [:settings :audio-returns] returns/empty-config))
+        owner ["run" 7] db (:db (full-frame base view))
+        edited (:db (transition db [:audio-returns/edit [:block-frames] 2048]))
+        requested (transition edited [:audio-returns/request :configure])
+        submitted (get-in requested [:studio/http :body :config])
+        ack-event (get-in requested [:studio/http :on-success])
+        acked (:db (transition (:db requested) (conj ack-event {})))
+        accepted (:db (advance-settings acked (assoc-in view [:settings :audio-returns] submitted) 4))]
+    (is (= 2048 (:block-frames submitted)))
+    (is (= submitted (get-in acked [:audio-returns owner :submitted])))
+    (is (nil? (get-in accepted [:audio-returns owner :submitted])))))

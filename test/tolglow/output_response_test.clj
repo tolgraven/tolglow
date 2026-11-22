@@ -245,3 +245,11 @@
         (host/tick! runtime 125)
         (is (zero? @last-byte)))
       (finally (host/stop! runtime)))))
+
+(deftest scene-membership-takes-precedence-over-a-patch-group-of-the-same-name
+  (let [model (assoc-in show [:extensions :tolglow.lighting-scenes/control :groups :wash :fixture-ids] [:front])
+        opt {:enabled? true :groups {:wash {:attack {:beats 1}}}}
+        start (tick nil opt (source 0.0 0.0) 0 0 model)
+        next (tick start opt (source 1.0 1.0) 500 1 model)]
+    (is (near? (- 1.0 (Math/exp -1.0)) (value next :front :red)))
+    (is (near? 1.0 (value next :back :dimmer)))))

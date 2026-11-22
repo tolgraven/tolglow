@@ -236,19 +236,20 @@
   {:keys [priority end-rest? color scale held? extra-keys extra-vars
           channels channel-type heads head-type]
    :or {priority 10}}]
- (let [param-data (into {} (filter #(= (:type %) lfo-names) param/types))
-       [fx-key fixtures fx-name end-keys] (group-parts group (str fx-fn) "multi" :channel channel-type) ;FIX might not be getting channel-type
-       color :white #_(or color #_(:color param-data))
-       variables (apply vars/auto (:variables param-data) (or extra-vars) :alpha) ;XXX switch to float min-max and use scale for eventual value. express width as 1/cycles (+- offset for fine adj?), same concept as reg beats/cycles
-       scale (or scale (:max (get-map-with "level" variables)) (:max (get-map-with "max" variables)) 255)
-       ;; channels (or channels (get-channels fixtures channel-type))
+ (let [names (mapv name (if (or (string? lfo-names) (keyword? lfo-names)) [lfo-names] lfo-names))
+       [fx-key fixtures fx-name end-keys] (group-parts group (str fx-fn) "multi" :channel channel-type)
+       defaults (distinct (mapcat #(:variables (util/get-map-for-param % param/types)) names))
+       variables (vars/auto defaults extra-vars :alpha)
        targets (or channels heads fixtures)
-       held? (or held? (:velocity (get-map-with "level" variables)) held?)] ;should scan all vars rather  ;velocity implies held unless specified. (if not or) so handles non-nil falsey
+       held? (or held? (:velocity (get-map-with "level" variables)))]
+   (when (empty? names)
+     (throw (ex-info "A multi-LFO cue needs at least one oscillator" {:cue fx-key})))
    (set-cue! x y
      (cue fx-key
-          (fn [vm] (fx-fn (param/lfo-chooser vm param/types :picker-param (param/rng :interval :bar :min 1 :max 4))
-                          targets :effect-name fx-name))
-          :priority priority, :color color, :variables variables
+          (fn [vm]
+            (let [picker (param/rng :interval :bar :min 0 :max (count names) :fade-fraction 0)]
+              (fx-fn (param/lfo-chooser vm names :picker-param picker) targets :effect-name fx-name)))
+          :priority priority, :color (or color :white), :variables variables
           ;;            (let [l (param/lfo-color-fn (:variables active) lfo-type :min -35 :max 10)]
           ;;             (build-color-param :color (:color cue)
           ;;                                :adjust-saturation (resolve-param l show snapshot) ;(* -20))

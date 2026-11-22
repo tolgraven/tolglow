@@ -1,7 +1,7 @@
 (ns tolglow.studio.debug-stream
   "Bounded Transit event history and opt-in raw universe inspection."
   (:require [ring.websocket :as ws]
-            [tolglow.studio.state-stream :as state-stream]
+            [tolglow.studio.origin :as origin]
             [tolglow.transit :as wire])
   (:import [clojure.lang PersistentQueue]
            [java.util ArrayDeque Date UUID]
@@ -171,7 +171,7 @@
         since (when after (parse-long after))]
     (cond
       @(:closed? hub) {:status 503 :body "Studio stopped"}
-      (not (state-stream/same-origin? request)) {:status 403 :body "Cross-origin debug stream"}
+      (not (origin/same-origin? request)) {:status 403 :body "Cross-origin debug stream"}
       (not (ws/upgrade-request? request)) {:status 426 :headers {"Upgrade" "websocket"} :body "WebSocket required"}
       (and after (not (and since (<= 0 since)))) {:status 400 :body "Invalid cursor"}
       :else

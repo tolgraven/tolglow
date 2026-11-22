@@ -31,6 +31,7 @@
              :cljs {:source-paths ^:replace ["src/studio" "src/shared" ~(tolglow.build-manifest/fork-source "src")]
                     :dependencies ^:replace [[org.clojure/clojure "1.12.7"]
                                    [org.clojure/clojurescript "1.12.145"]
+                                   [com.fasterxml.jackson.core/jackson-core "2.22.3"]
                                    [thi.ng/color "1.5.1" :exclusions [org.clojure/clojurescript]]
                                    [thheller/shadow-cljs "3.5.14"]
                                    ;; Match shadow-cljs's own POM; Lein's nearest
