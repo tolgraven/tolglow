@@ -29,6 +29,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
+            [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]
@@ -594,16 +595,10 @@
 (defn- advance-light-scenes [runtime model patch frame now-ms bypass?]
   (if (empty? (lighting-scenes/groups model))
     (do (when (seq @(:scene-plans runtime)) (vreset! (:scene-plans runtime) {})) model)
-    (let [prior @(:scene-plans runtime)
-          plans (reduce-kv
-                 (fn [plans id {:keys [fixture-ids]}]
-                   (let [old (get prior id)]
-                     (assoc plans id (if (and (identical? patch (:patch old)) (= fixture-ids (:ids old))) old
-                                       {:patch patch :ids fixture-ids :plan (lighting-scenes/prepare patch fixture-ids)}))))
-                 {} (lighting-scenes/groups model))
-          measured (reduce-kv (fn [m id {:keys [plan]}]
-                                (assoc m id (:utilization (capacity/measure plan (:universes frame))))) {} plans)]
-      (vreset! (:scene-plans runtime) plans)
+    (let [cache (:scene-plans runtime)
+          next-cache (lighting-scenes/meter-frame @cache patch (lighting-scenes/groups model) (:universes frame))
+          measured (update-vals (:plans next-cache) :actual)]
+      (vreset! cache next-cache)
       (lighting-scenes/feedback model measured now-ms bypass?))))
 
 (defn- response-middleware! [runtime responses]
@@ -988,9 +983,10 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (advance-light-scenes runtime
-                                 (cond-> (:model result) setpoint (fog-control/publish previous-control (:status setpoint)))
-                                 patch frame time-ms bypass?)
+                       {:model (let [with-fog (cond-> (:model result)
+                                                setpoint (fog-control/publish previous-control (:status setpoint)))
+                                     updated (advance-light-scenes runtime with-fog patch frame time-ms bypass?)]
+                                 (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
