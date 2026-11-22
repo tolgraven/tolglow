@@ -967,10 +967,9 @@
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
                                  (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
                                                       (:reference-rms meter-opts (:reference-rms capacity/defaults))))
-                           setpoint (when (or observation previous-control (:block fog) (get-in model [:settings :fog-control :enabled?]))
-                                      (fog-control/frame model patch observation previous-control
-                                        (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
-                                        fog-bypass? (:contributions result) (:block fog)))
+                           setpoint (fog-control/frame model patch observation previous-control
+                                      (if (get-in runtime [:sink :send!]) ((get-in runtime [:publisher :now-ms])) time-ms)
+                                      fog-bypass? (:contributions result) (:block fog))
                            extra-blocks (cond-> (fog-control/with-demands [] (:feedback setpoint))
                                           manual-aim (conj manual-aim)
                                           (:music setpoint) (conj (:music setpoint))
