@@ -1,7 +1,28 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
+ [{:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :in-progress
+   :owner "venue_volume_motion_membership_and_hdr_contact_events" :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]}
+  {:id :show/spatial-bindings :title "Bind ranked registered effects and cues to scoped fixture contact" :kind :implementation :status :in-progress
+   :owner "late_bound_fixture_targets_registry_search_and_ranked_area_cues" :paths ["tolglow/src/tolglow/spatial/actions.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Retarget a real cue and release only the instances owned by the binding."]}
+  {:id :reactive/leased-sources :title "Dispose unused derived subscriptions and isolate sampled source failures" :kind :implementation :status :in-progress
+   :owner "reactive_subscription_lifetimes_sampling_validation_and_fault_isolation" :paths ["afterglow/src/afterglow/reactive.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Acquire and release shared observers, validate and recover after a failing source."]}
+  {:id :web/query-stream :title "Push leased query results and revisioned deltas over Transit" :kind :implementation :status :in-progress
+   :owner "demand_driven_transit_subscription_stream_and_reframe_coeffects" :paths ["tolglow/src/tolglow/studio/state_stream.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Initial and periodic snapshots, delta replay, disconnect and final disposal."]}
+  {:id :studio/spatial-bodies :title "Author and inspect moving volumes and fixture contact actions" :kind :implementation :status :in-progress
+   :owner "studio_spatial_volume_editor_target_picker_and_push_controls" :paths ["tolglow/src/studio/tolglow/studio/spatial.cljs"] :depends-on [:foundation/tests]
+   :acceptance ["Select targets, configure or throw a volume, observe its state in the preview."]}
+  {:id :studio/instance-inspection :title "Inspect faulting cue children and edit typed input mappings" :kind :implementation :status :in-progress
+   :owner "active_cue_fault_inspection_vector_widgets_and_effect_input_patchbay" :paths ["tolglow/src/studio/tolglow/studio/instance_inspector.cljs"] :depends-on [:foundation/tests]
+   :acceptance ["Expand active sources, edit a component mapping and see attributed diagnostics."]}
+  {:id :show/spatial-host :title "Run, persist and restore spatial subscriptions through the show owner" :kind :implementation :status :in-progress
+   :owner "spatial_show_host_integration" :paths ["tolglow/src/tolglow/spatial.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Verify moving and HDR contacts, event-driven commands and restoration using physical packet capture."]}
+  {:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/autopilot.clj" "tolglow/src/tolglow/autopilot/controller.clj" "tolglow/src/tolglow/autopilot/statistics.clj" "tolglow/src/tolglow/autopilot/signal.clj" "tolglow/src/tolglow/autopilot/target_response.clj"]
    :depends-on [:show/concurrent-light-budget :show/perceptual-light-activity :music/audio-energy-naming]
