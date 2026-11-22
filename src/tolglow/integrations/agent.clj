@@ -34,7 +34,7 @@
                                              :limit {:type "integer" :minimum 1 :maximum 64}}
                  :additionalProperties false}}
    {:name "set_lighting_scene"
-    :description "Create, vary or release a group's owned look. A 72% target is 0.72. Supply fixture-ids to create a custom group. Optional target-var binds a normalized show variable by path, e.g. [audio,features,energy-envelope], [fog/level] or [fog/observed-level]."
+    :description "Create, vary or release a group's owned look. Supply fixture-ids to create a custom group. Optional target-var binds a normalized show variable by path, e.g. [audio/energy], [fog/level] or [fog/observed-level]."
     :parameters {:type "object" :properties {:op {:type "string" :enum ["apply" "vary" "release"]}
                  :group-id id-schema :target {:type "number" :minimum 0 :maximum 1}
                  :brightness-reference {:type "string" :enum ["global" "local"]}

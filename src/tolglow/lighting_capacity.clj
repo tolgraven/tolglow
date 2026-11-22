@@ -234,12 +234,12 @@
   and operator master; divide both out before estimating the current look.
   Silence is measured audio. Missing or stale capture restores manual control."
   [{:keys [follow-energy? minimum maximum reference-rms signal-timeout-ms]}
-   previous master now-ms {:keys [energy-envelope received-ms]} bypass?]
-  (let [live? (and (number? energy-envelope) (Double/isFinite (double energy-envelope))
+   previous master now-ms {energy :audio/energy :keys [received-ms]} bypass?]
+  (let [live? (and (number? energy) (Double/isFinite (double energy))
                    (number? received-ms) (<= 0 (- now-ms received-ms) signal-timeout-ms))
         mode (cond bypass? :bypassed (not follow-energy?) :manual (not live?) :no-signal :else :following)
         target (when (= mode :following)
-                 (+ minimum (* (- maximum minimum) (max 0.0 (min 1.0 (/ energy-envelope reference-rms))))))
+                 (+ minimum (* (- maximum minimum) (max 0.0 (min 1.0 (/ energy reference-rms))))))
         past-scale (* (:gain previous 0.0) (:operator-master previous 0.0))
         baseline (when (and (pos? past-scale) (pos? (:utilization previous 0.0)))
                    (* master (/ (:utilization previous) past-scale)))
@@ -254,7 +254,7 @@
                  (if (pos? master) (min 1.0 (/ target master)) 1.0))
                1.0)]
     {:mode mode :gain gain :operator-master master :effective-master (* master gain)
-     :target target :energy-envelope (when live? energy-envelope)}))
+     :target target :audio/energy (when live? energy)}))
 
 (defn fog-policy
   "One simulated or presented pulse per upward crossing of 80% audio energy.
@@ -262,7 +262,7 @@
   audio, operator blackout/master zero, pause or calibration cancels demand."
   [{:keys [fog? fog-fixture-ids]} {:keys [foggers]} previous now-ms limit bypass? reference-rms]
   (let [targets (filterv foggers (distinct fog-fixture-ids))
-        energy (:energy-envelope limit)
+        energy (:audio/energy limit)
         armed? (and fog? (seq targets) (some? energy) (not bypass?) (pos? (:operator-master limit)))
         normalized (when armed? (/ energy reference-rms))
         continuing? (and armed? (= targets (:targets previous))

@@ -16,7 +16,7 @@
   (into (set (keys (scenes/groups model))) (mapcat :groups) (get-in model [:rig :fixtures])))
 
 (def ^:private built-in-signals
-  #{[:audio :features :energy-envelope] [:fog/level] [:fog/observed-level]})
+  #{[:audio/energy] [:fog/level] [:fog/observed-level]})
 
 (defn scene-request [model arguments]
   (cond-> (update arguments :group-id (partial resolve-id (group-ids model)))
@@ -61,7 +61,7 @@
   (let [[action] (:actions subscriber)]
     (when (and (= 1 (count (:actions subscriber))) (= {:type :audio/energy} (:match subscriber))
                (= :lighting/scene (:op action)) (= id (get-in action [:scene :group-id]))
-               (= [:data :energy-envelope] (get-in action [:gate :path])))
+               (= [:data :audio/energy] (get-in action [:gate :path])))
       action)))
 
 (defn energy-binding [model {:keys [op group-id target above below]}]
@@ -79,7 +79,7 @@
                 {:op :save :expected-subscriber prior
                  :subscriber {:id id :match {:type :audio/energy}
                               :actions [{:op :lighting/scene :scene {:op :vary :group-id group :target target}
-                                         :gate {:path [:data :energy-envelope] :above above :below below}}]}}))))
+                                         :gate {:path [:data :audio/energy] :above above :below below}}]}}))))
 
 (defn- page [items offset limit]
   (let [rows (vec (take limit (drop offset items)))
@@ -93,8 +93,9 @@
         observation (:fog/observation variables)
         features (get-in variables [:audio :features])]
     {:music (when features
-              (select-keys features [:time-ms :energy-envelope :energy-dbfs :energy-class :relative-energy
-                                     :rms :breakdown? :confidence :calibrated?]))
+              (merge (select-keys variables [:audio/energy])
+                     (select-keys features [:time-ms :energy-dbfs :energy-class :relative-energy
+                                            :rms :breakdown? :confidence :calibrated?])))
      :lighting (when capacity
                  (select-keys capacity [:utilization :relative-capacity :relative-output :rated-watts
                                         :used-rated-watts :headroom :color :target :mode :operator-master]))

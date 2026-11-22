@@ -12,6 +12,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
@@ -404,7 +405,7 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (audio-return/disarm (validate-model (:model document)))
+  (let [saved (-> (:model document) saved-audio/restore validate-model audio-return/disarm)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))

@@ -68,7 +68,7 @@
         (is (= :rejected (:status (issue :settings {:scope :lighting-capacity :values {:minimum 0.8 :maximum 0.2}}))))
         (is (= :accepted (:status (issue :settings {:scope :lighting-capacity
                        :values {:enabled? true :follow-energy? true :minimum 0.0 :maximum 1.0
-                                :reference-rms (* 2 (:energy-envelope data)) :signal-timeout-ms 500}}))))
+                                :reference-rms (* 2 (:audio/energy data)) :signal-timeout-ms 500}}))))
         (is (= :no-signal (:mode (tick))))
         (is (true? (get-in (show/export-show rt) [:model :settings :lighting-capacity :follow-energy?])))
         (feed 0.25)

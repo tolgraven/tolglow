@@ -82,17 +82,21 @@
         (apply-at! runtime :modulation-start {:id :pulse :seed 4 :every {:beats 1}
                                              :select {:instance-ids [id]} :params [:level]
                                              :ranges {:level [0.1 0.2]}} 0)
-        ((:features! callbacks) {:time-ms 40.0 :rms 0.65 :peak 0.9 :kick-rms 0.2 :energy-envelope 0.3
+        ((:features! callbacks) {:time-ms 40.0 :rms 0.65 :peak 0.9 :kick-rms 0.2 :audio/energy 0.3
                                 :confidence 0.8 :capture {:run-id "capture-1"}})
         (show/tick! runtime 100.0)
         (let [model (:model @(:state runtime))]
           (is (= 0.65 (get-in model [:instances id :params :level])))
           (is (= 4 (count (get-in (show/snapshot runtime) [:patch :sources]))))
+          (is (= 0.3 (:audio/energy (show/variables runtime))
+                 (get-in model [:routing :ports "audio/energy" :value])))
+          (is (not (contains? (get-in model [:variables :audio :features]) :audio/energy)))
           (is (empty? (get-in model [:modulation :holds])))
           (is (<= 0.1 (get-in (show/snapshot runtime) [:modulation :overrides id :level]) 0.2))
           (is (= 40.0 (get-in model [:routing :state :sources "audio/rms" :observed-at-ms]))))
         ((:features! callbacks) {:time-ms 40.0 :rms 0.1})
         (show/tick! runtime 150.0)
+        (is (not (contains? (show/variables runtime) :audio/energy)))
         (is (= 0.65 (get-in @(:state runtime) [:model :instances id :params :level]))))
       (finally (show/stop! runtime)))))
 
@@ -255,3 +259,30 @@
         (show/tick! runtime 400.0)
         (is (false? (get-in @(:state runtime) [:model :routing :ports source :gate?]))))
       (finally (show/stop! runtime)))))
+
+(deftest saved-audio-energy-bindings-follow-the-canonical-signal-after-load
+  (let [m (-> (model) (assoc-in [:rig :fixtures 0 :groups] [:wash])
+              (assoc-in [:variables :audio :features] {:energy-envelope 0.3 :rms 0.31}))
+        rt (show/create-runtime {:model m})
+        old-field [:data :energy-envelope]
+        action {:op :lighting/scene :scene {:op :vary :group-id :wash :target 0.4}
+                :gate {:path old-field :above 0.7 :below 0.2}}]
+    (try
+      (prepare! rt (spec "audio/energy-envelope" :audio [0.0 1.0]))
+      (is (= :accepted (:status (apply-at! rt :lighting-scene
+                               {:op :apply :group-id :wash :target-var [:audio :features :energy-envelope]} 1))))
+      (doseq [topic [:audio/energy :my/energy]]
+        (is (= :accepted (:status (apply-at! rt :event-subscriber
+                                  {:op :save :subscriber {:id topic :match {:type topic} :actions [action]}} 2)))))
+      (let [saved (persistence/read-string (show/export-show-source rt))
+            reloaded (persistence/thaw (model) saved)
+            subscribers (into {} (map (juxt :id identity)) (get-in reloaded [:event-subscribers :subscribers]))
+            routing (get-in reloaded [:routing :spec])]
+        (is (= 0.3 (get-in reloaded [:variables :audio/energy])))
+        (is (= {:rms 0.31} (get-in reloaded [:variables :audio :features])))
+        (is (= [:audio/energy] (get-in reloaded [:extensions :tolglow.lighting-scenes/control :groups :wash :target-var])))
+        (is (= [:data :audio/energy] (get-in subscribers [:audio/energy :actions 0 :gate :path])))
+        (is (= old-field (get-in subscribers [:my/energy :actions 0 :gate :path])))
+        (is (= ["audio/energy"] (keys (:sources routing))))
+        (is (= "audio/energy" (get-in routing [:routes 0 :source]))))
+      (finally (show/stop! rt)))))

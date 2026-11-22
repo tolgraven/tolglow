@@ -49,7 +49,7 @@
           (is (= :at-target (:status g)) (pr-str g))
           (is (< (abs (- (:actual g) 0.72)) 0.016))
           (is (= [:left :right] (:fixture-ids g)))
-          (is (nil? (:source-effect-id g)) "Saturated red cannot reach 72%; the owned emitter fill can"))
+          (is (nil? (:source-effect-id g)) "A saturated red source needs emitter fill to reach this target"))
         (is (= 89 (byte-at rt 4)) "Manual light on another fixture was not changed")
         (is (= :rejected (:status (style {:op :apply :group-id :overlap :fixture-ids [:right] :target 1}))))
         (is (= :rejected (:status (style {:op :apply :group-id :pump :fixture-ids [:pump] :target 1}))))
@@ -97,7 +97,7 @@
         analyzer (atom (analysis/new-analyzer {:energy-event-ms 50}))
         offset (atom 0)
         action {:op :lighting/scene :scene {:op :vary :group-id :wash :target 0.72 :effect-ids []}
-                :gate {:path [:data :energy-envelope] :above 0.2 :below 0.08}}
+                :gate {:path [:data :audio/energy] :above 0.2 :below 0.08}}
         send-audio (fn [amplitude]
                      (let [t @offset result (analysis/analyze @analyzer
                              {:samples (double-array (map #(* amplitude (Math/sin (* % (/ (* 2 Math/PI 100) 48000)))) (range 48000)))
@@ -119,6 +119,12 @@
       (dotimes [_ 3] (send-audio 0.0))
       (send-audio 0.9)
       (is (= 2 (:generation (group! rt :wash))))
+      (let [saved (persistence/read-string (show/export-show-source rt))
+            restored (persistence/thaw (demo/model) saved)
+            subscriber (first (get-in restored [:event-subscribers :subscribers]))]
+        (is (= :audio/energy (get-in subscriber [:match :type])))
+        (is (= [:data :audio/energy] (get-in subscriber [:actions 0 :gate :path])))
+        (is (pos? (get-in restored [:variables :audio/energy]))))
       (finally (show/stop! rt)))))
 
 (deftest repeated-agent-requests-and-patch-group-identities
