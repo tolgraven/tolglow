@@ -34,6 +34,7 @@ on:
       - 'dev/tolglow/bench_show.clj'
       - 'dev/tolglow/bench_performance_controls.clj'
       - 'dev/tolglow/bench_activity_opacity.clj'
+      - 'dev/tolglow/bench_autopilot.clj'
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
       - 'dev/tolglow/bench_movers_reference.clj'
@@ -158,6 +159,12 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein with-profile +benchmark run -m tolglow.bench-activity-opacity > ../performance-artifact/activity-opacity.edn
+      - name: Measure musical decisions, between-beat frames and HDR against the base show
+        if: hashFiles('tolglow/dev/tolglow/bench_autopilot.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.bench-autopilot > ../performance-artifact/autopilot.edn
       - name: Compare baseline and repeat candidate on the same runner
         if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
         working-directory: tolglow

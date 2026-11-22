@@ -32,3 +32,19 @@ Both runs ended with 1,056 of 2,112 sources above standby and 341.87 estimated w
 - For the allocator alone, run `lein with-profile +benchmark run -m tolglow.perf.lighting-budget`. It alternates packed RGBW frames and checks post-allocation watts and active counts on every frame.
 
 [Operating the lighting controls](../group-lighting-scenes.md) · [Complete profiling guide](../performance-profiling.md)
+
+## Musical conductor and spatial HDR
+
+Run `lein with-profile +benchmark run -m tolglow.bench-autopilot`. The default show contains 2,048 animated RGBW strip pixels and 64 moving heads. It plays three passes with the same authored effects and clock. The passes progressively enable HDR, then a half-beat conductor. Each pass warms up for 100 frames and measures another 160. The final report separates ordinary frames from decision frames and includes wall percentiles, owner and worker allocations, and the number exceeding 25 ms. The master performance workflow archives the report under `autopilot.edn`.
+
+Each pass captures 4,680 ArtDMX packets over 18 universes. Packet comparisons, fixture visibility queries and timing summaries run outside the measured tick. Two isolated probe pixels check that the authored red source whitens and that its explicitly black neighbor receives the halo. The conductor lane records how many selected sources really emitted and the two measured one-bar means. No physical DMX interface is involved.
+
+| Controlled comparison | Before | After | Output check |
+| --- | ---: | ---: | --- |
+| Mixed integer and floating coordinates, median summed worker CPU/frame | 20.28 ms | 2.26 ms | All 1,440 packets matched over 80 frames |
+| RGBW HDR with explicit white, median HDR owner CPU/render | 4.16 ms | 2.21 ms | All 1,105,920 DMX payload bytes matched over 120 frames |
+| 10,000 sources, median controller CPU/decision | 15.26 ms | 9.81 ms | The same seeds yielded identical saved state, gains, actions and ordering |
+
+These measurements isolate individual stages on a shared development host. The full-show report includes scheduling and garbage collection, which affect both the tail latency and the number of missed deadlines. [Operator controls](../energy-autopilot.md)
+
+The first hosted mixed-rig run before the optimizations recorded 160 late conductor frames out of 160. A subsequent hosted run delivered all 160 within 25 ms. Its 144 ordinary frames had a 7.06 ms median and 13.71 ms p95. Its 16 decision frames had a 14.15 ms median and 20.91 ms p95. All 1,432 selected sources emitted in the last frame. Independent runs under shared local load had late decision frames. Each archive identifies both Git commits and the complete timing distribution. [Before](https://github.com/tolgraven/tolglow/actions/runs/45057167476) · [After](https://github.com/tolgraven/tolglow/actions/runs/45057636738)

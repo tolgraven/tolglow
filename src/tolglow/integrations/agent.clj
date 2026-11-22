@@ -10,6 +10,12 @@
 (def ^:private id-schema {:type "string" :minLength 1 :maxLength 256})
 (def ^:private page-offset {:type "integer" :minimum 0 :maximum 2147483647})
 
+(def ^:private level-schema {:type "number" :minimum 0 :maximum 1})
+(def ^:private musical-duration
+  {:type "object" :description "One positive musical duration, for example {beats:0.5}."
+   :properties (zipmap [:beats :bars :phrases] (repeat {:type "number" :minimum 0}))
+   :additionalProperties false})
+
 (def default-tools
   "Provider-neutral tool declarations for the studio's semantic dispatcher.
   Definitions/auto policy still undergo domain validation in that dispatcher."
@@ -53,6 +59,21 @@
                               :standby-mode {:type "string" :enum ["shed" "all"]}
                               :strategy {:type "string" :enum ["proportional" "priority"]}
                               :fixture-order {:type "array" :items id-schema}}
+                 :additionalProperties false}}
+   {:name "configure_energy_autopilot"
+    :description "Steer average fixture brightness and visual activity. Edit only the controls you supply. enabled? switches the manual latch. A running mapped enable cue can also keep the conductor active. Use group-id for a patched group, page-id for the emitters on a cue page, or scope=global for the rig. interval sets decision timing, window sets averaging time, and duration sets one-shot cue length. audio-targets follows current audio energy for the named axes. To restore a fixed level, supply that axis in targets."
+    :parameters {:type "object"
+                 :properties {:enabled? {:type "boolean"} :group-id id-schema :page-id id-schema
+                              :scope {:type "string" :enum ["global"]}
+                              :targets {:type "object" :properties {:brightness level-schema :activity level-schema}
+                                        :additionalProperties false}
+                              :audio-targets {:type "array" :items {:type "string" :enum ["brightness" "activity"]}
+                                              :minItems 1 :maxItems 2}
+                              :interval musical-duration :window musical-duration :duration musical-duration
+                              :strategy {:type "string" :enum ["gradual" "instant"]}
+                              :preference {:type "string" :enum ["parameters" "cues" "generate" "author"]
+                                           :description "generate builds a local one-shot. Choose author only when the performer requests ongoing provider-authored effects."}
+                              :rotate? {:type "boolean"}}
                  :additionalProperties false}}
    {:name "configure_energy_scene"
     :description "Save or remove a persistent audio-energy crossing for a group. On rising above 'above', vary its look to target; another rise requires energy to fall back to 'below'. For save supply all three normalized numbers. Saving the binding does not start audio capture."

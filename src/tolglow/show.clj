@@ -16,6 +16,9 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
+            [tolglow.autopilot :as autopilot]
+            [tolglow.autopilot.config :as autopilot-config]
+            [tolglow.effects.authoring :as authoring]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
@@ -104,6 +107,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
             :receiver-surfaces (:receivers optics)
@@ -119,7 +123,7 @@
             :instances (mapv #(-> % (dissoc :state)
                                   (assoc :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
-                                                               (select-keys s [:opacity :paused? :attack :release])))))
+                                                               (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
@@ -287,13 +291,18 @@
             (try (compute/close! owner) (catch Throwable cleanup (.addSuppressed error cleanup)))
             (throw error))))))
 
+(declare ^:private command)
+
 (defn- restart-model [model time-ms]
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
                 subscribers/restart
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
-                (update :variables dissoc :audio :audio/energy :lighting/activity :lighting/budget :sync :surface-aim)
+                (autopilot/clear-session time-ms command)
+                (cond-> (get-in model [:extensions :tolglow.autopilot/hdr-clock])
+                  (update :extensions dissoc :tolglow.autopilot/hdr-clock))
+                (update :variables dissoc :lighting/autopilot :audio :audio/energy :lighting/activity :lighting/budget :sync :surface-aim)
                 (update :responses #(mapv (fn [entry] (assoc entry :enabled? false :state (envelope/initial-state clock))) %)))
       (:auto model) (update :auto assoc :enabled? false :state nil :reasons [])
       (seq configs) (assoc-in [:settings :modulation :saved-controllers] configs)
@@ -368,6 +377,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
     :rdm-update (do (when (and (:rdm-session-id payload)
@@ -878,7 +888,8 @@
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
-         committed-fault-events (volatile! [])]
+         committed-fault-events (volatile! [])
+         author-request (volatile! nil)]
      (try
        (locking (:lock runtime)
          (when @(:running runtime)
@@ -964,28 +975,45 @@
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
+                           patch (patch! runtime (get-in model [:rig :fixtures]))
+                           conductor? (autopilot-config/enabled? model)
+                           calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+                           bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
+                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
+                           suspended? (or bypass? hard-off?)
+                           meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
+                           resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
+                           previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
+                           prior-output (when (and (= (:epoch model) (get-in before [:model :epoch]))
+                                                   (identical? (:rig model) (get-in before [:model :rig])))
+                                          (:output before))
+                           prepared (when (or conductor? (get-in model autopilot/run-path))
+                                      (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
+                                        (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
+                                                 (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
+                                                 prior-output)) command (:modulation-view before) prior-output))
+                           model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
+                           hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
+                           hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
+                           hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
+                                                                              (:modulation-view before) hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
-                                                         :show-id (:show-id model) :fixtures (get-in model [:rig :fixtures])}
+                                                         :show-id (:show-id model) :hdr? (boolean hdr?) :fixtures (get-in model [:rig :fixtures])}
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
-                           patch (patch! runtime (get-in model [:rig :fixtures]))
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
                            meter-opts (get-in model [:settings :lighting-capacity])
-                           meter-plan (when (lighting/needs-meter? (:settings model)) (capacity-plan! runtime patch))
                            plan (when (:enabled? meter-opts) meter-plan)
                            audio @(:capacity-audio runtime)
                            previous (when (= (:epoch model) (get-in before [:model :epoch]))
                                       (get-in before [:output :lighting-capacity]))
-                           calibrating? (or photo-session (calibration/current model))
-                           bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
-                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
                            budget (lighting/prepare-budget before model patch meter-plan calibrating? hard-off?)
                            standby (when-not bypass? (:standby-block budget))
                            observation (when (identical? (:rig model) (get-in before [:model :rig])) (get-in before [:output :atmosphere]))
@@ -1009,15 +1037,16 @@
                                           (:music setpoint) (conj (:music setpoint))
                                           (:block photo-session) (conj (:block photo-session))
                                           pause-layer (conj pause-layer))
-                           resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
+                           render-options (cond-> {:master (get limit :effective-master (:master model))
+                                                   :blackout? (pause-look/blackout? model)
+                                                   :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
+                                                   :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
+                                                                    (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
+                                                   :previous-values (or (get-in before [:output :values]) {})
+                                                   :previous-compact (get-in before [:output :compact])}
+                                            hdr? (assoc :hdr hdr-opts))
                            resolved (effect-faults/resolve-output result
-                                     #(resolve-frame patch (lighting/contributions standby % extra-blocks)
-                                     {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
-                                      :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
-                                      :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
-                                                       (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
-                                      :previous-values (or (get-in before [:output :values]) {})
-                                      :previous-compact (get-in before [:output :compact])}))
+                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])
@@ -1034,13 +1063,21 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (let [with-fog (cond-> (:model result)
+                       (let [observation (when (:plan prepared)
+                                           (autopilot/observe (:model result) prepared previous-cache frame
+                                             (lighting/contributions standby (:contributions result) extra-blocks)
+                                             {:suspended? suspended? :calibrating? calibrating?}
+                                             (assoc (select-keys render-options [:master :edge-tracking :previous-values :previous-compact])
+                                               :hdr {} :compact-values? false :include-values? false)
+                                             (:contributions result)))]
+                       {:model (let [with-fog (cond-> (or (:model observation) (:model result))
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :output frame :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-                        :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
+                        :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
                      (catch Exception error
                        (assoc before :model model :status {:error (error-data error)} :fault-events []
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
@@ -1057,7 +1094,8 @@
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
-             (reset! (:state runtime) next-state)
+             (reset! (:state runtime) (dissoc next-state :autopilot-author-request))
+             (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
@@ -1083,6 +1121,8 @@
              (doseq [observer (vals @(:observers runtime))]
                ((:frame! observer) @(:state runtime))))))
        (finally
+         (when-let [request @author-request]
+           (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
                                 @restored-generation @restarted-generation)
@@ -1240,6 +1280,8 @@
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
+          "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
+                                                         (select-keys envelope [:expected-epoch]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]

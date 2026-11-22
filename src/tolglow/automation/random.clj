@@ -2,13 +2,23 @@
   "Explicit seeded randomness and bounded schema-aware parameter choices."
   (:require [tolglow.registry :as registry]))
 
+(defn- seed-word ^long [seed]
+  (when-not (integer? seed) (throw (ex-info "Seed must be an integer" {:seed seed})))
+  (long (mod seed 4294967296)))
+
+(defn- advance-word ^long [^long word]
+  (bit-and 0xffffffff (+ (* 1664525 word) 1013904223)))
+
+(defn- seed-value [seed word]
+  ;; Preserve the numeric type when a saved show supplies an arbitrary-precision seed.
+  (if (int? seed) word (bigint word)))
+
 (defn next-random
   "Portable 32-bit LCG. Returns [next-seed unit-value], with value in [0,1).
   This is a reproducibility primitive, not cryptographic randomness."
   [seed]
-  (when-not (integer? seed) (throw (ex-info "Seed must be an integer" {:seed seed})))
-  (let [seed (mod (+ (* 1664525 (mod seed 4294967296)) 1013904223) 4294967296)]
-    [seed (/ (double seed) 4294967296.0)]))
+  (let [word (advance-word (seed-word seed))]
+    [(seed-value seed word) (/ (double word) 4294967296.0)]))
 
 (defn choose [seed values]
   (when-not (seq values) (throw (ex-info "Cannot choose from an empty collection" {})))
@@ -17,12 +27,19 @@
 (defn shuffle-values
   "Fisher-Yates using only supplied seed. Returns [next-seed vector]."
   [seed values]
-  (loop [seed seed result (vec values) i (dec (count values))]
-    (if (<= i 0) [seed result]
-        (let [[seed value] (next-random seed)
-              j (int (* value (inc i)))
-              a (nth result i) b (nth result j)]
-          (recur seed (assoc result i b j a) (dec i))))))
+  (let [n (count values)]
+    (if (< n 2) [seed (vec values)]
+      ;; This private copy is never mutated after publication. Each swap
+      ;; consumes exactly one LCG word in the same Fisher-Yates order.
+      (let [items (object-array values)]
+        (loop [word (seed-word seed) i (dec n)]
+          (if (zero? i) [(seed-value seed word) (vec items)]
+            (let [word (advance-word word)
+                  j (int (* (/ (double word) 4294967296.0) (inc i)))
+                  item (aget items i)]
+              (aset items i (aget items j))
+              (aset items j item)
+              (recur word (dec i)))))))))
 
 (defn- numeric-choice [seed spec current]
   (let [bounds (or (get-in spec [:random :range]) (:recommended spec) (:bounds spec)

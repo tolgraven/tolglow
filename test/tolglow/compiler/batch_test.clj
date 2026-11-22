@@ -245,3 +245,24 @@
         (is (= expected (get-in result [:assignments 0 :value])))
         (is (= (frame-bytes (render/resolve-contributions rig (blocks ((compiler/compile-effect definition) input))))
                (frame-bytes (render/resolve-contributions rig (blocks result)))))))))
+
+(deftest floating-position-arithmetic-keeps-integer-geometry-in-the-typed-kernel
+  (let [x {:op :position :axis :x}
+        rig (assoc-in fixtures [0 :position] [-5 0 0])
+        effect (fn [expr] {:id :geometry :version 1 :targets [:a] :outputs {:dimmer expr}})
+        floating {:op :add :args [0.5 {:op :multiply :args [x 0.05]}]}
+        d (effect floating)
+        input (assoc-in (context d) [:frame :fixtures] rig)
+        fast (batch/compile-effect d rig)
+        slow (compiler/compile-effect d)
+        packet #(frame-bytes (render/resolve-contributions rig (blocks (% input))))]
+    (is (= :batch (:backend (meta fast))))
+    (is (= (packet slow) (packet fast)))
+    ;; A second use of the very same axis can still calculate in integer space.
+    (doseq [expr [{:op :add :args [floating {:op :subtract :args [x x]}]}
+                  {:op :multiply :args [x x 0.05]}
+                  {:op :sin :args [{:op :multiply :args [x x]}]}]]
+      (is (= [:exact-position] (:fallback-reasons (meta (batch/compile-effect (effect expr) rig))))))
+    ;; Values outside double's integer precision still use the scalar path.
+    (is (= [:exact-position]
+           (:fallback-reasons (meta (batch/compile-effect d (assoc-in rig [0 :position 0] 9007199254740993))))))))

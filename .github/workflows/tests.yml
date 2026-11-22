@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ab811c496867e32974f4ac7ec76ed950d35dfcb7
+          ref: 7da8eab038935d15893d60b85fd3f72005c662b5
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ab811c496867e32974f4ac7ec76ed950d35dfcb7
+          ref: 7da8eab038935d15893d60b85fd3f72005c662b5
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -89,6 +89,7 @@ jobs:
         run: |
           npx --no-install playwright-core install --with-deps chromium
           export CHROMIUM_PATH="$(node --input-type=module -e 'import {chromium} from "playwright-core"; process.stdout.write(chromium.executablePath())')"
+          echo "CHROMIUM_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
           npm run preview:test
           bin/profile-mover-shader 64 24
       - name: Exercise show-configured native shader execution and frame deadlines
@@ -101,6 +102,10 @@ jobs:
         run: |
           npm run studio:test
           npm run studio:build
+      - name: Verify energy autopilot and HDR in tablet and phone Studio
+        working-directory: tolglow
+        timeout-minutes: 5
+        run: lein run -m tolglow.qa.autopilot-browser
       - name: Test and package the complete Leiningen project
         working-directory: tolglow
         run: |
@@ -123,7 +128,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ab811c496867e32974f4ac7ec76ed950d35dfcb7
+          ref: 7da8eab038935d15893d60b85fd3f72005c662b5
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:

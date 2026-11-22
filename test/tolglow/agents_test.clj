@@ -1,9 +1,11 @@
 (ns tolglow.agents-test
-  (:require [clojure.test :refer :all]
+  (:require [afterglow.control.model :as model]
+            [clojure.test :refer :all]
             [clojure.data.json :as json]
             [clojure.string :as str]
             [tolglow.agents :as agents]
-            [tolglow.agents.credentials :as credentials])
+            [tolglow.agents.credentials :as credentials]
+            [tolglow.show :as show])
   (:import [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -358,3 +360,61 @@
       (is (= "two" (:selected-conversation-id (agents/export-state manager))))
       (is (thrown? clojure.lang.ExceptionInfo (agents/select-conversation! manager "one")))
       (finally (agents/close! manager)))))
+
+(deftest agent-steers-a-group-on-the-musical-clock-and-reads-back-both-axes
+  (let [fixtures [{:id :front :groups ["stage/front" "shared"] :channels {:dimmer 1} :universe 1 :address 1}
+                  {:id :back :groups [:stage/back :shared] :channels {:dimmer 1} :universe 1 :address 2}]
+        model (-> (model/new-show {})
+                  (assoc :rig {:fixtures fixtures} :pages {"music/front" {:id "music/front" :cells {}}})
+                  (assoc-in [:variables :audio/energy] 0.61))
+        rounds [["configure_energy_autopilot"
+                 {:group-id "stage/front" :enabled? true :targets {:brightness 0.3}
+                  :audio-targets ["activity"] :interval {:beats 0.5} :window {:bars 2}
+                  :duration {:phrases 1} :preference "parameters" :strategy "gradual"}]
+                ["inspect_lighting" {}]
+                ["configure_energy_autopilot" {:targets {:brightness 0.25}}]
+                ["configure_energy_autopilot" {:scope "global" :enabled? false}]]
+        requests (atom [])
+        transport (fn [request consume! _]
+                    (let [n (dec (count (swap! requests conj (json/read-str (:body request) :key-fn keyword))))]
+                      (consume! (if-let [[tool args] (get rounds n)]
+                                  (tool-stream (str n) tool args)
+                                  (stream-text "Done"))))
+                    {:status 200})
+        rt (show/start! {:model model :workspace-options nil :agent-options {:transport transport}})
+        manager (show/agent-manager rt)
+        settings #(get-in @(:state rt) [:model :settings :autopilot])
+        events (atom [])]
+    (try
+      (configure-local! manager)
+      (let [handle (agents/start-chat! manager {:message "Conduct the front with the music."}
+                                       {:snapshot! #(show/snapshot rt)
+                                        :dispatch! #(show/dispatch-tool! rt %1 %2 %3)
+                                        :emit! #(swap! events conj %) :done! (fn [_])})
+            result (await-result handle)
+            replies (->> @events (filter #(= :tool/result (:type %))) (mapv :result))
+            view (:autopilot (second replies))]
+        (is (= :completed (:status result)) (str result))
+        (is (some #(= "configure_energy_autopilot" (get-in % [:function :name])) (:tools (first @requests))))
+        (is (= [:accepted :accepted :accepted] (mapv :status [(get replies 0) (get replies 2) (get replies 3)])))
+        (is (= true (:enabled? view)))
+        (is (= {:group-id "stage/front"} (:scope view)))
+        (is (= {:brightness 0.3 :activity 0.61} (:targets view)))
+        (is (every? number? (map #(get-in view [:statistics % :mean]) [:brightness :activity])))
+        (is (= {:interval {:beats 0.5} :window {:bars 2} :duration {:phrases 1} :preference :parameters
+                :strategy :gradual :scope :global :enabled? false
+                :targets {:brightness 0.25 :activity {:variable [:audio/energy] :default 0}}}
+               (settings))))
+      (let [before (settings)
+            call #(show/dispatch-tool! rt "configure_energy_autopilot" % {})]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"existing group" (call {:group-id "missing"})))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one autopilot scope" (call {:scope "global" :group-id "stage/back"})))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"fixed target" (call {:audio-targets ["activity"] :targets {:activity 0.5}})))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"previous show session"
+                              (show/dispatch-tool! rt "configure_energy_autopilot" {:enabled? true} {:expected-epoch -1})))
+        (is (= :rejected (:status (call {:window {:beats 0 :bars 1}}))))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Ambiguous" (call {:group-id "shared"})))
+        (is (= before (settings)))
+        (is (= :accepted (:status (call {:page-id "music/front"}))))
+        (is (= {:page-id "music/front"} (:scope (settings)))))
+      (finally (show/stop! rt)))))

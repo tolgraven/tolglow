@@ -1,6 +1,7 @@
 (ns tolglow.show.lighting
   "Settings and frame ordering for Tolglow's optical and performance controls."
-  (:require [tolglow.lighting-activity :as activity]
+  (:require [tolglow.autopilot.config :as autopilot]
+            [tolglow.lighting-activity :as activity]
             [tolglow.lighting-budget :as budget]
             [tolglow.output-response :as response]))
 
@@ -11,7 +12,7 @@
   options)
 
 (def validators
-  {:lighting-budget budget/settings :output-response response/settings :lighting-activity activity-settings})
+  {:autopilot autopilot/settings :hdr autopilot/hdr-settings :lighting-budget budget/settings :output-response response/settings :lighting-activity activity-settings})
 
 (defn validate! [settings]
   (doseq [[scope validate] validators :when (contains? settings scope)]
@@ -29,12 +30,19 @@
   override. Individual controls such as a duration or parameter binding are
   replaced as a unit."
   [scope current edit]
-  (let [scoped? (#{:lighting-budget :output-response} scope)
+  (let [fields (case scope
+                 :output-response [:groups :fixtures :cues :compositions]
+                 :lighting-budget [:groups] [])
         options (cond-> (merge current edit)
-                  (and scoped? (map? (:global edit)))
-                  (assoc :global (merge (:global current) (:global edit)))
-                  (and scoped? (contains? edit :groups))
-                  (assoc :groups (edit-groups (:groups current) (:groups edit))))]
+                  (and (seq fields) (map? (:global edit)))
+                  (assoc :global (merge (:global current) (:global edit))))
+        options (reduce (fn [opts k]
+                          (if (contains? edit k) (assoc opts k (edit-groups (get current k) (get edit k))) opts))
+                        options fields)
+        options (reduce (fn [opts k]
+                          (if (and (map? (get edit k)) (map? (get current k)))
+                            (update opts k #(merge (get current k) %)) opts))
+                        options (case scope :autopilot [:targets :hdr :signals :target-response] :hdr [:cue-gains :instance-gains :source-gains] []))]
     (when-let [validate (validators scope)] (validate options))
     options))
 
@@ -60,7 +68,7 @@
         response? (get-in settings [:output-response :enabled?])
         shaped (when response? (response/advance (:response previous) model patch frame
                                  (or calibration? hard-off? (false? (get-in model [:transport :playing?])))
-                                 ceiling (when same-rig? (:output before))))
+                                 ceiling (when same-rig? (:output before)) blocks))
         shaped-frame (or (:frame shaped) frame)
         delivered (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)
         scoring? (get-in settings [:lighting-activity :enabled?])

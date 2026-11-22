@@ -30,6 +30,18 @@ Exact commands and checkpoint counts are in [testing.md](testing.md). CPU and
 software WebGL workloads differ; their timings must not be presented as a GPU
 speedup comparison.
 
+## Mixed human and automatic performance
+
+The energy autopilot can conduct the whole rig, a group, a cue page or an explicit set of sources. Brightness measures delivered light against calibrated capacity. Visual activity measures changes in the visible look. Both targets can follow audio energy, cue parameters and musical signals. The controller samples delivered output each advancing frame and makes decisions on the configured musical interval. [Operator guide](energy-autopilot.md)
+
+| Milestone | Implemented and exercised |
+| --- | --- |
+| Measure and chase targets | Duration-weighted rolling means, volatility and time in range. Targets can rise or fall over a musical interval or by a fraction per frame. Capture tests cover dimming, standby, restored control and hard output limits. [Response settings](output-response.md) |
+| Mix with a performer | Stepwise or immediate correction, optional source rotation, reversible gain, scoped cue selection and transient look generation. Tests cover manual takeover, an explicitly shut fixture and stale author replies. [Action preferences](energy-autopilot.md#start-with-a-two-bar-look) |
+| Overdrive and spatial highlights | Afterglow carries excess emission through native composition. Independent controls whiten the source and nearby receivers according to distance. A real OpenGL capture matched the CPU packet and isolated an invalid focus value. [Highlight controls](energy-autopilot.md#overdrive-and-whiten-highlights) |
+
+The first full conductor benchmark on a shared host exceeded the 25 ms frame budget on all 160 measured ticks with 2,048 RGBW pixels and 64 moving heads. Median wall time was 41.77 ms on ordinary ticks and 59.43 ms on decision ticks. Repeat the same workload to assess changes. Physical lamp measurements, sustained performance on the venue computer, iPad Safari and a live external authoring provider remain field checks. [Profiling the lighting controls](performance/lighting-controls.md)
+
 ## Active studio integration
 
 Musical authoring uses beat/bar/phrase units first, with explicit meter and

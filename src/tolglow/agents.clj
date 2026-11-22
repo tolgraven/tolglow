@@ -141,6 +141,7 @@
        (throw (failure :invalid-options "Invalid agent worker or input limits")))
      {:lock (Object.)
       :options opts
+      :background-jobs (atom {})
       :executor (ThreadPoolExecutor.
                  (int (:workers opts)) (int (:workers opts)) 30 TimeUnit/SECONDS
                  (ArrayBlockingQueue. (int (:queue-size opts)))
@@ -165,7 +166,7 @@
             :credential-persisted? (boolean credential-ref) :credential-ref credential-ref
             :credential-error credential-error
             :selected-conversation-id selected-conversation-id :conversation-count (count conversations)
-            :closed? closed? :active-runs (count runs)
+            :closed? closed? :active-runs (+ (count runs) (count @(:background-jobs manager)))
             :capacity (+ (get-in manager [:options :workers]) (get-in manager [:options :queue-size]))})))
 
 (defn configure!
@@ -290,7 +291,8 @@
     (locking (:lock manager)
       (let [{:keys [closed? runs]} @(:state manager)]
         (when closed? (throw (failure :closed "Agent manager is closed")))
-        (when (seq runs) (throw (failure :busy "Stop agent runs before restoring their configuration and history")))
+        (when (or (seq runs) (seq @(:background-jobs manager)))
+          (throw (failure :busy "Stop agent runs before restoring their configuration and history")))
         (let [store (get-in manager [:options :credential-store])
               lookup (when credential-ref
                        (if store
@@ -379,6 +381,7 @@
    "Persistent, held, timed and one-shot modes are distinct; timed/one-shot need a positive duration. Stop exact instance IDs, not cue IDs. "
    "set_parameter arguments are {instance-id,param,value}. inspect_show returns fuller current data. If a saved tool outcome is unknown after interruption, inspect current show state before retrying any action. "
    "Use inspect_lighting to discover patched groups and measured output. set_lighting_scene chooses a look and brightness target. Choose brightness-reference global to match unlike fixtures against the brightest patched source. set_lighting_budget controls concurrent sources and their combined estimated watts, with an optional group, limit, active count, standby level, strategy or fixture order. Inspect the result for actual local/global brightness, budget use and visual activity. A seeking group is settling; limited, unlit and over-target describe an unmet target. Human master, blackout and cue priority remain authoritative. For a repeating audio-energy crossing, configure_energy_scene saves an upper trigger and lower rearm threshold. Inspection reports the binding, current audio energy and available fog observations. "
+   "Use configure_energy_autopilot to steer average brightness and visual activity over musical time. Supply targets for fixed levels or audio-targets to follow music. Set enabled? explicitly when asked to start or stop it. A mapped enable cue can keep it active. After an interval, inspect_lighting reports the effective targets and the rolling measurements. "
    "Example configure_auto: {\"configuration\":{\"enabled?\":true,\"interval\":{\"bars\":1},\"count\":1,\"scope\":{\"cue-ids\":[\"agent-red-cue\"]},"
    "\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}},\"seed\":42}}. Scope may instead be \"all\" or {\"page-id\":\"actual-page-id\"}; "
    "scope also constrains any required emission companion. Disable auto with {\"configuration\":{\"enabled?\":false}}.\n\n"
@@ -586,6 +589,54 @@
                  (throw (failure :busy "Agent worker capacity is full")))))))
     (dissoc handle :initial :ledger)))
 
+(defn start-tool-job!
+  "Queue a background proposal on the same bounded provider executor as chat.
+  Caller supplies a narrow tool set and messages. Admission never acquires
+  the chat/configuration lock or accesses a credential store. The worker sees
+  one immutable connection snapshot and completion exposes only its status.
+  A background job has no conversation or chat-history entry."
+  [manager {:keys [messages tools dispatch! done!]}]
+  (let [{:keys [closed? config credential credential-ref]} @(:state manager)
+        executor ^ThreadPoolExecutor (:executor manager)
+        jobs (:background-jobs manager)
+        id (str (UUID/randomUUID))
+        cancelled? (atom false) started? (atom false) completed? (atom false)
+        result (promise)
+        finish! (fn [status]
+                  (when (compare-and-set! completed? false true)
+                    (swap! jobs dissoc id)
+                    (try (done! status) (finally (deliver result status)))))
+        job (FutureTask.
+             ^Callable
+             (fn []
+               (reset! started? true)
+               (try
+                 (let [outcome (agent/run! config (credential-value credential) messages tools dispatch! (constantly nil)
+                                           (merge (select-keys config [:timeout-ms :connect-timeout-ms :max-rounds :max-tool-calls])
+                                                  {:run-id id :cancelled? cancelled?
+                                                   :transport (get-in manager [:options :transport])}))]
+                   (finish! (if @cancelled? {:status :cancelled :error :cancelled}
+                              (select-keys outcome [:status :error :run-id]))))
+                 (catch Exception _
+                   (finish! (if @cancelled? {:status :cancelled :error :cancelled}
+                              {:status :error :error :proposal-failed}))))))
+        cancel! (fn []
+                  (reset! cancelled? true)
+                  (.cancel job true)
+                  (.remove executor job)
+                  (when-not @started? (finish! {:status :cancelled :error :cancelled})))
+        handle {:run-id id :cancel! cancel! :result result}]
+    (when closed? (throw (failure :closed "Agent manager is closed")))
+    (when-not (and config (or credential (and (= :self-hosted (:provider config)) (nil? credential-ref))))
+      (throw (failure :not-configured "Configure a provider before requesting a proposal")))
+    (swap! jobs assoc id handle)
+    (if (:closed? @(:state manager))
+      (cancel!)
+      (try (.execute executor job)
+           (catch RejectedExecutionException _
+             (finish! {:status :error :error :capacity-rejected}))))
+    handle))
+
 (defn cancel-all!
   "Cancel current runs without closing the manager. Wait at most timeout-ms
   total (default 1000), outside its lock. Call outside show-owner locks, since
@@ -594,7 +645,7 @@
   ([manager timeout-ms]
    (when-not (and (integer? timeout-ms) (<= 0 timeout-ms 10000))
      (throw (failure :invalid-timeout "Cancellation timeout must be 0..10000 ms")))
-   (let [runs (locking (:lock manager) (vec (vals (:runs @(:state manager)))))
+   (let [runs (locking (:lock manager) (into (vec (vals (:runs @(:state manager)))) (vals @(:background-jobs manager))))
          deadline (+ (System/nanoTime) (* 1000000 timeout-ms))]
      (doseq [run runs] ((:cancel! run)))
      (doseq [run runs]
@@ -612,9 +663,8 @@
   safe. Cancellation stops future proposals; it does not undo accepted commands."
   [manager]
   (let [runs (locking (:lock manager)
-               (let [runs (vals (:runs @(:state manager)))]
-                 (swap! (:state manager) assoc :closed? true :credential nil)
-                 (vec runs)))]
+               (let [state (swap! (:state manager) assoc :closed? true :credential nil)]
+                 (into (vec (vals (:runs state))) (vals @(:background-jobs manager)))))]
     (doseq [run runs] ((:cancel! run)))
     (.shutdownNow ^ThreadPoolExecutor (:executor manager))
     {:closed? true :cancelled-runs (count runs)

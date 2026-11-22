@@ -52,3 +52,33 @@
 .priority-order li .button { min-width: 44px; min-height: 44px; padding: 4px; margin-left: 6px; }
 
 .policy-binding { grid-column: 1/-1; }
+
+.conduct > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.conduct fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.conduct label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.conduct .policy-toggle { display: inline-flex; align-items: center; min-height: 44px; }
+.conduct input:not([type=checkbox]), .conduct select, .conduct textarea, .conduct button { min-height: 44px; width: 100%; box-sizing: border-box; }
+.conduct :is(select, textarea, input), .conduct-signal, .conduct-scope { min-width: 0; }
+.conduct .performance-actions button { width: auto; }
+.conduct textarea { font-family: var(--mono, monospace); }
+.conduct-fields, .conduct-meters { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,210px),1fr)); gap: 14px; margin: 12px 0; }
+.conduct-signal { align-self: start; display: grid; gap: 6px; align-content: start; border-inline-start: 2px solid var(--line); padding-inline-start: 10px; }
+.conduct-name, .conduct-meter-title { color: var(--text); font-size: 13px; }
+.conduct-duration { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px; }
+.conduct-wave, .conduct-preview { grid-column: 1/-1; }
+.conduct .conduct-wave { grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); }
+.conduct-wave > :is(.conduct-duration, details, .conduct-preview) { grid-column: 1/-1; }
+.conduct-meters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.conduct-fixtures { display: grid; grid-template-columns: repeat(auto-fit,minmax(110px,1fr)); gap: 2px 8px; max-height: 14em; overflow: auto; }
+.conduct-meter { padding: 10px; border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 4px; font-size: 12px; }
+.conduct-meter-title { display: flex; justify-content: space-between; gap: 4px; }
+.conduct-meter meter { width: 100%; accent-color: var(--accent); }
+.conduct-meter small, .conduct-action { color: var(--muted); }
+.conduct-distribution { display: flex; align-items: end; gap: 2px; height: 16px; }
+.conduct-distribution span { flex: 1; background: var(--accent); border-radius: 1px; }
+@media (max-width:600px) { .conduct-fields, .conduct-meters { grid-template-columns: 1fr; } }
+.conduct-new-signal { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.conduct-new-signal label { flex: 1 1 12em; }
+.conduct-new-signal button { width: auto; }
+.conduct-action { grid-column: 1/-1; display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
+.conduct .policy-stage > .conduct-duration { grid-column: 1/-1; }

@@ -55,6 +55,32 @@
      :values (cond-> {:enabled? (if (nil? enabled?) true enabled?)}
                (seq controls) (assoc-in (if group [:groups group] [:global]) controls))}))
 
+(defn- autopilot-scope [model arguments]
+  (let [selection (select-keys arguments [:scope :group-id :page-id])]
+    (when (> (count selection) 1)
+      (throw (ex-info "Choose one autopilot scope" {})))
+    (when-let [[k v] (first selection)]
+      (if (= k :scope) v
+        (let [ids (if (= k :group-id) (group-ids model) (set (keys (:pages model))))
+              id (resolve-id ids v)]
+          (when-not (contains? ids id)
+            (throw (ex-info "Choose an existing group or cue page" selection)))
+          {k id})))))
+
+(defn autopilot-request [model {:keys [targets audio-targets] :as arguments}]
+  (let [scope (autopilot-scope model arguments)
+        audio-axes (mapv keyword audio-targets)]
+    (when (some #(contains? targets %) audio-axes)
+      (throw (ex-info "Choose either a fixed target or audio energy for each axis" {})))
+    (let [targets (merge targets (zipmap audio-axes (repeat {:variable [:audio/energy] :default 0})))
+          controls (cond-> (dissoc arguments :targets :scope :group-id :page-id :audio-targets)
+                     (seq targets) (assoc :targets targets)
+                     scope (assoc :scope scope)
+                     (:preference arguments) (update :preference keyword))]
+      (when (empty? controls)
+        (throw (ex-info "Supply an autopilot setting" {})))
+      {:scope :autopilot :values controls})))
+
 (defn- energy-subscriber-id [id]
   (keyword "agent.energy" (java.net.URLEncoder/encode (wire-id id) java.nio.charset.StandardCharsets/UTF_8)))
 
@@ -89,7 +115,19 @@
     (cond-> {:total total :items rows}
       (< next-offset total) (assoc :next-offset next-offset))))
 
-(defn- venue-signals [{:keys [variables time-ms epoch]} output]
+(defn- autopilot-summary [settings view]
+  (let [scope (or (:scope view) (:scope settings))
+        statistics (:statistics view)]
+    (cond-> (merge {:enabled? (boolean (:enabled? view))}
+                   (select-keys settings [:window :interval :duration :strategy :preference :rotate?])
+                   (select-keys view [:targets :requested-targets]))
+      scope (assoc :scope (if (:fixture-ids scope) {:fixture-count (count (:fixture-ids scope))} scope))
+      statistics (assoc :statistics
+                        (into {} (for [axis [:brightness :activity]]
+                                   [axis (select-keys (axis statistics)
+                                                      [:instant :mean :min :max :stddev :target-hit-fraction])]))))))
+
+(defn- venue-signals [{:keys [variables time-ms epoch settings]} output]
   (let [capacity (:lighting-capacity output)
         observation (:fog/observation variables)
         features (get-in variables [:audio :features])]
@@ -110,6 +148,7 @@
            :observation (when observation
                           (assoc (select-keys observation [:level :level-change-per-s :sample-time-ms :epoch :phase :path-m])
                                  :current-epoch? (= epoch (:epoch observation))))}
+     :autopilot (autopilot-summary (:autopilot settings) (:lighting/autopilot variables))
      :lighting-budget (:lighting-budget output)
      :lighting-activity (when-let [activity (:lighting-activity output)] (select-keys activity [:scene]))
      :show-time-ms time-ms}))

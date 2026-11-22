@@ -1,5 +1,6 @@
 (ns tolglow.native-show-test
-  (:require [afterglow.render.gpu.expressions :as expressions]
+  (:require [afterglow.control.model :as control]
+            [afterglow.render.gpu.expressions :as expressions]
             [afterglow.render.gpu.session :as gpu]
             [afterglow.render.gpu.movement :as movement]
             [clojure.test :refer [deftest is]]
@@ -194,3 +195,50 @@
           owner (get-in show [:compute :movement])
           patch (:compiled @(:patch show))]
       (is (= :closed (get-in (movement/resolve-contributions! owner patch probe) [:movement :reason]))))))
+
+(defn- capture-highlight [backend]
+  (let [fixtures (mapv (fn [id address x]
+                         {:id id :address address :universe 1 :position [x 0.0 0.0]
+                          :channels {:red 1 :green 2 :blue 3 :focus 4}})
+                       [:source :near :far] [1 5 9] [0.0 0.5 5.0])
+        effects {:hot {:id :hot :version 1 :targets [:source]
+                       :outputs {:color {:op :vec3 :args [{:op :add :args [0.75 0.5]} 0.0 0.0]}}}
+                 :bad {:id :bad :version 1 :targets [:near] :outputs {:focus 1.25}}}
+        cues (update-vals effects (fn [{:keys [id]}] {:id id :version 1 :effect-id id}))
+        model (assoc (control/new-show {:registry {:cues cues :effects effects}})
+                     :rig {:fixtures fixtures}
+                     :settings {:hdr {:enabled? true :max-excess 1.0 :white-mix 1.0 :spill 1.0
+                                      :radius 1.0 :spill-white-mix 1.0}})
+        packet (atom nil)
+        sink {:send! (fn [universes _]
+                       (reset! packet (mapv #(bit-and 255 %) (take 12 (get universes 1)))))}
+        runtime (show/create-runtime {:model model :workspace-options nil :sink sink
+                                      :compute-backend backend :gpu-budget-ms 5000})
+        launch (fn [id time]
+                 (first (run-commands! runtime time [{:op :cue/launch :cue-id id}])))]
+    (try
+      (is (= :accepted (:status (launch :hot 25.0))))
+      (let [healthy @packet
+            _ (is (= :accepted (:status (launch :bad 50.0))))
+            view (show/snapshot runtime)
+            faults (into {} (map (juxt :effect-id :fault)) (:instances view))]
+        (is (nil? (get-in view [:status :error])))
+        (is (nil? (:hot faults)))
+        (is (some? (:bad faults)) "The invalid focus is quarantined")
+        (is (= healthy @packet) "The healthy highlight survives an unrelated invalid effect")
+        (when (= backend :native-gpu)
+          (let [compute (get-in view [:status :compute])]
+            (is (= :native-gpu (:active compute)))
+            (is (pos? (:native-dispatches compute)))
+            (is (zero? (:cpu-fallbacks compute)))))
+        healthy)
+      (finally (show/stop! runtime)))))
+
+(deftest native-emission-highlights-reach-neighbours-and-isolate-invalid-controls
+  (let [cpu (capture-highlight :cpu)
+        gpu (capture-highlight :native-gpu)]
+    (is (= cpu gpu))
+    (is (= 255 (first gpu)))
+    (is (every? pos? (subvec gpu 1 3)) "The overbright source whitens")
+    (is (every? pos? (subvec gpu 4 7)) "Spill whitens the nearby receiver")
+    (is (every? zero? (subvec gpu 8 12)) "The distant receiver remains dark")))

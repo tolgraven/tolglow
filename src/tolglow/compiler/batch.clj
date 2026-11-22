@@ -55,34 +55,35 @@
 
 (defn- finish-fields!
   "Validate and optionally scale exclusively owned IR results before publication."
-  [outputs envelope-result envelope-attributes]
+  [outputs envelope-result envelope-attributes hdr?]
   (doseq [[attribute {:keys [values]}] outputs]
     (let [^doubles values values
           geometric? (contains? compiler/geometry-attributes attribute)
+          emission-hdr? (and hdr? (compiler/hdr-attribute? attribute))
           scale (double (if (and envelope-result (contains? envelope-attributes attribute))
                           (:value envelope-result) 1.0))
           scale? (not (== 1.0 scale))]
       (dotimes [index (alength values)]
         (let [value (* scale (aget values index))]
-          (when-not (and (Double/isFinite value) (or geometric? (<= 0.0 value 1.0)))
+          (when-not (and (Double/isFinite value) (or geometric? (and (<= 0.0 value) (or emission-hdr? (<= value 1.0)))))
             (fail! [:outputs attribute :value]
                    (if geometric? "World coordinates must be finite"
                        "Computed fixture output must be finite and within [0,1]")))
           (when scale? (aset-double values index value))))))
   outputs)
 
-(defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes]
+(defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes hdr?]
   (let [batch {:target-ids target-ids :blend blend}]
     {:kind :batch
      :batch
      (if prepared
        (assoc batch :field-request
-              {:group prepared :env (dissoc env :state)
+              {:group prepared :hdr? hdr? :env (dissoc env :state)
                :scales (when envelope-result
                          (into {} (for [attribute (keys expressions) :when (envelope-attributes attribute)]
                                     [attribute (:value envelope-result)])))})
        (let [result (evaluate env)]
-         (finish-fields! (:outputs result) envelope-result envelope-attributes)
+         (finish-fields! (:outputs result) envelope-result envelope-attributes hdr?)
          (merge result batch)))}))
 
 (defn- floating-value? [value]
@@ -97,10 +98,23 @@
 (defn- needs-scalar? [value arithmetic?]
   (or (exact-value? value) (and arithmetic? (not (floating-value? value)))))
 
+(defn- coerces-position? [{:keys [op args]}]
+  ;; The scalar IR passes these unary functions through double. For binary
+  ;; arithmetic the floating literal must be an immediate sibling: a later
+  ;; cast cannot repair rounded intermediate integer calculations.
+  (or (#{:sin :cos :abs :floor :sqrt :pow} op)
+      (and (#{:add :subtract :multiply :divide} op) (= 2 (count args))
+           (some #(and (= :const (:op %)) (number? (:value %)) (floating-value? (:value %))) args))))
+
 (defn- exact-position? [{:keys [nodes arithmetic? positions]}]
-  (let [axes (into #{} (keep #(when (= :position (:op %)) ({:x 0 :y 1 :z 2} (:axis %)))) nodes)]
+  (let [axis-index {:x 0 :y 1 :z 2}
+        axes (into #{} (keep #(when (= :position (:op %)) (axis-index (:axis %)))) nodes)
+        exact-axes (when arithmetic?
+                     (into #{} (comp (remove coerces-position?) (mapcat :args)
+                                     (keep #(when (= :position (:op %)) (axis-index (:axis %))))) nodes))]
     (and (seq axes)
-         (some (fn [position] (some #(needs-scalar? (nth position %) arithmetic?) axes)) positions))))
+         (some (fn [position]
+                 (some #(needs-scalar? (nth position %) (contains? exact-axes %)) axes)) positions))))
 
 (defn- numeric-contract [outputs]
   (let [expressions (mapv (fn [output]
@@ -135,7 +149,7 @@
 
   Numeric IR outputs, envelopes, stable-ID selectors and duplicate output layers
   use typed fields. World aim points and directions remain signed vec3 fields.
-  Tweens use the scalar compiler. Exact-number literals/positions in arithmetic also fall back;
+  Tweens use the scalar compiler. Integer-position arithmetic that can remain exact falls back;
   exact parameters or integer clocks select the scalar step for that frame.
   This conservative policy preserves scalar numeric semantics at byte boundaries.
   Unsupported expressions still fail normal validation; they
@@ -191,7 +205,7 @@
                         :meter (time/normalize-meter (:timing-meter instance))}
                    exact? (exact-environment? numeric env)
                    blocks (if (or done? exact?) []
-                              (mapv #(contribution % env envelope-result envelope-attributes) groups))]
+                              (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]
                (if exact? (scalar-step context)
                    (-> context
                        (assoc :state state :done? done?)

@@ -24,6 +24,7 @@
             [tolglow.composition.sequence :as sequence]
             [tolglow.composition :as composition]
             [tolglow.agents :as agents]
+            [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
             [tolglow.event-subscribers :as event-subscribers]
@@ -418,7 +419,8 @@
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
                                        layer (get-in instance [:source :native-layer])
-                                       source (or (lighting-scenes/session-source saved instance)
+                                       source (or (conductor-actions/session-source (get-in saved [:extensions :tolglow.autopilot/run :actions]) instance)
+                                                  (lighting-scenes/session-source saved instance)
                                                   (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
                                                 {:adapter :restore :epoch epoch}))]]
@@ -434,6 +436,12 @@
         tokens (into {} (for [[token instance-id] (:composition-tokens saved) :when (ids instance-id)]
                           [(assoc token 0 (owners (first token))) (ids instance-id)]))
         model (cond-> (assoc model :instances instances)
+                (get-in saved [:extensions :tolglow.autopilot/run])
+                (update-in [:extensions :tolglow.autopilot/run]
+                           (fn [run] (-> run (update :actions conductor-actions/restore ids epoch)
+                                      (assoc-in [:controller :epoch] epoch)
+                                      (assoc-in [:history :clock :epoch] epoch)
+                                      (cond-> (:target-response run) (assoc-in [:target-response :clock :epoch] epoch)))))
                 (contains? saved :composition-runs) (assoc :composition-runs runs)
                 (contains? saved :composition-tokens) (assoc :composition-tokens tokens)
                 (get-in saved [:auto :state]) (update :auto #(-> (remap-references % ids owners) (assoc-in [:state :epoch] epoch)))

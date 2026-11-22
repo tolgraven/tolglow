@@ -3,7 +3,8 @@
             [afterglow.render.emission :as light]
             [afterglow.render.frame :as frame]
             [clojure.test :refer [deftest is]]
-            [tolglow.output-response :as response]))
+            [tolglow.output-response :as response]
+            [tolglow.show :as host]))
 
 (def fixtures [{:id :front :groups [:wash :front] :universe 0 :address 1 :channels {:dimmer 1 :red 2 :blue 3 :strobe 4}}
                {:id :back :groups [:wash] :universe 0 :address 5 :channels {:dimmer 1}}])
@@ -150,3 +151,97 @@
         next (response/advance (:state prev) (select-group :back) patch lit false 1.0 limited)]
     (is (near? 0.25 (value next :back :dimmer)))
     (is (= 1.0 (value next :front :red)))))
+
+(deftest linear-timing-arrives-at-the-target-and-ordinary-edges-stay-continuous
+  (let [options {:enabled? true :global {:attack {:mode :linear :ms 200}
+                                          :release {:mode :linear :beats 1/2}}}
+        lit (source 1.0 1.0)
+        start (tick nil options empty-frame 0 0)
+        rise (tick start options lit 50 1/8)
+        crest (tick rise options lit 200 1/4)
+        tail (tick crest options empty-frame 300 1/2)
+        held (tick tail options empty-frame 500 1/2)
+        out (tick held options empty-frame 600 3/4)
+        down (tick rise options empty-frame 100 1/4)
+        rebound (tick down options lit 150 3/8)]
+    (is (near? 0.25 (value rise :front :red)))
+    (is (= 1.0 (value crest :front :red)))
+    (is (near? 0.5 (value tail :front :red)))
+    (is (= (packet-bytes tail) (packet-bytes held)))
+    (is (zero? (value out :front :red)))
+    (is (near? 0.1875 (value down :front :red)))
+    (is (near? (+ 0.1875 (* 0.25 (- 1 0.1875))) (value rebound :front :red)))
+    (is (= (packet-bytes crest)
+           (packet-bytes (reduce (fn [p t] (tick p options lit t 1/4)) start [11 74 164 200]))))))
+
+(deftest frame-fraction-counts-commits-once-and-validates-bound-sources
+  (let [options {:enabled? true :global {:attack {:blend {:variable [:drive] :default 1/4}}
+                                         :release {:blend 0.5}}}
+        lit (source 1.0 1.0)
+        first (tick nil options lit 0 0)
+        same (tick first options lit 0 0)
+        next (tick same options lit 502 0)
+        gone (tick next options empty-frame 503 0)]
+    (is (near? 0.25 (value first :back :dimmer)))
+    (is (= (packet-bytes first) (packet-bytes same)))
+    (is (near? 0.4375 (value next :back :dimmer)))
+    (is (near? 0.21875 (value gone :back :dimmer)))
+    (doseq [invalid [{:blend -1} {:blend 1.1} {:mode :linear :blend 0.5}
+                     {:mode :linear :beats 1 :ms 1} {:mode :unknown :ms 50}
+                     {:blend {:variable [:drive] :default 2}}]]
+      (is (thrown? Exception (response/settings {:global {:attack invalid}}))))))
+
+(defn- cue-block [cue instance id level]
+  {:source {:cue-id cue :instance-id instance :effect-id :shared}
+   :assignments [{:target-id id :attribute :dimmer :value level :blend :replace}]})
+
+(defn- writer-tick [prev config blocks ms model]
+  (let [input (frame/resolve-frame patch (into [] (mapcat :assignments) blocks) {})
+        m (-> model (assoc :time-ms ms) (assoc-in [:settings :output-response] (response/settings config)))]
+    (response/advance (:state prev) m patch input false 1.0 (:frame prev) blocks)))
+
+(deftest cue-and-macro-response-follow-emitting-members-and-retain-only-falling-tails
+  (let [opts {:enabled? true
+              :fixtures {:front {:attack {:ms 0}}}
+              :cues {:hit {:attack {:mode :linear :ms 100}}}
+              :compositions {:riff {:release {:mode :linear :ms 100}}}}
+        hit (cue-block :hit "a" :back 1.0)
+        other (cue-block :other "b" :back 0.25)
+        m (-> show (assoc-in [:composition-runs :riff :owner-id] "run-1")
+              (assoc-in [:instances "a" :source] {:adapter :composition :session-id "run-1"}))
+        off (writer-tick nil opts [] 0 m)
+        quarter (writer-tick off opts [other hit] 25 m)
+        full (writer-tick quarter opts [other hit] 100 m)
+        removed (dissoc m :instances :composition-runs)
+        falling (writer-tick full opts [other] 150 removed)
+        end (writer-tick falling opts [other] 200 removed)
+        takeover (writer-tick quarter opts [hit (cue-block :other "b" :back 1.0)] 30 m)]
+    (is (near? 0.25 (value quarter :back :dimmer)))
+    (is (= 1.0 (value full :back :dimmer)))
+    (is (near? 0.625 (value falling :back :dimmer)))
+    (is (near? 0.25 (value end :back :dimmer)))
+    (is (= 1.0 (value takeover :back :dimmer)))))
+
+(deftest cue-removal-delivers-the-exact-scoped-release-to-the-output-sink
+  (let [effect {:id :lamp :name "Lamp" :version 1 :targets [:back] :params {} :outputs {:dimmer 1.0}}
+        show (-> (model/new-show {:registry {:effects {:lamp effect}
+                                             :cues {:flash {:id :flash :effect-id :lamp :version 1}}}})
+                 (assoc :rig {:fixtures fixtures})
+                 (assoc-in [:settings :output-response]
+                           {:enabled? true :cues {:flash {:release {:mode :linear :ms 100}}}}))
+        last-byte (atom nil)
+        runtime (host/create-runtime {:model show :workspace-options nil
+                                      :sink {:send! (fn [u _] (reset! last-byte (bit-and 255 (aget ^bytes (get u 0) 4))))}})
+        command (fn [cmd t] (let [ack (host/submit! runtime :command cmd)] (host/tick! runtime t) @ack))]
+    (try
+      (let [ack (command {:op :cue/launch :cue-id :flash} 0)]
+        (is (= :accepted (:status ack)))
+        (host/tick! runtime 25)
+        (is (= 255 @last-byte))
+        (is (= :accepted (:status (command {:op :instance/remove :instance-id (:instance-id ack)} 50))))
+        (is (= 191 @last-byte))
+        (host/tick! runtime 75)
+        (is (= 128 @last-byte))
+        (host/tick! runtime 125)
+        (is (zero? @last-byte)))
+      (finally (host/stop! runtime)))))
