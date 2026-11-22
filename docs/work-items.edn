@@ -1,17 +1,17 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :in-progress :owner "native-layer-renderer"
+ [{:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence []}
+   :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence ["Afterglow #37 passed 387 JVM tests and 5 native OpenGL tests, including color, vector, beat-ratio and deferred shader results."]}
   {:id :studio/compound-native-editor :title "Author and perform ordered native layer modifiers from the composition editor" :kind :implementation :status :in-progress :owner "composition-authoring"
    :paths ["tolglow/src/tolglow/composition.clj"] :depends-on [:foundation/tests]
    :acceptance ["Author and perform ordered native layer modifiers from the composition editor in the normal show path with regression coverage"] :evidence []}
-  {:id :render/dmx-venue-atmosphere :title "Integrate delivered fogger output with venue diffusion and air exchange" :kind :implementation :status :in-progress :owner "venue-fog"
+  {:id :render/dmx-venue-atmosphere :title "Integrate delivered fogger output with venue diffusion and air exchange" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/atmosphere.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Integrate delivered fogger output with venue diffusion and air exchange in the normal show path with regression coverage"] :evidence []}
+   :acceptance ["Integrate delivered fogger output with venue diffusion and air exchange in the normal show path with regression coverage"] :evidence ["Afterglow #38 and #39 and Tolglow #73 cover rated flow, independently held coarse and fine universe data, plume mixing, ventilation, held physical output after failed sends, and Transit save with a stalled render clock."]}
   {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :in-progress :owner "studio-atmosphere"
-   :paths ["tolglow/js/preview/fog.js"] :depends-on [:foundation/tests]
+   :paths ["tolglow/js/preview/show-atmosphere.js"] :depends-on [:foundation/tests]
    :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence []}
   {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :in-progress :owner "energy-coupling"
    :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
@@ -28,27 +28,27 @@
    :evidence ["Afterglow #33, 52 optics/fixture tests with 820 assertions; includes physical patch validation."
               "Tolglow focused tests 36/269 and Studio ClojureScript tests 187/1001, plus production build with zero warnings."
               "Chromium in a 1024 × 768 touch viewport published and patched a fixture with four edited optical properties; server snapshot retained them."]}
-  {:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
+  {:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/optics.cljc"] :depends-on [:foundation/tests]
-   :acceptance ["Calibrated cone footprints and tangential tracking on finite surfaces through the production entry point and regression tests"] :evidence []}
-  {:id :fixtures/optical-definitions :title "Fixture beam angle, lamp power, and measured white response" :kind :implementation :status :in-progress :owner "fixture-photometry"
+   :acceptance ["Calibrated cone footprints and tangential tracking on finite surfaces through the production entry point and regression tests"] :evidence ["Afterglow #34 solves finite receiving ellipses and tangent followers after blending; CPU, compact and native rendering paths are covered in the fork."]}
+  {:id :fixtures/optical-definitions :title "Fixture beam angle, lamp power, and measured white response" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/photometry.cljc"] :depends-on [:foundation/tests]
-   :acceptance ["Fixture beam angle, lamp power, and measured white response through the production entry point and regression tests"] :evidence []}
-  {:id :studio/reflected-beams :title "Preview finite beams, receiving surfaces, and reflected light" :kind :implementation :status :in-progress :owner "studio-optics"
-   :paths ["tolglow/js/preview/optics.js"] :depends-on [:foundation/tests]
-   :acceptance ["Preview finite beams, receiving surfaces, and reflected light through the production entry point and regression tests"] :evidence []}
+   :acceptance ["Fixture beam angle, lamp power, and measured white response through the production entry point and regression tests"] :evidence ["Afterglow #33 and #36 validate full beam angles, zoom, finite or point aperture, and optional measured brightness. Tolglow #69 exercises registry publication, head expansion, patch and calibrated preview ordering."]}
+  {:id :studio/reflected-beams :title "Preview finite beams, receiving surfaces, and reflected light" :kind :implementation :status :done :owner nil
+   :paths ["tolglow/js/preview/reflections.js"] :depends-on [:foundation/tests]
+   :acceptance ["Preview finite beams, receiving surfaces, and reflected light through the production entry point and regression tests"] :evidence ["Tolglow #67 verifies a visible reflected colored patch in real WebGL outside the main cone and verifies occlusion on both paths."]}
   {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :in-progress :owner "studio-picking"
    :paths ["tolglow/src/tolglow/rig/surfaces.clj"] :depends-on [:foundation/tests]
    :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence []}
   {:id :rig/photometry-session :title "One-metre output-confirmed relative brightness calibration" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/rig/photometry.clj"] :depends-on [:foundation/tests]
    :acceptance ["One-metre output-confirmed relative brightness calibration through the production entry point and regression tests"] :evidence ["test/tolglow/fixture_photometry_test.clj verifies physical publisher receipts, cross-type measurements, full RGBWA channels, UV suppression, registry publication and lease expiry with an in-memory capture sink"]}
-  {:id :native/photometry-camera :title "Capture locked-exposure dark and white calibration pairs on iPhone" :kind :implementation :status :in-progress :owner "iphone-photometry"
+  {:id :native/photometry-camera :title "Capture locked-exposure dark and white calibration pairs on iPhone" :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/Photometry"] :depends-on [:foundation/tests]
-   :acceptance ["Capture locked-exposure dark and white calibration pairs on iPhone through the production entry point and regression tests"] :evidence []}
-  {:id :runtime/pure-step-reuse :title "Reuse immutable pure step results against declared injected inputs" :kind :implementation :status :in-progress :owner "effect-purity"
-   :paths ["afterglow/src/afterglow/runtime/memo.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Reuse immutable pure step results against declared injected inputs through the production entry point and regression tests"] :evidence []}
+   :acceptance ["Capture locked-exposure dark and white calibration pairs on iPhone through the production entry point and regression tests"] :evidence ["Tolglow #65 built the iPhone target with the Apple SDK and tested dark/white sample pairing. Physical camera calibration remains a venue measurement."]}
+  {:id :runtime/pure-step-reuse :title "Reuse immutable pure step results against declared injected inputs" :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/runtime/reuse.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Reuse immutable pure step results against declared injected inputs through the production entry point and regression tests"] :evidence ["Afterglow #35 and Tolglow #71 verify explicit immutable inputs, injected frame time, declarative effect recompilation, bounded reuse and isolated shader array ownership."]}
   {:id :build/leiningen-canonical-workflows
    :title "Use one Leiningen project for backend, frontend, tests and profiling"
    :kind :implementation :status :done :owner nil
