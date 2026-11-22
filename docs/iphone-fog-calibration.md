@@ -1,13 +1,14 @@
 # Measure room fog with iPhone
 
 In the iPhone companion, open **Rig → Measure room fog**, connect to Studio and
-choose a patched fog machine. The phone measures the loss of contrast along one
+choose a patched fog machine or **Unmetered · manual burst**. The latter works
+when the show has no patched fogger. The phone measures the loss of contrast along one
 sightline. A second sightline or a repeat run can reveal uneven mixing in the
 room.
 
 1. Set up a stand and a matte two-tone target in the room. Illuminate it with a
    fixed light. Keep the light, target, background and phone position unchanged
-   for the full run. Measure the distance from rear camera to target in metres.
+   for the full run. Measure the distance from rear camera to target in metres (supported range 0.1–1000 m).
 2. Start with clear air. Enter the distance and choose **Lock camera and align**.
    The camera locks shutter, ISO, focus, white balance, zoom and SDR transfer
    for the run. Fill the left box with the white target and the right box with
@@ -43,7 +44,7 @@ The phone reads the runtime identity, epoch and available foggers from
 
 | Operation | Additional data |
 | --- | --- |
-| `start` | `fixture-id`, measured `path-m` |
+| `start` | Measured `path-m` and, for a metered fog cue, `fixture-id` |
 | `samples` | `samples` array with `phase`, `elapsed-ms`, linear `bright` and `dark` |
 | `fit` | Accepted reply contains the current fit, including `clearance-half-life-s` |
 | `apply` | Save fitted values after explicit review |

@@ -4,6 +4,8 @@ import CoreMotion
 import Foundation
 import TolglowSensorCore
 
+let fogPathMetres = 0.1...1000.0
+
 struct FogFixture: Decodable, Identifiable {
     let id: String
     let name: String?
@@ -53,6 +55,7 @@ private struct FogSession {
     @Published private(set) var status = "Connect to select a fog machine."
     @Published private(set) var quality = ""
     var baselineReady: Bool { baseline.ready }
+    var connected: Bool { host != nil }
 
     private let http: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -98,7 +101,7 @@ private struct FogSession {
             let host = try await calibrationJSON(FogHost.self, URLRequest(url: endpoint), self.http)
             try Task.checkCancellation()
             self.host = host; self.endpoint = endpoint; self.fixtures = host.fixtures
-            self.status = host.fixtures.isEmpty ? "Patch a fog machine in Studio first." : "Mount the phone and align both patches."
+            self.status = "Select the source, mount the phone and align both patches."
         }
     }
 
@@ -153,7 +156,7 @@ private struct FogSession {
 
     func start(fixture: String, path: Double) {
         guard prepared, !busy, !recording, let host, let endpoint,
-              host.fixtures.contains(where: { $0.id == fixture }), path.isFinite, path > 0,
+              (fixture.isEmpty || host.fixtures.contains(where: { $0.id == fixture })), fogPathMetres.contains(path),
               let reading = lastReading, let (fixed, acceleration) = motionReading(),
               fixed.holds(fixed, accelerationG: acceleration) else {
             status = "Enter the measured sightline length and steady the phone."; return
@@ -164,7 +167,9 @@ private struct FogSession {
         self.session = session
         perform {
             let before = self.uptime
-            _ = try await session.send("start", ["fixture-id": fixture, "path-m": path])
+            var fields: [String: Any] = ["path-m": path]
+            if !fixture.isEmpty { fields["fixture-id"] = fixture }
+            _ = try await session.send("start", fields)
             let after = self.uptime
             try Task.checkCancellation()
             guard after - before <= 1 else { throw BrightnessCaptureFailure("Host round-trip exceeded one second. Reconnect on the local network.") }

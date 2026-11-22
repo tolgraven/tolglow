@@ -17,19 +17,20 @@ struct FogCalibrationView: View {
                 TextField("Studio origin", text: $origin).keyboardType(.URL)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().disabled(locked)
                 Button("Connect") { client.connect(origin) }.disabled(locked)
-                if !client.fixtures.isEmpty {
-                    Picker("Fog machine", selection: $fixture) {
+                if client.connected {
+                    Picker("Fog source", selection: $fixture) {
+                        Text("Unmetered · manual burst").tag("")
                         ForEach(client.fixtures) { f in Text(f.name ?? f.id).tag(f.id) }
                     }.disabled(locked)
                 }
             }
-            if !client.fixtures.isEmpty && client.fit == nil {
+            if client.connected && client.fit == nil {
                 Section("Fixed sightline") {
                     Text("Mount the phone on a stand. At the far end, place adjacent matte white and black patches under one steady light. Keep their lighting, distance and the phone position fixed for the entire measurement.")
                     HStack {
                         Text("Camera to target")
                         Spacer()
-                        TextField("Length", value: $path, format: .number).keyboardType(.decimalPad)
+                        TextField("0.1–1000", value: $path, format: .number).keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                         Text("m")
                     }.disabled(locked)
@@ -38,7 +39,7 @@ struct FogCalibrationView: View {
                     }.disabled(locked)
                     if !client.prepared {
                         Button("Lock camera and align") { client.prepare(shutter: shutter) }
-                            .disabled(locked || (path ?? 0) <= 0 || fixture.isEmpty)
+                            .disabled(locked || !fogPathMetres.contains(path ?? 0))
                     }
                     if let image = client.preview { SightlinePreview(image: image) }
                     if client.prepared && !client.recording {
@@ -83,7 +84,7 @@ struct FogCalibrationView: View {
         }
         .navigationTitle("Room fog")
         .onChange(of: client.fixtures.map(\.id)) { _, ids in
-            if !ids.contains(fixture) { fixture = ids.first ?? "" }
+            if !ids.contains(fixture) { fixture = "" }
         }
         .onChange(of: origin) { _, _ in client.resetHost() }
         .onChange(of: client.prepared) { _, prepared in
