@@ -144,6 +144,12 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein with-profile +benchmark run -m tolglow.perf.venue-fog 2048 125 300 > ../performance-artifact/venue-fog.edn
+      - name: Measure concurrent limits, response and activity across an animated rig
+        if: hashFiles('tolglow/dev/tolglow/bench_performance_controls.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.bench-performance-controls > ../performance-artifact/performance-controls.edn
       - name: Compare baseline and repeat candidate on the same runner
         if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
         working-directory: tolglow
