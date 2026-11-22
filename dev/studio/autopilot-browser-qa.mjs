@@ -115,6 +115,7 @@ try {
   assert.deepEqual(shaped.release, {blend: 0.25});
 
   await page.setViewportSize({width: 390, height: 844});
+  if (await live.isVisible()) await live.tap();
   for (const root of [pilot, hdr]) {
     await root.scrollIntoViewIfNeeded();
     const bounds = await root.boundingBox();
