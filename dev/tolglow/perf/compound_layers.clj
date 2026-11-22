@@ -42,8 +42,8 @@
             (composition/start :compound 0))))))
 
 (defn- packets-equal? [a b]
-  (and (= (set (keys a)) (set (keys b)))
-       (every? (fn [[universe ^bytes data]] (Arrays/equals data ^bytes (get b universe))) a)))
+  (and (seq a) (= (count a) (count b))
+       (every? true? (map #(Arrays/equals ^bytes %1 ^bytes %2) a b))))
 
 (defn- measure-frame [runtime i allocated]
   (let [bytes-before (when allocated (allocated))
@@ -55,16 +55,16 @@
     (when (or (:error status) (:output-error status) (not= 24 (count (:instances model)))
               (some :fault (vals (:instances model))) (empty? (:universes output)))
       (throw (ex-info "Compound benchmark frame failed" {:frame i :status status})))
-    {:ms elapsed :bytes bytes :universes (:universes output)}))
+    {:ms elapsed :bytes bytes :packets (deref (get-in runtime [:sink :latest]))}))
 
 (defn- sample [runtimes i allocated]
   (let [order (take (count lanes) (drop (mod i (count lanes)) (cycle lanes)))
         frames (into {} (map (fn [lane] [lane (measure-frame (runtimes lane) i allocated)]) order))
-        individual (get-in frames [:individual :universes])]
-    (when-not (and (packets-equal? individual (get-in frames [:opaque-compound :universes]))
-                   (not (packets-equal? individual (get-in frames [:transformed-compound :universes]))))
+        individual (get-in frames [:individual :packets])]
+    (when-not (and (packets-equal? individual (get-in frames [:opaque-compound :packets]))
+                   (not (packets-equal? individual (get-in frames [:transformed-compound :packets]))))
       (throw (ex-info "Compound did not produce the expected DMX frame" {:frame i})))
-    (update-vals frames #(dissoc % :universes))))
+    (update-vals frames #(dissoc % :packets))))
 
 (defn- summarize [rows]
   (cond-> {:ms (bench/distribution (map :ms rows))
