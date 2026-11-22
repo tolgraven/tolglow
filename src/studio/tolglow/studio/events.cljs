@@ -577,10 +577,15 @@
       {:db (-> db (update-in [:ui :rig-draft :fixtures] conj fixture) (assoc-in [:ui :rig-dirty?] true))})))
 (rf/reg-event-fx :studio/rig-save
   (fn [{:keys [db]} _]
-    (let [rig (get-in db [:ui :rig-draft])]
+    (let [rig (get-in db [:ui :rig-draft])
+          path [:room :measured-fog]
+          typed (get-in db (into [:server-projection :view :rig] path))
+          ;; Preserve the phone's typed method and metadata on unrelated layout edits.
+          body (if (and typed (= (get-in rig path) (projection/presentation typed)))
+                 (assoc-in rig path typed) rig)]
       (if-let [message (fog/room-error (:room rig))]
         {:dispatch [:studio/toast message true]}
-        {:studio/http {:path "/api/rig" :body rig
+        {:studio/http {:path "/api/rig" :body body
                        :on-success [:studio/rig-saved rig (get-in db [:show :epoch]) (get-in db [:show :runtime-id])]}}))))
 (rf/reg-event-fx :studio/rig-saved
   (fn [{:keys [db]} [_ rig epoch runtime-id _]]

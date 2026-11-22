@@ -34,3 +34,10 @@
 
 .rig-view-controls {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
 .rig-view-controls input[type="range"] {padding:0}
+
+.room-clearance { border:1px solid var(--line); border-radius:7px; padding:14px; }
+.room-clearance h3 { font-size:14px; }
+.room-clearance dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(115px,1fr)); gap:12px; margin:14px 0; }
+.room-clearance dt { font-size:11px; color:var(--muted); }
+.room-clearance dd { font-size:15px; font-variant-numeric:tabular-nums; margin:4px 0 0; }
+.room-clearance button { min-height:44px; margin-top:8px; }

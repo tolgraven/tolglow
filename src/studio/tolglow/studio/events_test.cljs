@@ -599,3 +599,18 @@
         (is (= :studio/toast (first (:dispatch result))))))
     (is (= {:width 12 :height 5 :depth 10 :fog-half-life-s 60}
            (:room (saved (change (update-in db [:ui :rig-draft] dissoc :room) :fog-half-life-s 60)))))))
+
+(deftest removing-a-room-measurement-reverts-the-rig-draft-to-manual-clearance
+  (let [measurement {:clearance-half-life-s 85 :extinction-per-m 1.4 :reference-path-m 5
+                     :r-squared 0.97 :method :metered-burst}
+        rig {:fixtures [] :room {:width 10 :height 6 :depth 14 :air-changes-per-hour 2
+                                 :fog-half-life-s 120 :measured-fog measurement}}
+        db (-> base (assoc-in [:server-projection :view :rig] rig)
+               (assoc-in [:ui :rig-draft] (projection/presentation rig)))
+        submit #(get-in (transition % [:studio/rig-save]) [:studio/http :body :room])
+        removed (:db (transition db [:studio/rig-atmosphere :measured-fog nil]))]
+    (is (= (:room rig) (submit db)) "Layout saves retain the typed fit method")
+    (is (true? (get-in removed [:ui :rig-dirty?])))
+    (is (= rig (get-in removed [:server-projection :view :rig])) "The live calibration lasts until Save rig")
+    (is (= (dissoc (:room rig) :measured-fog) (submit removed)))
+    (is (= 3 (:air-changes-per-hour (submit (:db (transition removed [:studio/rig-atmosphere :air-changes-per-hour 3]))))))))
