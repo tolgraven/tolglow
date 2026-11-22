@@ -887,7 +887,8 @@
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
-         committed-fault-events (volatile! [])]
+         committed-fault-events (volatile! [])
+         author-request (volatile! nil)]
      (try
        (locking (:lock runtime)
          (when @(:running runtime)
@@ -1056,10 +1057,12 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       (let [observation (autopilot/observe (:model result) prepared previous-cache frame
-                                          (lighting/contributions standby (:contributions result) extra-blocks) suspended?
-                                          {:master (:master render-options) :hdr {} :compact-values? true :include-values? false} (:contributions result))]
-                       {:model (let [with-fog (cond-> (:model observation)
+                       (let [observation (when (:plan prepared)
+                                           (autopilot/observe (:model result) prepared previous-cache frame
+                                             (lighting/contributions standby (:contributions result) extra-blocks) suspended?
+                                             {:master (:master render-options) :hdr {} :compact-values? true :include-values? false}
+                                             (:contributions result)))]
+                       {:model (let [with-fog (cond-> (or (:model observation) (:model result))
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
@@ -1084,9 +1087,7 @@
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
              (reset! (:state runtime) (dissoc next-state :autopilot-author-request))
-             (when-let [request (:autopilot-author-request next-state)]
-               (authoring/request! (agent-manager runtime) request
-                 #(submit! runtime :autopilot-authored %)))
+             (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
              (vreset! committed-fault-events (:fault-events next-state []))
              (doseq [[reply ack] receipts] (deliver reply ack))
@@ -1112,6 +1113,8 @@
              (doseq [observer (vals @(:observers runtime))]
                ((:frame! observer) @(:state runtime))))))
        (finally
+         (when-let [request @author-request]
+           (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates @retired-devices
                                 @restored-generation @restarted-generation)

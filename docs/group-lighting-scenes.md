@@ -46,6 +46,8 @@ In this example, up to four sources can run above standby, including up to two i
 - **What happens to the others?** `:standby-level` sets a fraction of emitter drive. The default `:standby-mode :shed` preserves the tint of sources reduced to standby and leaves unused heads dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Authored black, zero master and blackout still take effect. If the standby look alone would exceed the watt budget, its level falls too.
 - **What did the show actually use?** Read `(get-in (show/variables runtime) [:lighting/budget :global])` for the active and shed counts, requested watts and delivered watts. The same fields are available under `[:lighting/budget :groups group-id]`. A powered lamp behind a closed shutter consumes estimated watts and leaves its visible-source slot free.
 
+To steer the show toward a rolling brightness and activity target, enable the [energy autopilot](energy-autopilot.md).
+
 ## Shape visual activity
 
 Enable `:lighting-activity` to score the final, visible output from zero to one. A faster fixture strobe raises the strobe component. A square dimmer LFO raises the flashing component, and rounding its edges reduces it. Moving-head speed contributes while the head is lit. A handful of sparkles can score highly on their own fixtures while contributing little to the whole room.

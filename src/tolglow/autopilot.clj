@@ -158,7 +158,10 @@
 (defn accept-authored [model {:keys [request definition error]} time-ms command]
   (let [current (run model)]
     (if (and current (config/enabled? model))
-      (let [result (if error (actions/reject-authored model (:actions current) request error)
+      (let [opts (get-in model [:settings :autopilot])
+            error (or error (when (or (not= :author (:preference opts))
+                                      (not= (:scope current) (:scope opts :global))) :scope-changed))
+            result (if error (actions/reject-authored model (:actions current) request error)
                      (actions/accept-authored model (:actions current) request definition time-ms command))]
         {:model (-> (:model result) (assoc-in (conj run-path :actions) (:state result))
                     (assoc-in (conj run-path :last-action) (:result result)))
