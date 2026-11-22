@@ -16,6 +16,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
+            [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
@@ -1175,16 +1176,22 @@
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
-  (when (and (:expected-epoch metadata)
-             (not= (:expected-epoch metadata) (get-in @(:state runtime) [:model :epoch])))
-    (throw (ex-info "Agent run belongs to a previous show session" {})))
-  (let [arguments (data/normalize-json arguments)
+  (let [state @(:state runtime)
+        model (:model state)
+        _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
+            (throw (ex-info "Agent run belongs to a previous show session" {})))
+        arguments (if (= "set_lighting_scene" tool)
+                    (venue-tools/scene-request model arguments)
+                    (data/normalize-json arguments))
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
                         {:command-id (:command-id metadata)
                          :source {:adapter :agent :session-id (:run-id metadata)}})
         [type payload]
         (case tool
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+                                                            (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
+          "inspect_lighting" [:inspect-lighting arguments]
           "publish_effect" [:definition (merge envelope {:kind :effects :definition (:definition arguments)})]
           "put_cue" [:agent-cue (merge envelope {:cue (:cue arguments)})]
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
@@ -1193,7 +1200,9 @@
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
-    (if (= :inspect type) (snapshot runtime)
+    (case type
+      :inspect (project-snapshot runtime state)
+      :inspect-lighting (venue-tools/inspect state payload)
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn push-browser-display
