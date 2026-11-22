@@ -14,10 +14,10 @@
     (throw (ex-info "Macro needs portable slots with distinct IDs and cue references" {})))
   {:owner-id owner-id
    :tokens (mapv #(vector owner-id (:id %)) slots)
-   :intents (mapv (fn [slot]
-                    {:op :composition/launch :owner-id owner-id
+   :intents (mapv (fn [index slot]
+                    {:op :composition/launch :owner-id owner-id :member index
                      :token [owner-id (:id slot)] :slot-id (:id slot) :cue-id (:cue-id slot)
-                     :launch (merge {:mode :persistent :params (:params slot {})} (:launch slot))}) slots)})
+                     :launch (merge {:mode :persistent :params (:params slot {})} (:launch slot))}) (range) slots)})
 
 (defn end-plan
   "End only instances captured for this macro's tokens. Instances are the

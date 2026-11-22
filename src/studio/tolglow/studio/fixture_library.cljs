@@ -2,6 +2,7 @@
   "Re-frame fixture discovery, import review, publication and explicit rig patching."
   (:require [clojure.string :as str] [cljs.reader :as reader] [cljs.pprint :as pprint] [re-frame.core :as rf] [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.fog-fields :as fog]
             [afterglow.render.photometry :as photometry]))
 
 (def defaults
@@ -204,6 +205,7 @@
     (let [definition (reduce-kv
                       (fn [definition key value]
                         (cond
+                          (= :fogger key) (fog/apply-profile definition value)
                           (and (some #{key} photometry/fixture-keys) (= "" value)) (dissoc definition key)
                           (#{:beam-angle :max-watts :measured-relative-brightness :lens-radius-m} key)
                           (assoc definition key (number! value (name key) false))
@@ -230,6 +232,10 @@
 (rf/reg-event-db :fixtures/edit-field
   (fn [db [_ key value]]
     (store db (-> (state db) (assoc-in [:field-edits key] value)
+                  (assoc :draft-edited? true :published-id nil) (update :edit-revision inc)))))
+(rf/reg-event-db :fixtures/edit-fogger
+  (fn [db [_ field value]]
+    (store db (-> (state db) (assoc-in [:field-edits :fogger field] value)
                   (assoc :draft-edited? true :published-id nil) (update :edit-revision inc)))))
 (rf/reg-event-db :fixtures/edit-channel
   (fn [db [_ attribute field value]]
@@ -259,7 +265,10 @@
 (rf/reg-event-fx :fixtures/remove-channel
   (fn [{:keys [db]} [_ attribute]]
     (try
-      (let [s (state db) definition (update (form-definition s) :channels dissoc attribute)]
+      (let [s (state db)
+            ;; Removing the controller channel also removes its physical profile.
+            source (if (= attribute :fog) (assoc-in s [:field-edits :fogger] {:enabled? false}) s)
+            definition (update (form-definition source) :channels dissoc attribute)]
         {:db (store db (-> s (assoc :definition definition :draft-source (pretty definition) :field-edits {}
                                     :channel-edits {} :published-id nil :draft-edited? true :parse-error nil)
                             (update :edit-revision inc)))})
@@ -387,6 +396,7 @@
         [:option {:value ""} "Preview default"]
         [:option {:value "true"} "Enable reflected light"]
         [:option {:value "false"} "Disable reflected light"]]]]
+     [fog/fixture-controls s]
      [:div.fixture-channel-heading [:strong "Channel mapping"]
       [:span.small.muted "Offsets start at 1 · fine and inversion are optional"]]
      [:div.fixture-channel-list
