@@ -115,3 +115,14 @@
       (send-audio 0.9)
       (is (= 2 (:generation (group! rt :wash))))
       (finally (show/stop! rt)))))
+
+(deftest repeated-agent-requests-and-patch-group-identities
+  (let [m (assoc-in (demo/model) [:rig :fixtures] fixtures)
+        request {:op :vary :group-id "wash" :target 0.72 :effect-ids [] :command-id "turn-1"}
+        first-model (scenes/apply-request m request 1)
+        repeated (scenes/apply-request first-model request 2)]
+    (is (= [:wash] (vec (keys (scenes/groups repeated)))))
+    (is (identical? first-model repeated))
+    (is (thrown? clojure.lang.ExceptionInfo (scenes/apply-request repeated (assoc request :target 0.4) 2)))
+    (is (= 2 (get-in (scenes/groups (scenes/apply-request repeated (assoc request :command-id "turn-2") 3))
+                      [:wash :generation])))))

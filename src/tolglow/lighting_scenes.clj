@@ -53,6 +53,18 @@
       (fail "A fixture already belongs to another controlled lighting group" {:group other}))
     heads))
 
+(defn- existing-id [ids value]
+  (if (contains? ids value) value
+    (let [alternate (cond (keyword? value) (subs (str value) 1) (string? value) (keyword value))]
+      (if (contains? ids alternate) alternate value))))
+
+(defn- normalize-ids [model request]
+  (let [rig (fixtures model)
+        group-ids (into (set (keys (groups model))) (mapcat :groups) rig)]
+    (cond-> (update request :group-id (partial existing-id group-ids))
+      (:fixture-ids request) (update :fixture-ids #(mapv (partial existing-id (set (map :id rig))) %))
+      (:effect-ids request) (update :effect-ids #(mapv (partial existing-id (set (keys (get-in model [:registry :effects])))) %)))))
+
 (defn- supported? [fixture attr]
   (if (= attr :color) (every? (:channels fixture) [:red :green :blue])
       (or (contains? (:channels fixture) attr) (= attr :dimmer))))
@@ -60,13 +72,13 @@
 (defn- scoped-outputs [definition heads]
   (let [all (when (contains? definition :targets) (set (:targets definition)))]
     (into [] (keep (fn [{:keys [attribute targets] :as output}]
-                     (when (light-fields attribute)
+                     (when (and (light-fields attribute) (not= attribute :uv))
                        (let [selected (when targets (set targets))
                              ids (into [] (comp (filter #(and (supported? % attribute)
                                                               (or (nil? all) (all (:id %)))
                                                               (or (nil? selected) (selected (:id %)))))
                                                 (map :id)) heads)]
-                         (when (seq ids) (assoc output :targets ids))))))
+                         (when (seq ids) (if (= (count ids) (count heads)) (dissoc output :targets) (assoc output :targets ids)))))))
           (registry/output-entries (:outputs definition)))))
 
 (defn- safe-source? [entry]
@@ -75,32 +87,38 @@
        (not (:modulation entry)) (not (:layer entry)) (not (:scene-owner entry))
        (not-any? special-tags (concat (:tags entry) (:categories entry)))))
 
-(defn- candidates [model heads {:keys [effect-ids params]}]
+(defn- choose-source [model heads {:keys [effect-ids params last-source-id]} generation]
   (let [allowed (when (some? effect-ids) (set effect-ids))
         cues (vals (get-in model [:registry :cues]))
-        by-effect (group-by :effect-id cues)]
-    (->> (vals (get-in model [:registry :effects]))
+        by-effect (group-by :effect-id cues)
+        ordered (->> (vals (get-in model [:registry :effects]))
          (filter #(and (safe-source? %) (or (nil? allowed) (allowed (:id %)))
                        ;; An effect attached exclusively to show-control cues stays outside this pool.
                        (or (empty? (get by-effect (:id %))) (some safe-source? (get by-effect (:id %))))
                        (every? (set (keys (:params %))) (keys params))))
-         (sort-by (comp str :id))
-         (keep (fn [effect]
-                 (let [outs (scoped-outputs effect heads)]
-                   (when (and (seq outs)
-                              (or (some #(not= :dimmer (:attribute %)) outs)
-                                  (some #(and (:dimmer (:channels %))
-                                              (not (some (disj light-fields :color :dimmer) (keys (:channels %))))) heads)))
-                     {:effect effect :outputs outs}))))
-         vec)))
+                     (sort-by (comp str :id)) vec)]
+    (when (seq ordered)
+      (let [offset (mod (dec generation) (count ordered))
+            rotated (concat (subvec ordered offset) (subvec ordered 0 offset))]
+        (some (fn [effect]
+                (let [outs (scoped-outputs effect heads)]
+                  (when (and (seq outs)
+                             (or (some #(not= :dimmer (:attribute %)) outs)
+                                 (some #(and (:dimmer (:channels %))
+                                             (not (some registry/emitter-attributes (keys (:channels %))))) heads)))
+                    {:effect effect :outputs outs})))
+              (concat (remove #(= last-source-id (:id %)) rotated)
+                      (filter #(= last-source-id (:id %)) rotated)))))))
 
 (defn- generated [heads target generation]
   (let [fields (sort (filter (disj light-fields :color :uv) (set (mapcat (comp keys :channels) heads))))
         accent (when-let [colors (seq (remove #{:dimmer} fields))]
                  (nth colors (mod generation (count colors))))
         outputs (mapv (fn [field]
-                        {:attribute field :targets (mapv :id (filter #(get-in % [:channels field]) heads))
-                         :value {:op :const :value (if (= accent field) (+ 0.75 (* 0.25 target)) 1.0)}}) fields)]
+                        (let [targets (mapv :id (filter #(get-in % [:channels field]) heads))]
+                          (cond-> {:attribute field
+                                   :value {:op :const :value (if (= accent field) (+ 0.75 (* 0.25 target)) 1.0)}}
+                            (< (count targets) (count heads)) (assoc :targets targets)))) fields)]
     {:effect {:params {}} :outputs outputs}))
 
 (defn- issue [model group now cmd]
@@ -141,7 +159,7 @@
             (fail "A user cue already owns the scene name" {:id id}))
         effect (:effect choice)
         definition {:id id :version (inc (:version existing 0)) :name id :scene-owner group-id
-                    :tags [:emission :scene] :auto? false :params (:params effect {}) :outputs (:outputs choice)}
+                    :tags [:emission :scene] :auto? false :targets (:fixture-ids group) :params (:params effect {}) :outputs (:outputs choice)}
         cue {:id id :name id :effect-id id :scene-owner group-id :tags [:scene] :auto? false
              :priority Integer/MIN_VALUE :reload-policy :pinned}
         model (retire model group now)
@@ -160,10 +178,10 @@
                                                 :system {:opacity target}}})
         instance-id (get-in res [:ack :instance-id])
         group (assoc group :generation generation :instance-id instance-id :gain target :saturated 0
-                     :source-effect-id (:id effect) :status :seeking)]
+                     :source-effect-id (:id effect) :last-source-id (or (:id effect) (:last-source-id group)) :status :seeking)]
     (assoc-in (:model res) (group-path group-id) group)))
 
-(defn apply-request [model {:keys [op group-id] :as request} now]
+(defn- apply-new-request [model {:keys [op group-id] :as request} now]
   (validate-request request)
   (let [old (get-in model (group-path group-id))]
     (if (= op :release)
@@ -179,13 +197,31 @@
             replace? (or (= op :vary) (nil? old)
                          (some #(not= (get group %) (get old %)) [:fixture-ids :effect-ids :params :allow-generated?]))]
         (if replace?
-          (let [pool (candidates model heads group)
-                generation (inc (:generation group))
-                choice (or (when (seq pool) (nth pool (mod (dec generation) (count pool))))
+          (let [generation (inc (:generation group))
+                choice (or (choose-source model heads group generation)
                            (when (:allow-generated? group) (generated heads (:target group) generation))
                            (fail "No permitted registry effect emits on these fixtures" {:group group-id}))]
             (launch model (assoc group :generation generation) choice now))
           (assoc-in model (group-path group-id) (assoc group :status :seeking :saturated 0)))))))
+
+(defn apply-request
+  "Apply one scene ownership transition, deduplicating explicitly identified
+  requests in the same epoch. Event gate state remains separate from receipts."
+  [model request now]
+  (let [request (normalize-ids model request)
+        id (:command-id request)
+        body (select-keys request [:op :group-id :target :fixture-ids :effect-ids :params :target-var :allow-generated?])
+        receipts (get-in model [:extensions ::control :receipts] [])
+        previous (when id (some #(when (and (= (:epoch model) (:epoch %)) (= id (:id %))) %) receipts))]
+    (if previous
+      (if (= body (:request previous)) model (fail "Scene request ID already used with different settings" {:id id}))
+      (let [updated (apply-new-request model request now)
+            updated (if (and (not= model updated) (= (:revision model) (:revision updated)))
+                      (update updated :revision inc) updated)]
+        (if id
+          (assoc-in updated [:extensions ::control :receipts]
+                    (conj (vec (take-last 127 receipts)) {:id id :epoch (:epoch model) :request body}))
+          updated)))))
 
 (defn prepare [patch ids]
   (let [lookup (:by-id patch)
@@ -196,7 +232,7 @@
   "Use one committed normalized measurement per group. Each update is bounded;
   operator blackout, pause and master zero suspend regulation. Generated fill
   can replace an insufficient source only when the caller permits it."
-  [model measurements now]
+  [model measurements now suspended?]
   (reduce-kv
    (fn [m id group]
      (let [{:keys [target instance-id gain saturated target-var]} group
@@ -211,7 +247,7 @@
          (nil? instance) (update-in m location dissoc id)
          (or (not (unit? target)) (not (number? value))) m
          :else
-         (let [suspended? (or (:blackout? m) (zero? (:master m)) (false? (get-in m [:transport :playing?])))
+         (let [suspended? (or suspended? (:blackout? m) (zero? (:master m)) (false? (get-in m [:transport :playing?])))
                error (- target value)
                close? (<= (abs error) 0.015)
                next-gain (cond (or close? suspended?) gain

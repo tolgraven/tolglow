@@ -569,7 +569,7 @@
       (vreset! cache {:patch patch :plan (capacity/prepare patch)}))
     (:plan @cache)))
 
-(defn- advance-light-scenes [runtime model patch frame now-ms]
+(defn- advance-light-scenes [runtime model patch frame now-ms bypass?]
   (if (empty? (lighting-scenes/groups model))
     (do (when (seq @(:scene-plans runtime)) (vreset! (:scene-plans runtime) {})) model)
     (let [prior @(:scene-plans runtime)
@@ -582,7 +582,7 @@
           measured (reduce-kv (fn [m id {:keys [plan]}]
                                 (assoc m id (:utilization (capacity/measure plan (:universes frame))))) {} plans)]
       (vreset! (:scene-plans runtime) plans)
-      (lighting-scenes/feedback model measured now-ms))))
+      (lighting-scenes/feedback model measured now-ms bypass?))))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
@@ -953,7 +953,7 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (advance-light-scenes runtime (:model result) patch frame time-ms) :output frame :fault-events (:fault-events result)
+                       {:model (advance-light-scenes runtime (:model result) patch frame time-ms bypass?) :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error

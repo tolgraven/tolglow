@@ -180,7 +180,7 @@
 (def ^:private excluded-roles #{:show-control :code :code-cue})
 (defn- musical-definition? [entry]
   (and entry (not (or (excluded-roles (:role entry)) (excluded-roles (:kind entry))
-                      (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
+                      (:scene-owner entry) (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
 
 (defn candidates [model {:keys [op select]}]
   (let [{:keys [ids categories page-id]} select
