@@ -360,6 +360,8 @@
                                          (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})) time-ms)
     model))
 
+(declare ^:private auto-plans)
+
 (defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
@@ -579,7 +581,12 @@
           enabled? (true? (:enabled? payload))
           config (dissoc payload :enabled? :seed :expected-epoch)
           state (when enabled? (policy/initial-state (:seed payload 0) time-ms (str (UUID/randomUUID))))]
-      (when enabled? (policy/advance (assoc model :fixtures (get-in model [:rig :fixtures])) config state time-ms))
+      (when enabled?
+        (let [fixtures (get-in model [:rig :fixtures])
+              ;; An earlier queued rig edit may still be provisional. Validation
+              ;; can reuse a matching cache without changing the output patch.
+              plans (when (and runtime (= fixtures (:fixtures @(:patch runtime)))) (auto-plans runtime fixtures))]
+          (policy/advance (assoc model :fixtures fixtures) config state time-ms plans)))
       {:model (-> model (assoc :auto {:enabled? enabled? :config config :state state}) (update :revision inc))
        :ack {:status :accepted}})
      :import
@@ -644,11 +651,18 @@
         beat (+ (:beat transport 0.0) (if (:playing? transport) (* delta (/ (:bpm transport) 60000.0)) 0.0))]
     (update model :transport assoc :time-ms time-ms :beat beat)))
 
-(defn- advance-auto [model time-ms]
+(defn- auto-plans [runtime fixtures]
+  (delay
+    (let [patch (patch! runtime fixtures)]
+      {:patch patch :meter (delay (capacity-plan! runtime patch))
+       :previous-budget (get-in @(:state runtime) [:lighting-history :budget])})))
+
+(defn- advance-auto [model time-ms runtime]
   (if (get-in model [:auto :enabled?])
-    (let [{:keys [state commands reasons]} (policy/advance
-                                          (assoc model :fixtures (get-in model [:rig :fixtures]))
-                                          (get-in model [:auto :config]) (get-in model [:auto :state]) time-ms)
+    (let [fixtures (get-in model [:rig :fixtures])
+          {:keys [state commands reasons]} (policy/advance (assoc model :fixtures fixtures)
+                                              (get-in model [:auto :config]) (get-in model [:auto :state])
+                                              time-ms (auto-plans runtime fixtures))
           [model state] (reduce (fn [[m s] c]
                                   (let [{:keys [model ack]} (command m c time-ms)]
                                     [model (if (and (= :cue/launch (:op c)) (= :accepted (:status ack)) (:instance-id ack))
@@ -947,7 +961,7 @@
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
-                                     (composition/advance time-ms) (advance-auto time-ms)
+                                     (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            modulation-result (modulation/advance (:modulation model) model

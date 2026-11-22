@@ -229,8 +229,10 @@
   are skipped. Scope also constrains emission companions. Return commands plus
   reasons; pages use the canonical {:cells {coordinate cue-id}} shape, with
   :cue-ids accepted as a compact alias. The caller dispatches commands and feeds
-  accepted IDs to record-launch."
-  [model config state time-ms]
+  accepted IDs to record-launch. A host can supply its :patch and :meter as
+  values or delays and the :previous-budget from its last committed frame.
+  Delayed plans are realized only when a selection is due."
+  [model config state time-ms & [plans]]
   (let [duration (interval-duration config)
         clock (time/frame-clock (assoc model :time-ms time-ms))
         normalized (time/normalize-duration duration (:meter clock))
@@ -257,9 +259,12 @@
       (and (nil? timer) (= :ms unit) (< time-ms (:next-at-ms state)))
       {:state state :commands [] :reasons []}
       :else
-      (let [patch (render/compile-patch (:fixtures model []))
-            ctx (budget/planning-context model patch)
-            model (assoc model ::patch patch ::budget ctx ::meter (delay (capacity/prepare patch)))
+      (let [plans (force plans)
+            patch (or (force (:patch plans)) (render/compile-patch (:fixtures model [])))
+            meter (or (:meter plans) (delay (capacity/prepare patch)))
+            ctx (when (budget/enabled? model)
+                  (budget/prepare-frame-context (:previous-budget plans) model patch (force meter)))
+            model (assoc model ::patch patch ::budget ctx ::meter meter)
             pool (candidates model config)
             [seed ordered] (random/shuffle-values (:seed state) pool)
             ordered (activity-order model (:activity-target config) ordered)

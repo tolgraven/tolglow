@@ -5,8 +5,10 @@
             [tolglow.automation.policy :as auto]
             [tolglow.automation.prediction :as prediction]
             [tolglow.lighting-budget :as budget]
+            [tolglow.lighting-budget.allocation :as allocation]
             [tolglow.lighting-capacity :as meter]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry]
+            [tolglow.show :as show]))
 
 (defn- lamp [label address watts groups]
   (cond-> {:id label :universe 1 :address address :channels {:dimmer 1} :groups groups}
@@ -249,6 +251,44 @@
     (is (= (:instance-id ack) (:instance-id (first commands))))
     (is (= :move-lit (:cue-id (last commands))))
     (is (empty? (:commands (select human))))))
+
+(deftest automatic-selection-reuses-the-host-patch-meter-and-scopes
+  (let [rig [(assoc (lamp :head 1 40 []) :position [0 0 0])]
+        model (setup rig [{:id :wash :outputs {:dimmer 1}}] {:enabled? true :global {:limit 0.8}})
+        rt (show/create-runtime {:model model}) now (atom 0)
+        tick #(show/tick! rt (swap! now + 25))
+        submit (fn [op payload] (let [ack (show/submit! rt op payload)] (tick) @ack))
+        compile-meter meter/prepare
+        calls (atom {}) observe (fn [kind f] (fn [& args] (swap! calls update kind (fnil inc 0)) (apply f args)))]
+    (try
+      (tick)
+      (with-redefs [frame/compile-patch (observe :patch frame/compile-patch)
+                    meter/prepare (fn
+                                    ([patch] (compile-meter patch))
+                                    ([patch reference]
+                                     (swap! calls update :meter (fnil inc 0))
+                                     (compile-meter patch reference)))
+                    allocation/scopes (observe :scopes allocation/scopes)]
+        (is (= :accepted (:status (submit :auto {:enabled? true :scope {:cue-ids [:wash]} :interval {:ms 20}}))))
+        (dotimes [_ 5] (tick))
+        (is (>= (get-in @(:state rt) [:model :auto :state :tick]) 5))
+        (is (= {} @calls) "Validation, due selections and rendering share the same compiled plans")
+        (let [old (get-in @(:state rt) [:lighting-history :budget])]
+          (is (= :accepted (:status (submit :settings {:scope :lighting-budget :values {:global {:limit 0.3}}}))))
+          (is (not (identical? old (get-in @(:state rt) [:lighting-history :budget]))))
+          (is (pos? (:scopes @calls)))
+          (is (nil? (:patch @calls)))
+          (is (nil? (:meter @calls))))
+        (reset! calls {})
+        (is (= :accepted (:status (submit :rig {:fixtures (assoc-in rig [0 :max-watts] 100)}))))
+        (is (pos? (:patch @calls)))
+        (is (= 1 (:meter @calls)))
+        (is (= 30.0 (get-in (show/variables rt) [:lighting/budget :global :limit-watts])))
+        (reset! calls {})
+        (dotimes [_ 4] (tick))
+        (is (= {} @calls))
+        (is (registry/data? (get-in @(:state rt) [:model :auto]))))
+      (finally (show/stop! rt)))))
 
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}
