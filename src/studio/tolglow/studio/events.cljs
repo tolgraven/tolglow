@@ -6,6 +6,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
+            [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.transit :as transit]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -82,7 +83,7 @@
                                            (str/includes? type "application/json")
                                            (js->clj (js/JSON.parse text) :keywordize-keys true)
                                            :else {:message text})]
-                                (if (or (not (.-ok response)) (contains? #{"rejected" :rejected} (:status data)) (:error data))
+                                (if (or (not (.-ok response)) (contains? #{:rejected "rejected"} (:status data)) (:error data))
                                   (throw (js/Error. (str (error-message data))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
@@ -177,6 +178,7 @@
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
+                    spatial-drafts/settle
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated

@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 import {finitePoint, planeAxis} from './editor.js';
+import {VolumeOverlay} from './spatial-volumes.js';
 
 /** Graphics-only authoring hints, drawn after fog; never fixture output. */
 export class RigOverlay {
-  constructor() {this.scene = new THREE.Scene(); this.key = null;}
-  clear() {this.scene.traverse(o => {o.geometry?.dispose(); o.material?.dispose();}); this.scene.clear();}
+  constructor() {
+    this.scene = new THREE.Scene(); this.rig = new THREE.Group(); this.volumes = new VolumeOverlay();
+    this.scene.add(this.rig, this.volumes.group); this.key = null;
+  }
+  clear() {this.rig.traverse(o => {o.geometry?.dispose(); o.material?.dispose();}); this.rig.clear();}
   update(snapshot) {
+    this.volumes.update(snapshot?.['spatial-volumes']);
     const editor = snapshot?.editor, selection = editor?.selection;
     if (!editor) {if (this.key !== null) {this.clear(); this.key = null;} return;}
     if (this.markerRig !== snapshot.rig) {
@@ -19,25 +24,25 @@ export class RigOverlay {
     if (key === this.key) return; this.key = key; this.clear();
     const line = (points, color, opacity = 1) => {
       const geometry = new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(...p)));
-      this.scene.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({color, transparent: opacity < 1, opacity, depthTest: false, toneMapped: false})));
+      this.rig.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({color, transparent: opacity < 1, opacity, depthTest: false, toneMapped: false})));
     };
     if (markers.length) {
       const geometry = new THREE.BufferGeometry().setFromPoints(markers.map(p => new THREE.Vector3(...p)));
-      this.scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({color: 0xa2b6c9, size: 6, sizeAttenuation: false, depthTest: false, toneMapped: false})));
+      this.rig.add(new THREE.Points(geometry, new THREE.PointsMaterial({color: 0xa2b6c9, size: 6, sizeAttenuation: false, depthTest: false, toneMapped: false})));
     }
     const points = (editor.points || []).filter(finitePoint).slice(0, 256);
     if (points.length > 1) line(editor['closed?'] ? [...points, points[0]] : points, 0xb6c9a9);
     points.forEach((point, index) => {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(index === editor['selected-point'] ? .11 : .075, 10, 6),
         new THREE.MeshBasicMaterial({color: index === editor['selected-point'] ? 0xffc980 : 0xb6c9a9, depthTest: false, toneMapped: false}));
-      dot.position.fromArray(point); this.scene.add(dot);
+      dot.position.fromArray(point); this.rig.add(dot);
     });
     if (item && finitePoint(item.position)) {
       const box = new THREE.BoxGeometry(selection.kind === 'trusses' ? Math.min(40, item.length || 1) : .7, .9, .65);
       const edges = new THREE.EdgesGeometry(box); box.dispose();
       const outline = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color: 0xffc980, depthTest: false, toneMapped: false}));
       outline.position.fromArray(item.position); outline.rotation.set(...(item['rotation-deg'] || [0, 0, 0]).map(n => n * Math.PI / 180), 'ZYX');
-      this.scene.add(outline);
+      this.rig.add(outline);
     }
     if (editor.tool === 'draw') {
       const axis = planeAxis(editor.plane), other = [0, 1, 2].filter(n => n !== axis), value = Number(editor['plane-value']) || 0;
@@ -49,12 +54,12 @@ export class RigOverlay {
     }
   }
   render(renderer, camera) {
-    if (!this.scene.children.length) return;
+    if (!this.rig.children.length && !this.volumes.group.children.length) return;
     // EffectComposer restores the caller's render target after its screen pass.
     // Authoring hints belong on the presented canvas, not the fog composite.
     const auto = renderer.autoClear, target = renderer.getRenderTarget();
     try {renderer.setRenderTarget(null); renderer.autoClear = false; renderer.clearDepth(); renderer.render(this.scene, camera);}
     finally {renderer.autoClear = auto; renderer.setRenderTarget(target);}
   }
-  dispose() {this.clear();}
+  dispose() {this.clear(); this.volumes.dispose();}
 }

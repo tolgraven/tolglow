@@ -3,7 +3,7 @@
   Raw adapters supply observations; this boundary captures show epoch/clock,
   bounds inventory/pending input, validates logical destinations and uses the
   same command reducer as other controls. No device or transport is opened."
-  (:require [afterglow.control.model :as control]
+  (:require [tolglow.spatial :as spatial]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
             [tolglow.integrations.patch :as patch]))
@@ -174,7 +174,7 @@
   commands through the supplied common [model command time-ms] reducer.
   Rejected writes produce diagnostics and retry on later frames. The default
   dispatcher is the real shared control reducer; no effects are evaluated here."
-  ([model time-ms] (advance model time-ms (fn [model command _] (control/apply-command model command))))
+  ([model time-ms] (advance model time-ms (fn [model command _] (spatial/apply-command model command))))
   ([model time-ms dispatch]
    (if-not (:routing model) model
      (let [routing (state model)

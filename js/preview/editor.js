@@ -61,7 +61,13 @@ export function pickEditor(snapshot, camera, bounds, x, y) {
     const distance = Math.hypot(p.x - x, p.y - y);
     if (distance <= radius) candidates.push({...selection, position: point, score: distance / radius + p.depth * .001});
   };
-  if (editor.tool === 'draw') (editor.points || []).slice(0, 256).forEach((point, index) => add(point, {kind: 'points', index}, 22));
+  if (editor.tool === 'volume-select') {
+    for (const volume of snapshot['spatial-volumes'] || []) {
+      const center = volume.signal?.position || volume.position || (finitePoint(volume.min) && finitePoint(volume.max)
+        ? volume.min.map((v, i) => (v + volume.max[i]) / 2) : null);
+      if (center) add(center, {kind: 'volumes', id: volume.id}, 32);
+    }
+  } else if (editor.tool === 'draw') (editor.points || []).slice(0, 256).forEach((point, index) => add(point, {kind: 'points', index}, 22));
   else {
     (snapshot?.rig?.fixtures || []).slice(0, 2048).forEach(f => add(f.position, {kind: 'fixtures', id: String(f.id)}));
     (snapshot?.rig?.trusses || []).slice(0, 24).forEach(t => {
@@ -119,7 +125,15 @@ export class RigEditorInput {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    if (e.tool === 'throw') {
+      const point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, e.plane, e['plane-value'], e.snap);
+      if (!point) {this.emit('unreachable'); return;}
+      this.gesture = {tool: 'throw', token: ++this.sequence, pointer: event.pointerId, point, start: event.timeStamp,
+        x: event.clientX, y: event.clientY, plane: e.plane, value: e['plane-value']};
+      this.canvas.setPointerCapture(event.pointerId); return;
+    }
     const bounds = this.canvas.getBoundingClientRect(), hit = pickEditor(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
+    if (e.tool === 'volume-select') {if (hit) this.emit('select-volume', {'volume-id': hit.id}); return;}
     if (e.tool !== 'draw' && !hit) {this.emit('select', {selection: null}); return;}
     const value = hit ? hit.position[planeAxis(e.plane)] : e['plane-value'];
     const point = planePoint(this.engine.camera, bounds, event.clientX, event.clientY, e.plane, value, e.snap);
@@ -132,6 +146,7 @@ export class RigEditorInput {
   move(event) {
     const g = this.gesture; if (!g || event.pointerId !== g.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
+    if (g.tool === 'throw') return;
     if (g.tool === 'aim') {
       if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 10) g.dragged = true;
       return;
@@ -147,6 +162,16 @@ export class RigEditorInput {
       if (!cancelled && !g.dragged && Math.hypot(event.clientX - g.x, event.clientY - g.y) <= 10) {
         const hit = pickSurface(this.snapshot, this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY);
         this.emit(hit ? 'surface' : 'missed-surface', hit || {});
+      }
+    } else if (g.tool === 'throw') {
+      if (!cancelled && Math.hypot(event.clientX - g.x, event.clientY - g.y) >= 8) {
+        const end = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, g.plane, g.value);
+        if (end) {
+          const seconds = Math.max(.08, (event.timeStamp - g.start) / 1000);
+          const velocity = end.map((n, i) => (n - g.point[i]) / seconds);
+          const scale = Math.min(1, 50 / (Math.hypot(...velocity) || 1));
+          this.emit('throw', {point: g.point, velocity: velocity.map(v => v * scale)});
+        }
       }
     } else this.emit(cancelled ? 'cancel' : 'end');
     const pointer = g.pointer; this.gesture = null;

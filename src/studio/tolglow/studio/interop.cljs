@@ -88,7 +88,7 @@
         previous-rig (aget this "rig")
         js-rig (if (identical? rig previous-rig) (aget this "jsRig") (preview-rig rig))
         frame (preview-data (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
-                                         :blackout? :master :editor :receiver-surfaces]))
+                                         :blackout? :master :editor :receiver-surfaces :spatial-volumes]))
         intents (get-in show [:status :last-intents])]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)

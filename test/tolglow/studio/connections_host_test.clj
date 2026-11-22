@@ -21,7 +21,6 @@
 (defn launch-on-beat [_ _ _] {:op :cue/launch :cue-id :ember})
 (def launch-descriptor
   {:id ::launch :kind :fx :implementation {:type :var :symbol "tolglow.studio.connections-host-test/launch-on-beat"}})
-(defn broken-sub [_ _] (throw (ex-info "subscription failed" {})))
 
 (deftest restore-publishes-saved-state-output-and-clock-without-an-extra-effect-step
   (with-runtime [r {}]
@@ -63,6 +62,24 @@
             (is (not (identical? prior (show/reactions fresh))))
             (check-graph!)))))))
 
+(defn authored-beat [_ _] :authored-beat)
+
+(deftest partial-saved-show-registries-gain-missing-defaults-and-preserve-explicit-definitions
+  (with-runtime [author {}]
+    (let [original (:model (show/export-show author))
+          explicit {:kind :sub :id :clock/beat
+                    :implementation {:type :var :symbol "tolglow.studio.connections-host-test/authored-beat"}}]
+      (doseq [registrations [[] [explicit]]]
+        (with-runtime [fresh {:model (assoc-in original [:reactive :registrations] registrations)
+                              :reactive-options {:allowed-vars #{'tolglow.studio.connections-host-test/authored-beat}}}]
+          (let [graph (show/reactions fresh)]
+            (is (= (if (seq registrations) :authored-beat 0) @(reactive/subscribe graph [:clock/beat])))
+            (is (= {} @(reactive/subscribe graph [:runtime/effect-faults])))
+            (is (= {} @(reactive/subscribe graph [:spatial/scene])))
+            (let [saved (get-in (show/export-show fresh) [:model :reactive :registrations])]
+              (is (= 1 (count (filter #(= :clock/beat (:id %)) saved))))
+              (when (seq registrations) (is (some #{explicit} saved))))))))))
+
 (deftest saved-source-requires-the-runtime-owner-to-opt-in
   (doseq [trusted? [false true]]
     (with-runtime [r {:reactive-options {:trusted-source? trusted?}}]
@@ -102,20 +119,32 @@
 
 (deftest reactive-errors-stay-local-to-diagnostics-after-the-frame-commits
   (with-runtime [r {}]
-    (let [signal (reactive/reg-sub! (show/reactions r) ::broken broken-sub)]
-      ;; Registering a failing query is allowed; evaluating it reports a local
-      ;; graph error. A successful earlier cached query becomes dirty on change.
-      (is (= ::broken signal))
-      (is (thrown? clojure.lang.ExceptionInfo (reactive/subscribe (show/reactions r) [::broken])))
-      (reactive/reg-sub! (show/reactions r) ::broken (fn [{:keys [db]} _] (:master @db)))
-      (is (= 1.0 @(reactive/subscribe (show/reactions r) [::broken])))
-      (reactive/reg-sub! (show/reactions r) ::broken broken-sub)
-      (let [reply (show/submit! r {:op :master/set :value 0.6})]
-        (show/tick! r 10)
-        (is (= :accepted (:status @reply)))
-        (is (= 0.6 (:master (show/snapshot r))))
-        (is (get-in (show/snapshot r) [:status :reactive-error]))
-        (is (pos? (:frame-number (show/snapshot r))))))))
+    (let [graph (show/reactions r)
+          master (fn [{:keys [db]} _] (:master @db))]
+      (reactive/reg-sub! graph ::editable master)
+      (reactive/reg-sub! graph ::sibling master)
+      (let [editable (reactive/acquire! graph [::editable] (fn [_]))
+            sibling (reactive/acquire! graph [::sibling] (fn [_]))]
+        (try
+          (is (= 1.0 (:value editable) (:value sibling)))
+          (reactive/reg-sub! graph ::editable
+                             (fn [context query]
+                               (let [level (master context query)]
+                                 (when (< level 0.7) (throw (ex-info "subscription failed" {})))
+                                 level))
+                             {:owner {:cue-id :ember}})
+          (is (= :accepted (:status (apply-at! r {:op :master/set :value 0.6} 10))))
+          (let [{:keys [master reactive-faults frame-number]} (show/snapshot r)
+                fault (last (filter #(= ::editable (:id %)) reactive-faults))]
+            (is (= 0.6 master @(:signal sibling)))
+            (is (= 1.0 @(:signal editable)))
+            (is (= [:reactive/fault :subscription :ember] ((juxt :type :stage :cue-id) fault)))
+            (is (= "subscription failed" (:message fault)))
+            (is (seq (:stacktrace fault)))
+            (is (pos? frame-number)))
+          (is (= :accepted (:status (apply-at! r {:op :master/set :value 0.8} 20))))
+          (is (= 0.8 @(:signal editable) @(:signal sibling)))
+          (finally ((:close! sibling)) ((:close! editable))))))))
 
 (deftest stopped-and-stale-imports-dispose-their-prepared-managers
   (doseq [stop? [true false]]
@@ -277,3 +306,41 @@
           (is (= (:time-ms before) (:time-ms (show/snapshot r))))
           (is (= 1.0 (:master (show/snapshot r))))))
       (finally (Files/deleteIfExists file) (Files/delete directory)))))
+
+(deftest a-trusted-repl-registration-survives-closing-the-authoring-runtime
+  (let [source
+        (with-runtime [author {}]
+          (let [done (promise)
+                forms (str "(require '[afterglow.reactive :as r] '[tolglow.show :as show] "
+                           "'[clojure.string :as text :refer [lower-case]])\n"
+                           "(import 'java.time.DayOfWeek)\n"
+                           "(let [label \"Ember\"] "
+                           "(r/reg-sub (show/reactions runtime) :show/described-level {label label} "
+                           "(fn [{:keys [db]} _] [(text/upper-case label) (lower-case label) "
+                           "(.name DayOfWeek/MONDAY) (:master @db)])))\n"
+                           "(show/reg-event-subscriber! runtime {:id :repl/energy :match {:type :master/changed} "
+                           ":bindings {\"label\" \"ember\"} :middleware (fn [context _] "
+                           "(assoc-in context [:variables :repl/event-label] (text/upper-case label)))})\n:registered")]
+            (show/repl-eval! author {:source forms :request-id "register-level"} (fn [_]) #(deliver done %))
+            (is (= :completed (:status (deref done 5000 {}))))
+            (show/tick! author 0)
+            (show/export-show-source author)))
+        document (files/read-string source)
+        registration (some #(when (= :show/described-level (:id %)) %) (get-in document [:model :reactive :registrations]))]
+    (is (some? registration))
+    (is (nil? (some-> (get-in registration [:implementation :namespace]) symbol find-ns)))
+    (with-runtime [fresh {:reactive-options {:trusted-source? true} :event-callback-options {:trusted-source? true}}]
+      (let [receipt (show/submit! fresh :import {:source source})]
+        (show/tick! fresh 0)
+        (is (= :accepted (:status @receipt)) (pr-str @receipt)))
+      (let [level (reactive/subscribe (show/reactions fresh) [:show/described-level])]
+        (is (= ["EMBER" "ember" "MONDAY" 1.0] @level))
+        (is (= :accepted (:status (apply-at! fresh {:op :master/set :value 0.35} 25))))
+        (is (= ["EMBER" "ember" "MONDAY" 0.35] @level)))
+      (loop [n 0]
+        (when (and (< n 100) (nil? (get-in @(:state fresh) [:model :variables :repl/event-label])))
+          (show/tick! fresh (+ 50 n))
+          (Thread/sleep 5)
+          (recur (inc n))))
+      (is (= "EMBER" (get-in @(:state fresh) [:model :variables :repl/event-label])))
+      (is (= "register-level" (:request-id (last (:history (show/repl-action! fresh :snapshot {})))))))))

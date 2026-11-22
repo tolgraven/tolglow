@@ -133,6 +133,7 @@
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
    :expressive (settings-module :expressive {}) :agents configure-agents
    :lighting-capacity (settings-module :lighting-capacity {:enabled? true})
+   :spatial (settings-module :spatial {:enabled? true})
    :hdr (settings-module :hdr {:enabled? true})
    :autopilot (settings-module :autopilot {:enabled? true})
    :lighting-budget (settings-module :lighting-budget {:enabled? true})

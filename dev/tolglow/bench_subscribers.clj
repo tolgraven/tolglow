@@ -7,6 +7,7 @@
             [tolglow.bench-show :as bench]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.projection :as projection]
             [tolglow.transit :as transit])
   (:import [java.lang.management ManagementFactory]
            [java.net URI]
@@ -159,6 +160,15 @@
   (update frame :preview #(mapv (fn [v] (select-keys v [:id :pan :tilt :focus :zoom :strobe
                                                        :emitted-color :intensity :aim :direction])) %)))
 
+(defn- assert-subscriber-view! [expected client frame]
+  (let [received (dissoc (:view @(:state client)) :status)]
+    (when-not (= expected received)
+      (let [[operation path] (first (projection/typed-changes expected received))]
+        (throw (ex-info (if operation
+                          (str "Applied subscriber view differs at " (pr-str path))
+                          "Applied subscriber view differs beyond the stream's delta limit")
+                        {:client (:name client) :frame frame :operation operation :path path}))))))
+
 (defn- profile-case [{:keys [model preview-indices]} expected client-count opts]
   (let [{:keys [workers warmup samples period-ms]} opts
         sink (bench/capture-sink)
@@ -217,10 +227,9 @@
                               (.get (acknowledge! (:socket slow) (:token @(:state slow))) 5 TimeUnit/SECONDS)
                               (await-frame! slow final-frame)
                               (/ (- (System/nanoTime) start) 1e6)))
-              final-view (dissoc (show/snapshot runtime) :status)]
+              final-view (dissoc (studio/stream-view runtime @(:state runtime)) :status)]
           (doseq [client @clients]
-            (when-not (= final-view (dissoc (:view @(:state client)) :status))
-              (throw (ex-info "Applied subscriber view differs from current production snapshot" {:client (:name client)}))))
+            (assert-subscriber-view! final-view client final-frame))
           {:fast-clients client-count :withheld-ack-clients (if slow 1 0)
            :measurement-window {:from (str measurement-started) :through (str measurement-ended)}
            :visible-output-targets (count (get-in final-view [:output :values]))
@@ -263,7 +272,7 @@
                                 :jvm-arguments (vec (.getInputArguments (ManagementFactory/getRuntimeMXBean)))}
                   :options (dissoc opts :output)
                   :notes ["Actual owned loopback Jetty and JVM WebSocket clients, production Transit encoder/decoder and per-client ACKs."
-                          "Every host tick matches scalar model/intents/ArtDMX bytes/preview. Every client validates base tokens and final reconstructed snapshot."
+                          "Every host tick matches scalar model/intents/ArtDMX bytes/preview. Every client validates base tokens and the entire common Studio view apart from live diagnostics; spatial signals require explicit query leases."
                           "ArtDMX capture only; no physical output. Browser JavaScript, UI/GPU drawing, remote networks and physical packet delivery are excluded."
                           "Production snapshot includes rig definitions but bounds live output projection; each run records visible-output-targets. This is not a full-pixel preview transfer benchmark."
                           "Host ticks are paced without catch-up bursts; host duration is separate from asynchronous commit-to-client decode/apply latency."

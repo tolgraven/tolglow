@@ -1,5 +1,6 @@
 (ns tolglow.studio.state-stream-test
-  (:require [afterglow.sync :as sync]
+  (:require [afterglow.reactive :as rx]
+            [afterglow.sync :as sync]
             [tolglow.connections :as connections]
             [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
@@ -95,6 +96,34 @@
               (is (nil? (.poll ^LinkedBlockingQueue (:messages slow) 90 TimeUnit/MILLISECONDS))
                   "Acknowledging a publication never generates another snapshot of it")))
           (finally (.abort ^WebSocket (:socket slow)) (.abort ^WebSocket (:socket fast)))))
+      (finally (show/stop! runtime) (.stop server)))))
+
+(deftest common-view-reconstructs-show-fields-and-spatial-members-are-leased
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (let [client (connect server "spatial-lease") initial (receive client)
+            query [:spatial/members :room]]
+        (try
+          (acknowledge client initial)
+          (let [receipt (show/submit! runtime :settings {:scope :spatial :values
+                         {:enabled? true :run-when :enabled
+                          :volumes {:room {:shape :sphere :position [0 0 0] :radius 100}}}})]
+            (show/tick! runtime 25)
+            (is (= :accepted (:status @receipt))))
+          (let [common-message (receive client)
+                common (apply-patch (:view initial) common-message)
+                domain (show/snapshot runtime)
+                members (get-in domain [:spatial :members :room])]
+            (is (seq members))
+            (is (= (dissoc domain :spatial :status) (dissoc common :status)))
+            (is (not (contains? common :spatial)))
+            (acknowledge client common-message)
+            (send-control client {:op :queries :queries [query]})
+            (let [leased (:view (receive client))]
+              (is (= members (get-in leased [:subscriptions query :value])))
+              (is (= (dissoc common :status) (dissoc leased :status :subscriptions)))))
+          (finally (.abort ^WebSocket (:socket client)))))
       (finally (show/stop! runtime) (.stop server)))))
 
 (deftest rendering-does-not-wait-for-projection
@@ -257,3 +286,102 @@
                   (is (seq (get-in audio [:waveform :bins])))
                   (is (= (:frame-number (:view base)) (:frame-number view))))))))
       (finally (.abort ^WebSocket (:socket client)) (show/stop! runtime) (.stop server)))))
+
+(deftest leased-query-readers-share-one-graph-and-recover-with-typed-keyframes
+  (let [query [:field/body :ball]
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0
+               :settings {:studio {:public-queries [:field/body]}} :ball {:position [0 1 0]}}
+        graph (rx/create-system model)
+        calls (atom 0) owner (atom graph)
+        hub (stream/create (fn [_] (throw (ex-info "Query-only socket projected the whole show" {})))
+                           (constantly nil)
+                           {:runtime-id "server" :get-graph #(deref owner) :checkpoint-every 1})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
+        change! (fn [i ball] (let [m (assoc model :frame-number i :ball ball)]
+                               (rx/publish! @owner m) (stream/publish! hub {:model m})))
+        take! (fn [client] (let [m (receive client)] (acknowledge client m) m))
+        register! (fn [system] (rx/reg-sub! system :field/body
+                                  (fn [{:keys [db]} _] (swap! calls inc) (:ball @db))))
+        open! #(connect server (str % "&view=queries"))]
+    (try
+      (register! graph)
+      (stream/publish! hub {:model model})
+      (let [a (open! "a") b (open! "b")]
+        (try
+          (doseq [client [a b]]
+            (is (= {} (get-in (take! client) [:view :subscriptions])))
+            (send-control client {:op :queries :queries [query]})
+            (is (= (:ball model) (get-in (take! client) [:view :subscriptions query :value]))))
+          (is (= 1 @calls))
+          (change! 1 (:ball model))
+          (is (nil? (.poll ^LinkedBlockingQueue (:messages a) 120 TimeUnit/MILLISECONDS)))
+          (change! 2 {:position [0 2 0]})
+          (doseq [client [a b]]
+            (let [patch (take! client)]
+              (is (= :patch (:kind patch)))
+              (is (some #{[:set [:subscriptions query :value :position 1] 2]} (:changes patch)))))
+          (change! 3 {:position [0 3 0]})
+          (doseq [client [a b]]
+            (is (= :full (:kind (take! client))) "A fresh baseline follows one changed delta"))
+          (send-control a {:op :resync})
+          (is (= 3 (get-in (take! a) [:view :subscriptions query :value :position 1])))
+          (send-control b {:op :queries :queries [[:field/private]]})
+          (is (= :not-exposed (get-in (take! b) [:view :subscriptions [:field/private] :error])))
+          (is (rx/demanded? graph #{:field/body}))
+          (send-control a {:op :queries :queries []})
+          (is (empty? (get-in (take! a) [:view :subscriptions])))
+          (is (false? (rx/demanded? graph #{:field/body})))
+          (let [n @calls] (change! 4 {:position [0 4 0]}) (is (= n @calls)))
+          (send-control a {:op :queries :queries [query]})
+          (is (= 4 (get-in (take! a) [:view :subscriptions query :value :position 1])))
+          (let [next-model (assoc model :epoch 1 :ball {:position [9 9 9]})
+                next-graph (rx/create-system next-model)]
+            (register! next-graph)
+            (reset! owner next-graph)
+            (stream/publish! hub {:model next-model})
+            (let [frame (take! a)]
+              (is (= [:full 1 [9 9 9]]
+                     [(:kind frame) (get-in frame [:identity :epoch])
+                      (get-in frame [:view :subscriptions query :value :position])])))
+            (is (false? (rx/demanded? graph #{:field/body}))))
+          (finally (.abort ^WebSocket (:socket a)) (.abort ^WebSocket (:socket b)))))
+      (finally (stream/close! hub) (.stop server) (rx/close! graph)
+               (when-not (identical? @owner graph) (rx/close! @owner))))))
+
+(deftest live-registration-repairs-a-missing-query-without-reconnecting
+  (let [query [:custom/late]
+        model {:epoch 1 :show-id :test :settings {:studio {:public-queries [:custom/late]}}}
+        graph (rx/create-system model)
+        hub (stream/create identity (constantly nil) {:runtime-id "test" :get-graph (constantly graph)})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (stream/publish! hub {:model model})
+      (let [socket (connect server "live&view=queries")]
+        (try
+          (acknowledge socket (receive socket))
+          (send-control socket {:op :queries :queries [query]})
+          (let [absent (receive socket)]
+            (is (= :unavailable (get-in absent [:view :subscriptions query :error])))
+            (acknowledge socket absent)
+            (rx/reg-sub! graph (first query) (constantly nil) {:validate number?})
+            (stream/publish! hub {:model model})
+            ;; A registered source whose initial value fails validation also remains unavailable.
+            (let [invalid (receive socket) unavailable (apply-patch (:view absent) invalid)]
+              (is (= {:error :unavailable} (get-in unavailable [:subscriptions query])))
+              (acknowledge socket invalid)
+              (rx/reg-sub! graph (first query) (constantly 42))
+              (rx/publish! graph model)
+              (stream/publish! hub {:model model})
+              (let [updated (receive socket) fixed (apply-patch unavailable updated)]
+              (is (= {:value 42} (get-in fixed [:subscriptions query])))
+              (acknowledge socket updated)
+              ;; Custom hosts can provide projections without the show's configuration admission.
+              (stream/publish! hub {:model (assoc-in model [:settings :studio :public-queries] :custom/late)})
+              (let [bad (receive socket) denied (apply-patch fixed bad)]
+                (is (= {:error :not-exposed} (get-in denied [:subscriptions query])))
+                (acknowledge socket bad))
+              (send-control socket {:op :client-fault :fault {:kind :event :id "custom-handler" :message "changed form"}})
+              (stream/publish! hub {:model model})
+              (is (some? (receive socket))))))
+          (finally (.abort ^WebSocket (:socket socket)))))
+      (finally (stream/close! hub) (.stop server) (rx/close! graph)))))

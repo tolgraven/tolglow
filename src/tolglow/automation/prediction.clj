@@ -1,6 +1,7 @@
 (ns tolglow.automation.prediction
   "Hypothetical outputs for choosing a look. Prediction owns no show or device state."
   (:require [afterglow.control.model :as control]
+            [tolglow.spatial :as spatial]
             [afterglow.render.frame :as render]
             [afterglow.runtime.engine :as engine]
             [afterglow.time :as time]
@@ -28,7 +29,7 @@
         (reduce (fn [show [i cue]]
                   (let [launch (update (:prediction-launch cue) :params #(merge {} (:params cue) %))
                         {:keys [model ack]}
-                        (control/apply-command show
+                        (spatial/apply-command show
                           {:op :cue/launch :show-id (:show-id show) :epoch (:epoch show)
                            :command-id (str "auto-prediction:" (:revision show) ":" i)
                            :source :auto-prediction :time-ms time-ms :cue-id (:id cue) :launch launch})]

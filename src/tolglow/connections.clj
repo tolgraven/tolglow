@@ -130,6 +130,15 @@
               [:fixtures fixture-manager/close! (:fixtures bundle)]
               [:reactive graph/close! (:reactive bundle)]]))
 
+(defn- initialize-reactive! [system saved options]
+  (when-let [register! (:register-reactive! options)] (register! system))
+  (when saved
+    (let [key-of (juxt :kind :id)
+          supplied (set (map key-of (:registrations saved)))
+          defaults (:registrations (graph/export-registry system))
+          registry (update saved :registrations into (remove #(contains? supplied (key-of %)) defaults))]
+      (graph/restore! system registry (:reactive-options options)))))
+
 (defn- prepare [model data options]
   (let [resources (volatile! {})]
     (try
@@ -158,9 +167,7 @@
             _ (vswap! resources assoc :reactive reactive)]
         ;; Resolve handlers before looking up credentials. Neither operation
         ;; publishes effects or starts remote chats/capture.
-        (when-let [register! (:register-reactive! options)] (register! reactive))
-        (when (:reactive model)
-          (graph/restore! reactive (:reactive data) (:reactive-options options)))
+        (initialize-reactive! reactive (when (:reactive model) (:reactive data)) options)
         (when-let [state (get-in data [:integrations :agents])]
           (agent-manager/restore! agents state))
         @resources)

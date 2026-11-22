@@ -5,6 +5,8 @@
             [ring.adapter.jetty :as jetty]
             [tolglow.studio.access :as access]
             [tolglow.show :as show]
+            [tolglow.spatial.targets :as targets]
+            [tolglow.effects.faults :as faults]
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
@@ -19,12 +21,20 @@
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]))
 
+(defn stream-view
+  "Common Studio fields for a committed show state. A client leases spatial
+  signals or membership separately through the state stream's query controls."
+  [runtime state]
+  (dissoc (show/project-snapshot runtime state) :spatial))
+
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
-            stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %)
-                     {:frame-rate (:frame-rate runtime)
+            stream (state-stream/create #(stream-view runtime %) #(show/heartbeat! runtime %)
+                     {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
+                      :get-graph #(show/reactions runtime)
+                      :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
             projections (projection/create)]
@@ -53,11 +63,19 @@
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view))))
 
+(defn client-faults
+  "Recent browser event and subscription failures across the attached Studio servers."
+  [runtime]
+  (->> (vals @(:observers runtime))
+       (keep #(get-in % [:state-stream :client-faults])) (mapcat deref)
+       (sort-by :at) (take-last 64) vec))
+
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
   ([runtime] (handler runtime (bind! runtime :studio)))
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+            :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
             :state-stream! #(state-stream/response (:state-stream bindings) %)

@@ -8,6 +8,8 @@
             [re-frame.registrar :as registrar]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.spatial :as spatial]
+            [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.chat]))
@@ -690,3 +692,39 @@
     (is (= 2048 (:block-frames submitted)))
     (is (= submitted (get-in acked [:audio-returns owner :submitted])))
     (is (nil? (get-in accepted [:audio-returns owner :submitted])))))
+
+(deftest spatial-drafts-wait-for-their-acknowledged-projection
+  (let [volume (spatial/default-spec :ball)
+        path [:drafts :orb]
+        original (-> (:show base)
+                     (assoc :runtime-id "runtime" :show-id :venue)
+                     (assoc-in [:settings :spatial :volumes :orb] volume))
+        saved (assoc volume :radius 2)
+        next-view (-> original (assoc :revision 7)
+                      (assoc-in [:settings :spatial :volumes :orb] saved))
+        project (fn [db view]
+                  (:db (stream-event (with-stream db)
+                                     {:protocol projection/protocol :kind :full
+                                      :token (str (:epoch view) "-" (:revision view))
+                                      :identity (projection/identity-of view) :view view})))
+        event (fn [db message] (:db (transition db message)))
+        draft (fn [db] (get-in (spatial-drafts/state db) path))
+        edit (fn [db field value] (event db [::spatial/volume-field :orb field value]))
+        edited (edit (project base original) :radius 2)
+        pending (transition edited [::spatial/save {:volumes {:orb saved}} "Saved" path :orb])
+        receipt (conj (get-in pending [:studio/http :on-success]) {:revision 7})]
+    (doseq [http-first? [true false] edit-again? [true false]]
+      (let [first-result (if http-first? (event (:db pending) receipt)
+                                           (project (:db pending) next-view))
+            interim (if http-first? (project first-result (assoc original :revision 6)) first-result)
+            local (if edit-again? (edit interim :hardness 0.2) interim)
+            completed (if http-first? (project local next-view) (event local receipt))]
+        (is (= saved (draft interim)))
+        (is (= (when edit-again? (assoc saved :hardness 0.2)) (draft completed)))
+        (is (nil? (:pending (spatial-drafts/state completed))))))
+    (let [replacement (project (:db pending) (assoc next-view :epoch 8))]
+      (is (nil? (draft (event replacement receipt)))))
+    (let [queued (event (:db pending) (conj (get-in pending [:studio/http :on-success])
+                                            {:status "pending" :message "Command remains queued"}))]
+      (is (= saved (draft queued)))
+      (is (nil? (:pending (spatial-drafts/state queued)))))))

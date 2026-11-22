@@ -161,6 +161,21 @@
           (is (nil? (get-in (show/snapshot runtime) [:status :error])))
           (finally (show/stop! runtime)))))))
 
+(deftest one-broken-subscriber-leaves-its-peers-running-and-a-portable-diagnostic
+  (let [model (-> (configured [launch])
+                  (sub/configure {:op :save :subscriber (assoc (listener [launch]) :id :sibling)}))
+        admitted (:model (sub/admit model [kick]))
+        run (fn [run]
+              (if (= :kicks (:subscriber run))
+                (assoc-in run [:steps 0] {:op :invalid-at-runtime}) run))
+        result (sub/advance (update-in admitted [:event-subscribers :runs] #(mapv run %)) 0 {})
+        diagnostic (get-in result [:variables :runtime :handler-faults 0])]
+    (is (= 1 (count (:instances result))))
+    (is (= :event/handler-failed (:type diagnostic)))
+    (is (= :kicks (:subscriber-id diagnostic)))
+    (is (seq (:stacktrace diagnostic)))
+    (is (empty? (get-in result [:event-subscribers :runs])))))
+
 (deftest json-scene-subscriber-registers-typed-event-and-gate-paths
   (let [runtime (show/create-runtime)
         app (studio/handler runtime)

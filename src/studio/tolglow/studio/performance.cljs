@@ -6,6 +6,8 @@
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
             [tolglow.studio.modulation :as modulation]
+            [tolglow.studio.effect-inspector :as inspect]
+            [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
@@ -287,25 +289,37 @@
 (defn- instance-card [show instance parameter-control]
   (let [id (wire (:id instance)) expanded? @(rf/subscribe [:performance/card-expanded id])
         definition (card-definition show instance)
+        faults @(rf/subscribe [:inspect/faults])
+        faulted? (seq (inspect/faults-for faults instance))
+        controls (inspect/xyz-controls definition (card-parameters definition true))
         cue (some #(when (= (wire (:id %)) (wire (:cue-id instance))) %) (:cues show))
         title (or (:name cue) (:name instance) (widgets/label (:cue-id instance)))
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
-                                :class (str (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
+                                :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
      [:header.live-effect-header
-      [:div [:h3 title] [:span.live-effect-phase (if paused? "Paused" (widgets/label (:phase instance)))]]
+      [:div [:h3 title] [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]]
       [:button.live-effect-expand {:type "button" :aria-expanded expanded? :aria-label (str "Expand " title " controls")
                                    :on-click #(rf/dispatch [:performance/card-toggle id])}
-       (if expanded? "Less −" (str "More +" (when (> (count (:params definition)) 2) (str " " (- (count (:params definition)) 2)))))] ]
+       (if expanded? "Less −" (str "More +" (when (> (count controls) 2) (str " " (- (count controls) 2)))))] ]
      [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]
      [:div.live-effect-parameters
-      (for [[parameter schema] (card-parameters definition expanded?)]
-        ^{:key (wire parameter)} [parameter-control instance parameter schema nil {:compact? (not expanded?)}])]
+      (for [{:keys [parameter schema attribute components]} (if expanded? controls (take 2 controls))]
+        ^{:key (pr-str (or parameter [attribute components]))}
+        (if components
+          [:div.param-row [:label (widgets/label attribute)]
+           [widgets/axes-control (widgets/label attribute)
+            (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
+            (mapv (fn [[id schema]] (get-in instance [:params id] (:default schema))) components)
+            (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]]
+          [parameter-control instance parameter schema nil {:compact? (not expanded?)}]))]
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced
+        [inspect/panel show instance faults]
+        (when (:cue-id instance) [spatial/cue-target-picker (:cue-id instance)])
         [envelope-controls state key target instances (empty? instances)]
         [action-button target "instance/remove" "Remove immediately" {:class "performance-remove"}]
         [:span.live-effect-identity id]])]))
@@ -314,6 +328,7 @@
   (let [show (:show db) instances (:instances show)]
     [:section.live-board {:aria-label "Running effects"}
      [:div.live-board-heading [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]]
+     [inspect/unassigned-faults show @(rf/subscribe [:inspect/faults])]
      (if (seq instances)
        [:<> [group-panel db]
         [:div.live-effect-grid

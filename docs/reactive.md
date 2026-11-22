@@ -1,15 +1,9 @@
 # JVM reactivity and durable REPL registrations
 
-`afterglow.reactive` supplies an explicit JVM control-plane owner with source
-ratoms, tracked reactions, cached subscriptions and effect watchers. It does not
-change the pure effect context contract or install reactions in pixel workers.
-The browser continues to use actual ClojureScript re-frame and Reagent.
-
-The JVM module is an implementation of the relevant reactive semantics, not a
-copy of the full Reagent browser library. It provides normal `IDeref`, `IAtom2`
-and `IRef` source behavior, an explicit batch boundary, and portable registration
-data. It does not provide a React component renderer, automatic UI mount/unmount
-reference counting, or a hidden global scheduler.
+`afterglow.reactive` runs ratoms, subscriptions and effect watchers on the JVM
+show owner. It supplies a consistent immutable snapshot for each publication.
+The Studio uses Reagent and re-frame on the browser side. Mounted components
+can acquire JVM signals through the [Studio subscription stream](studio-subscriptions.md).
 
 ## Sources, derived values and one owner cycle
 
@@ -61,12 +55,13 @@ batch continue to see the captured value; the next batch observes the change.
 Concurrent writers wait for the owner lock, so two reads in one reaction cannot
 see opposite sides of a concurrent reset.
 
-The complete derived graph, watcher comparisons and emitted action data commit
-together. If a derivation or effect handler throws, that graph/action batch does
-not commit. Immediate source writes, external I/O, or arbitrary side effects
-performed by user callbacks cannot be rolled back. Return semantic actions
-instead. Ordinary `add-watch` callbacks on derived signals run after graph
-commit; exceptions from those callbacks do not undo that committed graph.
+A throwing calculation keeps its last validated value. Use a validator and a
+fallback when a first value is required. A failed effect watcher discards the
+actions it queued in that call. Other watchers still run. The owner records
+attributed faults and publishes healthy changes. Read recent faults with
+`(rx/faults reactive)`. Exceptions during initial graph construction or staged
+restore reject that construction. Immediate user writes and external I/O are
+outside the graph transaction.
 
 ## Cached and form-2 subscriptions
 
@@ -93,11 +88,26 @@ function. Export reports an error until transient reactions are disposed or
 their definitions are represented by durable registrations. This avoids silently
 dropping user work from a supposedly complete saved show.
 
-`dispose!` removes a shared signal from the graph/cache. Existing holders become
-invalid, and a later subscription creates a new handle. There is no implicit
-component reference count: the owner decides when a shared subscription is no
-longer in use. Cycles, cross-system dependencies and reads of disposed handles
-raise structured errors. `close!` explicitly releases the whole graph.
+For a direct REPL subscription, call `dispose!` when finished. For a UI, socket,
+or temporary listener, use `acquire!`. It atomically returns the initial value,
+its availability flag and an idempotent close function. The listener receives
+distinct committed changes. Equal queries share their upstream work.
+
+```clojure
+(let [{:keys [available? value close!]} (rx/acquire! reactive [::scaled 2] draw!)]
+  (try
+    (when available? (draw! value))
+    (run-until-view-closes!)
+    (finally (close!))))
+```
+
+The final release removes unused upstream calculations and source watches.
+A direct REPL subscription or a show-owned effect watcher also counts as
+demand. `reg-ref!` can track a projection of an ordinary atom. `reg-cofx!`
+accepts on-demand, frame or background samplers. For example, a background
+source with `:interval {:beats 1/2}` samples from the published musical clock
+while observed. Closing its final lease cancels outstanding work. An old read
+that finishes late cannot publish into a newly acquired lease.
 
 ## Musical subscriptions and effect watchers
 
@@ -188,23 +198,45 @@ code. It checks registration references, rejects nonportable captures and stale
 command envelopes, and reads exactly one literal `fn`/`fn*` form with reader
 evaluation and custom tagged readers disabled.
 
-`restore!` resolves var references and rebuilds a complete graph before replacing
-the active one. Source compilation additionally requires
-`{:trusted-source? true}`. Loading arbitrary fixture/show EDN does not grant that
-trust; the host must make the trusted user-code restore decision explicitly.
-Trusted source is ordinary Clojure and can call code when its handler runs. A
-failed compile or initial graph evaluation leaves the previous live graph intact.
+## Restoring trusted show code after a restart
 
-## Evidence and current integration boundary
+When a show opens, Tolglow installs its local clock, fault and spatial handlers.
+Saved definitions retain precedence for each `[kind id]`. A partial registry
+gains any missing built-ins. A stored Var descriptor is resolved against its
+locally registered kind, ID and qualified Var name. On live import the running
+graph also supplies local registrations. A cold start can admit additional
+named implementations with a host-supplied set of qualified symbols.
 
-The initial `afterglow.reactive-test` suite runs actual handlers, real worker
-threads with latches, and EDN round trips. It verifies source atom semantics,
-dependency pruning, form-2 caching, coherent snapshots, cycle errors, queued
-actions, batch failure behavior, durable captures, same-beat restore behavior,
-disposal and explicit meter subscriptions. No hardware or network is involved.
+```clojure
+(require '[tolglow.show :as show])
 
-The module is usable independently. The studio/show owner must call its cycle
-API and include the exported registry in full-show persistence; merely requiring
-the namespace does not wire it into an application. Browser re-frame remains a
-separate presentation boundary, and immutable effect computations remain
-separate from both.
+(show/create-runtime
+  {:model saved-model
+   :reactive-options {:allowed-vars #{'my-show.signals/level}}})
+```
+
+To restore literal function forms written in your own web REPL, enable source
+compilation in the host when opening that trusted show. The saved document
+holds the function form, captured data and namespace context. After the
+authoring REPL closes, a new runtime can reconstruct its aliases, referred
+Vars and imported classes. Trust is set in host options. The incoming show
+document cannot enable it.
+
+```clojure
+(show/create-runtime
+  {:model saved-model
+   :reactive-options {:trusted-source? true}
+   :event-callback-options {:trusted-source? true}})
+```
+
+The second option controls saved event middleware and defaults to the
+reactive trust setting. Set it explicitly to `false` to enable only reactive
+source on a trusted host. Compilation runs ordinary Clojure. Keep unrestricted
+source disabled when accepting public show files. A rejected staged restore
+preserves the active graph and show epoch.
+
+The host tests save a subscription and event middleware through the web REPL,
+close the authoring runtime, import the Transit document into a fresh runtime,
+change the master level, and verify the restored subscription and event result.
+They also cover ordinary built-ins, older partial registries and rejection of
+untrusted source. [Show restore tests](../test/tolglow/studio/connections_host_test.clj)
