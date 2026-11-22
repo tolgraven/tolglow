@@ -147,7 +147,7 @@
 
 (defn- launch-intent [spec state]
   (let [step (get-in spec [:steps (:step-index state)])]
-    {:op :composition/launch :owner-id (:owner-id state)
+    {:op :composition/launch :owner-id (:owner-id state) :member (:step-index state)
      :token [(:owner-id state) (:visit state)] :slot-id (:id step)
      :cue-id (:cue-id step)
      :launch (merge {:mode :persistent :params (:params step {})} (:launch step))}))
