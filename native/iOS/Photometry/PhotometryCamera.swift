@@ -138,12 +138,10 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         let attachments = CVBufferCopyAttachments(buffer, .shouldPropagate) as? [String: Any]
         let value = (attachments?[kCVImageBufferTransferFunctionKey as String] as? String)
             ?? (CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String)
-        switch value {
-        case kCVImageBufferTransferFunction_sRGB as String: return .sRGB
-        case kCVImageBufferTransferFunction_ITU_R_709_2 as String: return .rec709
-        case kCVImageBufferTransferFunction_Linear as String: return .linear
-        default: throw BrightnessCaptureFailure("Camera frame has no supported SDR transfer function.")
-        }
+        if value == (kCVImageBufferTransferFunction_sRGB as String) { return .sRGB }
+        if value == (kCVImageBufferTransferFunction_ITU_R_709_2 as String) { return .rec709 }
+        if value == (kCVImageBufferTransferFunction_Linear as String) { return .linear }
+        throw BrightnessCaptureFailure("Camera frame has no supported SDR transfer function.")
     }
 
     private static func frameLuminance(_ buffer: CVPixelBuffer, transfer: SDRTransfer) throws -> Double {
