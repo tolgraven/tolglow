@@ -60,7 +60,7 @@ struct StudioSnapshot: Decodable {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (bytes, response) = try await http.bytes(for: request)
+        let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             throw URLError(.badServerResponse)
         }
