@@ -27,6 +27,7 @@
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]
@@ -83,6 +84,13 @@
 (defn repls [runtime] (connections/repls (:connections runtime)))
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- scene-eligible-ids [runtime fixtures]
+  (let [cache (:scene-eligible runtime)
+        previous @cache]
+    (if (identical? fixtures (:fixtures previous)) (:ids previous)
+      (let [ids (lighting-scenes/eligible-ids fixtures)]
+        (reset! cache {:fixtures fixtures :ids ids}) ids))))
+
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
   (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
@@ -92,6 +100,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
@@ -179,6 +188,7 @@
    (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         _ (lighting-scenes/validate-state! model)
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
@@ -229,6 +239,7 @@
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
+      :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
@@ -342,6 +353,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
@@ -577,6 +589,21 @@
     (when-not (identical? patch (:patch @cache))
       (vreset! cache {:patch patch :plan (capacity/prepare patch)}))
     (:plan @cache)))
+
+(defn- advance-light-scenes [runtime model patch frame now-ms bypass?]
+  (if (empty? (lighting-scenes/groups model))
+    (do (when (seq @(:scene-plans runtime)) (vreset! (:scene-plans runtime) {})) model)
+    (let [prior @(:scene-plans runtime)
+          plans (reduce-kv
+                 (fn [plans id {:keys [fixture-ids]}]
+                   (let [old (get prior id)]
+                     (assoc plans id (if (and (identical? patch (:patch old)) (= fixture-ids (:ids old))) old
+                                       {:patch patch :ids fixture-ids :plan (lighting-scenes/prepare patch fixture-ids)}))))
+                 {} (lighting-scenes/groups model))
+          measured (reduce-kv (fn [m id {:keys [plan]}]
+                                (assoc m id (:utilization (capacity/measure plan (:universes frame))))) {} plans)]
+      (vreset! (:scene-plans runtime) plans)
+      (lighting-scenes/feedback model measured now-ms bypass?))))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
@@ -960,7 +987,9 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (cond-> (:model result) setpoint (fog-control/publish previous-control (:status setpoint)))
+                       {:model (let [model (cond-> (:model result)
+                                            setpoint (fog-control/publish previous-control (:status setpoint)))]
+                                 (advance-light-scenes runtime model patch frame time-ms bypass?))
                         :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
@@ -1156,6 +1185,7 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (if (= :inspect type) (snapshot runtime)
