@@ -115,6 +115,10 @@ window.fogTest = () => {
   result.jetDarkest=Math.min(...red)/dry[0]; result.jetClearest=Math.max(...red)/dry[0];
   fog.setAtmosphere('venue',host(50000,25.6,0,25.6,0)); const room=render([]);
   const mid=(49*width+49)*4; result.roomTransmission=room[mid]/dry[mid];
+  const calibrated = {...host(50000,25.6,0,25.6,0),'extinction-per-m':2.5,'reference-path-m':8,'fog-level':1-Math.exp(-2)};
+  fog.setAtmosphere('venue', calibrated); result.calibratedTransmission=render([])[mid]/dry[mid];
+  result.calibratedMass=fog.field.stats().massEstimate;
+  fog.setAtmosphere('venue',host(50001,25.6,0,25.6,0));
   scene.background.setRGB(0,0,0);
   const vertical={position:new THREE.Vector3(0,3,0),direction:new THREE.Vector3(0,-1,0),
     color:new THREE.Color(1,0,0), angle:.035,penumbra:.3,intensity:160,distance:8};

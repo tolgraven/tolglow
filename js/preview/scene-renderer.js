@@ -230,7 +230,7 @@ export class SceneRenderer {
     if (this.spots.length) {
       if (candidates.length) this.content.updateMatrixWorld(true);
       this.reflections.resolve(candidates);
-      this.reflections.illuminate(this.fog.field, this.fogAmount);
+      this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
       this.spotUniformOrder.forEach((light, i) => {
         this.apertureUniform.value[i] = light.userData.apexDistance || 0;
         this.patchRadii.value[i] = light.userData.patchRadius || 0;
@@ -376,7 +376,7 @@ export class SceneRenderer {
     if (this.bounceColor) ambient.add(this.bounceColor);
     this.fog.setAmbient?.({color: ambient, intensity: 1, groundColor: ambient.clone().multiplyScalar(.5)});
     this.fog.update(simulate ? dt : 0, this.lightEntries || []);
-    this.reflections.illuminate(this.fog.field, this.fogAmount);
+    this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);

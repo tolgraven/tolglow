@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import {ShowAtmosphere} from './show-atmosphere.js';
+import {DEFAULT_EXTINCTION_PER_M, ShowAtmosphere} from './show-atmosphere.js';
 import { FogField, FOG_QUALITY } from './fog-field.js';
 
 const vertex = `out vec2 vUv;
@@ -14,7 +14,7 @@ uniform sampler2D sceneDepth;
 uniform sampler3D densityTexture;
 uniform mat4 inverseProjection, cameraWorld;
 uniform vec3 eye, room;
-uniform float amount, time, mixedDensity;
+uniform float amount, time, mixedDensity, extinctionPerM;
 uniform int raySteps, lightCount;
 uniform vec3 lightPosition[16], lightDirection[16], lightColor[16];
 uniform vec3 lightShape[16]; // half-angle cosine, intensity, maximum distance
@@ -101,7 +101,7 @@ vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
   vec3 optical=lightPosition[i]+lightStart[i]*lightDirection[i];
   vec3 midpoint=mix(optical,shadowPoint,.5);
   vec3 uvw=vec3(midpoint.x/room.x+.5,midpoint.y/room.y,midpoint.z/room.z+.5);
-  float opticalDepth=1.25*amount*path*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
+  float opticalDepth=extinctionPerM*amount*path*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
   return lightColor[i]*lightShape[i].y*spot*attenuation*exp(-opticalDepth)*phase(dot(travel,toEye))*visibility(lightShadow[i],shadowPoint);
 }
 float extinctionAt(vec3 position){
@@ -119,7 +119,7 @@ float extinctionAt(vec3 position){
   float folds=smoothstep(.36,.64,billow);
   structure=mix(1.,.08+2.6*folds*folds,detailWeight);
  }
- return (density+(structure-1.)*localDensity)*amount*1.25;
+ return (density+(structure-1.)*localDensity)*amount*extinctionPerM;
 }
 void main(){
  if(amount<=0.){volumeOutput=vec4(0.,0.,0.,1.);return;}
@@ -161,7 +161,7 @@ void main(){
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.15,.3,.05)/room,vec3(0.),vec3(1.))).r*.3;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.32,.7,.12)/room,vec3(0.),vec3(1.))).r*.4;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.55,1.3,.2)/room,vec3(0.),vec3(1.))).r*.6;
-   ambient*=.78+.22*exp(-canopy*amount*.7);
+   ambient*=.78+.22*exp(-canopy*extinctionPerM*amount*.56);
   }
   radiance+=transmission*(1.-segment)*.92*ambient;
   for(int i=0;i<16;i++){
@@ -232,7 +232,7 @@ export class VolumetricFog {
     this.uniforms = {
       sceneDepth: { value: null }, densityTexture: { value: this.density }, inverseProjection: { value: new THREE.Matrix4() },
       cameraWorld: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3() }, room: { value: new THREE.Vector3(...this.field.room) },
-      amount: { value: this.amount }, time: { value: 0 }, mixedDensity:{value:0}, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
+      amount: { value: this.amount }, time: { value: 0 }, mixedDensity:{value:0}, extinctionPerM:{value:DEFAULT_EXTINCTION_PER_M}, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
       lightPosition: { value: vectors(16) }, lightDirection: { value: vectors(16) }, lightColor: { value: vectors(16) },
       lightShape: { value: vectors(16) }, lightShadow: { value: new Int32Array(16).fill(-1) },
       lightProfile: {value: Array.from({length:16}, () => new THREE.Vector4())},
@@ -268,6 +268,7 @@ export class VolumetricFog {
     }
     this.upload();
   }
+  get extinctionPerM() {return this.showAtmosphere?.extinctionPerM ?? DEFAULT_EXTINCTION_PER_M;}
   setAmount(amount) { if (!Number.isFinite(amount)) throw new Error('Invalid fog amount'); this.amount = Math.max(0, Math.min(1, amount)); }
   setAmbient({color, intensity = 0, groundColor = color} = {}) {
     if (!Number.isFinite(intensity) || intensity < 0) throw new Error('Invalid atmosphere ambient intensity');
@@ -312,6 +313,7 @@ export class VolumetricFog {
     u.cameraWorld.value.copy(camera.matrixWorld); u.eye.value.setFromMatrixPosition(camera.matrixWorld);
     const atmosphere = this.showAtmosphere;
     const visibleAmount = atmosphere && !atmosphere.localVolume && !atmosphere.sample?.['mixed-density'] ? 0 : this.amount;
+    u.extinctionPerM.value = this.extinctionPerM;
     u.mixedDensity.value = atmosphere?.sample?.['mixed-density'] || 0;
     u.amount.value = visibleAmount; u.time.value = this.field.time; u.lightCount.value = this.lights.length;
     u.lightShadow.value.fill(-1); let shadows = 0;

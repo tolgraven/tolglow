@@ -132,3 +132,10 @@ soft, density-dependent lobe represents scattering beyond the bright shaft.
 It widens away from the physical aperture and uses the shadow on the edge of
 the shaft, preserving opaque occlusion and the dry-room appearance. The direct
 and scattered light scale with the fixture's calibrated brightness.
+
+The show's `:extinction-per-m` is the optical extinction coefficient of the
+rated output at unit density. The default is 1.25 m⁻¹. At unit preview strength
+the transmission of a homogeneous layer with density `d` and length `L` is
+`exp(-extinction-per-m × d × L)`. Viewer, lamp and reflected-light paths use
+the same coefficient. A different fluid calibration changes apparent opacity
+without changing emitted or mixed volume.

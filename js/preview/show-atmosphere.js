@@ -4,9 +4,11 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const nonnegative = (x) => Number.isFinite(x) && x >= 0;
 const vector = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
 const MAX_PARCELS = 8;
+export const DEFAULT_EXTINCTION_PER_M = 1.25;
 const sameVector = (a, b) => a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
 function sameSample(a, b) {
-  return a === b || (a['volume-m3'] === b['volume-m3'] && a['mixed-m3'] === b['mixed-m3'] &&
+  return a === b || (a['extinction-per-m'] === b['extinction-per-m'] &&
+    a['reference-path-m'] === b['reference-path-m'] && a['fog-level'] === b['fog-level'] && a['volume-m3'] === b['volume-m3'] && a['mixed-m3'] === b['mixed-m3'] &&
     a['mixed-density'] === b['mixed-density'] && a.sources.length === b.sources.length &&
     a.sources.every((v, i) => {
       const w = b.sources[i];
@@ -200,10 +202,17 @@ export class ShowAtmosphere {
     this.field = field;
     return true;
   }
+  get extinctionPerM() {
+    const k = this.sample?.['extinction-per-m'];
+    return nonnegative(k) ? k : DEFAULT_EXTINCTION_PER_M;
+  }
   stats() {
     return {
       sampleTimeMs: this.sample?.['sample-time-ms'],
       mixedDensity: this.sample?.['mixed-density'],
+      extinctionPerM: this.extinctionPerM,
+      referencePathM: this.sample?.['reference-path-m'],
+      fogLevel: this.sample?.['fog-level'],
       mixedVolumeM3: this.sample?.['mixed-m3'],
       roomVolumeM3: this.sample?.['volume-m3'],
       localVolumeM3: this.localVolume,

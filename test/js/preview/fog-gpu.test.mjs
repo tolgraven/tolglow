@@ -50,6 +50,8 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.equal(result.dryHostDifference,0);
     assert.ok(result.jetDarkest < .85 && result.jetClearest > .98, JSON.stringify(result));
     assert.ok(result.roomTransmission < .9 && result.roomTransmission > 0);
+    assert.ok(Math.abs(result.calibratedTransmission-result.roomTransmission**2)<.001);
+    assert.ok(Math.abs(result.calibratedMass-25.6)<.00001);
     assert.ok(result.opticalCore > result.halo && result.halo > 0);
     assert.equal(result.haloGreen,0);
     assert.ok(Math.abs(result.brighterHalo/result.halo - 2) < .02);
