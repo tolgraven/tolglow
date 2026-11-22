@@ -93,7 +93,7 @@
   (let [capacity (:lighting-capacity output)
         observation (:fog/observation variables)
         features (get-in variables [:audio :features])]
-    {:music (when features
+    {:music (when (or features (contains? variables :audio/energy))
               (merge (select-keys variables [:audio/energy])
                      (select-keys features [:time-ms :energy-dbfs :energy-class :relative-energy
                                             :rms :breakdown? :confidence :calibrated?])))
@@ -110,8 +110,8 @@
            :observation (when observation
                           (assoc (select-keys observation [:level :level-change-per-s :sample-time-ms :epoch :phase :path-m])
                                  :current-epoch? (= epoch (:epoch observation))))}
-     :light-budget (:lighting-budget output)
-     :light-activity (get-in output [:lighting-activity :scene])
+     :lighting-budget (:lighting-budget output)
+     :lighting-activity (when-let [activity (:lighting-activity output)] (select-keys activity [:scene]))
      :show-time-ms time-ms}))
 
 (defn inspect

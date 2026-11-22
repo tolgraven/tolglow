@@ -239,7 +239,10 @@
                                            :target 0.5})
                                   3 (tool "on-rise" "configure_energy_scene" {:op "save" :group-id "stage/left-movers"
                                                                                :above 0.5 :below 0.2 :target 0.5})
-                                  4 (tool "readback" "inspect_lighting" {:group-id "stage/left-movers"})
+                                  4 (tool "budget" "set_lighting_budget" {:group-id "stage/left-movers"
+                                                                           :max-active 1 :limit 0.8
+                                                                           :strategy "priority" :fixture-order ["bank/spot-1"]})
+                                  5 (tool "readback" "inspect_lighting" {:group-id "stage/left-movers"})
                                   {:content "I varied the left movers and checked their measured output."})]
                       (consume! (str "data: " (json/write-str {:choices [{:delta delta}]}) "\n\ndata: [DONE]\n\n"))
                       {:status 200}))
@@ -268,11 +271,12 @@
         (is (= 200 (:status response)))
         (is (re-find #"checked their measured output" (.toString stream "UTF-8")))
         (is (contains? (set (map #(get-in % [:function :name]) (:tools (first @requests)))) "inspect_lighting"))
-        (is (= 5 (count @requests)))
+        (is (= 6 (count @requests)))
         (let [read-result (fn [index] (json/read-str (:content (peek (:messages (get @requests index)))) :key-fn keyword))
               discovered (read-result 1)
               varied (read-result 2)
-              measured (read-result 4)]
+              budgeted (read-result 4)
+              measured (read-result 5)]
           (is (= ["bank/spot-1"] (mapv :id (get-in discovered [:eligible-fixtures :items]))))
           (is (= {:local-brightness 0.0 :global-brightness 0.0 :global-maximum 1.0}
                  (select-keys (get-in discovered [:eligible-fixtures :items 0])
@@ -282,6 +286,9 @@
           (is (= 0.32 (get-in discovered [:fog :observation :level])))
           (is (not (clojure.string/includes? (pr-str @requests) "DO-NOT-EXPORT-HIDDEN-VARIABLE")))
           (is (= "accepted" (:status varied)))
+          (is (= "accepted" (:status budgeted)))
+          (is (= 0.8 (get-in measured [:lighting-budget :groups :stage/left-movers :limit-watts])))
+          (is (= ["bank/spot-1"] (get-in (show/snapshot rt) [:settings :lighting-budget :groups "stage/left-movers" :fixture-order])))
           (is (= {:above 0.5 :below 0.2 :target 0.5 :enabled? true}
                  (get-in measured [:groups :items 0 :energy-binding])))
           (is (= 1 (get-in measured [:groups :items 0 :generation])))
