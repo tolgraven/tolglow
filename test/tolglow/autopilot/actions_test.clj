@@ -182,3 +182,17 @@
     (is (= [0 51] (packed-output (:model admitted) 0)))
     (is (= 0 (first quiet) (first peak)))
     (is (< 0 (second quiet) (second peak)))))
+
+(deftest an-explicit-closed-shutter-is-dark-and-generation-can-open-a-profiled-head
+  (let [channels {:dimmer 1 :shutter {:offset 2 :functions [{:start 0 :end 49 :type :shutter-closed}
+                                                            {:start 50 :end 100 :type :shutter-open}
+                                                            {:start 101 :end 255 :type :strobe :hz [1 20]}]}}
+        start (-> (initial)
+                  (assoc-in [:model :rig :fixtures] [(assoc (first fixtures) :channels channels)])
+                  (assoc-in [:model :registry :effects :wash :outputs] {:dimmer 1 :shutter 0}))
+        authored (advance start :generate {:fixture-ids [:a]})
+        proposed (advance start :launch {:fixture-ids [:a]})
+        [level shutter] (packed-output (:model authored) 0)]
+    (is (pos? level))
+    (is (<= 50 shutter 100))
+    (is (= :no-eligible-look (:result proposed)))))

@@ -32,6 +32,20 @@
     (compiler/compile-effect definition)
     definition))
 
+(defn- open-shutters [fixtures]
+  (let [settings (for [{:keys [id channels]} fixtures
+                       attr [:shutter :strobe]
+                       :let [{:keys [inverted-from functions]} (get channels attr)
+                             open (some #(when (#{:open :shutter-open :strobe-off} (:type %)) %) functions)]
+                       :when open
+                       :let [byte (quot (+ (:start open) (:end open)) 2)
+                             drive (/ (double (if (and inverted-from (>= byte inverted-from))
+                                                (+ inverted-from (- 255 byte)) byte)) 255.0)]]
+                   [[attr drive] id])]
+    (mapv (fn [[[attr value] rows]]
+            {:attribute attr :value value :targets (mapv second rows)})
+          (sort-by key (group-by first settings)))))
+
 (defn procedural
   "Generate an emission look with adjustable level and a beat-relative pulse.
   Per-channel rows work on dimmer-only lamps and RGB/RGBW strips alike."
@@ -55,7 +69,7 @@
                          :value (if (== tint 1.0) base {:op :multiply :args [tint base]})}))]
     {:name (if (= domain :activity) "Beat pulse" "Warm fill")
      :params {:level {:type :number :bounds [0 1] :default (max 0.1 (min 1.0 amount))}}
-     :outputs rows}))
+     :outputs (into rows (open-shutters fixtures))}))
 
 (def ^:private author-tool
   {:name "propose_effect" :description "Propose one declarative lighting effect for the requested fixture scope."

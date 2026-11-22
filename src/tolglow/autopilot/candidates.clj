@@ -3,6 +3,7 @@
   (:require [afterglow.render.photometry :as photometry]
             [clojure.set :as set]
             [tolglow.effects.authoring :as authoring]
+            [tolglow.fixtures.shutter :as shutter]
             [tolglow.lighting-activity :as activity]
             [tolglow.registry :as registry]))
 
@@ -47,6 +48,14 @@
         (= :param (:op v)) (estimate-value params (get params (:key v) 0.5))
         :else 0.5))
 
+(defn- shutter-response [channels attr value]
+  (when (and (number? value) (contains? channels attr))
+    (let [channel (get channels attr)
+          pivot (:inverted-from channel)
+          logical (Math/round (* 255.0 (min 1.0 (max 0.0 (double value)))))
+          raw (if (and pivot (>= logical pivot)) (+ pivot (- 255 logical)) logical)]
+      (shutter/response attr channel raw value))))
+
 (defn- estimated-white [channels fields lit?]
   (let [dimmer (get fields :dimmer 1.0)
         emitters (filter registry/emitter-attributes (keys channels))
@@ -54,8 +63,10 @@
         rgb (when color (zipmap [:red :green :blue] (if (vector? color) color (repeat 3 color))))
         has-color? (or rgb (some fields emitters))
         response (fn [attr] (first (photometry/emitter-spectrum attr)))
-        weights (reduce + 0.0 (map response emitters))]
+        weights (reduce + 0.0 (map response emitters))
+        closed? (some (fn [attr] (false? (first (shutter-response channels attr (fields attr))))) [:shutter :strobe])]
     (* dimmer (cond
+                closed? 0.0
                 (empty? emitters) (if (:dimmer fields) 1.0 0.0)
                 (zero? weights) 0.0
                 (and (not has-color?) lit?) 1.0
@@ -92,48 +103,55 @@
                 model)]
     (or (activity/predicted-score model (or cue {:effect-id (:id effect)})) 0.0)))
 
-(defn choose
-  "Rank scoped cues and bare effects by their recorded or estimated activity.
-  Explicit cue/page scope excludes unattached effects. A launch touching other
-  groups can be copied as a transient with strictly scoped output targets."
-  [model state {:keys [fixture-ids cue-ids domain direction amount lit-fixture-ids]}]
-  (let [selected (set fixture-ids)
-        fixtures (get-in model [:rig :fixtures])
-        by-id (into {} (map (juxt :id identity)) fixtures)
-        rig (set (keys by-id))
-        lit (set lit-fixture-ids)
-        reg (:registry model)
-        all-cues (vals (:cues reg))
+(defn- active-output?
+  "A profiled shutter set to open or closed is steady. A physical strobe
+  contributes only on a strobe range. A time-dependent emitter or aim can
+  change visual activity even when its current value is small."
+  [by-id ids params {:keys [attribute value] :as row}]
+  (if (and (#{:strobe :shutter} attribute)
+           (or (number? value) (#{:param :const} (:op value))))
+    (let [value (estimate-value params value)]
+      (some (fn [id]
+              (let [fixture (by-id id)]
+                (when (usable-output? fixture row)
+                  (pos? (or (second (shutter-response (:channels fixture) attribute value)) 0.0))))) ids))
+    (variable-motion? row)))
+
+(defn- candidate [model {:keys [selected by-id rig lit fixture-ids domain active]} [cue effect]]
+  (let [origin (or (:id cue) (:id effect))]
+    (when (and (eligible? effect) (not (contains? active origin)))
+      (let [rows (mapv #(cond-> % (:targets %) (update :targets set)) (registry/output-entries (:outputs effect)))
+            ids (target-ids rig effect)
+            overlap (into #{} (filter #(some (partial usable-output? (by-id %)) rows)) (set/intersection ids selected))
+            emits? (some plausible-light? rows)
+            companion-ids (when (and (= domain :activity) (not emits?)) (set/intersection lit overlap))
+            params (merge (update-vals (:params effect) :default) (:params cue) (:saved-params cue))]
+        (when (and (seq overlap) (every? #(authoring/performance-attributes (:attribute %)) rows)
+                   (or emits? (seq companion-ids))
+                   (or (not= domain :activity) (some (partial active-output? by-id (or companion-ids overlap) params) rows)))
+          (let [brightness (brightness-estimate by-id selected overlap cue effect rows lit)]
+            (when (or (pos? brightness) (seq companion-ids))
+              {:cue cue :effect effect :origin origin :ids (filterv overlap fixture-ids)
+               :scoped? (not= ids overlap) :brightness brightness
+               :score (if (= domain :activity) (estimate model effect cue (seq companion-ids)) brightness)})))))))
+
+(defn- entries [registry cue-ids]
+  (let [all-cues (vals (:cues registry))
         linked (into #{} (map :effect-id) all-cues)
-        cues (cond->> all-cues cue-ids (filter (comp (set cue-ids) :id)))
-        entries (concat (for [cue cues :when (eligible? cue)] [cue (registry/cue-effect reg cue)])
-                        (when (nil? cue-ids)
-                          (for [[id effect] (:effects reg) :when (not (linked id))] [nil effect])))
-        active (into #{} (map #(or (:origin %) (:cue-id %) (:effect-id %))) (vals (:owned state)))
-        candidates (into [] (keep
-                             (fn [[cue effect]]
-                               (when (eligible? effect)
-                                 (let [rows (mapv #(cond-> % (:targets %) (update :targets set))
-                                                  (registry/output-entries (:outputs effect)))
-                                       ids (target-ids rig effect)
-                                       overlap (into #{} (filter #(some (partial usable-output? (by-id %)) rows))
-                                                     (set/intersection ids selected))
-                                       emits? (some plausible-light? rows)
-                                       companion? (and (= :activity domain) (seq (set/intersection lit overlap))
-                                                       (some #(#{:aim :direction :pan :tilt :shutter :strobe}
-                                                               (:attribute %)) rows))
-                                       origin (or (:id cue) (:id effect))
-                                       supported? (every? #(authoring/performance-attributes (:attribute %)) rows)]
-                                   (when (and supported? (seq overlap) (or emits? companion?)
-                                              (or (not= domain :activity) (some variable-motion? rows)))
-                                     (let [brightness (brightness-estimate by-id selected overlap cue effect rows lit)]
-                                       (when (or (pos? brightness) companion?)
-                                         {:cue cue :effect effect :origin origin :ids (filterv overlap fixture-ids)
-                                          :scoped? (not= ids overlap) :brightness brightness
-                                          :score (if (= domain :activity)
-                                                   (estimate model effect cue (and companion? (not emits?))) brightness)
-                                          :running? (contains? active origin)}))))))) entries)
-        fresh (sort-by (comp str :origin) (remove :running? candidates))]
+        cues (if (some? cue-ids) (filter (comp (set cue-ids) :id) all-cues) all-cues)]
+    (concat (for [cue cues :when (eligible? cue)] [cue (registry/cue-effect registry cue)])
+            (when (nil? cue-ids) (for [[id effect] (:effects registry) :when (not (linked id))] [nil effect])))))
+
+(defn choose
+  "Rank scoped cues and bare effects by their estimated change in the requested
+  measure. An explicit page or cue set excludes unattached effects. Broad
+  candidates carry the exact subset of fixtures for a transient scoped launch."
+  [model state {:keys [fixture-ids cue-ids domain amount lit-fixture-ids]}]
+  (let [by-id (into {} (map (juxt :id identity)) (get-in model [:rig :fixtures]))
+        context {:selected (set fixture-ids) :fixture-ids fixture-ids :domain domain
+                 :rig (set (keys by-id)) :by-id by-id :lit (set lit-fixture-ids)
+                 :active (into #{} (map #(or (:origin %) (:cue-id %) (:effect-id %))) (vals (:owned state)))}
+        fresh (sort-by (comp str :origin) (keep (partial candidate model context) (entries (:registry model) cue-ids)))]
     (when (seq fresh)
       (let [start (mod (dec (:serial state)) (count fresh))
             rotated (concat (drop start fresh) (take start fresh))]
