@@ -75,3 +75,19 @@
       (is (thrown? clojure.lang.ExceptionInfo ((:put! store) "fake-secret")))
       (is (= "unchanged" (slurp (.toFile target))))
       (finally (Files/deleteIfExists path) (remove-tree! directory)))))
+
+(deftest file-store-scopes-control-lookup-and-deletion
+  (let [directory (temp-directory) path (.resolve directory "keys.edn")
+        store (credentials/file-store path)
+        scope #(let [reopened (credentials/file-store path)] ((:scope reopened) %))]
+    (try
+      (let [a (scope "provider-A") b (scope "provider-B")
+            reference ((:put! a) "test-key") plain ((:put! store) "test-pairing")]
+        (is (nil? ((:get! store) reference)))
+        (is (false? ((:delete! store) reference)))
+        (is (nil? ((:get! b) reference)))
+        (is (false? ((:delete! b) reference)))
+        (is (nil? ((:get! a) plain)))
+        (is (= "test-key" ((:get! (scope "provider-A")) reference)))
+        (is (true? ((:delete! a) reference))))
+      (finally (remove-tree! directory)))))

@@ -3,6 +3,7 @@
   projections are acquired only when this adapter is attached."
   (:require [clojure.data.json :as json]
             [ring.adapter.jetty :as jetty]
+            [tolglow.studio.origin :as origin]
             [tolglow.show :as show]
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
@@ -125,11 +126,11 @@
 (defn listen!
   "Bind Studio to the selected show, returning the actual port (including port
   zero) and an idempotent shutdown function."
-  [runtime {:keys [host port] :or {host "127.0.0.1" port 8500}}]
+  [runtime {:keys [host port allowed-hosts] :or {host "127.0.0.1" port 8500}}]
   (let [id (Object.)
         bindings (bind! runtime id)]
     (try
-      (let [server (jetty/run-jetty (handler runtime bindings) {:host host :port port :join? false})]
+      (let [server (jetty/run-jetty (origin/wrap-listener-host (handler runtime bindings) host allowed-hosts) {:host host :port port :join? false})]
         ;; Streaming clients can remain connected for the lifetime of the show.
         (.setStopTimeout server 0)
         {:host host :port (.getLocalPort (first (.getConnectors server)))

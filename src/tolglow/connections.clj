@@ -158,7 +158,9 @@
             _ (vswap! resources assoc :reactive reactive)]
         ;; Resolve handlers before looking up credentials. Neither operation
         ;; publishes effects or starts remote chats/capture.
-        (graph/restore! reactive (:reactive data) (:reactive-options options))
+        (when-let [register! (:register-reactive! options)] (register! reactive))
+        (when (:reactive model)
+          (graph/restore! reactive (:reactive data) (:reactive-options options)))
         (when-let [state (get-in data [:integrations :agents])]
           (agent-manager/restore! agents state))
         @resources)
@@ -385,7 +387,8 @@
   [connections model]
   (let [before (live-state connections)
         data (preflight model)
-        bundle (prepare model data (:options connections))]
+        bundle (prepare model data (assoc-in (:options connections) [:reactive-options :local-system]
+                                             (get-in before [:bundle :reactive])))]
     {:owner connections :expected-generation (:generation before)
      :model-epoch (:epoch model) :model model :data data :bundle bundle
      :lifecycle (atom :prepared)}))

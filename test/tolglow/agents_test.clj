@@ -237,6 +237,10 @@
         (is (not (str/includes? (pr-str saved) "fake-persistent-key")))
         (is (not (str/includes? (pr-str @(:state one)) "fake-persistent-key")))
         (agents/close! one)
+        (let [different (assoc-in saved [:config :endpoint] "https://second-provider.test/v1/chat/completions")
+              result (agents/restore! two different)]
+          (is (false? (:ready? result)))
+          (is (= :missing-reference (:credential-error result))))
         (is (:ready? (agents/restore! two saved)))
         (is (= 1 (count @requests)))
         (is (= "chat-one" (:selected-conversation-id (agents/history two))))

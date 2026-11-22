@@ -220,10 +220,8 @@
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
-                                             (assoc :reactive-options (merge {:trusted-source? true} (:reactive-options options)))))
-         _ (when-not (:reactive model)
-             (reactive-clock/register! (connections/reactive owned))
-             (effect-faults/register! (connections/reactive owned)))
+                                             (assoc :reactive-options (:reactive-options options)
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!))))
          worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create

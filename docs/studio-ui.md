@@ -157,6 +157,16 @@ not hidden simulated functionality.
 
 ## API and lifecycle
 
+Studio gives connected operators control of the show, including the Clojure
+REPL when available. The default Jetty listener binds to loopback and accepts
+local HTTP hostnames. To use a named local proxy, include its hostname in
+`:web-server {:host "127.0.0.1" :allowed-hosts ["studio.local"]}`. Browser
+mutations and WebSocket upgrades require matching HTTP scheme, hostname and
+effective port. Configure a TLS proxy to preserve the public Host and expose
+the authenticated scheme to Ring at the trusted proxy boundary. A wildcard
+bind on a trusted venue network accepts LAN hostnames unless restricted by
+`:allowed-hosts`. This deployment grants connected clients operator access.
+
 `src/studio/tolglow/studio/events.cljs` has one outstanding `/api/state?session=…` request at a time, normally
 every 100 ms, with a request timeout and reconnection notice. Hidden tabs poll
 less frequently. Polls include the last accepted runtime identity, epoch and
