@@ -36,7 +36,7 @@
    :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
    :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
    :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
-   :evidence ["Initial shared-host full-frame run exceeded 25 ms on all 160 measured frames. The ordinary-tick median was 41.77 ms and the decision-tick median was 59.43 ms, with 18 captured universes."]}
+   :evidence ["The first full-frame run exceeded 25 ms on all 160 measured frames. Mixed integer coordinates now stay on the typed path when the scalar calculation coerces them to double. All 1,440 compared ArtDMX packets matched. Afterglow #52 kept every byte across another 120 frames and 18 universes. See docs/performance/lighting-controls.md and the master performance workflow's autopilot.edn for per-lane timings and deadline misses."]}
   {:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
    :acceptance ["Unequal lamps at the same achievable global target deliver comparable estimated brightness."] :evidence ["Tolglow #94 measures the same common brightness on unequal fixtures at approximately 30% and 60% local drive. Per-source readback includes the white and color-limited ceilings."]}

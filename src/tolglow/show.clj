@@ -994,7 +994,9 @@
                                                  prior-output)) command (:modulation-view before) prior-output))
                            model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
-                           hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended? (:modulation-view before)) {}))
+                           hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
+                           hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
+                                                                              (:modulation-view before) hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
@@ -1072,7 +1074,7 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))

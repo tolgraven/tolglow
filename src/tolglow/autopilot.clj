@@ -22,26 +22,37 @@
   (try (controller/scope-ids model scope)
        (catch clojure.lang.ExceptionInfo _ [])))
 
-(defn- scope-plan [previous model patch meter scope]
-  (let [page? (and (map? scope) (:page-id scope))
-        page (when page? (get-in model [:pages (:page-id scope)]))
-        registry (when page? (:registry model))
-        groups (when (:group-id (when (map? scope) scope))
+(defn- members [previous model patch scope]
+  (let [page-id (:page-id scope)
+        page (when page-id (get-in model [:pages page-id]))
+        registry (when page-id (:registry model))
+        groups (when (:group-id scope)
                  (get-in model [:extensions :tolglow.lighting-scenes/control :groups]))]
-    (if (and (identical? patch (:patch previous)) (identical? meter (:meter previous))
-             (= scope (:scope previous)) (identical? page (:page previous))
-             (identical? registry (:registry previous)) (identical? groups (:groups previous)))
+    (if (and (identical? patch (:patch previous)) (= scope (:scope previous))
+             (identical? page (:page previous)) (identical? registry (:registry previous))
+             (identical? groups (:groups previous)))
+      previous
+      {:patch patch :scope scope :page page :registry registry :groups groups
+       :ids (live-scope model scope)
+       :cue-ids (when page (vec (scope/page-cue-ids model page-id)))})))
+
+(defn standalone-scope [previous model patch]
+  (let [{:keys [enabled? scope] :or {scope :global}} (get-in model [:settings :hdr])]
+    (when (and enabled? (not= :global scope))
+      (members previous model patch scope))))
+
+(defn- scope-plan [previous model patch meter scope]
+  (let [selection (members (:selection previous) model patch scope)]
+    (if (and (identical? selection (:selection previous)) (identical? meter (:meter previous)))
       previous
       (let [capacities (:source-capacities meter)
-            ids (into [] (filter #(pos? (get-in capacities [% :relative-capacity] 0)))
-                      (live-scope model scope))]
-        {:patch patch :meter meter :scope scope :page page :groups groups :registry registry
-         :ids ids
+            ids (filterv #(pos? (get-in capacities [% :relative-capacity] 0)) (:ids selection))]
+        {:patch patch :meter meter :scope scope :selection selection
+         :ids ids :cue-ids (:cue-ids selection)
          :source-rows (mapv (fn [id] {:id id :capacity (get-in capacities [id :relative-capacity])}) ids)
          :source-meter (assoc meter :meter-heads
                               (object-array (map #(aget ^objects (:meter-heads meter)
                                                        (int (first (get (:writers-by-head meter) %)))) ids)))
-         :cue-ids (when page (vec (scope/page-cue-ids model (:page-id scope))))
          :scoped-meter (if (= scope :global) meter (assoc meter :source-capacities (select-keys capacities ids)))}))))
 
 (defn- metered-frame? [meter frame]
@@ -136,7 +147,7 @@
       (assoc-in model [:extensions ::hdr-clock] (time/frame-clock (assoc model :time-ms time-ms))))
     (if (get-in model [:extensions ::hdr-clock]) (update model :extensions dissoc ::hdr-clock) model)))
 
-(defn render-options [model prepared blocked? modulation-view]
+(defn render-options [model prepared blocked? modulation-view standalone-scope]
   (let [standalone (get-in model [:settings :hdr])
         managed? (and (:plan prepared) (not blocked?))
         independent? (and (:enabled? standalone) (not blocked?))]
@@ -150,7 +161,7 @@
             fields (config/hdr-values model opts context)
             scope (if independent? (:scope opts :global) (:scope current))
             ids (when-not (= :global scope)
-                  (if independent? (live-scope model scope) (get-in prepared [:plan :ids])))]
+                  (if independent? (:ids standalone-scope) (get-in prepared [:plan :ids])))]
         (cond-> fields
           ids (assoc :fixture-ids (vec ids))
           (seq (:gains current)) (update :source-gains multiply-gains (:gains current))

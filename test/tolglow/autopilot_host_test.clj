@@ -131,3 +131,19 @@
         (is (zero? (get-in (view) [:statistics :brightness :mean])))
         (is (zero? (get-in (view) [:statistics :brightness :lit-fraction]))))
       (finally (show/stop! rt)))))
+
+(deftest standalone-hdr-reuses-the-scoped-members-and-invalidates-on-repatch
+  (let [a (fixture :a 1 :front) b (fixture :b 2 :back)
+        rt (runtime [a b] [(look :wash [:a :b] {:dimmer 0.4})] true)]
+    (try
+      (submit rt 0 :command {:op :cue/launch :cue-id :wash})
+      (submit rt 25 :settings {:scope :hdr :values {:enabled? true :scope {:group-id :front} :gain 2.0}})
+      (let [plan (:hdr-scope @(:state rt))]
+        (is (= [:a] (:ids plan)))
+        (is (= [0.8 0.4] (levels rt [:a :b])))
+        (tick rt 50)
+        (is (identical? plan (:hdr-scope @(:state rt))))
+        (submit rt 75 :rig {:fixtures [(assoc a :groups [:back]) (assoc b :groups [:front])]})
+        (is (= [:b] (:ids (:hdr-scope @(:state rt)))))
+        (is (= [0.4 0.8] (levels rt [:a :b]))))
+      (finally (show/stop! rt)))))
