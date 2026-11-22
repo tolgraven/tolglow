@@ -12,13 +12,18 @@
 (defn sphere [x] {:shape :sphere :position [x 1 0] :radius 0.1})
 
 (defn runtime [batch?]
-  (let [effects {:red {:id :red :version 1 :params {} :outputs {:red 1.0}}
+  (let [captured (atom nil)
+        capture! (fn [universes _frame-id]
+                   (reset! captured (mapv #(bit-and 255 %) (take 9 (get universes 1)))))
+        effects {:red {:id :red :version 1 :params {} :outputs {:red 1.0}}
                  :hot {:id :hot :version 1 :params {} :targets [:left] :outputs {:color [1.4 0 0]}}
                  :blue {:id :blue :version 1 :params {} :outputs {:blue 1.0}}}
         cues {:red {:id :red :version 1 :effect-id :red :selector {:volume-id :solo}}
               :blue {:id :blue :version 1 :effect-id :blue}}]
-    (show/create-runtime {:model (assoc (control/new-show {:registry {:effects effects :cues cues}})
-                                        :rig {:fixtures fixtures}) :batch? batch?})))
+    (assoc (show/create-runtime {:model (assoc (control/new-show {:registry {:effects effects :cues cues}})
+                                               :rig {:fixtures fixtures})
+                                 :batch? batch? :sink {:send! capture!}})
+           ::captured-dmx captured)))
 
 (defn tick [rt now]
   (show/tick! rt now)
@@ -35,7 +40,7 @@
   (submit rt now :settings {:scope :spatial :values settings}))
 
 (defn output [rt]
-  (mapv #(bit-and 255 %) (take 9 (get-in @(:state rt) [:output :universes 1]))))
+  @(::captured-dmx rt))
 
 (deftest sleeping-volumes-support-scoped-launch-and-stay-asleep
   (doseq [batch? [true false]]
