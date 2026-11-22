@@ -38,13 +38,14 @@
                       (when (and (number? node) (<= 0 node 1)) resolved)))
                   (throw (ex-info "Choose a normalized show variable as the lighting target" {})))))))
 
-(defn budget-request [model {:keys [enabled? group-id fixture-order strategy] :as args}]
+(defn budget-request [model {:keys [enabled? group-id fixture-order standby-mode strategy] :as args}]
   (let [groups (group-ids model)
         group (when group-id (resolve-id groups group-id))
         ids (set (map :id (get-in model [:rig :fixtures])))
         order (when fixture-order (mapv (partial resolve-id ids) fixture-order))
         controls (cond-> (select-keys args [:limit :max-active :standby-level])
                    strategy (assoc :strategy (keyword strategy))
+                   standby-mode (assoc :standby-mode (keyword standby-mode))
                    order (assoc :fixture-order order))]
     (when (or (and group (not (groups group))) (some #(not (ids %)) order))
       (throw (ex-info "Choose an existing group and patched fixtures" {:group group :order order})))

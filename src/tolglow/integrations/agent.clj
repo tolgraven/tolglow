@@ -50,6 +50,7 @@
                               :limit {:type "number" :minimum 0 :maximum 1}
                               :max-active {:type "integer" :minimum 0}
                               :standby-level {:type "number" :minimum 0 :maximum 1}
+                              :standby-mode {:type "string" :enum ["shed" "all"]}
                               :strategy {:type "string" :enum ["proportional" "priority"]}
                               :fixture-order {:type "array" :items id-schema}}
                  :additionalProperties false}}

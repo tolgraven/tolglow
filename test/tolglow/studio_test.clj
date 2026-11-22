@@ -273,7 +273,10 @@
               discovered (read-result 1)
               varied (read-result 2)
               measured (read-result 4)]
-          (is (= [{:id "bank/spot-1"}] (get-in discovered [:eligible-fixtures :items])))
+          (is (= ["bank/spot-1"] (mapv :id (get-in discovered [:eligible-fixtures :items]))))
+          (is (= {:local-brightness 0.0 :global-brightness 0.0 :global-maximum 1.0}
+                 (select-keys (get-in discovered [:eligible-fixtures :items 0])
+                              [:local-brightness :global-brightness :global-maximum])))
           (is (= "stage/left-movers" (get-in discovered [:groups :items 0 :group-id])))
           (is (= 0.5 (get-in discovered [:music :audio/energy])))
           (is (= 0.32 (get-in discovered [:fog :observation :level])))
