@@ -36,16 +36,23 @@
             ids (into [] (filter #(pos? (get-in capacities [% :relative-capacity] 0)))
                       (live-scope model scope))]
         {:patch patch :meter meter :scope scope :page page :groups groups :registry registry
-         :ids ids :cue-ids (when page (vec (scope/page-cue-ids model (:page-id scope))))
+         :ids ids
+         :source-rows (mapv (fn [id] {:id id :capacity (get-in capacities [id :relative-capacity])}) ids)
+         :source-meter (assoc meter :meter-heads
+                              (object-array (map #(aget ^objects (:meter-heads meter)
+                                                       (int (first (get (:writers-by-head meter) %)))) ids)))
+         :cue-ids (when page (vec (scope/page-cue-ids model (:page-id scope))))
          :scoped-meter (if (= scope :global) meter (assoc meter :source-capacities (select-keys capacities ids)))}))))
 
 (defn- metered-frame? [meter frame]
   (and (:universes frame) (every? (partial contains? (:universes frame)) (:universes meter))))
 
-(defn- source-rows [meter ids frame]
-  (let [readings (when (metered-frame? meter frame) (capacity/measure-sources meter (:universes frame) ids))]
-    (mapv (fn [id] {:id id :capacity (get-in meter [:source-capacities id :relative-capacity])
-                    :level (get-in readings [id :local-brightness] 0.0)}) ids)))
+(defn- read-sources [{:keys [source-meter source-rows]} frame]
+  (let [^doubles levels (if (metered-frame? source-meter frame)
+                          (capacity/local-brightnesses source-meter (:universes frame))
+                          (double-array (count source-rows)))]
+    (reduce-kv (fn [rows i source] (conj rows (assoc source :level (aget levels (int i)))))
+               [] source-rows)))
 
 (defn- perform [model state decisions time-ms command]
   (reduce (fn [{:keys [model state author-request]} decision]
@@ -73,7 +80,7 @@
   (let [prior (run model)]
     (if-not (config/enabled? model)
       {:model (stop-run model prior time-ms command)}
-      (let [opts (merge config/defaults (get-in model [:settings :autopilot]))
+      (let [opts (config/with-defaults (get-in model [:settings :autopilot]))
             scope (:scope opts)
             plan (scope-plan (:plan previous-cache) model patch meter scope)
             changed? (and prior (or (not= scope (:scope prior))
@@ -103,7 +110,7 @@
             response (target-response/advance (:target-response prior)
                        (cond-> clock suspended? (assoc :playing? false)) requested initial (:target-response opts))
             targets (:targets response)
-            sources (when due? (source-rows meter (:ids plan) (force raw-frame)))
+            sources (when due? (read-sources plan (force raw-frame)))
             result (when due?
                      (controller/advance previous-state
                        {:clock clock :epoch (:epoch model) :sources sources :targets targets
@@ -119,7 +126,9 @@
          :author-request (:author-request performed)}))))
 
 (defn- multiply-gains [base more]
-  (if (seq more) (merge-with * base more) base))
+  ;; The controller holds one gain per head. Add the usually sparse artistic
+  ;; overrides to that persistent map, retaining it between decision ticks.
+  (if (seq base) (merge-with * more base) more))
 
 (defn start-hdr-clock [model time-ms]
   (if (get-in model [:settings :hdr :enabled?])
@@ -147,7 +156,7 @@
           (seq (:gains current)) (update :source-gains multiply-gains (:gains current))
           (seq (get-in current [:actions :instance-gains])) (update :instance-gains multiply-gains (get-in current [:actions :instance-gains])))))))
 
-(defn observe [model prepared previous-cache frame blocks suspended? raw-options raw-blocks]
+(defn observe [model prepared previous-cache frame blocks {:keys [suspended? calibrating?]} raw-options raw-blocks]
   (if-let [plan (:plan prepared)]
     (let [prior (run model)
           clock (:clock prepared)
@@ -157,7 +166,7 @@
                                              frame blocks (:time-ms clock)))
           scene (:scene (or global-report (:report measured)))
           levels {:brightness (:brightness scene 0.0) :activity (:score scene 0.0)}
-          history (statistics/advance (:history prior) (cond-> clock suspended? (assoc :playing? false))
+          history (statistics/advance (:history prior) (cond-> clock calibrating? (assoc :playing? false))
                                     (get-in prepared [:options :window]) levels (:targets prior) (:tolerance prepared))
           view {:enabled? true :scope (:scope prior) :requested-targets (:requested-targets prior) :targets (:targets prior) :statistics (:report history)
                 :decision (:decision prior) :last-action (:last-action prior)}

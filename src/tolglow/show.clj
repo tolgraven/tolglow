@@ -1063,7 +1063,8 @@
                                                         fog (assoc :fog (:state fog))))))]
                        (let [observation (when (:plan prepared)
                                            (autopilot/observe (:model result) prepared previous-cache frame
-                                             (lighting/contributions standby (:contributions result) extra-blocks) suspended?
+                                             (lighting/contributions standby (:contributions result) extra-blocks)
+                                             {:suspended? suspended? :calibrating? calibrating?}
                                              {:master (:master render-options) :hdr {} :compact-values? true :include-values? false}
                                              (:contributions result)))]
                        {:model (let [with-fog (cond-> (or (:model observation) (:model result))

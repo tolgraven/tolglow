@@ -54,9 +54,11 @@
   {:step [0.0 1.0] :tolerance [0.0 1.0] :standby-level [0.0 1.0]
    :overshoot [0.0 1.0] :max-gain [1.0 Double/MAX_VALUE]})
 
+(defn with-defaults [opts]
+  (assoc (merge defaults opts) :targets (merge (:targets defaults) (:targets opts))))
+
 (defn settings [opts]
-  (let [s (-> (merge defaults opts)
-              (update :targets #(merge (:targets defaults) %))
+  (let [s (-> (with-defaults opts)
               (update :hdr hdr-settings)
               (update :target-response target-response/validate!))]
     (when-not (and (every? (conj (set (keys defaults)) :enable-cue) (keys opts))

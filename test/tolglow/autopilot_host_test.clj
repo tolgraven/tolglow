@@ -93,9 +93,10 @@
     (try
       (submit rt 0 :command {:op :cue/launch :cue-id :wash})
       (submit rt 25 :settings {:scope :autopilot
-                               :values {:enabled? true :targets {:brightness 0.0 :activity 0.0}
+                               :values {:enabled? true :targets {:brightness 0.0}
                                         :interval {:bars 2} :target-response {:release {:ms 100}}}})
       (is (== 1 (target)))
+      (is (== 0.4 (get-in (show/snapshot rt) [:autopilot :requested-targets :activity])))
       (is (zero? (get-in (show/snapshot rt) [:autopilot :requested-targets :brightness])))
       (tick rt 75)
       (is (== 0.5 (target)))
@@ -113,4 +114,20 @@
       (is (contains? (get-in @(:state rt) [:output :universes]) 3))
       (tick rt 75)
       (is (number? (get-in (show/snapshot rt) [:autopilot :statistics :brightness :mean])))
+      (finally (show/stop! rt)))))
+
+(deftest a-manual-blackout-counts-as-dark-song-time-and-holds-cue-decisions
+  (let [rt (runtime [(fixture :lamp 1 :stage)] [(look :wash [:lamp] {:dimmer 1.0})] true)
+        view #(:autopilot (show/snapshot rt))]
+    (try
+      (submit rt 0 :command {:op :cue/launch :cue-id :wash})
+      (submit rt 25 :settings {:scope :autopilot :values {:enabled? true :targets {:brightness 1.0}
+                               :window {:ms 100} :interval {:ms 25}}})
+      (is (== 1 (get-in (view) [:statistics :brightness :instant])))
+      (let [decision (:decision (view))]
+        (submit rt 50 :command {:op :blackout/set :value true})
+        (doseq [t (range 75 176 25)] (tick rt t))
+        (is (= decision (:decision (view))))
+        (is (zero? (get-in (view) [:statistics :brightness :mean])))
+        (is (zero? (get-in (view) [:statistics :brightness :lit-fraction]))))
       (finally (show/stop! rt)))))
