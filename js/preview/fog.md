@@ -98,10 +98,10 @@ this explicit integration gate rather than claiming GPU validation. The fixture
 bundles the production module, renders real half-float/depth/shadow targets and
 reads their pixels. It checks exact empty/disabled preservation, opaque-wall
 occlusion, extinction, shadow attenuation, blackout and narrow-shaft coverage.
-The available Chromium renderer is SwiftShader: this proves shader execution and
-pixel behaviour, not hardware acceleration, mobile thermal stability or AAA
-visual quality. Full-scene screenshots and physical device performance remain
-separate acceptance gates.
+The WebGL2 checks use Chromium's SwiftShader renderer. The operator guide shows
+the complete Studio scene with the same lighting during and after a fog cue.
+Physical iPad performance and thermal stability require separate measurement.
+[Compare the clear room, nozzle plume and mixed haze](../../docs/studio-atmosphere.md#reading-the-room-preview).
 
 ## Fog from the show
 

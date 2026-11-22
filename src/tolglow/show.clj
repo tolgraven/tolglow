@@ -23,6 +23,7 @@
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
@@ -87,10 +88,16 @@
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
+  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+        fixtures (get-in model [:rig :fixtures])
+        patch @(:patch runtime)
+        gains (if (identical? fixtures (:fixtures patch))
+                (:brightness-gains patch)
+                (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
-            :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime (get-in model [:rig :fixtures])))
-            :receiver-surfaces (surfaces/receivers (:rig model))
+            :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
+            :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
@@ -120,12 +127,8 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (let [fixtures (get-in model [:rig :fixtures])
-                                   cached @(:patch runtime)]
-                               (preview/values output fixtures
-                                               (if (identical? fixtures (:fixtures cached))
-                                                 (:brightness-gains cached)
-                                                 (preview/brightness-gains fixtures))))
+            :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
+                     :edge-tracking (:edge-tracking output [])
                      :atmosphere (:atmosphere output)
                      :preview-only? true
                      :lighting-capacity (:lighting-capacity output)
@@ -136,7 +139,7 @@
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
+                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
@@ -243,6 +246,7 @@
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
@@ -952,6 +956,8 @@
                                      patch (into % extra-blocks)
                                      {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
+                                      :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
+                                                       (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
                            result (:result resolved)
