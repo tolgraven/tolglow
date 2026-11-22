@@ -7,7 +7,7 @@
 (defn shutter-strobe-map "helper for strobe defs and scaling"
  [& {:keys [label hz] :or {}}]
  (let [common {:type :strobe, :range :variable}
-       scaler (when hz {:scale-fn (apply partial function-value-scaler hz)})
+       scaler (when hz {:hz hz :scale-fn (apply partial function-value-scaler hz)})
        [lo hi] (map #(if %1 (str %1 "Hz") %2) (or hz [nil nil]) ["Slow" "Fast"])
        label {:label (or label (str "Strobe (" lo "->" hi ")"))}]
   (merge common scaler label)))
@@ -174,7 +174,7 @@
                         0 "Shutter Closed"
                         8 "Shutter Open"
                         16 {:type :strobe ; 0-10 Hz per manual
-                            :scale-fn (scaler 0.2 10)
+                            :hz [0.2 10] :scale-fn (scaler 0.2 10)
                             :label "Strobe (Slow->Fast)"
                             :range :variable}
                         132 "Shutter Open 2"
