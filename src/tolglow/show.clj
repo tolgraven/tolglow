@@ -992,9 +992,9 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (let [model (cond-> (:model result)
-                                            setpoint (fog-control/publish previous-control (:status setpoint)))]
-                                 (advance-light-scenes runtime model patch frame time-ms bypass?))
+                       {:model (advance-light-scenes runtime
+                                 (cond-> (:model result) setpoint (fog-control/publish previous-control (:status setpoint)))
+                                 patch frame time-ms bypass?)
                         :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})

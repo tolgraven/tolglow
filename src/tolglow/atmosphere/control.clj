@@ -90,7 +90,8 @@
         pumps (into {} (for [configured (:fog-fixture-ids s)
                              :let [index (:by-id patch)
                                    id (if (contains? index configured) configured
-                                        (if (keyword? configured) (subs (str configured) 1) configured))]]
+                                        (let [alias (if (keyword? configured) (subs (str configured) 1) (keyword configured))]
+                                          (if (contains? index alias) alias configured)))]]
                          [id (pump (get-in patch [:by-id id]) (get sources id) (prior-pump previous id)
                                    now (and enabled? request?) (and enabled? fresh? valid? (not bypass?)))]))]
     {:epoch epoch :enabled? enabled? :target target :level level :lower low :upper high :zone zone

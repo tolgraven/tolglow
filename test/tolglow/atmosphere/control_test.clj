@@ -29,6 +29,7 @@
         sel #(get-in % [:pumps :jet])]
     (is (= [:injecting :injecting :idle :idle :resting :injecting]
            (mapv #(get-in % [:pumps :jet :mode]) [low band high idle cooling next-pulse])))
+    (is (= low (fog/advance (fog/configure armed {:fog-fixture-ids ["jet"]}) patch (observed 0.24 0) nil 0 false)))
     (is (= 0.35 (:demand (sel low))))
     (is (= [100.0 401.0] (mapv #(get-in % [:pumps :jet :until-ms]) [low next-pulse])))
     (is (= #{:fog/above-target :fog/demand-ended}
