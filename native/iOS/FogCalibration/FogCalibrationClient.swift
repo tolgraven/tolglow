@@ -219,7 +219,7 @@ private struct FogSession {
         guard recording, !busy else { return }
         if phase == .baseline, baselineReady {
             phase = .active; status = "Operate the fogger with its usual controls. Mark clearing after release."
-        } else if phase == .active, counts[.active, default: 0] >= 3 {
+        } else if phase == .active, counts[.active, default: 0] >= 4 {
             phase = .clearing; status = "Leave output off and observe the contrast recovering."
         }
     }

@@ -59,7 +59,7 @@ struct FogCalibrationView: View {
                     case .baseline:
                         Button("Mark fog active") { client.advance() }.disabled(!client.baselineReady || client.busy)
                     case .active:
-                        Button("Mark clearing") { client.advance() }.disabled(client.counts[.active, default: 0] < 3 || client.busy)
+                        Button("Mark clearing") { client.advance() }.disabled(client.counts[.active, default: 0] < 4 || client.busy)
                     case .clearing:
                         Button("Fit measurements") { client.fitSeries() }
                             .disabled(client.counts[.clearing, default: 0] < 8 || client.posting || client.busy)

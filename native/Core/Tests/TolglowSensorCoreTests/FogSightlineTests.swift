@@ -36,7 +36,11 @@ final class FogSightlineTests: XCTestCase {
         let fog = try FogReading(bright: 0.375, dark: 0.125)
         XCTAssertEqual(fog.contrast / baseline.contrast!, 0.5, accuracy: 1e-12)
         XCTAssertThrowsError(try baseline.accept(fog))
-        XCTAssertThrowsError(try baseline.accept(FogReading(bright: 0.012, dark: 0.01)))
+        XCTAssertThrowsError(try baseline.accept(FogReading(bright: 0.045, dark: 0.01)))
+        var drift = FogBaseline()
+        try drift.accept(FogReading(bright: 0.54, dark: 0.05))
+        for _ in 0..<50 { try drift.accept(clear) }
+        XCTAssertThrowsError(try drift.accept(FogReading(bright: 0.59, dark: 0.05)))
         XCTAssertThrowsError(try FogReading(bright: .nan, dark: 0))
         XCTAssertThrowsError(try FogReading(bright: 0.1, dark: 0.2))
     }

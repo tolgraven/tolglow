@@ -56,6 +56,8 @@ public struct FogReading {
 
 public struct FogBaseline {
     private var contrasts: [Double] = []
+    private var lowest = Double.infinity
+    private var highest = 0.0
     public init() {}
     public var ready: Bool { contrasts.count >= 8 }
     public var contrast: Double? {
@@ -63,9 +65,13 @@ public struct FogBaseline {
         return sorted.isEmpty ? nil : sorted[sorted.count / 2]
     }
     public mutating func accept(_ reading: FogReading) throws {
-        guard reading.contrast >= 0.025 else { throw FogSightlineError.weak }
-        if let center = contrast,
-           abs(reading.contrast - center) > max(0.004, center * 0.08) { throw FogSightlineError.unstable }
+        guard reading.contrast > 0.04 else { throw FogSightlineError.weak }
+        let low = min(lowest, reading.contrast), high = max(highest, reading.contrast)
+        // Match the host's 10% span criterion across the entire baseline, including
+        // observations older than the bounded display median.
+        guard high - low < 0.10 * low else { throw FogSightlineError.unstable }
+        lowest = low
+        highest = high
         if contrasts.count == 32 { contrasts.removeFirst() }
         contrasts.append(reading.contrast)
     }
