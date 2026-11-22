@@ -37,17 +37,20 @@
   {:type :sync/observation
    :observation {:source-id source-id :event-id id :value value :gate? (pos? value)
                  :confidence 1.0 :observed-at-ms time :kind :midi :origin :midi-input}})
-(defn capture-fixture []
-  (let [opened (promise)
+(defn capture-fixture
+  ([] (capture-fixture {}))
+  ([options]
+   (let [opened (promise)
         runtime (show/create-runtime
-                  {:model (model)
-                   :sync-options {:midi-factory (fn [_ _]
-                                                  {:open! (fn [receive!] (deliver opened receive!) :captured)
-                                                   :close! (fn [_])})}})]
+                  (merge {:model (model)
+                          :sync-options {:midi-factory (fn [_ _]
+                                                         {:open! (fn [receive!] (deliver opened receive!) :captured)
+                                                          :close! (fn [_])})}}
+                         options))]
     (show/sync-action! runtime :configure {:midi {:enabled? true :input-index 0}})
     (show/sync-action! runtime :start {})
     {:runtime runtime :receive! (deref opened 2000 nil)
-     :manager (connections/sync (:connections runtime))}))
+     :manager (connections/sync (:connections runtime))})))
 
 (deftest real-midi-observations-use-owner-clock-and-common-command-reducer
   (let [{:keys [runtime receive! manager]} (capture-fixture)]
@@ -286,3 +289,40 @@
         (is (= ["audio/energy"] (keys (:sources routing))))
         (is (= "audio/energy" (get-in routing [:routes 0 :source]))))
       (finally (show/stop! rt)))))
+
+(deftest midi-cue-parameter-shapes-group-emission-and-measured-activity
+  (let [bytes (atom nil)
+        knob {:id :wash :version 1 :params {:rise {:type :number :default 0.0 :bounds [0.0 2.0]}}
+              :targets [:head] :outputs {:dimmer 0.0}}
+        hit {:id :light :version 1 :targets [:head] :outputs {:dimmer 1.0}}
+        rig (control/new-show {:rig {:fixtures [(assoc head :groups [:front] :channels {:dimmer 1})]}
+                               :registry {:effects {:wash knob :light hit}
+                                          :cues {:wash {:id :wash :version 1 :effect-id :wash}
+                                                 :light {:id :light :version 1 :effect-id :light :priority 10}}}})
+        {:keys [runtime receive! manager]} (capture-fixture {:model rig :sink {:send! (fn [us _]
+                                                        (reset! bytes (bit-and 255 (aget ^bytes (get us 1) 0))))}})
+        midi! (fn [t data]
+                (receive! {:type :midi/message :source-id :midi-clock :time-ms t :bytes data})
+                (is (session/flush! manager))
+                (show/tick! runtime t))
+        score #(get-in (show/snapshot runtime) [:output :lighting-activity :scene :score])]
+    (try
+      (is (= :accepted (:status (apply-at! runtime :settings {:scope :lighting-activity :values {:enabled? true}} 0))))
+      (is (= :accepted (:status (apply-at! runtime :settings
+                  {:scope :output-response :values {:enabled? true :groups {:front {:attack {:beats {:cue-id :wash :param :rise}}
+                                                                                    :release {:beats 1}}}}} 0))))
+      (let [id (prepare! runtime (-> (spec) (assoc-in [:destinations :level :param] :rise)
+                                     (assoc-in [:destinations :level :range] [0.0 2.0])))]
+        (midi! 10 [0x90 60 127])
+        (is (= 2.0 (get-in @(:state runtime) [:model :instances id :params :rise])))
+        (let [light (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :light} 10))]
+          (show/tick! runtime 260)
+          (let [soft (score)]
+            (is (<= 55 @bytes 57))
+            (midi! 285 [0x80 60 0])
+            (is (= 255 @bytes))
+            (is (< soft (score))))
+          (apply-at! runtime :command {:op :instance/remove :instance-id light} 285)
+          (show/tick! runtime 785)
+          (is (<= 93 @bytes 95))))
+      (finally (show/stop! runtime)))))
