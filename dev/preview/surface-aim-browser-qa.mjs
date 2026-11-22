@@ -13,7 +13,8 @@ const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH
 try {
   const context = await browser.newContext({viewport: {width: 1024, height: 900}, hasTouch: true});
   const page = await context.newPage();
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  page.setDefaultTimeout(30000);
+  const errors = []; page.on('pageerror', e => { errors.push(e.message); console.error(e.message); });
   await page.goto(origin);
   await page.locator('[data-view="rig"]').click();
   const panel = page.locator('.rig-editor'), canvas = panel.locator('canvas');
