@@ -31,3 +31,8 @@ parameter, position and clock paths from the validated expression. Apply current
 response and modulation inputs first. Apply envelopes to the frame's owned
 arrays after the pure field evaluation. Upstream layer values are inputs to
 any compound transform that uses them. Rebind on definition or rig changes.
+
+Positional numeric eligibility uses the intersection of the effect and output
+targets and the axes that the particular output reads. Fixtures outside that
+intersection must not force a spatial pixel or moving-head effect into scalar
+evaluation. Check exact values on selected heads against the scalar compiler.
