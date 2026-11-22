@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import {clamp} from './math.js';
 
 export function apertureRadius(fixture) {
-  return clamp(Number(fixture['lens-radius-m']) || .119, .005, .5);
+  const radius = fixture['lens-radius-m'];
+  return Number.isFinite(radius) && radius >= 0 ? radius : .119;
 }
 export function opticalFrustum(position, direction, halfAngle, radius) {
   const axis = new THREE.Vector3(...direction).normalize();

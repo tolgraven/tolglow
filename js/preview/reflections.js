@@ -50,7 +50,8 @@ export class SurfaceReflections {
       // Approximate diffuse patch emission with a broad outward lobe. Its own
       // shadow map keeps secondary illumination on the visible side of objects.
       const light = new THREE.SpotLight(0, 0, 15, Math.PI * .47, 1, 2);
-      light.castShadow = true; light.shadow.mapSize.set(shadowSize, shadowSize);
+      light.castShadow = true; light.shadow.autoUpdate = false; light.shadow.needsUpdate = true;
+      light.shadow.mapSize.set(shadowSize, shadowSize);
       light.shadow.camera.near = .015; light.shadow.bias = -.0001; light.shadow.normalBias = .005;
       content.add(light, light.target); return light;
     });
@@ -92,6 +93,7 @@ export class SurfaceReflections {
       this.patches.push(patch);
       if (this.patches.length === this.lights.length) break;
     }
+    for (let i = 0; i < this.patches.length; i++) this.lights[i].shadow.needsUpdate = true;
   }
   illuminate(field, amount) {
     this.lights.forEach((light, index) => {

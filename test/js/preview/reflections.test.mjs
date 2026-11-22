@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, readFileSync} from 'node:fs';
 import {chromium} from 'playwright-core';
+import {apertureRadius} from '../../../js/preview/optics.js';
 import {fixtureSlots} from '../../../js/preview/fixture-selection.js';
 import {beamAngle, roomDimensions} from '../../../js/preview/math.js';
 
@@ -10,6 +11,7 @@ test('full included fixed beam angle and zoom range use fixture data in degrees'
   assert.equal(degrees(beamAngle({'beam-angle':20}, {zoom:.75})),20);
   assert.equal(degrees(beamAngle({'beam-angle':20,'zoom-range-deg':[8,40]}, {channels:{zoom:.25}})),16);
   assert.equal(degrees(beamAngle({}, {zoom:.5})),29);
+  for (const radius of [0,.001,.8]) assert.equal(apertureRadius({'lens-radius-m':radius}),radius);
   for (const full of [.2,175]) assert.ok(Math.abs(degrees(beamAngle({'beam-angle':full})) - full) < 1e-10);
 });
 
