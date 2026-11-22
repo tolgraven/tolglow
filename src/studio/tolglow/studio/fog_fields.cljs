@@ -70,6 +70,22 @@
           [input edits profile [:direction 1] "Nozzle direction · world Y" 0]
           [input edits profile [:direction 2] "Nozzle direction · world Z" 1]])])))
 
+(defn measured-clearance [measurement]
+  [:section.room-clearance {:aria-label "Measured fog clearance"}
+   [:h3 "Measured fog clearance"]
+   [:dl
+    (for [[field title unit] [[:clearance-half-life-s "Total clearance half-life" " s"]
+                              [:extinction-per-m "Extinction coefficient" " m⁻¹"]
+                              [:reference-path-m "Reference distance" " m"]
+                              [:r-squared "Fit R²" ""]]]
+      ^{:key field} [:div [:dt title]
+                      [:dd (let [n (get measurement field)]
+                            (if (js/Number.isFinite n)
+                              (str (js/Number (.toPrecision n 4)) unit) "Unmeasured"))]])]
+   [:p.small.muted "The measured total already includes ventilation. Switch to manual clearance to use the configured ventilation and deposition rates."]
+   [:button.button {:type "button" :on-click #(rf/dispatch [:studio/rig-atmosphere :measured-fog nil])}
+    "Use manual clearance"]])
+
 (defn set-room-value [db field value]
   (let [path [:ui :rig-draft :room]
         room (get-in db path)]
