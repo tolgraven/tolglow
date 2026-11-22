@@ -184,3 +184,27 @@
     (is (= [:launch] (mapv :op (:actions a))))
     (is (empty? (:actions b)))
     (is (near? 0.5 (get-in b [:report :estimated-brightness])))))
+
+(deftest first-frame-matches-existing-light-before-a-window-exists
+  (let [in (dissoc (inputs 0 [1.0 1.0 0.4 0.4] 0.7 0.61) :statistics)
+        out (control/advance nil in)]
+    (is (near? 0.7 (get-in out [:report :forecast :brightness])))
+    (is (near? 0.5 (get-in out [:report :estimated-brightness])))
+    (is (empty? (:actions out)))))
+
+(deftest page-scope-skips-program-control-cells-and-channels-that-cannot-emit-its-color
+  (let [model {:rig {:fixtures [{:id :red :channels {:red 1}}
+                                {:id :amber :channels {:amber 1}}
+                                {:id :virtual-white :rgbw-policy :extract-min :channels {:white 1}}]}
+               :pages {:music {:cells {[0 0] :rgb [0 1] :toggle}}}
+               :registry {:cues {:rgb {:effect-id :hue} :toggle {:effect-id :all :role :show-control}}
+                          :effects {:hue {:outputs {:color [1 1 1]}}
+                                    :all {:outputs {:dimmer 1}}}}}]
+    (is (= [:red :virtual-white] (control/scope-ids model {:page-id :music})))))
+
+(deftest configured-overshoot-allows-completing-a-source-only-within-the-headroom
+  (let [in (assoc-in (inputs 0 [1.0 1.0] 1.0 0.4) [:targets :brightness] 0.45)
+        level #(get-in (control/advance nil (assoc-in in [:options :overshoot] %)) [:report :estimated-brightness])]
+    (is (near? 0.45 (level 0.0)))
+    (is (near? 0.45 (level 0.04)))
+    (is (near? 0.5 (level 0.06)))))

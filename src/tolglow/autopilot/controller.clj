@@ -231,8 +231,13 @@
             membership (into {} (map (juxt :id (comp double :capacity))) sources)
             pending (when (and (= window (:window state)) (= membership (:membership state)))
                       (pending-at (:pending state) clock (max 1e-9 (:coverage statistics 1.0))))
-            brightness (predicted statistics pending :brightness)
-            activity (predicted statistics pending :activity)
+            ;; A show can be restored with live outputs before its first statistics
+            ;; window exists. Start from that light and await a real activity score.
+            brightness (if (some? (get-in statistics [:brightness :mean]))
+                         (predicted statistics pending :brightness)
+                         (weighted sources (:gains state) (reduce + 0.0 (map :capacity sources))))
+            activity (if (some? (get-in statistics [:activity :mean]))
+                       (predicted statistics pending :activity) (:activity targets))
             light (light-plan state sources brightness (:brightness targets) opts)
             activity-change (change activity (:activity targets) opts)
             requested (actions light activity-change opts cue-ids)

@@ -12,18 +12,25 @@
 (defn- capable? [fixture attr]
   (let [channels (:channels fixture)]
     (case attr
-      :color (some #(contains? channels %) registry/emitter-attributes)
+      ; The native color packs into RGB, and optionally into extracted white.
+      :color (or (some #(contains? channels %) [:red :green :blue])
+                 (and (= :extract-min (:rgbw-policy fixture)) (contains? channels :white)))
       (:aim :direction) (or (contains? channels :pan) (contains? channels :tilt))
       :dimmer true ; a virtual master is available on emitter-only fixtures
       (contains? channels attr))))
+
+(defn- musical? [definition]
+  (let [control? #{:show-control :code :code-cue}]
+    (and definition (not (:code-cue? definition)) (not (:show-control? definition))
+         (not (control? (:role definition))) (not (control? (:kind definition)))
+         (not-any? control? (concat (:tags definition) (:categories definition))))))
 
 (defn- output-scopes [model ids]
   (let [registry (:registry model)]
     (for [id ids
           :let [cue (get-in registry [:cues id])
                 effect (registry/cue-effect registry cue)]
-          :when (and effect (not (:show-control? cue)) (not (:show-control? effect))
-                     (not= :show-control (:kind cue)) (not= :show-control (:kind effect)))
+          :when (and (musical? cue) (musical? effect))
           {:keys [attribute targets]} (registry/output-entries (:outputs effect))]
       {:attribute attribute :effect-targets (some-> (:targets effect) set)
        :output-targets (some-> targets set)})))
