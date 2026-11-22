@@ -93,3 +93,13 @@ Completed lighting packets retain original physical timestamps; presentation
 never advances effect state. Fade only declared linear emission controls and
 preserve discrete channels/coarse-fine semantics. Scene/fog visual work has one
 owner; backend projection and shared frontend widgets have separate claims.
+
+## Fixture brightness and performance controls
+
+Keep source brightness, watts, visual activity and audio energy in their own units.
+Use the existing calibrated meter for both local and rig-relative brightness.
+Forecast auto selections through the same effects and patch as live composition.
+Apply the group/rig response to authored light, enforce concurrent budgets, then
+read and score the delivered emitter channels. Keep coarse/fine encoding and
+bulk frame operations in Afterglow. Run the mixed 2,048-pixel/64-head benchmark
+when changing that path. [Operator guide](../../docs/group-lighting-scenes.md)

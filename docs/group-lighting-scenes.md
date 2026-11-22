@@ -1,6 +1,11 @@
 # Balance a lighting scene
 
-**Brightness** tells you how much light a source produces. **Lighting budget** determines how many sources may be bright together and how much of their combined output they may use. **Visual activity** describes how busy the result looks. A few white sparkles can change rapidly while the room stays mostly dark. **Audio energy** is a separate measurement from the sound input.
+| When you want to… | Use |
+| --- | --- |
+| Match the brightness of a wash and a smaller spot | The **global brightness reference** |
+| Keep only a few heads bright, even as cues overlap | The **lighting budget** and **active-source limit** |
+| Choose between a steady wash and a restless sparkle | The **visual activity** score |
+| Change the show when the music gets louder | The **audio energy** signal |
 
 ## Match unlike fixtures
 
@@ -33,13 +38,17 @@ Apply a lighting budget when a composition calls for a few bright sources and th
                              :fixture-order [:lead-spot :side-wash]}}}})
 ```
 
-Here the whole rig can use up to 55% of its estimated capacity, and up to four sources can rise above standby. The front group can use up to two. Proportional allocation shares the available output. Priority allocation protects the preferred fixtures first. Shedding can leave a requested source dim, with its hue intact. With the default `:standby-mode :shed`, sources that were dark stay dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Higher-priority cues can still write black, and a blackout remains immediate. If three cues request six of nine fixtures, the allocator can keep four above standby and reduce their combined level to fit the watt budget. Automatic cue selection uses the budget when admitting and retiring its own looks. Each scope’s readback reports requested and used watts, capacity, active and shed counts, and how many sources used the fallback rating.
+In this example, up to four sources can run above standby, including up to two in the front group. Three cues can address six of nine heads and still share that one limit. Auto mode considers the combined demand when it chooses a cue and can retire its own earlier cues to make room. Manual launches also pass through the final cap.
+
+- **Which sources stay bright?** The allocator admits them in fixture order. Supply `:fixture-order` to put particular heads first. Among admitted sources, `:proportional` shares the remaining watts and `:priority` spends those watts on the first heads in order.
+- **What happens to the others?** The default `:standby-mode :shed` preserves the tint of sources reduced to standby and leaves unused heads dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Authored black, zero master and blackout still take effect. If the standby look alone would exceed the watt budget, its level falls too.
+- **What did the show actually use?** Read `(get-in (show/variables runtime) [:lighting/budget :global])` for the active and shed counts, requested watts and delivered watts. The same fields are available under `[:lighting/budget :groups group-id]`. A powered lamp behind a closed shutter consumes estimated watts and leaves its visible-source slot free.
 
 ## Shape visual activity
 
 Enable `:lighting-activity` to read scores from the final lighting output. A sustained wash, a fast strobe and a moving sparkle can have similar average brightness and very different scores. Coverage matters. A single sparkling head contributes less to the whole scene than a bank of heads flashing together. The readback includes brightness, coverage, flashing, movement and strobe components. Inspect `[:lighting/activity :scene]`, `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups group-id]` in `(show/variables runtime)`.
 
-To soften the look, set response durations on the rig or a group. Attack smooths rises in emitted light. Release smooths falling levels, including the tail when a cue ends. Longer values also soften abrupt waveform edges in a running cue. After one duration, the output has moved about 63% toward a held input. The activity meter sees the smoothed result. A physical strobe channel continues to flash at its commanded rate. Smoothing the light level can soften its onset and release; changing the strobe rate itself requires adjusting that channel.
+To soften the look, set response durations on the rig or a group. Attack smooths rises in emitted light. Release smooths falling levels, including the tail when a cue ends. Longer values also soften abrupt waveform edges in a running cue. After one duration, the output has moved about 63% toward a held input. The activity meter sees the smoothed result. A physical strobe channel continues to flash at its commanded rate. A longer attack delays how quickly the flashes reach full brightness. Change the shutter command to alter their rate.
 
 ```clojure
 (show/submit! runtime :settings
@@ -49,7 +58,15 @@ To soften the look, set response durations on the rig or a group. Attack smooths
             :groups {:front {:release {:bars 1}}}}})
 ```
 
-Group stages override the corresponding global stage. To use a mapped control for attack, replace the fixed beat count with `{:cue-id :feel :param :attack :default 1/4}`. A knob mapped to the running cue's numeric `:attack` parameter then sets the response in beats. Blackout and the operator's zero master remain immediate.
+Group stages override the corresponding global stage. In Studio, choose **Cue parameter** as the attack or release time source, then select the cue and its numeric parameter. For example, `{:beats {:cue-id :feel :param :attack :default 1/4}}` lets a device knob mapped to the running cue’s `:attack` parameter set attack in beats. The fallback applies while the cue is idle. Blackout and the operator’s zero master remain immediate.
+
+Auto mode can use the visual score when choosing its next cue. For a restrained sequence, try an activity target near the low end. Auto ranks eligible cues by distance from that score and considers the shared output budget before launching. For an effect it has seen, it uses the observed peak for that effect revision. For a new declarative effect, it estimates activity from its outputs and targeted fixtures.
+
+```clojure
+(show/submit! runtime :auto
+  {:enabled? true :interval {:bars 2} :count 1
+   :activity-target 0.2 :scope {:cue-ids [:slow-pan :warm-wash :sparkle]}})
+```
 
 ## Trigger a look from sound
 
