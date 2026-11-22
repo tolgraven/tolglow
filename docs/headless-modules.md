@@ -25,3 +25,15 @@ For example, record a bounded waveform summary directly from a PCM source:
 The clock supplies musical time to effects. Device reads, network publication and credential access belong to their explicit owners. Web-specific routes, browser subscriptions and display projections bind these APIs to Studio. Afterglow owns the clock reducer, renderer and controller mapping used by those APIs.
 
 The original show authoring namespaces remain available, including `tolglow.config`, `tolglow.setup`, `tolglow.fx` and `tolglow.fixtures`. See the [source-linked behavior inventory](feature-parity-inventory.md) for their configuration structures.
+
+## Start a calibrated performance from configuration
+
+The default application configuration registers three optional modules after fixture patching and show restore. Enable them in the same EDN file that defines the rig. The following entries assume the rig contains a profiled fogger named `:stage-jet` and a group of lights named `:front`.
+
+```clojure
+{:lighting-capacity {:enabled true}
+ :fog-control {:enabled true :target 0.30 :hysteresis 0.035 :fog-fixture-ids [:stage-jet]}
+ :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.72}]}}
+```
+
+The lighting-capacity module measures the rig. The fog controller uses the calibrated reference sightline and the selected nozzle's delivered flow. The lighting-scenes module chooses and parameterizes an emission effect for each group. For a later change, call `(tolglow.show/submit! runtime :lighting-scene {:op :vary :group-id :front :target 0.72})`. Audio energy events can request the same operation. [Group scenes and event bindings](group-lighting-scenes.md) · [Fog calibration and control](venue-fog.md)

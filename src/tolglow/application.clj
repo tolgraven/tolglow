@@ -104,9 +104,16 @@
       (accepted! (show/submit! runtime :waveform {:source (pr-str definition)})))
     {:value (show/waveform-action! runtime :registry {})}))
 
-(defn- install-expressive [context options]
+(defn- settings-module [scope defaults]
+  (fn [context options]
+    {:value (accepted! (show/submit! (need-show context) :settings
+                                     {:scope scope :values (merge defaults options)}))}))
+
+(defn- install-lighting-scenes [context {:keys [groups]}]
   (let [runtime (need-show context)]
-    {:value (accepted! (show/submit! runtime :settings {:scope :expressive :values options}))}))
+    (when-not (vector? groups)
+      (throw (ex-info "Lighting scenes need a vector of group targets" {})))
+    {:value (mapv #(accepted! (show/submit! runtime :lighting-scene (assoc % :op :apply))) groups)}))
 
 (defn- configure-sensors [context {:keys [sources]}]
   (let [runtime (need-show context)]
@@ -122,7 +129,10 @@
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
-   :expressive install-expressive :agents configure-agents
+   :expressive (settings-module :expressive {}) :agents configure-agents
+   :lighting-capacity (settings-module :lighting-capacity {:enabled? true})
+   :fog-control (settings-module :fog-control {:enabled? true})
+   :lighting-scenes install-lighting-scenes
    :fixtures install-fixtures :cue-pages install-cue-pages})
 
 (defn start!

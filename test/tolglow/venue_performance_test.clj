@@ -1,7 +1,23 @@
 (ns tolglow.venue-performance-test
   (:require [afterglow.control.model :as control]
             [clojure.test :refer [deftest is]]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.application :as app]))
+
+(deftest configure-room-feedback-and-groups-from-the-ordered-startup-map
+  (let [rig {:fixtures [{:id :spot :universe 1 :address 1 :channels {:dimmer 1} :groups [:front]}]}
+        config (assoc (app/default-config) :web-server false
+                      :show {:model (assoc (control/new-show {}) :rig rig)}
+                      :lighting-capacity {:enabled true}
+                      :fog-control {:enabled true :target 0.25 :fog-fixture-ids []}
+                      :lighting-scenes {:enabled true :groups [{:group-id :front :target 0.72 :effect-ids []}]})
+        rt (app/start! config)]
+    (try
+      (let [state (show/snapshot rt)]
+        (is (true? (get-in state [:settings :lighting-capacity :enabled?])))
+        (is (= 0.25 (get-in state [:settings :fog-control :target])))
+        (is (= 0.72 (get-in state [:lighting-scenes :groups 0 :target]))))
+      (finally (app/stop! rt)))))
 
 (deftest calibrated-fog-and-independent-lighting-targets-share-a-running-show
   (let [rig {:room {:width 1 :height 1 :depth 1
