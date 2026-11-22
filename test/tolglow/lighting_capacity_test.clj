@@ -225,6 +225,8 @@
     (doseq [[value expected] [[20 0.0] [50 1.0]]]
       (let [summary (capacity/measure plan (physical value))
             reading (:device (capacity/measure-sources plan (physical value) [:device]))]
+        (is (near? expected (aget ^doubles (capacity/local-brightnesses plan (physical value)) 0)))
+        (is (near? 1.0 (aget ^doubles (capacity/emitter-drives plan (physical value)) 0)))
         (is (near? expected (:global-brightness summary)))
         (is (near? expected (:global-brightness reading)))
         (is (near? 120 (:used-rated-watts reading)))

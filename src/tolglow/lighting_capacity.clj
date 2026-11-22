@@ -57,7 +57,7 @@
 
 (deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot])
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
-(deftype MeterHead [^MeterAddress dimmer ^objects emitters shutters])
+(deftype MeterHead [^MeterAddress dimmer ^objects emitters shutters ^double weight])
 
 (defn- address [indices {:keys [coarse fine inverted-from]}]
   (when coarse
@@ -78,7 +78,7 @@
                          (if (pos? response) (* weight (/ sensitivity response)) 0.0) (/ (or watts 0.0) n)
                          (* color-scale (nth tint 0)) (* color-scale (nth tint 1)) (* color-scale (nth tint 2))))))]
     (MeterHead. (address indices dimmer) (object-array channels)
-                (seq (mapv (fn [[channel ranges]] [(address indices channel) ranges]) shutters)))))
+                (seq (mapv (fn [[channel ranges]] [(address indices channel) ranges]) shutters)) weight)))
 
 (defn prepare
   "Compile a meter plan alongside an Afterglow compiled patch, once per rig."
@@ -175,6 +175,26 @@
                       (let [^MeterEmitter emitter (aget emitters j)]
                         (recur (inc j) (+ sum (level buffers (.-address emitter)))))))]
         (aset-double result i (* (level buffers (.-dimmer head)) (/ total n)))))
+    result))
+
+(defn local-brightnesses
+  "Local visible brightness per source in meter-head order. The caller owns
+  the array. Color response, dimmer, inversion and closed shutters are included."
+  [{:keys [meter-heads] :as plan} universes]
+  (let [buffers (object-array (map universes (:universes plan)))
+        ^objects heads meter-heads
+        result (double-array (alength heads))]
+    (dotimes [i (alength heads)]
+      (let [^MeterHead head (aget heads i)
+            weight (.-weight head)]
+        (when (and (pos? weight) (or (nil? (.-shutters head)) (open-shutter? buffers head)))
+          (let [^objects emitters (.-emitters head)
+                n (alength emitters)
+                light (loop [j 0 sum 0.0]
+                        (if (== j n) sum
+                          (let [^MeterEmitter emitter (aget emitters j)]
+                            (recur (inc j) (+ sum (* (.-brightness emitter) (level buffers (.-address emitter))))))))]
+            (aset-double result i (* (level buffers (.-dimmer head)) (/ light weight)))))))
     result))
 
 (defn match-brightness
