@@ -103,6 +103,12 @@
           (do (submit-at! rt 50 :command {:op :cue/launch :cue-id :base})
               (submit-at! rt 75 :command {:op :cue/launch :cue-id :filter :launch {:reload-policy :preserve-state}})))
         (is (= (if grouped? [0 0 255] [0 255 0]) (bytes!)))
+        (let [view (show/snapshot rt)
+              registered (some #(when (= :filter (:id %)) %) (:effects view))
+              live (some #(when (= :filter (:cue-id %)) %) (:instances view))
+              color-group (some #(when (= :color (:id %)) %) (:groups view))]
+          (is (= [:color] (:categories registered) (:categories live)))
+          (is (some #{(:id live)} (:instance-ids color-group))))
         (publish! 100 (-> modifier (assoc :version 2)
                           (assoc-in [:layer :transforms] [(rotate-hue 2/3)])))
         (is (= (if grouped? [255 0 0] [0 0 255]) (bytes!)))
