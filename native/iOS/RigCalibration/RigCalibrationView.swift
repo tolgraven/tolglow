@@ -10,6 +10,11 @@ struct RigCalibrationView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    NavigationLink {
+                        BrightnessCalibrationView()
+                    } label: {
+                        Label("Measure fixture brightness", systemImage: "sun.max")
+                    }.disabled(scanner.running || client.busy || client.armed)
                     Text("Scan your rig").font(.largeTitle.bold())
                     Text("LiDAR measures visible surfaces. Tap the actual lens for placement and a solid beam landing spot for aim. Fog, reflections and hidden fixtures need manual correction or another view.")
                         .font(.callout).foregroundStyle(.secondary)
