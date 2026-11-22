@@ -14,6 +14,7 @@
             [tolglow.registry :as registry]
             [tolglow.compiler :as compiler]
             [tolglow.modulation :as modulation]
+            [tolglow.lighting-capacity :as capacity]
             [tolglow.signals :as signals]
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
@@ -239,6 +240,8 @@
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (when (contains? (:settings model) :lighting-capacity)
+    (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)
     (try (expressive/normalize-config (get-in model [:settings :expressive]))
          (catch clojure.lang.ExceptionInfo error

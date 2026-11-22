@@ -23,7 +23,8 @@
 ;; assumes 300 lm/optical watt, as in afterglow.render.photometry. RGB is a display tint.
 (def ^:private spectrum
   {:red [0.321 [1 0 0]] :green [0.793 [0 1 0]] :blue [0.074 [0 0 1]]
-   :white [(/ 300.0 683) [1 1 1]] :amber [0.757 [1 0.55 0]] :uv [0.0 [0 0 0]]})
+   :white [(/ 300.0 683) [1 1 1]] :amber [0.757 [1 0.55 0]] :uv [0.0 [0 0 0]]
+   :warm-white [(/ 300.0 683) [1 0.8 0.62]] :cold-white [(/ 300.0 683) [0.82 0.9 1]]})
 
 (def ^:private field-bit (zipmap (into [:dimmer :color] (keys spectrum)) (map #(bit-shift-left 1 %) (range))))
 
@@ -118,12 +119,25 @@
              :relative-output light :utilization utilization :headroom (- 1.0 utilization)
              :used-rated-watts (aget totals 1) :color (if (pos? peak) (mapv #(/ % peak) rgb) rgb)))))
 
+(defn- source-targets [{:keys [batch assignments native-layer]}]
+  (concat (:target-ids batch) (map :target-id assignments) (:target-ids native-layer)))
+
+(defn- modifiers-targets [blocks i {:keys [native-layer] :as block}]
+  (concat (source-targets block)
+          (when (= :previous (:targets native-layer))
+            (into [] (comp (filter #(or (:inherit-backdrop? native-layer)
+                                         (= (:id native-layer) (get-in % [:native-layer :id]))))
+                           (filter #(pos? (get-in % [:native-layer :member-opacity] 1.0)))
+                           (mapcat source-targets))
+                  (take i blocks)))))
+
 (defn writers
   "List positive-opacity emission writers, removing writers fully superseded
-  by later opaque replaces of the same native field on every target. Additive
-  and max blends share the resulting output; attribution is not a watt split."
+  by later opaque replaces of the same native field on every target. Arithmetic
+  modifier and partial blend contributors share the resulting output."
   [{:keys [writers-by-head heads-count]} blocks]
-  (let [covered (int-array heads-count)
+  (let [blocks (vec blocks)
+        covered (int-array heads-count)
         visible! (fn [id attribute opacity blend]
                    (when-let [[index supported] (get writers-by-head id)]
                      (when (and (pos? opacity) (contains? supported attribute))
@@ -133,24 +147,35 @@
                            (when (and (= blend :replace) (== (double opacity) 1.0))
                              (aset-int covered (int index) (int (bit-or before bit))))
                            true)))))]
-    (->> (rseq (vec blocks))
-         (keep (fn [{:keys [source assignments batch]}]
-                 (let [visible? (volatile! false)
+    (->> (range (dec (count blocks)) -1 -1)
+         (keep (fn [i]
+                 (let [{:keys [source assignments batch native-layer] :as block} (nth blocks i)
+                       weight (* (:member-opacity native-layer 1.0) (:opacity native-layer 1.0))
+                       visible? (volatile! false)
                        visit! (fn [id attr opacity blend]
-                                (when (visible! id attr opacity blend) (vreset! visible? true)))]
-                   (doseq [{:keys [target-id attribute opacity blend] :or {opacity 1.0 blend :replace}}
-                           (rseq (vec assignments))]
-                     (visit! target-id attribute opacity blend))
-                   (when batch
-                     (let [attrs (or (keys (:outputs batch))
-                                     (map :attribute (get-in batch [:field-request :group :cpu-plan :outputs])))]
-                       (let [opacity (:opacity batch 1.0) blend (:blend batch :replace)]
+                                (when (visible! id attr (* opacity weight) blend) (vreset! visible? true)))]
+                   (when (pos? weight)
+                     (doseq [{:keys [target-id attribute opacity blend] :or {opacity 1.0 blend :replace}}
+                             (rseq (vec assignments))]
+                       (visit! target-id attribute opacity blend))
+                     (when batch
+                       (let [attrs (or (keys (:outputs batch))
+                                       (map :attribute (get-in batch [:field-request :group :cpu-plan :outputs])))
+                             opacity (* (:opacity batch 1.0) weight)
+                             blend (:blend batch :replace)]
                          (if (and (= blend :replace) (== (double opacity) 1.0))
-                           (doseq [id (:target-ids batch) attr attrs] (visit! id attr opacity blend))
+                           (doseq [id (:target-ids batch) attr attrs]
+                             (when (visible! id attr opacity blend) (vreset! visible? true)))
                            (when (and (pos? opacity)
                                       (some (fn [id] (some #(visible! id % opacity blend) attrs)) (:target-ids batch)))
-                             (vreset! visible? true))))))
-                   (when @visible? source))))
+                             (vreset! visible? true)))))
+                     (when-let [transforms (seq (filter #(field-bit (:attribute %)) (:transforms native-layer)))]
+                       (doseq [id (modifiers-targets blocks i block)
+                               {:keys [attribute value]} transforms]
+                         ;; A transform may read the previous or incoming native
+                         ;; value. A performed arithmetic write keeps that source.
+                         (visit! id attribute 1.0 (if (map? value) :add :replace))))
+                     (when @visible? source)))))
          distinct reverse vec)))
 
 (defn control
@@ -195,7 +220,7 @@
                       (>= now-ms (:rest-until-ms previous 0)) (>= normalized 0.8))
         until-ms (cond trigger? (+ now-ms 400) continuing? (:until-ms previous) :else 0)
         state {:active? (boolean (or trigger? continuing?))
-               :latched? (boolean (and armed? (or trigger? (and (:latched? previous) (> normalized 0.55)))))
+               :latched? (boolean (and armed? (or (>= normalized 0.8) (and (:latched? previous) (> normalized 0.55)))))
                :targets targets :until-ms until-ms
                :rest-until-ms (if trigger? (+ until-ms 6000) (:rest-until-ms previous 0))}]
     {:state state

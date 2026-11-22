@@ -165,6 +165,7 @@
    (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (doseq [definition (vals (get-in model [:registry :effects]))] (compiler/compile-effect definition))
          fixtures (get-in model [:rig :fixtures])
@@ -886,7 +887,7 @@
                            audio @(:capacity-audio runtime)
                            previous (when (= (:epoch model) (get-in before [:model :epoch]))
                                       (get-in before [:output :lighting-capacity]))
-                           bypass? (or photo-session (calibration/current model) pause-layer (pause-look/blackout? model))
+                           bypass? (or photo-session (calibration/current model) (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
                            limit (when plan
                                    (capacity/control (merge capacity/defaults meter-opts)
                                      previous

@@ -15,12 +15,21 @@
     (for [x (sort (conj (set (filter #(<= minimum % maximum) (map #(/ % 20) (range 21)))) value))]
       ^{:key x} [:option {:value (str x)} (percent x)])]])
 
-(defn panel [db pending?]
+(rf/reg-sub :lighting-capacity/settings
+  (fn [db _]
+    (merge (get-in db [:show :settings :lighting-capacity])
+           (get-in db [:connections :capacity-draft]))))
+(rf/reg-sub :lighting-capacity/output (fn [db _] (get-in db [:show :output :lighting-capacity])))
+(rf/reg-sub :lighting-capacity/fixtures (fn [db _] (get-in db [:show :rig :fixtures])))
+(rf/reg-sub :lighting-capacity/foggers :<- [:lighting-capacity/fixtures]
+  (fn [fixtures _] (filterv #(get-in % [:channels :fog]) fixtures)))
+
+(defn panel [pending?]
   (let [{:keys [enabled? follow-energy? minimum maximum fog? fog-fixture-ids]
-         :or {minimum 0.1 maximum 0.9}} (get-in db [:show :settings :lighting-capacity])
+         :or {minimum 0.1 maximum 0.9}} @(rf/subscribe [:lighting-capacity/settings])
         {:keys [utilization headroom rated-watts used-rated-watts rated-heads heads-count mode target writers color fog]}
-        (get-in db [:show :output :lighting-capacity])
-        foggers (filter #(get-in % [:channels :fog]) (get-in db [:show :rig :fixtures]))]
+        @(rf/subscribe [:lighting-capacity/output])
+        foggers @(rf/subscribe [:lighting-capacity/foggers])]
     [:section.panel {:aria-label "Lighting capacity"}
      [:div.panel-top [:span.section-label "LIGHTING CAPACITY"]]
      [:div.form-body
