@@ -10,7 +10,7 @@
 (defn disarm [model]
   (if (current model) (update model :extensions dissoc ::session) model))
 
-(def ^:private visible #{:red :green :blue :white :amber :lime :cyan :warm-white :cool-white})
+(def ^:private visible #{:red :green :blue :white :amber :lime :cyan :warm-white :cold-white :cool-white})
 (def ^:private controlled (into visible [:dimmer :uv :strobe]))
 (defn- can-light? [{:keys [channels]}]
   (some #(contains? channels %) (conj visible :dimmer)))
