@@ -16,7 +16,9 @@ final class FogSightlineTests: XCTestCase {
     func testPatchesRejectAnEdgeOrClippedPixels() throws {
         XCTAssertEqual(try patch { _, _ in 102 }, 0.4, accuracy: 1e-12)
         XCTAssertThrowsError(try patch { _, x in x < 8 ? 128 : 12 })
-        XCTAssertThrowsError(try patch { _, _ in 250 })
+        XCTAssertThrowsError(try patch { _, _ in 250 }) { error in
+            XCTAssertEqual(error as? FogSightlineError, .clipped)
+        }
         for width in [480, 640, 1280] {
             let left = SightlinePatch.bright.pixel(column: 15, row: 15, width: width, height: 480)
             let right = SightlinePatch.dark.pixel(column: 0, row: 0, width: width, height: 480)

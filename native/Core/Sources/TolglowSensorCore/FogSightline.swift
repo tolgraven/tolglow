@@ -14,9 +14,10 @@ public struct SightlinePatch {
 }
 
 public enum FogSightlineError: LocalizedError {
-    case uneven, weak, unstable
+    case uneven, weak, unstable, clipped
     public var errorDescription: String? {
         switch self {
+        case .clipped: return "The target clipped. Restart in clear air with a shorter shutter time."
         case .uneven: return "Align each box inside one evenly lit patch, away from its edges."
         case .weak: return "The clear target needs a brighter left patch and a darker right patch."
         case .unstable: return "Clear-air contrast is changing. Fix the target light and restart the baseline."
@@ -33,7 +34,9 @@ public struct FogPatchMeter {
         quadrants[(row / 8) * 2 + column / 8].sample(red: red, green: green, blue: blue)
     }
     public func luminance() throws -> Double {
-        let values = try quadrants.map { try $0.luminance() }
+        let values: [Double]
+        do { values = try quadrants.map { try $0.luminance() } }
+        catch PhotometryError.clipped { throw FogSightlineError.clipped }
         let mean = values.reduce(0,+) / 4
         guard values.max()! - values.min()! <= max(0.012, 0.20 * mean) else { throw FogSightlineError.uneven }
         return mean
