@@ -23,6 +23,7 @@
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.modulation :as modulation]
+            [tolglow.lighting-capacity :as capacity]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]
@@ -107,6 +108,7 @@
                                 (sort-by (comp str :id) (vals (:compositions model))))
             :output {:values (preview/values output (get-in model [:rig :fixtures]))
                      :preview-only? true
+                     :lighting-capacity (:lighting-capacity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :compute (compute/status (:compute runtime))
@@ -204,6 +206,7 @@
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
+      :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
@@ -504,6 +507,7 @@
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
             settings (merge (get-in model [:settings scope]) values)
+            _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
         {:model (-> model (assoc-in [:settings scope] settings) (update :revision inc))
@@ -531,6 +535,12 @@
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
           (reset! (:patch runtime) {:fixtures fixtures :compiled patch}) patch))))
+
+(defn- capacity-plan! [runtime patch]
+  (let [cache (:capacity-plan runtime)]
+    (when-not (identical? patch (:patch @cache))
+      (vreset! cache {:patch patch :plan (capacity/prepare patch)}))
+    (:plan @cache)))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
@@ -601,11 +611,14 @@
                        #(if (= epoch (get-in % [:model :epoch]))
                           (assoc-in % [:status :audio-result] (select-keys result [:status :error])) %))))}))
 
-(defn- consume-audio! [runtime model]
+(defn- consume-audio! [runtime model time-ms]
   (let [captured (locking (:audio-input runtime)
                    (let [before @(:audio-input runtime)]
                      (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})
                      before))]
+    (when (and (:features captured) (= (:epoch model) (:epoch captured)))
+      (vreset! (:capacity-audio runtime) {:epoch (:epoch model) :received-ms time-ms
+                                         :energy-envelope (get-in captured [:features :energy-envelope])}))
     (if (= (:epoch model) (:epoch captured))
       (cond-> model
         (:features captured) (routing/admit-audio (:features captured))
@@ -807,7 +820,7 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms))))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
@@ -862,16 +875,36 @@
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
                            pause-layer (pause-layer! runtime model)
+                           patch (patch! runtime (get-in model [:rig :fixtures]))
+                           meter-opts (get-in model [:settings :lighting-capacity])
+                           plan (when (:enabled? meter-opts) (capacity-plan! runtime patch))
+                           audio @(:capacity-audio runtime)
+                           previous (when (= (:epoch model) (get-in before [:model :epoch]))
+                                      (get-in before [:output :lighting-capacity]))
+                           bypass? (or photo-session (calibration/current model) pause-layer (pause-look/blackout? model))
+                           limit (when plan
+                                   (capacity/control (merge capacity/defaults meter-opts)
+                                     previous
+                                     (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
+                                     bypass?))
+                           fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
+                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit bypass?
+                                                      (:reference-rms meter-opts (:reference-rms capacity/defaults))))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result
                                      #(resolve-frame
-                                     (patch! runtime (get-in model [:rig :fixtures])) (cond-> % (:block photo-session) (conj (:block photo-session)) pause-layer (conj pause-layer))
-                                     {:master (:master model) :blackout? (pause-look/blackout? model)
+                                     patch (cond-> % (:block fog) (conj (:block fog)) (:block photo-session) (conj (:block photo-session)) pause-layer (conj pause-layer))
+                                     {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
-                           result (:result resolved)]
-                       {:model (:model result) :output (:output resolved) :fault-events (:fault-events result)
+                           result (:result resolved)
+                           frame (cond-> (:output resolved)
+                                   plan (assoc :lighting-capacity
+                                               (merge limit (capacity/measure plan (get-in resolved [:output :universes]))
+                                                      (cond-> {:writers (capacity/writers plan (:contributions result))}
+                                                        fog (assoc :fog (:state fog))))))]
+                       {:model (:model result) :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
