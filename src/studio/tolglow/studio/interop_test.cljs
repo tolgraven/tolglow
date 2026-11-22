@@ -37,3 +37,10 @@
     (is (= 8.5 (aget (aget fixtures 0) "beam-angle")))
     (is (false? (aget (aget fixtures 0) "pseudo-fixture")))
     (is (not (contains? (first (:fixtures rig)) :relative-brightness)))))
+
+(deftest preview-controls-return-to-mounted-perform-engine-after-rig-unmount
+  (let [views {:previews {:rig :rig-view :perform :live-view}}]
+    (is (= :rig-view (interop/preview-engine views nil)))
+    (is (= :live-view (interop/preview-engine views :perform)))
+    (is (= :live-view (interop/preview-engine (update views :previews dissoc :rig) nil)))
+    (is (nil? (interop/preview-engine (update views :previews dissoc :rig) :rig)))))

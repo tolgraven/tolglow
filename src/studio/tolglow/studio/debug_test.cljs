@@ -68,3 +68,13 @@
         result (transition db [:subscribers/submit :save])]
     (is (string? (get-in result [:db :debug :catalog-error])))
     (is (nil? (:subscribers/http result)))))
+
+(deftest replacing-show-clears-pending-subscriber-and-reloads-visible-catalog
+  (let [before {:show {:runtime-id "replacement" :epoch 2}
+                :debug {:handle "debug" :saving? true :catalog {:stale true} :form {:id :old}}}
+        result (transition before [:subscribers/runtime-change])
+        stale ["debug" {:runtime-id "old" :epoch 1}]]
+    (is (= {:handle "debug"} (get-in result [:db :debug])))
+    (is (= [:subscribers/load] (:dispatch result)))
+    (is (= (:db result) (:db (transition (:db result) [:subscribers/error stale "late"]))))
+    (is (nil? (:dispatch (transition {} [:subscribers/runtime-change]))))))

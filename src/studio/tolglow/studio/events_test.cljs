@@ -127,7 +127,13 @@
 
 (deftest existing-definition-publication-is-optimistic
   (let [db (update-in base [:ui :definition] merge {:loaded-id "ember" :kind "effects" :version 2})
-        publish (transition db [:studio/publish-source false nil "{:id :ember :version 2}"])]
+        opened (transition db [:studio/definition-publish false])
+        event (assoc (:dispatch opened) 4 "{:id :ember :version 2}")
+        publish (transition (:db opened) event)
+        stale (assoc-in (:db publish) [:show :epoch] 999)]
+    (is (empty? (transition stale event)))
+    (is (empty? (transition stale (conj (get-in publish [:studio/http :on-success]) {:id "ember"}))))
+    (is (empty? (transition stale (conj (get-in publish [:studio/http :on-failure]) "late"))))
     (is (= 2 (get-in publish [:studio/http :body :expected-version])))
     (is (= "{:id :ember :version 2}" (get-in publish [:studio/http :body :source])))
     (is (true? (get-in publish [:db :ui :definition :publishing?])))))
