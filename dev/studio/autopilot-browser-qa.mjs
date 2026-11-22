@@ -9,6 +9,7 @@ async function state() {
   return r.json();
 }
 const before = await state();
+const signalID = 'qa/phrase-' + Date.now();
 assert.equal(before.status.output.type, 'preview');
 assert.ok(before.pages?.length && before.cues?.length && before.rig.fixtures.some(f => f.groups?.length));
 const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
@@ -69,13 +70,13 @@ try {
   assert.ok(group.scope['group-id'] && !group.scope['page-id']);
 
   await pilot.locator('summary').filter({hasText: 'Shared signals'}).click();
-  await pilot.getByLabel('New signal name').fill(':qa/phrase');
+  await pilot.getByLabel('New signal name').fill(':' + signalID);
   await pilot.getByRole('button', {name: 'Add shared waveform'}).click();
   await box(pilot, 'Brightness target source').selectOption({label: 'Shared signal'});
-  await box(pilot, 'Brightness target shared signal').selectOption({label: 'qa/phrase'});
+  await box(pilot, 'Brightness target shared signal').selectOption({label: signalID});
   const shared = (await write(pilot.getByRole('button', {name: 'Apply autopilot settings'}))).settings.autopilot;
-  assert.equal(shared.targets.brightness.signal, 'qa/phrase');
-  assert.equal(shared.signals['qa/phrase'].waveform, 'sine');
+  assert.equal(shared.targets.brightness.signal, signalID);
+  assert.equal(shared.signals[signalID].waveform, 'sine');
 
   await write(enable);
   await hdr.locator('summary').filter({hasText: 'Gain and spatial spill'}).click();
@@ -97,6 +98,16 @@ try {
   assert.ok((await write(hdr.getByRole('button', {name: 'Apply HDR settings'}))).settings.hdr.scope['group-id']);
   await box(hdr, 'Affected fixtures').selectOption({label: 'Entire rig'});
   assert.equal((await write(hdr.getByRole('button', {name: 'Apply HDR settings'}))).settings.hdr.scope, 'global');
+
+  const envelope = page.getByRole('region', {name: 'Output response envelope'});
+  await box(envelope, 'Attack response').selectOption('linear');
+  await box(envelope, 'Attack unit').selectOption('beats');
+  await envelope.getByRole('textbox', {name: 'Attack duration', exact: true}).fill('1/2');
+  await box(envelope, 'Release response').selectOption('blend');
+  await envelope.getByRole('textbox', {name: 'Release fraction', exact: true}).fill('1/4');
+  const shaped = (await write(envelope.getByRole('button', {name: 'Apply response'}))).settings['output-response'].global;
+  assert.deepEqual(shaped.attack, {mode: 'linear', beats: 0.5});
+  assert.deepEqual(shaped.release, {blend: 0.25});
 
   await page.setViewportSize({width: 390, height: 844});
   for (const root of [pilot, hdr]) {
