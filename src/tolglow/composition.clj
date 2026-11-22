@@ -3,6 +3,7 @@
   The host supplies milliseconds and, for beat sequences, transport :beat/:bpm.
   No clock, transport or output is started by loading this namespace."
   (:require [afterglow.control.model :as control]
+            [afterglow.render.layers :as layers]
             [afterglow.time :as time]
             [clojure.string :as str]
             [tolglow.registry :as registry]
@@ -33,6 +34,12 @@
     (when-not (and (map? (:params slot)) (map? launch)
                    (map? (:params launch {})) (#{:persistent :held :timed :one-shot} mode))
       (fail! [:slots index :launch] "Slot needs parameter maps and a supported launch mode"))
+    (when (and (contains? slot :targets) (not= :previous (:targets slot)))
+      (fail! [:slots index :targets] "Use :previous to include the targets of earlier layer members"))
+    (when (contains? slot :transforms)
+      (try (layers/validate-transforms! (:transforms slot))
+           (catch clojure.lang.ExceptionInfo cause
+             (fail! [:slots index :transforms] (.getMessage cause)))))
     (doseq [key [:duration-ms :duration-beats] :when (contains? slot key)]
       (when-not (positive-time? (get slot key))
         (fail! [:slots index key] "Slot duration must be positive and finite")))
@@ -66,6 +73,9 @@
                  (every? map? (:slots definition))
                  (#{:ms :beats} (:timebase definition :beats)))
     (fail! [] "Composition needs portable data, an ID, mode, timebase and nonempty slot vector"))
+  (let [opacity (get definition :opacity 1)]
+    (when-not (and (registry/finite-number? opacity) (<= 0 opacity 1))
+      (fail! [:opacity] "Layer opacity must be between zero and one")))
   (let [timebase (:timebase (sequence/normalize-spec {:steps (:slots definition)
                                                         :timebase (:timebase definition)}))
         duration {:duration (if (= :beats timebase) {:beats 1} {:ms 1000})}
@@ -97,7 +107,7 @@
       (update :composition-tokens #(apply dissoc % (owned-tokens model execution)))
       (update :composition-runs dissoc id)))
 
-(defn- perform [model time-ms intent]
+(defn- perform [model time-ms definition intent]
   (let [token (:token intent) id (get-in model [:composition-tokens token])
         launch? (= :composition/launch (:op intent))
         command (cond-> {:op (if launch? :cue/launch :instance/end)
@@ -105,6 +115,10 @@
                          :source {:adapter :composition :session-id (:owner-id intent)}
                          :show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms}
                   launch? (assoc :cue-id (:cue-id intent) :launch (:launch intent))
+                  launch? (assoc-in [:source :native-layer]
+                                    (merge {:id (:owner-id intent) :member (:member intent)
+                                            :opacity (:opacity definition 1)}
+                                           (select-keys (get-in definition [:slots (:member intent)]) [:transforms :targets])))
                   (not launch?) (assoc :instance-id id))]
     (if (and (not launch?) (not (get-in model [:instances id])))
       (update model :composition-tokens dissoc token)
@@ -123,7 +137,7 @@
           intents (when-not stale?
                     (mapv #(hash-map :op :composition/release :token % :owner-id (:owner-id execution))
                           (owned-tokens model execution)))
-          stopped (reduce #(perform %1 time-ms %2) model intents)]
+          stopped (reduce #(perform %1 time-ms (:definition execution) %2) model intents)]
       (-> (discard-execution stopped id execution) (update :revision inc)))
     model))
 
@@ -148,7 +162,7 @@
           clock (if (= :beats (:timebase spec)) (transport-clock model time-ms) time-ms)
           initial (when sequence? (sequence/initial-state spec clock owner))
           plan (when-not sequence? (macro/launch-plan owner (:slots definition)))
-          model (if plan (reduce #(perform %1 time-ms %2) model (:intents plan)) model)
+          model (if plan (reduce #(perform %1 time-ms definition %2) model (:intents plan)) model)
           run (cond-> {:owner-id owner :epoch (:epoch model) :definition definition :started-at-ms time-ms
                         :playback {:kind (:mode definition) :playing? (if sequence? playing? true)
                                    :started? (not sequence?) :slot-count (count (:slots definition))}}
@@ -194,7 +208,7 @@
              waiting? (and (not (:playing? clock)) (not (get-in execution [:playback :started?])))
              intents (if waiting? [] intents)
              state (if waiting? (:state execution) state)
-             model (reduce #(perform %1 time-ms %2) model intents)]
+             model (reduce #(perform %1 time-ms (:definition execution) %2) model intents)]
          (if done? (discard-execution model id execution)
              (assoc-in model [:composition-runs id]
                        (assoc execution :state state :clock clock
