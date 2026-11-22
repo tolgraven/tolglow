@@ -10,12 +10,12 @@
   {:id :render/dmx-venue-atmosphere :title "Integrate delivered fogger output with venue diffusion and air exchange" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/atmosphere.clj"] :depends-on [:foundation/tests]
    :acceptance ["Integrate delivered fogger output with venue diffusion and air exchange in the normal show path with regression coverage"] :evidence ["Afterglow #38 and #39 and Tolglow #73 cover rated flow, independently held coarse and fine universe data, plume mixing, ventilation, held physical output after failed sends, and Transit save with a stalled render clock."]}
-  {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :in-progress :owner "studio-atmosphere"
+  {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/show-atmosphere.js"] :depends-on [:foundation/tests]
-   :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence []}
-  {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :in-progress :owner "energy-coupling"
+   :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence ["Tolglow #74 and #85 verified and captured the local jet and dispersed room with the production Transit stream and offscreen WebGL worker. Calibrated light loss across the 7 m sightline matched the show at 0%, 10.58% and 50.13%."]}
+  {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Map audio energy to the fraction of calibrated rig light output in use in the normal show path with regression coverage"] :evidence []}
+   :acceptance ["Map audio energy to the fraction of calibrated rig light output in use in the normal show path with regression coverage"] :evidence ["Tolglow #75 samples final packed light channels, estimates weighted visible capacity, exposes active writers, and verifies independent lighting and fog responses to captured audio."]}
   {:id :studio/fog-machine-and-room-properties
    :title "Edit fog output profiles and venue ventilation in Studio"
    :kind :implementation :status :done :owner nil
@@ -46,9 +46,9 @@
   {:id :studio/reflected-beams :title "Preview finite beams, receiving surfaces, and reflected light" :kind :implementation :status :done :owner nil
    :paths ["tolglow/js/preview/reflections.js"] :depends-on [:foundation/tests]
    :acceptance ["Preview finite beams, receiving surfaces, and reflected light through the production entry point and regression tests"] :evidence ["Tolglow #67 verifies a visible reflected colored patch in real WebGL outside the main cone and verifies occlusion on both paths."]}
-  {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :in-progress :owner "studio-picking"
+  {:id :rig/point-and-follow :title "Pick a surface to aim a head or track a moving footprint" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/rig/surfaces.clj"] :depends-on [:foundation/tests]
-   :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence []}
+   :acceptance ["Pick a surface to aim a head or track a moving footprint through the production entry point and regression tests"] :evidence ["Tolglow #68 and #70 cover touch/world aiming, continuously animated leaders, tangent followers, release and physical constrained footprints on both rich and compact paths."]}
   {:id :rig/photometry-session :title "One-metre output-confirmed relative brightness calibration" :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/rig/photometry.clj"] :depends-on [:foundation/tests]
    :acceptance ["One-metre output-confirmed relative brightness calibration through the production entry point and regression tests"] :evidence ["test/tolglow/fixture_photometry_test.clj verifies physical publisher receipts, cross-type measurements, full RGBWA channels, UV suppression, registry publication and lease expiry with an in-memory capture sink"]}
