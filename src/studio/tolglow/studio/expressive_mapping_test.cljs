@@ -34,11 +34,19 @@
         request (transition edited [:expressive/save])]
     (is (nil? (get-in (expressive/device-policy edited) [:cues :user/wash :params :user/level])))
     (is (contains? (get-in (expressive/device-policy edited) [:cues :user/wash :params]) :user/level))
-    (is (= {:enabled? false} (get-in request [:studio/http :body :values :devices :stage/roli])))
-    (is (= {:axis "pressure"} (get-in request [:studio/http :body :values :devices :stage/push :params :user/level])))
+    (is (= "stage/push" (get-in request [:studio/http :body :device-id])))
+    (is (= {:axis "pressure"} (get-in request [:studio/http :body :values :params :user/level])))
     (is (= "expressive" (get-in request [:studio/http :body :scope])))
     (is (= "r1" (get-in request [:studio/http :body :runtime-id])))
     (is (= 2 (get-in request [:studio/http :body :expected-epoch])))))
+
+(deftest reopening-connections-keeps-save-completion-live
+  (let [saving (transition ready [:expressive/save])
+        reopened (db-after (:db saving) [:expressive/open])
+        ok (get-in saving [:studio/http :on-success])
+        fail (get-in saving [:studio/http :on-failure])]
+    (is (false? (get-in (db-after reopened (conj ok {:status "accepted"})) [:expressive-mapping :saving?])))
+    (is (false? (get-in (db-after reopened (conj fail "failed")) [:expressive-mapping :saving?])))))
 
 (deftest manual-binding-comes-from-backend-plan-not-client-semantics
   (let [result (db-after ready [:expressive/mode :user/level "manual"])]

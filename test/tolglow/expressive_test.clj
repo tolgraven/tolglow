@@ -94,7 +94,12 @@
                  (:mappings (expressive/preview (:model @(:state runtime)) {:device-id "push-main" :cue-id :ember})))))
         (is (= 422 (:status (app (request "/api/settings" {:scope :expressive
                                                            :values {:devices {:bad {:enabled? "false"}}}})))))
-        (is (= stored (get-in @(:state runtime) [:model :settings :expressive]))))
+        (is (= stored (get-in @(:state runtime) [:model :settings :expressive])))
+        (doseq [id ["stage/a" "stage/b"]]
+          (is (= 200 (:status (app (request "/api/settings" {:scope :expressive :device-id id :values {:enabled? false}}))))))
+        (let [policies (get-in @(:state runtime) [:model :settings :expressive :devices])]
+          (is (= {:enabled? false} (get policies :stage/a) (get policies :stage/b)))
+          (is (= (:devices stored) (dissoc policies :stage/a :stage/b)))))
       (finally (show/stop! runtime)))))
 
 (deftest invalid-imported-policy-is-rejected-before-restoring-state

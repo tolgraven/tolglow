@@ -130,7 +130,7 @@
       (if (or (> (count (:order state)) (:max-entries store)) (> (:bytes state) (:max-bytes store)))
         (let [old (first (:order state))]
           (recur (-> state (update :bytes - (get-in state [:entries old :bytes]))
-                     (update :entries dissoc old) (update :order #(subvec % 1)))))
+                     (update :entries dissoc old) (update :order #(into [] (next %))))))
         state))))
 
 (defn project!

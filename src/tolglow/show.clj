@@ -540,7 +540,7 @@
           _ (when (= :rejected (get-in published [:ack :status]))
               (throw (ex-info "Cannot publish aim path" (:ack published))))
           cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (inc (:version previous 0)) :reload-policy :preserve-state})
+                               :version (aim-paths/next-version (:registry model) :cues cue-id) :reload-policy :preserve-state})
           result (apply-message (:model published)
                                 {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
       (when (= :rejected (get-in result [:ack :status]))
@@ -572,7 +572,13 @@
         (output-scheduler/validate-options (:presentation values)))
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
-            settings (lighting/edit-settings scope (get-in model [:settings scope]) values)
+            settings (if (and (= scope :expressive) (contains? payload :device-id))
+                       (let [current (get-in model [:settings scope] {})
+                             id (:device-id payload)
+                             key (or (some #(when (= (keyword %) (keyword id)) %) (keys (:devices current)))
+                                     (keyword id))]
+                         (assoc-in current [:devices key] values))
+                       (lighting/edit-settings scope (get-in model [:settings scope]) values))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
