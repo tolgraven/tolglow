@@ -55,34 +55,35 @@
 
 (defn- finish-fields!
   "Validate and optionally scale exclusively owned IR results before publication."
-  [outputs envelope-result envelope-attributes]
+  [outputs envelope-result envelope-attributes hdr?]
   (doseq [[attribute {:keys [values]}] outputs]
     (let [^doubles values values
           geometric? (contains? compiler/geometry-attributes attribute)
+          emission-hdr? (and hdr? (compiler/hdr-attribute? attribute))
           scale (double (if (and envelope-result (contains? envelope-attributes attribute))
                           (:value envelope-result) 1.0))
           scale? (not (== 1.0 scale))]
       (dotimes [index (alength values)]
         (let [value (* scale (aget values index))]
-          (when-not (and (Double/isFinite value) (or geometric? (<= 0.0 value 1.0)))
+          (when-not (and (Double/isFinite value) (or geometric? (and (<= 0.0 value) (or emission-hdr? (<= value 1.0)))))
             (fail! [:outputs attribute :value]
                    (if geometric? "World coordinates must be finite"
                        "Computed fixture output must be finite and within [0,1]")))
           (when scale? (aset-double values index value))))))
   outputs)
 
-(defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes]
+(defn- contribution [{:keys [target-ids evaluate blend prepared expressions]} env envelope-result envelope-attributes hdr?]
   (let [batch {:target-ids target-ids :blend blend}]
     {:kind :batch
      :batch
      (if prepared
        (assoc batch :field-request
-              {:group prepared :env (dissoc env :state)
+              {:group prepared :hdr? hdr? :env (dissoc env :state)
                :scales (when envelope-result
                          (into {} (for [attribute (keys expressions) :when (envelope-attributes attribute)]
                                     [attribute (:value envelope-result)])))})
        (let [result (evaluate env)]
-         (finish-fields! (:outputs result) envelope-result envelope-attributes)
+         (finish-fields! (:outputs result) envelope-result envelope-attributes hdr?)
          (merge result batch)))}))
 
 (defn- floating-value? [value]
@@ -191,7 +192,7 @@
                         :meter (time/normalize-meter (:timing-meter instance))}
                    exact? (exact-environment? numeric env)
                    blocks (if (or done? exact?) []
-                              (mapv #(contribution % env envelope-result envelope-attributes) groups))]
+                              (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]
                (if exact? (scalar-step context)
                    (-> context
                        (assoc :state state :done? done?)

@@ -78,14 +78,17 @@
              :inputs inputs
              :evaluate (if bind-pure (bind-pure {:pure? true :inputs inputs} calculate) calculate)))))
 
-(defn- normalized-output? [attribute value]
+(defn hdr-attribute? [attribute]
+  (or (= attribute :color) (= attribute :dimmer) (contains? registry/emitter-attributes attribute)))
+
+(defn- normalized-output? [attribute value hdr?]
   (cond
     (geometry-attributes attribute)
     (and (vector? value) (= 3 (count value)) (every? registry/finite-number? value))
     (= attribute :color)
     (and (vector? value) (= 3 (count value))
-         (every? #(and (registry/finite-number? %) (<= 0 % 1)) value))
-    :else (and (registry/finite-number? value) (<= 0 value 1))))
+         (every? #(and (registry/finite-number? %) (<= 0 %) (or hdr? (<= % 1))) value))
+    :else (and (registry/finite-number? value) (<= 0 value) (or (and hdr? (hdr-attribute? attribute)) (<= value 1)))))
 
 (defn compile-plan
   "Validate an effect once and expose a reusable runtime compilation plan.
@@ -185,7 +188,7 @@
                                     value (if (and envelope-fn (some #{attribute} envelope-attributes))
                                             (if (vector? value) (mapv #(* (:value envelope-result) %) value)
                                                 (* (:value envelope-result) value)) value)]
-                                (when-not (normalized-output? attribute value)
+                                (when-not (normalized-output? attribute value (:hdr? frame))
                                   (fail! [:outputs i :value] "Computed fixture output must be finite and within [0,1]"))
                                 {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs)]
                            (if targets

@@ -1,0 +1,137 @@
+(ns tolglow.autopilot
+  "Run the musical feedback loop at the show boundary. Only ordinary data in
+  the run extension is saved. Compiled fixture plans and prior blocks belong
+  to the frame owner."
+  (:require [afterglow.time :as time]
+            [tolglow.autopilot.actions :as actions]
+            [tolglow.autopilot.config :as config]
+            [tolglow.autopilot.controller :as controller]
+            [tolglow.autopilot.statistics :as statistics]
+            [tolglow.lighting-activity :as activity]
+            [tolglow.lighting-capacity :as capacity]))
+
+(def run-path [:extensions ::run])
+
+(defn- run [model] (get-in model run-path))
+
+(defn- scope-plan [previous model patch meter scope]
+  (let [page? (and (map? scope) (:page-id scope))
+        page (when page? (get-in model [:pages (:page-id scope)]))
+        registry (when page? (:registry model))
+        groups (when (:group-id (when (map? scope) scope))
+                 (get-in model [:extensions :tolglow.lighting-scenes/control :groups]))]
+    (if (and (identical? patch (:patch previous)) (identical? meter (:meter previous))
+             (= scope (:scope previous)) (identical? page (:page previous))
+             (identical? registry (:registry previous)) (identical? groups (:groups previous)))
+      previous
+      (let [capacities (:source-capacities meter)
+            ids (into [] (filter #(pos? (get-in capacities [% :relative-capacity] 0)))
+                      (controller/scope-ids model scope))]
+        {:patch patch :meter meter :scope scope :page page :groups groups :registry registry
+         :ids ids :cue-ids (when page (vec (distinct (vals (:cells page)))))
+         :scoped-meter (if (= scope :global) meter (assoc meter :source-capacities (select-keys capacities ids)))}))))
+
+(defn- source-rows [meter ids frame]
+  (let [readings (when (:universes frame) (capacity/measure-sources meter (:universes frame) ids))]
+    (mapv (fn [id] {:id id :capacity (get-in meter [:source-capacities id :relative-capacity])
+                    :level (get-in readings [id :local-brightness] 0.0)}) ids)))
+
+(defn- perform [model state decisions time-ms command]
+  (reduce (fn [{:keys [model state author-request]} decision]
+            (let [result (actions/apply-decision model state decision time-ms command)]
+              (cond-> result author-request (assoc :author-request author-request))))
+          (actions/cleanup model state time-ms command) decisions))
+
+(defn- stop-run [model prior time-ms command]
+  (if prior
+    (-> (:model (actions/stop model (:actions prior) time-ms command))
+        (update :extensions dissoc ::run)
+        (update :variables dissoc :lighting/autopilot))
+    model))
+
+(defn prepare
+  "Decide and edit the model before effects run. raw-frame is delayed: a vetoed
+  or non-due decision never renders a forecast. A cue launched by this decision
+  participates in this tick's ordinary composition."
+  [model previous-cache patch meter time-ms suspended? raw-frame command]
+  (let [prior (run model)]
+    (if-not (config/enabled? model)
+      {:model (stop-run model prior time-ms command)}
+      (let [opts (merge config/defaults (get-in model [:settings :autopilot]))
+            scope (:scope opts)
+            changed? (and prior (not= scope (:scope prior)))
+            model (if changed? (stop-run model prior time-ms command) model)
+            prior (when-not changed? prior)
+            clock (assoc (time/frame-clock (assoc model :time-ms time-ms)) :epoch (:epoch model))
+            context {:start-clock (or (:start-clock prior) clock)}
+            model (assoc model :time-ms time-ms)
+            targets (config/targets model opts context)
+            knobs (config/policy-values model opts context)
+            plan (scope-plan (:plan previous-cache) model patch meter scope)
+            previous-state (:controller prior)
+            due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
+            previous-report (:statistics prior)
+            sources (when due? (source-rows meter (:ids plan) (force raw-frame)))
+            result (when due?
+                     (controller/advance previous-state
+                       {:clock clock :epoch (:epoch model) :sources sources :targets targets
+                        :statistics previous-report :cue-ids (:cue-ids plan) :options knobs}))
+            action-state (or (:actions prior) (actions/initial-state model scope))
+            performed (perform model action-state (:actions result) time-ms command)
+            next-run (cond-> (assoc prior :scope scope :start-clock (:start-clock context) :targets targets
+                                    :actions (:state performed))
+                       due? (assoc :controller (:state result) :gains (:gains result) :decision (:report result))
+                       (seq (:actions result)) (assoc :last-action (:result performed)))]
+        {:model (assoc-in (:model performed) run-path next-run)
+         :plan plan :clock clock :context context :options opts :tolerance (:tolerance knobs)
+         :author-request (:author-request performed)}))))
+
+(defn- multiply-gains [base more]
+  (if (seq more) (merge-with * base more) base))
+
+(defn render-options [model prepared blocked?]
+  (let [standalone (get-in model [:settings :hdr])
+        managed? (and (:plan prepared) (not blocked?))
+        independent? (and (:enabled? standalone) (not blocked?))]
+    (when (or managed? independent?)
+      (let [current (run model)
+            opts (if independent? standalone (get-in prepared [:options :hdr]))
+            opts (merge config/hdr-defaults opts)
+            fields (config/hdr-values model opts (:context prepared))
+            scope (if independent? (:scope opts :global) (:scope current))
+            ids (when-not (= :global scope)
+                  (if independent? (controller/scope-ids model scope) (get-in prepared [:plan :ids])))]
+        (cond-> fields
+          ids (assoc :fixture-ids (vec ids))
+          managed? (update :source-gains multiply-gains (:gains current))
+          managed? (update :instance-gains multiply-gains (get-in current [:actions :instance-gains])))))))
+
+(defn observe [model prepared previous-cache frame blocks suspended? raw-options]
+  (if-let [plan (:plan prepared)]
+    (let [prior (run model)
+          clock (:clock prepared)
+          global-report (when (= :global (:scope plan)) (:lighting-activity frame))
+          measured (when-not global-report
+                     (activity/advance-meter (:activity previous-cache) (:patch plan) (:scoped-meter plan)
+                                             frame blocks (:time-ms clock)))
+          scene (:scene (or global-report (:report measured)))
+          levels {:brightness (:brightness scene 0.0) :activity (:score scene 0.0)}
+          history (statistics/advance (:history prior) (cond-> clock suspended? (assoc :playing? false))
+                                    (get-in prepared [:options :window]) levels (:targets prior) (:tolerance prepared))
+          view {:enabled? true :scope (:scope prior) :targets (:targets prior) :statistics (:report history)
+                :decision (:decision prior) :last-action (:last-action prior)}
+          model (-> model (assoc-in (conj run-path :history) (:state history))
+                    (assoc-in (conj run-path :statistics) (:report history))
+                    (assoc-in [:variables :lighting/autopilot] view))]
+      {:model model :cache {:plan plan :activity (:state measured) :raw-options raw-options :blocks blocks}})
+    {:model model}))
+
+(defn accept-authored [model {:keys [request definition error]} time-ms command]
+  (let [current (run model)]
+    (if (and current (config/enabled? model))
+      (let [result (if error (actions/reject-authored model (:actions current) request error)
+                     (actions/accept-authored model (:actions current) request definition time-ms command))]
+        {:model (-> (:model result) (assoc-in (conj run-path :actions) (:state result))
+                    (assoc-in (conj run-path :last-action) (:result result)))
+         :ack {:status :accepted :result (:result result)}})
+      {:model model :ack {:status :rejected :reason :disabled}})))
