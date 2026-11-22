@@ -151,6 +151,7 @@
 
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/photometry" :photometry "/api/calibration" :calibration
+   "/api/fog-calibration" :fog-calibration
    "/api/command" :command "/api/definition" :definition "/api/rig" :rig
    "/api/aim-path" :aim-path "/api/surface-aim" :surface-aim
    "/api/audio/returns/configure" :audio-return-configure
@@ -201,9 +202,10 @@
 
 (defn- get-routes
   [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
-           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! event-subscribers!]}]
+           app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
+    "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
     "/api/photometry" (available photometry! "Fixture photometry unavailable" (fn [_] (ok (photometry!))))
     "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
     "/api/state" (fn [{:keys [query-params]}]

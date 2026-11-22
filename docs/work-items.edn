@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
+ [{:id :rig/stationary-fog-calibration :title "Measure venue clearing and mixing from a locked iPhone sightline"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/atmosphere/calibration.clj" "tolglow/src/tolglow/rig/fog_calibration.clj" "tolglow/native/iOS/FogCalibration"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Fit effective clearance from a manual burst and clearance, mixing and extinction from metered output, then apply and save in the rig"]
+   :evidence ["Afterglow #40 recovered known synthetic optical coefficients; Tolglow #83 exercises delivered DMX, scan retry, fit, application and saved calibration. iOS acquisition is Tolglow #81. Physical fluid, room, camera and ventilation comparison is pending."]}
+  {:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
    :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence ["Afterglow #37 passed 387 JVM tests and 5 native OpenGL tests, including color, vector, beat-ratio and deferred shader results."]}
   {:id :studio/compound-native-editor :title "Author and perform ordered native layer modifiers from the composition editor" :kind :implementation :status :done :owner nil
