@@ -11,7 +11,8 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
-import {clamp, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
+import {clamp, roomDimensions, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
+import {SurfaceReflections} from './reflections.js';
 import {VolumetricFog} from './fog.js';
 import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.js';
 
@@ -87,8 +88,9 @@ export class SceneRenderer {
     };
     this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(.0015, .002, .003);
     this.materials = createMaterials();
-    this.apertureUniform = {value: new Float32Array(MAX_LIGHTS)};
-    for (const material of Object.values(this.materials)) finiteApertureMaterial(material, this.apertureUniform);
+    this.apertureUniform = {value: new Float32Array(MAX_LIGHTS + 2)};
+    this.patchRadii = {value: new Float32Array(MAX_LIGHTS + 2)};
+    for (const material of Object.values(this.materials)) finiteApertureMaterial(material, this.apertureUniform, this.patchRadii);
     this.refreshEnvironment();
     this.hemisphere = new THREE.HemisphereLight(0xc5d9f0, 0x3a2c20, 0); this.scene.add(this.hemisphere);
     this.workLamp = new THREE.DirectionalLight(0xffe3c4, 0); this.workLamp.position.set(2, 6, 4); this.scene.add(this.workLamp);
@@ -182,40 +184,53 @@ export class SceneRenderer {
     this.displayedValues = output;
     this.activeLights = 0;
     this.lightEntries = [];
+    const candidates = [];
     for (const entry of this.fixtures) {
       const resolved = output[entry.id] || {}, direction = fixtureDirection(entry.fixture, resolved), rgb = emittedColor(resolved);
       const world = new THREE.Quaternion().setFromUnitVectors(DOWN, new THREE.Vector3(...direction));
       entry.head.quaternion.copy(entry.root.quaternion).invert().multiply(world);
       entry.yoke.rotation.y = axisDegrees(entry.fixture, resolved, 'pan') * Math.PI / 180;
-      entry.lensMaterial.emissive.setRGB(...rgb).multiplyScalar(8);
+      const brightness = entry.fixture['relative-brightness'] ?? 1;
+      entry.lensMaterial.emissive.setRGB(...rgb).multiplyScalar(8 * brightness);
       if (!entry.light) continue;
       const light = entry.light;
-      const lit = Math.max(...rgb) > 0;
+      const lit = brightness > 0 && Math.max(...rgb) > 0;
       if (lit) this.activeLights++;
-      light.color.setRGB(...rgb); light.intensity = 145; light.angle = Math.min(Math.PI * .45, beamAngle(entry.fixture, resolved) * 1.35);
+      light.color.setRGB(...rgb); light.intensity = 145 * brightness; light.angle = beamAngle(entry.fixture, resolved);
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
       const optics = opticalFrustum(entry.fixture.position, direction, light.angle, apertureRadius(entry.fixture));
       light.position.copy(optics.virtual);
+      light.distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
       if (light.shadow.camera.near !== optics.apexDistance + .006) {
         light.shadow.camera.near = optics.apexDistance + .006; light.shadow.camera.updateProjectionMatrix();
       }
       light.shadow.camera.far = light.distance; light.userData.apexDistance = optics.apexDistance;
       light.target.position.copy(light.position).add(new THREE.Vector3(...direction)); light.target.updateMatrixWorld();
       if (!lit) continue;
-      this.lightEntries.push({position: optics.optical, virtualPosition: optics.virtual, apexDistance: optics.apexDistance, apertureRadius: optics.radius, direction: optics.axis, color: light.color,
-        angle: light.angle, penumbra: light.penumbra, intensity: light.intensity, distance: light.distance, shadow: light.castShadow ? light.shadow : null});
+      const beam = {position: optics.optical, virtualPosition: optics.virtual, apexDistance: optics.apexDistance, apertureRadius: optics.radius, direction: optics.axis, color: light.color,
+        angle: light.angle, penumbra: light.penumbra, intensity: light.intensity, distance: light.distance, shadow: light.castShadow ? light.shadow : null, pseudo: entry.fixture['pseudo-fixture']};
+      this.lightEntries.push(beam);
+      this.reflections.addCandidate(candidates, entry, beam, resolved['beam-footprint']);
     }
     // Low-order room bounce estimate: only actual emitted, floor-directed light
     // contributes. This illuminates airborne density, not a second fixture output.
     const bounce = new THREE.Color(0, 0, 0);
     for (const entry of this.lightEntries) {
+      if (entry.pseudo) continue;
       const downward = Math.max(0, -entry.direction.y);
-      bounce.add(entry.color.clone().multiplyScalar(downward * .045));
+      bounce.add(entry.color.clone().multiplyScalar(downward * .045 * entry.intensity / 145));
     }
     this.bounceColor = bounce;
     // The permanent spot order matches Three's shadow-first uniform order.
-    this.apertureUniform.value.fill(0);
-    this.spots.forEach((light, i) => {this.apertureUniform.value[i] = light.userData.apexDistance || 0;});
+    if (this.spots.length) {
+      if (candidates.length) this.content.updateMatrixWorld(true);
+      this.reflections.resolve(candidates);
+      this.reflections.illuminate(this.fog.field, this.fogAmount);
+      this.spotUniformOrder.forEach((light, i) => {
+        this.apertureUniform.value[i] = light.userData.apexDistance || 0;
+        this.patchRadii.value[i] = light.userData.patchRadius || 0;
+      });
+    }
     if (this.ready) this.updateStatus();
   }
   rebuild(rig) {
@@ -223,10 +238,12 @@ export class SceneRenderer {
       this.scene.remove(this.content); disposeGeometry(this.content);
       for (const entry of this.fixtures) entry.dispose();
       for (const light of this.spots || []) light.dispose();
+      this.reflections?.dispose();
     }
-    const r = rig.room || {}; this.room = [r.width || 12, r.height || 5, r.depth || 10].map(v => clamp(Number(v) || 1, 1, 100));
+    this.room = roomDimensions(rig.room);
+    this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.fog?.setRoom(this.room);
-    this.content = new THREE.Group(); this.scene.add(this.content); this.content.add(createRoom(this.room, this.materials));
+    this.content = new THREE.Group(); this.scene.add(this.content); this.content.add(createRoom(this.room, this.materials, rig.surfaces || []));
     this.trusses = [];
     for (const spec of (rig.trusses || []).slice(0, 24)) {
       if (Array.isArray(spec.position) && spec.position.every(Number.isFinite) && Number.isFinite(spec.length) && spec.length > 0)
@@ -234,7 +251,7 @@ export class SceneRenderer {
     }
     this.spots = []; this.lightIds = [];
     this.fixtures = (rig.fixtures || []).slice(0, this.options.fixtures).map((fixture, index) => {
-      const entry = createMovingHead(fixture, this.materials); finiteApertureMaterial(entry.lensMaterial, this.apertureUniform); entry.id = String(fixture.id); entry.fixture = fixture;
+      const entry = createMovingHead(fixture, this.materials); finiteApertureMaterial(entry.lensMaterial, this.apertureUniform, this.patchRadii); entry.id = String(fixture.id); entry.fixture = fixture;
       const rotation = (fixture['rotation-deg'] || [0, 0, 0]).map(v => (Number(v) || 0) * Math.PI / 180);
       entry.root.rotation.set(...rotation, 'ZYX'); this.content.add(entry.root);
       if (index < MAX_LIGHTS) {
@@ -248,6 +265,10 @@ export class SceneRenderer {
       }
       return entry;
     });
+    const optedIn = (rig.fixtures || []).filter(f => f['pseudo-fixture']).length;
+    const reflectedCap = this.quality === 'mobile' || this.quality === 'low' ? 1 : 2;
+    this.reflections = new SurfaceReflections(this.content, Math.min(reflectedCap, optedIn), Math.min(512,this.options.shadowSize), this.fixtures);
+    this.spotUniformOrder = [...this.spots.filter(l => l.castShadow), ...this.reflections.lights, ...this.spots.filter(l => !l.castShadow)];
     this.totalFixtureCount = (rig.fixtures || []).length;
     this.lightEntries = [];
   }
@@ -350,6 +371,7 @@ export class SceneRenderer {
     if (this.bounceColor) ambient.add(this.bounceColor);
     this.fog.setAmbient?.({color: ambient, intensity: 1, groundColor: ambient.clone().multiplyScalar(.5)});
     this.fog.update(simulate ? dt : 0, this.lightEntries || []);
+    this.reflections.illuminate(this.fog.field, this.fogAmount);
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
@@ -378,6 +400,8 @@ export class SceneRenderer {
       idleBudgetMs: Math.max(0, this.frameInterval - this.lastCPU), nextFrameAt: this.nextFrameAt, frames: this.draws,
       geometryCount: this.renderer?.info.memory.geometries || 0, textureCount: this.renderer?.info.memory.textures || 0,
       programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
+      reflectedPatches: this.reflections?.patches.map(p => ({fixture:p.id, surface:p.surface, center:p.position.toArray(),
+        majorRadius:p.major.length(), minorRadius:p.minor.length()})) || [],
       lightIds: this.lightIds, fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: MAX_LIGHTS,
       shadowCount: this.renderedShadows || 0, workLight: this.workLight, fogAmount: this.fogAmount,
       camera: this.camera?.position.toArray(), target: this.controls?.target.toArray(), fog: this.fog?.stats(),
@@ -396,6 +420,7 @@ export class SceneRenderer {
     this.navigation?.dispose(); this.controls?.dispose(); this.fog?.dispose();
     for (const entry of this.fixtures) entry.dispose();
     for (const light of this.spots || []) light.dispose();
+    this.reflections?.dispose();
     if (this.content) disposeGeometry(this.content);
     this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
     this.sceneTarget?.dispose(); this.compositeTarget?.dispose(); this.environmentTarget?.dispose();

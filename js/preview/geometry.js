@@ -41,7 +41,7 @@ export function createTruss(spec, materials) {
   mesh.castShadow = mesh.receiveShadow = true; group.add(mesh); return group;
 }
 export function createMovingHead(fixture, materials) {
-  const radius = apertureRadius(fixture);
+  const radius = .119;
   const root = new THREE.Group(); root.name = `fixture:${fixture.id}`; root.position.fromArray(fixture.position || [0, 0, 0]);
   // Fixture origin is the optical origin, unchanged by decorative geometry.
   const base = box(root, [.52, .15, .36], [0, .62, 0], materials.housing, .025);
@@ -64,7 +64,7 @@ export function createMovingHead(fixture, materials) {
   for (let n = 0; n < 6; n++) box(head, [.27, .012, .012], [0, .17 + n * .034, .156], materials.rubber);
   // Small manufacturer display is non-emissive: no invented output light.
   box(base, [.12, .035, .004], [0, -.015, .182], materials.rubber, .003);
-  return {root, head, yoke, lensMaterial,
+  const entry = {root, head, yoke, lensMaterial,
     setAperture(fixture) {
       const next = apertureRadius(fixture), scale = next / radius;
       barrel.scale.set(scale, 1, scale); lens.scale.set(scale, scale, 1);
@@ -73,6 +73,8 @@ export function createMovingHead(fixture, materials) {
     },
     dispose() {lensMaterial.dispose();}
   };
+  entry.setAperture(fixture);
+  return entry;
 }
 export function disposeGeometry(root) {
   const geometries = new Set(); root.traverse(object => { if (object.geometry) geometries.add(object.geometry); });

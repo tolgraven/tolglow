@@ -8,7 +8,7 @@
     "studio:check": "shadow-cljs compile studio",
     "studio:test": "shadow-cljs compile studio-test && node -r ./dev/studio-node-globals.cjs target/studio-tests.js",
     "preview:build": "node js/preview/build.mjs",
-    "preview:test": "node --test test/js/preview/*.test.mjs"
+    "preview:test": "node --test --test-concurrency=1 test/js/preview/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.6.2",

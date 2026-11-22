@@ -2,6 +2,10 @@
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const radians = d => d * Math.PI / 180;
 const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+export function roomDimensions(room) {
+  return [room?.width, room?.height, room?.depth].map((value, i) =>
+    Number.isFinite(value) && value > 0 ? value : [12, 5, 10][i]);
+}
 export function normalize(v) {
   const n = Math.hypot(...v);
   return n > 1e-9 ? v.map(x => x / n) : [0, -1, 0];
@@ -51,10 +55,13 @@ export function emittedColor(output = {}) {
 }
 export function beamAngle(fixture, output = {}) {
   const range = fixture['zoom-range-deg'];
-  const zoom = clamp(Number(output.zoom) || 0, 0, 1);
-  const full = Array.isArray(range) && range.length === 2 ? range[0] + zoom * (range[1] - range[0]) : (fixture['beam-angle'] || 12) + zoom * 34;
-  return clamp(radians(full / 2), .012, Math.PI * .42);
+  const zoom = clamp(Number(output.zoom ?? output.channels?.zoom) || 0, 0, 1);
+  const valid = value => Number.isFinite(value) && value > 0 && value < 180;
+  const full = Array.isArray(range) && range.length === 2 && range.every(valid)
+    ? range[0] + zoom * (range[1] - range[0])
+    : valid(fixture['beam-angle']) ? fixture['beam-angle'] : 12 + zoom * 34;
+  return radians(full / 2);
 }
 export function structuralKey(rig) {
-  return JSON.stringify({room: rig?.room, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
+  return JSON.stringify({room: rig?.room, surfaces: rig?.surfaces, reflections: (rig?.fixtures || []).filter(f => f['pseudo-fixture']).length, fixtures: (rig?.fixtures || []).map(f => ({id: f.id, type: f['fixture-type'], aperture: f['lens-radius-m']})), trusses: (rig?.trusses || []).map(t => ({id: t.id, length: t.length}))});
 }
