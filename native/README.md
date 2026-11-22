@@ -179,3 +179,11 @@ Official references:
 - [CMMotionManager device motion](https://developer.apple.com/documentation/coremotion/cmmotionmanager)
 - [CMDeviceMotion](https://developer.apple.com/documentation/coremotion/cmdevicemotion)
 - [OSC 1.0 specification](https://opensoundcontrol.stanford.edu/spec-1_0.html)
+
+## Relative fixture brightness
+
+On iPhone choose **Scan rig → Measure fixture brightness**, connect to the Studio origin and select one representative of each fixture type. Select the reference first. Cover the rear wide camera with the same neutral diffuser throughout the run. Position its face one metre from each fixture’s lens on the centerline of its beam. Keep the diffuser facing the source and other lighting steady. This measures relative on-axis illumination in that geometry. Beam width affects it. Absolute lux, total lumens and electrical watts are different quantities.
+
+Choose a shutter speed before arming. The iPhone uses the rear physical wide camera, minimum ISO, fixed shutter, locked focus and white balance, unity zoom and SDR color. A capture waits for the host to confirm physical presentation, allows settling, then samples 15 frames for each of dark and full white. The center grid uses linearized Rec. 709 luminance. Clipped, unstable and low-contrast readings can be retaken. If the shutter or diffuser needs changing, stop and start the whole run again. At a mains or PWM frequency that produces unstable readings, try a longer shutter and a denser neutral diffuser.
+
+Once every type has a complete dark/white pair, Save sends the measurements in reference order to the show. The host computes ratios using each pair’s white-minus-dark signal. Navigating away, backgrounding, a camera interruption or a lost connection stops the session. The host lease also releases output when an iPhone cannot send cancellation. iPhone ISP tone processing and spectral sensitivity can vary, especially for narrowband LEDs. Camera repeatability and fixture-to-fixture agreement require physical measurements on the intended hardware.
