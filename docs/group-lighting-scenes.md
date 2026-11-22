@@ -48,7 +48,8 @@ priority remain in effect. Slow or changing cues may keep a group seeking.
 A fully lit source under a low master or a restricted color may show **Limited**
 or **Unlit**. If a foreground manual look keeps the group above target even with
 the owned scene at zero, the group reports **Over target**. Release only stops
-the group’s owned instance. A show backup preserves the target, source and
+the group’s owned instance. A registered subscriber can create a fresh look on
+its next matching event. A show backup preserves the target, source and
 owned instance, with instance identity rebound on restore.
 
 ## Drive groups from music or code

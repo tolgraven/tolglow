@@ -241,6 +241,7 @@
     (check! (map? (get model key)) [key] "Complete show needs this map"))
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
+  (lighting-scenes/validate-state! model)
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)

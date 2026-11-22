@@ -24,8 +24,10 @@
 
 (defn snapshot [model eligible]
   {:eligible-fixture-ids eligible
-   :groups (mapv (fn [g] (select-keys g [:group-id :fixture-ids :target :actual :status :source-effect-id
-                                         :instance-id :generation :target-var :effect-ids :allow-generated?]))
+   :groups (mapv (fn [g]
+                   (assoc (select-keys g [:group-id :fixture-ids :target :actual :status :source-effect-id
+                                         :gain :instance-id :generation :target-var :effect-ids :allow-generated?])
+                          :source-params (get-in model [:instances (:instance-id g) :params])))
                  (sort-by (comp str :group-id) (vals (groups model))))})
 
 (defn validate-request [{:keys [op group-id target fixture-ids effect-ids target-var params allow-generated?]}]
@@ -38,6 +40,20 @@
                  (or (nil? params) (and (map? params) (registry/data? params)))
                  (or (nil? allow-generated?) (boolean? allow-generated?)))
     (fail "A lighting scene needs a group, an apply/vary/release operation and normalized target" {:group group-id})))
+
+(defn validate-state! [model]
+  (when-let [{:keys [groups receipts] :as state} (get-in model [:extensions ::control])]
+    (when-not (and (map? state) (map? (or groups {})) (or (nil? receipts) (and (vector? receipts) (<= (count receipts) 128))))
+      (fail "Invalid saved lighting scene state" {}))
+    (reduce-kv
+     (fn [occupied id {:keys [group-id gain generation target fixture-ids instance-id] :as group}]
+       (validate-request (assoc group :op :apply))
+       (when-not (and (= group-id id) (unit? gain) (unit? target) (pos-int? generation)
+                      (string? instance-id) (seq fixture-ids) (= (count fixture-ids) (count (distinct fixture-ids)))
+                      (not-any? occupied fixture-ids))
+         (fail "Invalid or overlapping saved lighting group" {:group-id id}))
+       (into occupied fixture-ids)) #{} groups))
+  model)
 
 (defn- targets [model {:keys [group-id fixture-ids]} old]
   (let [rig (fixtures model)
@@ -60,7 +76,9 @@
 
 (defn- normalize-ids [model request]
   (let [rig (fixtures model)
-        group-ids (into (set (keys (groups model))) (mapcat :groups) rig)]
+        active (set (keys (groups model)))
+        group-ids (if (contains? active (existing-id active (:group-id request))) active
+                    (into active (mapcat :groups) rig))]
     (cond-> (update request :group-id (partial existing-id group-ids))
       (:fixture-ids request) (update :fixture-ids #(mapv (partial existing-id (set (map :id rig))) %))
       (:effect-ids request) (update :effect-ids #(mapv (partial existing-id (set (keys (get-in model [:registry :effects])))) %)))))
@@ -247,7 +265,8 @@
          (nil? instance) (update-in m location dissoc id)
          (or (not (unit? target)) (not (number? value))) m
          :else
-         (let [suspended? (or suspended? (:blackout? m) (zero? (:master m)) (false? (get-in m [:transport :playing?])))
+         (let [suspended? (or suspended? (:blackout? m) (get-in instance [:system :paused?]) (= :releasing (:phase instance))
+                              (zero? (:master m)) (false? (get-in m [:transport :playing?])))
                error (- target value)
                close? (<= (abs error) 0.015)
                next-gain (cond (or close? suspended?) gain

@@ -123,6 +123,8 @@
         repeated (scenes/apply-request first-model request 2)]
     (is (= [:wash] (vec (keys (scenes/groups repeated)))))
     (is (identical? first-model repeated))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (persistence/validate-model (assoc-in repeated [:extensions :tolglow.lighting-scenes/control :groups :wash :gain] -1))))
     (is (thrown? clojure.lang.ExceptionInfo (scenes/apply-request repeated (assoc request :target 0.4) 2)))
     (is (= 2 (get-in (scenes/groups (scenes/apply-request repeated (assoc request :command-id "turn-2") 3))
                       [:wash :generation])))))
