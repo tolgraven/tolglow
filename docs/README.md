@@ -72,6 +72,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Expressive performance](product/expressive-performance.md) | Modulation/categories, MPE/controllers, lighting synth, musical patchbay and sharing |
 | [System controls](system-controls.md) | Instance/category pause, opacity and independent musical AR |
 | [Modulation](modulation.md) | Seeded typed modulation, targeting and holds |
+| [Compound cues and native layers](native-composition.md) | Ordered color, aim and musical transforms, reusable modifier effects and layer opacity |
 | [Effect recipes](effect-recipes.md) | Declarative musical/spatial construction helpers |
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
