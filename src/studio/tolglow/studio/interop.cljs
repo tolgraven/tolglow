@@ -59,6 +59,9 @@
   ;; Maps of fixture IDs and the IDs in the rig must use the same full name.
   (clj->js data :keyword-fn #(subs (str %) 1)))
 
+(defn preview-output [show]
+  (preview-data (select-keys (:output show) [:values :atmosphere])))
+
 (defn preview-rig [rig]
   (preview-data
    (update rig :fixtures
@@ -80,7 +83,7 @@
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
     (aset frame "rig" js-rig)
-    (aset frame "output" #js {:values (preview-data (get-in show [:output :values]))})
+    (aset frame "output" (preview-output show))
     (aset frame "cut?" (boolean (or (:cut? show)
                                     (some #(#{"effect/reloaded" "instance/finished" :effect/reloaded :instance/finished}
                                             (:type %)) intents))))
