@@ -1277,6 +1277,8 @@
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
+          "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
+                                                         (select-keys envelope [:expected-epoch]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
