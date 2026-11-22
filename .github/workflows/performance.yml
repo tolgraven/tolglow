@@ -32,6 +32,8 @@ on:
     paths:
       - 'src/tolglow/**'
       - 'dev/tolglow/bench_show.clj'
+      - 'dev/tolglow/bench_performance_controls.clj'
+      - 'dev/tolglow/bench_activity_opacity.clj'
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
       - 'dev/tolglow/bench_movers_reference.clj'
@@ -150,6 +152,12 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein with-profile +benchmark run -m tolglow.bench-performance-controls > ../performance-artifact/performance-controls.edn
+      - name: Measure continuous alpha sweeps across layered pixel effects
+        if: hashFiles('tolglow/dev/tolglow/bench_activity_opacity.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.bench-activity-opacity > ../performance-artifact/activity-opacity.edn
       - name: Compare baseline and repeat candidate on the same runner
         if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
         working-directory: tolglow

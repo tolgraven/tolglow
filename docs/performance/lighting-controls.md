@@ -28,6 +28,7 @@ Both runs ended with 1,056 of 2,112 sources above standby and 341.87 estimated w
 ## Isolate a stage
 
 - For cached matching on a 2,048-pixel static tint, run `lein run -m tolglow.bench-group-feedback 2048 50 global`. This compares matched output with the same settled look without feedback and checks packet equality. [Group feedback](group-feedback.md)
+- For two continuous alpha sweeps across three overlapping effects on 2,048 RGBW pixels, run `lein with-profile +benchmark run -m tolglow.bench-activity-opacity`. Sharing the per-source calculation for identical layer membership reduced median scoring CPU from 19.53 to 2.23 ms and p95 from 27.83 to 4.20 ms (60 warmup, 120 measured). This isolates activity attribution and checks contributions while lower layers show through. The hosted artifact is `activity-opacity.edn`.
 - For the allocator alone, run `lein with-profile +benchmark run -m tolglow.perf.lighting-budget`. It alternates packed RGBW frames and checks post-allocation watts and active counts on every frame.
 
 [Operating the lighting controls](../group-lighting-scenes.md) · [Complete profiling guide](../performance-profiling.md)
