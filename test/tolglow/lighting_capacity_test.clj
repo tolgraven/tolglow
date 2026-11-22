@@ -2,6 +2,9 @@
   (:require [afterglow.render.frame :as frame]
             [clojure.test :refer [deftest is testing]]
             [tolglow.demo :as demo]
+            [tolglow.compiler :as compiler]
+            [tolglow.output.pause-look :as pause]
+            [tolglow.registry :as registry]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.persistence :as persistence]
@@ -169,3 +172,20 @@
     (is (> (last (:color meter)) (first (:color meter))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (persistence/validate-model (assoc-in (white-look) [:settings :lighting-capacity] {:reference-rms 0}))))))
+
+(deftest catalog-and-ambient-look-use-the-renderer-emitter-spectrum
+  (let [fixture {:id :extra :universe 1 :address 1 :max-watts 120
+                 :channels {:cool-white 1 :cyan 2 :lime 3 :dimmer 4}}
+        patch (frame/compile-patch [fixture])
+        emit (fn [field] {:target-id :extra :attribute field :value 1.0})
+        all {:kind :assignments :assignments (mapv emit (keys (:channels fixture)))}
+        frame (frame/resolve-contributions patch [all] {})
+        look (pause/ambient-layer [fixture] {:mode :ambient :color [0.42 0.42 0.42] :level 0.1})
+        paused (frame/resolve-contributions patch [all look] {})
+        plan (capacity/prepare patch)]
+    (is (near? 1.0 (:utilization (capacity/measure plan (:universes frame)))))
+    (is (< (:utilization (capacity/measure plan (:universes paused))) 0.1))
+    (doseq [field [:cool-white :lime :cyan]]
+      (is (empty? (registry/validate-definition :effects {:id field :version 1 :params {} :outputs {field (demo/constant 0.5)}})))
+      (is (ifn? (compiler/compile-effect {:id field :version 1 :params {} :outputs {field (demo/constant 1.0)}
+                                         :envelope {:attack {:beats 1} :attributes [field]}}))))))

@@ -8,7 +8,7 @@ settings and show snapshot as Studio.
 
 The meter reads the actual coarse/fine DMX bytes across every patched universe.
 It decodes channel inversion and applies the physical dimmer once. It includes
-RGB, white (including warm and cold emitters), amber, UV and dimmer-only lamps. Fog channels and other utility
+RGB, white (including warm and cold emitters), amber, cyan, lime, UV and dimmer-only lamps. Fog channels and other utility
 channels do not add any light. A head with a pure UV emitter contributes to
 rated emitter drive and has zero modeled visible output. Heads with a measured
 relative full-white brightness use the calibrated value. Other rated fixtures
@@ -64,7 +64,8 @@ and select patched fixtures with a named `:fog` channel. Headless options are
 `:fog? true` and `:fog-fixture-ids [:stage-fog]`. A crossing above 80% of
 reference RMS requests half drive for 0.4 seconds. The envelope must fall below
 55% and a six-second rest must elapse before another pulse. Losing fresh audio
-or disarming cancels this source’s demand on the next frame. Manual fog cues
+or disarming cancels this source’s demand on the next frame. An active stationary
+fog calibration scan also suppresses automatic fog requests. Manual fog cues
 combine by maximum. A pulse shown here is a requested show output. The atmosphere simulator
 uses fog DMX delivered by the output publisher at its delivery timestamps. The
 fogger’s own DMX curve, warm-up behavior and physical delivery determine what
