@@ -16,6 +16,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
+            [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
@@ -53,6 +54,7 @@
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.photometry :as photometry]
+            [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
@@ -181,7 +183,7 @@
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
+   (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
@@ -354,6 +356,7 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
+    :fog-calibration (fog-scan/operation model payload ((:now-ms (:publisher runtime))))
     :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
                                            (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :calibration (do (when (and (= :start (:op payload)) (photometry/current model))
@@ -871,7 +874,8 @@
                          restored? restored-output])))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms)) time-ms))
                        (calibration/advance physical-receipts physical-now)
-                       (photometry/advance physical-receipts physical-now)) [] false nil] messages)
+                       (photometry/advance physical-receipts physical-now)
+                       (fog-scan/expire physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
@@ -1020,17 +1024,20 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
-                        (or (not= type :photometry) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
+                        (or (not (#{:photometry :fog-calibration} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
                          (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+               payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
+                         (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
+                         payload)
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -1137,16 +1144,22 @@
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
-  (when (and (:expected-epoch metadata)
-             (not= (:expected-epoch metadata) (get-in @(:state runtime) [:model :epoch])))
-    (throw (ex-info "Agent run belongs to a previous show session" {})))
-  (let [arguments (data/normalize-json arguments)
+  (let [state @(:state runtime)
+        model (:model state)
+        _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
+            (throw (ex-info "Agent run belongs to a previous show session" {})))
+        arguments (if (= "set_lighting_scene" tool)
+                    (venue-tools/scene-request model arguments)
+                    (data/normalize-json arguments))
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
                         {:command-id (:command-id metadata)
                          :source {:adapter :agent :session-id (:run-id metadata)}})
         [type payload]
         (case tool
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+                                                            (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
+          "inspect_lighting" [:inspect-lighting arguments]
           "publish_effect" [:definition (merge envelope {:kind :effects :definition (:definition arguments)})]
           "put_cue" [:agent-cue (merge envelope {:cue (:cue arguments)})]
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
@@ -1155,7 +1168,9 @@
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
-    (if (= :inspect type) (snapshot runtime)
+    (case type
+      :inspect (project-snapshot runtime state)
+      :inspect-lighting (venue-tools/inspect state payload)
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn push-browser-display
@@ -1211,7 +1226,7 @@
   (let [[model output] (locking (:lock runtime)
                          (let [{:keys [model output]} @(:state runtime)
                                atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (merge model (connections/export-state (:connections runtime) model))
+                           [(cond-> (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))
                               atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 

@@ -15,6 +15,7 @@
     tolglow.integrations.agent-test
     tolglow.lighting-capacity-test tolglow.lighting-scenes-test tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
+    tolglow.venue-fog-test tolglow.fog-calibration-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.composition-test tolglow.agents-test
     tolglow.persistence-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
