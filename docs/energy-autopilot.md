@@ -32,6 +32,8 @@ When the look is too bright, the conductor can take fixtures to standby and rota
 
 Use `:duration {:bars 1}` to set the length of a new temporary look. Disabling the conductor releases its controls and ends its owned instances. Human-owned cues remain playable. To use a pad as the switch, configure `:enabled? false :enable-cue :conduct` and launch that cue. The conductor runs for the lifetime of the cue. An effect marked `:show-control? true` can have empty `:outputs {}` for this purpose.
 
+You can also ask show chat to start the conductor, for example “Keep front brightness near half, follow audio energy for visual activity, and reconsider every half-beat.” The agent uses `configure_energy_autopilot` to submit the same validated settings. Ask what the room is doing and `inspect_lighting` returns requested targets, effective targets and the two rolling measurements.
+
 ## Read the result
 
 ```clojure
