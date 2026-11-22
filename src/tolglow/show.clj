@@ -22,6 +22,7 @@
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.clock :as show-clock]
@@ -75,9 +76,10 @@
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
+  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
-            :receiver-surfaces (surfaces/receivers (:rig model))
+            :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
@@ -107,7 +109,8 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (preview/values output (get-in model [:rig :fixtures]))
+            :output {:values (reflections/with-footprints optics (preview/values output (get-in model [:rig :fixtures])))
+                     :edge-tracking (:edge-tracking output [])
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
@@ -116,7 +119,7 @@
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
+                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
@@ -217,6 +220,7 @@
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures (get-in model [:rig :fixtures]) :compiled patch})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
@@ -864,6 +868,8 @@
                                      (patch! runtime (get-in model [:rig :fixtures])) (cond-> % manual-aim (conj manual-aim) pause-layer (conj pause-layer))
                                      {:master (:master model) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
+                                      :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
+                                                       (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
                            result (:result resolved)]
