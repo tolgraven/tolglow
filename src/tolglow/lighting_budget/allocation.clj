@@ -51,7 +51,7 @@
 (defn- allocate-scope!
   "Only writes the privately owned granted array. Uses the same pass order
   for priority shedding and floor reservation regardless of frame format."
-  [^doubles granted ^doubles watts {:keys [indices rule capacity-watts]}]
+  [^doubles granted ^doubles watts ^doubles light {:keys [indices rule capacity-watts]}]
   (let [^ints indices indices
         n (alength indices)
         floor (double (:standby-level rule))
@@ -61,10 +61,11 @@
     (loop [k 0 requested 0.0 base 0.0 eligible-extra 0.0 active 0]
       (if (< k n)
         (let [i (aget indices k) drive (aget granted i) w (aget watts i)
-              extra (max 0.0 (- drive floor))]
+              extra (max 0.0 (- drive floor))
+              visible? (or (nil? light) (pos? (aget light i)))]
           (recur (inc k) (+ requested (* w drive)) (+ base (* w (min floor drive)))
-                 (+ eligible-extra (if (< active max-active) (* w extra) 0.0))
-                 (if (pos? extra) (inc active) active)))
+                 (+ eligible-extra (if (or (not visible?) (< active max-active)) (* w extra) 0.0))
+                 (if (and visible? (pos? extra)) (inc active) active)))
         (when (or (> requested cap) (> active max-active))
           (let [floor-scale (if (> base cap) (/ cap base) 1.0)
                 headroom (max 0.0 (- cap base))
@@ -73,17 +74,18 @@
               (when (< j n)
                 (let [i (aget indices j) drive (aget granted i) w (aget watts i)
                       extra (max 0.0 (- drive floor))
-                      eligible? (and (pos? slots) (pos? extra))
+                      visible? (or (nil? light) (pos? (aget light i)))
+                      eligible? (and (pos? extra) (or (not visible?) (pos? slots)))
                       above (cond (not eligible?) 0.0
                                   (not priority?) (* share extra)
                                   (zero? w) extra
                                   :else (min extra (/ left w)))]
                   (aset granted i (+ (* floor-scale (min drive floor)) above))
-                  (recur (inc j) (if eligible? (dec slots) slots) (max 0.0 (- left (* w above)))))))))))))
+                  (recur (inc j) (if (and eligible? visible?) (dec slots) slots) (max 0.0 (- left (* w above)))))))))))))
 
-(defn allocate [scopes watts ^doubles requested]
+(defn allocate [scopes watts light ^doubles requested]
   (let [granted (aclone requested)]
-    (doseq [scope scopes] (allocate-scope! granted watts scope))
+    (doseq [scope scopes] (allocate-scope! granted watts light scope))
     granted))
 
 (defn shortfall ^double [^doubles watts ^doubles requested ^doubles granted]
@@ -91,7 +93,7 @@
     (if (= i (alength watts)) cost
       (recur (inc i) (+ cost (* (aget watts i) (max 0.0 (- (aget requested i) (aget granted i)))))))))
 
-(defn report [scopes ^doubles watts ^doubles requested ^doubles actual]
+(defn report [scopes ^doubles watts ^doubles requested ^doubles actual ^doubles before-light ^doubles after-light]
   (reduce
    (fn [result {:keys [path indices rule capacity-watts unrated-count]}]
      (let [^ints indices indices n (alength indices) threshold (+ 1e-10 (double (:standby-level rule)))]
@@ -100,7 +102,9 @@
            (assoc-in result path {:capacity-watts capacity-watts :limit-watts (* capacity-watts (:limit rule))
                                   :requested-watts before :used-watts after :active-count active
                                   :source-count n :shed-count shed :unrated-count unrated-count})
-           (let [i (aget indices k) w (aget watts i) req (aget requested i) out (aget actual i)]
+           (let [i (aget indices k) w (aget watts i) req (aget requested i) out (aget actual i)
+                 lit? (and (> out threshold) (or (nil? after-light) (pos? (aget after-light i))))
+                 wanted? (and (> req threshold) (or (nil? before-light) (pos? (aget before-light i))))]
              (recur (inc k) (+ before (* w req)) (+ after (* w out))
-                    (if (> out threshold) (inc active) active)
-                    (if (and (> req threshold) (<= out threshold)) (inc shed) shed))))))) {} scopes))
+                    (if lit? (inc active) active)
+                    (if (and wanted? (not lit?)) (inc shed) shed))))))) {} scopes))

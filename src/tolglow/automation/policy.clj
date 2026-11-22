@@ -129,15 +129,36 @@
           (if (seq (:cues result)) result {:cues [] :reason :unsatisfied-emission}))))))
 
 (defn- make-room [model ctx selected owned time-ms]
-  (loop [model model loss (:unmet-watts selected 0.0) pending owned retired []]
-    (if (or (<= loss 1e-9) (empty? pending))
-      (assoc selected :retired retired :unmet-watts loss)
-      (let [id (first pending)
-            without (update model :instances dissoc id)
-            next-loss (cost without ctx (:cues selected) time-ms)]
-        (if (and next-loss (< next-loss (- loss 1e-9)))
-          (recur without next-loss (next pending) (conj retired id))
-          (recur model loss (next pending) retired))))))
+  (let [initial (:unmet-watts selected 0.0)
+        cost #(cost % ctx (:cues selected) time-ms)
+        ;; A later opaque cue can hide an earlier owner's contribution. If no
+        ;; single removal helps, try releasing their combination. Restore each
+        ;; unnecessary instance in reverse age order, preserving human writes.
+        trial (fn [model ids] (update model :instances #(apply dissoc % ids)))]
+    (loop [current model loss initial pending owned retired []]
+      (cond
+        (<= loss 1e-9) (assoc selected :retired retired :unmet-watts loss)
+        (seq pending)
+        (let [id (first pending)
+              without (trial current [id])
+              next-loss (cost without)]
+          (if (and next-loss (< next-loss (- loss 1e-9)))
+            (recur without next-loss (next pending) (conj retired id))
+            (recur current loss (next pending) retired)))
+        :else
+        (let [remaining (vec (remove (set retired) owned))
+              without (when (> (count remaining) 1) (trial current remaining))
+              best (when without (cost without))]
+          (if (and best (< best (- loss 1e-9)))
+            (loop [kept without pending (rseq remaining) release retired score best]
+              (if-let [id (first pending)]
+                (let [with (assoc-in kept [:instances id] (get-in model [:instances id]))
+                      restored (cost with)]
+                  (if (and restored (<= restored (+ score 1e-9)))
+                    (recur with (next pending) release restored)
+                    (recur kept (next pending) (conj release id) score)))
+                (assoc selected :retired release :unmet-watts score)))
+            (assoc selected :retired retired :unmet-watts loss)))))))
 
 (defn advance
   "Select cues when the interval expires. Model supplies :registry, canonical

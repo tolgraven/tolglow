@@ -63,6 +63,13 @@
         (let [scopes (allocation/scopes config (:fixtures patch) groups indices watts rated)]
           {:config config :patch patch :meter meter-plan :watts watts :target-indices target-indices
            :members (into {} (map (fn [id] [id (get-in groups [id :fixture-ids])])) (keys (:groups config)))
+           ;; For ordinary visible emitters, nonzero electrical drive already
+           ;; implies light. A shutter or UV channel can decouple the two.
+           :check-visible? (some (fn [{:keys [id channels]}]
+                                   (and (contains? indices id)
+                                        (or (:uv channels) (:shutter channels) (:strobe channels)
+                                            (zero? (get-in source-capacities [id :relative-capacity])))))
+                                 (:fixtures patch))
            :scopes scopes :standby-block (standby patch scopes)})))))
 
 (defn- target-gains [ctx ^doubles requested ^doubles granted]
@@ -74,6 +81,10 @@
           (when (< b a) (aset gains (aget target-indices i) (/ b a)))))
       gains)))
 
+(defn- visible-levels [ctx frame]
+  (when (:check-visible? ctx)
+    (capacity/local-brightnesses (:meter ctx) (:universes frame))))
+
 (defn apply-frame
   "Apply caps after ordinary effects, response and master. The reported watts
   come from the resulting packed emitter/dimmer bytes. For :standby-mode :all,
@@ -82,11 +93,13 @@
    (if (enabled? model) (apply-frame (prepare-frame-context nil model patch meter-plan) frame) frame))
   ([{:keys [scopes meter watts patch] :as ctx} frame]
    (let [requested (capacity/emitter-drives meter (:universes frame))
-         granted (allocation/allocate scopes watts requested)
+         light (visible-levels ctx frame)
+         granted (allocation/allocate scopes watts light requested)
          gains (target-gains ctx requested granted)
          adjusted (if gains (emission/scale-emission patch frame gains) frame)
-         actual (if gains (capacity/emitter-drives meter (:universes adjusted)) requested)]
-     (assoc adjusted :lighting-budget (allocation/report scopes watts requested actual)))))
+         actual (if gains (capacity/emitter-drives meter (:universes adjusted)) requested)
+         final-light (if gains (visible-levels ctx adjusted) light)]
+     (assoc adjusted :lighting-budget (allocation/report scopes watts requested actual light final-light)))))
 
 (defn planning-context
   "Prepare the meter and fixed budget scopes once for an entire selection."
@@ -96,7 +109,7 @@
 (defn unmet-watts [ctx frame]
   (when-not (::prediction/failed? frame)
     (let [requested (capacity/emitter-drives (:meter ctx) (:universes frame))
-          granted (allocation/allocate (:scopes ctx) (:watts ctx) requested)]
+          granted (allocation/allocate (:scopes ctx) (:watts ctx) (visible-levels ctx frame) requested)]
       (allocation/shortfall (:watts ctx) requested granted))))
 
 (defn- unused-id [registry]

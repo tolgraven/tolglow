@@ -161,6 +161,49 @@
     (is (= [:working] (mapv (comp :id :effect) (budget/rank-candidates m rig choices))))
     (is (= :working (get-in (auto/advance m {} (auto/initial-state 0 0 :auto) 0) [:commands 0 :cue-id])))))
 
+(deftest closed-shutters-and-ultraviolet-draw-watts-without-using-a-visible-slot
+  (let [rig [(assoc-in (lamp :closed 1 100 []) [:channels :shutter]
+                       {:offset 2 :functions [{:start 0 :end 127 :type :closed}
+                                              {:start 128 :end 255 :type :open}]})
+             {:id :uv :universe 1 :address 3 :channels {:uv 1} :max-watts 100}
+             {:id :rgb :universe 1 :address 4 :channels {:red 1 :green 2 :blue 3 :dimmer 4} :max-watts 90}
+             (lamp :white 8 60 [])]
+        defs [{:id :powered :targets [:closed :rgb] :outputs {:dimmer 1}}
+              {:id :uv-on :targets [:uv] :outputs {:uv 1}}
+              {:id :red :targets [:rgb] :outputs {:red 1}}
+              {:id :white-on :targets [:white] :outputs {:dimmer 1}}]
+        m (setup rig defs {:enabled? true :global {:max-active 1 :fixture-order [:closed :uv :rgb :white]}})
+        dark (:output (simulate m [:powered :uv-on]))
+        bright (:output (simulate m [:powered :uv-on :red :white-on]))]
+    (is (= 0 (get-in dark [:lighting-budget :global :active-count])) "An open RGB dimmer on black has no output")
+    (is (= 200.0 (get-in dark [:lighting-budget :global :used-watts])))
+    (is (= 1 (get-in bright [:lighting-budget :global :active-count])))
+    (is (= 1 (get-in bright [:lighting-budget :global :shed-count])))
+    (is (= 230.0 (get-in bright [:lighting-budget :global :used-watts])))
+    (is (= [255 0 255 255 0 0 255 0] (subvec (dmx bright) 0 8)))
+    (let [limited (:output (simulate (assoc-in m [:settings :lighting-budget :global :limit] 0.5)
+                                     [:powered :uv-on :red :white-on]))]
+      (is (<= (get-in limited [:lighting-budget :global :used-watts]) 175.0)))))
+
+(deftest overlapping-auto-instances-can-retire-together-to-make-room
+  (let [rig [(assoc-in (lamp :a 1 30 [:stage]) [:channels :pan] 2) (lamp :b 3 30 [:stage])]
+        defs [{:id :first :targets [:a] :outputs {:dimmer 1}} {:id :also-first :targets [:a] :outputs {:dimmer 1}}
+              {:id :pan :targets [:a] :outputs {:pan 0.2}} {:id :other :targets [:b] :outputs {:dimmer 1}}]
+        m (setup rig defs {:enabled? true :groups {:stage {:max-active 1}} :global {:limit 0.75}})
+        source {:adapter :auto :session-id "set"}
+        [active ids] (reduce (fn [[model ids] cue]
+                               (let [{:keys [model ack]} (launch model cue source 0)]
+                                 [model (conj ids (:instance-id ack))]))
+                             [m []] [:first :also-first :pan])
+        state (reduce auto/record-launch (auto/initial-state 0 0 "set") ids)
+        choose #(auto/advance % {:scope {:cue-ids [:other]}} state 1)
+        commands (:commands (choose active))
+        with-human (:model (launch active :first :human 1))]
+    (is (= (set (take 2 ids)) (into #{} (keep :instance-id) commands)))
+    (is (= [(last ids)] (get-in (choose active) [:state :owned-instance-ids])))
+    (is (= [:other] (into [] (keep :cue-id) commands)))
+    (is (= [:cue/launch] (mapv :op (:commands (choose with-human)))))))
+
 (deftest invalid-budget-configuration-is-rejected
   (doseq [settings [{:global {:limit ##NaN}} {:global {:standby-level 1.1}}
                     {:groups {:front {:max-active -1}}} {:global {:strategy :typo}}
