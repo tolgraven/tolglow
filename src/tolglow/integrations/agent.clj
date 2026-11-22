@@ -7,6 +7,9 @@
             [tolglow.integrations.providers :as providers])
   (:import [java.util UUID]))
 
+(def ^:private id-schema {:type "string" :minLength 1 :maxLength 256})
+(def ^:private page-offset {:type "integer" :minimum 0 :maximum 2147483647})
+
 (def default-tools
   "Provider-neutral tool declarations for the studio's semantic dispatcher.
   Definitions/auto policy still undergo domain validation in that dispatcher."
@@ -26,6 +29,26 @@
    {:name "set_parameter" :description "Set a bounded parameter on an exact active instance."
     :parameters {:type "object" :properties {:instance-id {:type "string"} :param {:type "string"} :value {}}
                  :required ["instance-id" "param" "value"] :additionalProperties false}}
+   {:name "inspect_lighting" :description "Discover patched and controlled lighting groups, eligible emitters, actual and target light levels, and current audio energy and fog measurements. Inspect before changing a group and again to check the measured outcome. Each list is paged independently. Optional group-id filters its members."
+    :parameters {:type "object" :properties {:group-id id-schema :offset page-offset :fixture-offset page-offset
+                                             :limit {:type "integer" :minimum 1 :maximum 64}}
+                 :additionalProperties false}}
+   {:name "set_lighting_scene"
+    :description "Create, vary or release a group's owned look. A 72% target is 0.72. Supply fixture-ids to create a custom group. Optional target-var binds a normalized show variable by path, e.g. [audio,features,energy-envelope], [fog/level] or [fog/observed-level]."
+    :parameters {:type "object" :properties {:op {:type "string" :enum ["apply" "vary" "release"]}
+                 :group-id id-schema :target {:type "number" :minimum 0 :maximum 1}
+                 :fixture-ids {:type "array" :items id-schema :minItems 1}
+                 :effect-ids {:type "array" :items id-schema}
+                 :target-var {:type "array" :items id-schema :minItems 1 :maxItems 16}
+                 :params {:type "object"} :allow-generated? {:type "boolean"}}
+                 :required ["op" "group-id"] :additionalProperties false}}
+   {:name "configure_energy_scene"
+    :description "Save or remove a persistent audio-energy crossing for a group. On rising above 'above', vary its look to target; another rise requires energy to fall back to 'below'. For save supply all three normalized numbers. Saving the binding does not start audio capture."
+    :parameters {:type "object" :properties {:op {:type "string" :enum ["save" "remove"]} :group-id id-schema
+                                             :below {:type "number" :minimum 0 :maximum 1}
+                                             :above {:type "number" :minimum 0 :maximum 1}
+                                             :target {:type "number" :minimum 0 :maximum 1}}
+                 :required ["op" "group-id"] :additionalProperties false}}
    {:name "configure_auto" :description "Configure automatic show selection policy using validated cue ids, timing and constraints."
     :parameters {:type "object" :properties {:configuration {:type "object"}}
                  :required ["configuration"] :additionalProperties false}}])

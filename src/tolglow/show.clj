@@ -16,6 +16,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as musical-time]
             [tolglow.data :as data]
+            [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
@@ -27,6 +28,7 @@
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [tolglow.waveforms :as waveforms]
@@ -35,6 +37,7 @@
             [tolglow.composition :as composition]
             [tolglow.output :as output]
             [tolglow.studio.display :as display]
+            [afterglow.output.retirement :as retirement]
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
@@ -80,6 +83,13 @@
 (defn repls [runtime] (connections/repls (:connections runtime)))
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- scene-eligible-ids [runtime fixtures]
+  (let [cache (:scene-eligible runtime)
+        previous @cache]
+    (if (identical? fixtures (:fixtures previous)) (:ids previous)
+      (let [ids (lighting-scenes/eligible-ids fixtures)]
+        (reset! cache {:fixtures fixtures :ids ids}) ids))))
+
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
   (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
@@ -89,6 +99,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
@@ -175,6 +186,7 @@
    (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         _ (lighting-scenes/validate-state! model)
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
@@ -224,6 +236,7 @@
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
+      :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
@@ -233,11 +246,11 @@
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
-      :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
       :optics-plan (atom (reflections/plan (:rig model)))
-      :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
+      :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
+                    :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
                    (or (get @cache definition)
@@ -337,6 +350,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
@@ -560,13 +574,30 @@
   (let [cached @(:patch runtime)]
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
-          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)}) patch))))
+          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)
+                                  :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
+          patch))))
 
 (defn- capacity-plan! [runtime patch]
   (let [cache (:capacity-plan runtime)]
     (when-not (identical? patch (:patch @cache))
       (vreset! cache {:patch patch :plan (capacity/prepare patch)}))
     (:plan @cache)))
+
+(defn- advance-light-scenes [runtime model patch frame now-ms bypass?]
+  (if (empty? (lighting-scenes/groups model))
+    (do (when (seq @(:scene-plans runtime)) (vreset! (:scene-plans runtime) {})) model)
+    (let [prior @(:scene-plans runtime)
+          plans (reduce-kv
+                 (fn [plans id {:keys [fixture-ids]}]
+                   (let [old (get prior id)]
+                     (assoc plans id (if (and (identical? patch (:patch old)) (= fixture-ids (:ids old))) old
+                                       {:patch patch :ids fixture-ids :plan (lighting-scenes/prepare patch fixture-ids)}))))
+                 {} (lighting-scenes/groups model))
+          measured (reduce-kv (fn [m id {:keys [plan]}]
+                                (assoc m id (:utilization (capacity/measure plan (:universes frame))))) {} plans)]
+      (vreset! (:scene-plans runtime) plans)
+      (lighting-scenes/feedback model measured now-ms bypass?))))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
@@ -600,18 +631,10 @@
 
 (defn- send-output! [runtime universes frame-number]
   (when-let [send! (get-in runtime [:sink :send!])]
-    (let [old @(:known-universes runtime)
-          current (set (keys universes))
-          retired (remove current old)]
-      (swap! (:known-universes runtime) into current)
-      (swap! (:retired-buffers runtime)
-             (fn [buffers] (reduce #(if (contains? %1 %2) %1 (assoc %1 %2 (byte-array 512))) buffers retired)))
-      ;; Continue zeroing retired universes; UDP has no acknowledgement and a
-      ;; single blackout packet on a patch change could be lost.
-      (let [packet (merge @(:retired-buffers runtime) universes)]
-        (send! packet frame-number)
-        (when (:plan @(:venue-fog runtime))
-          (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))))))
+    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)]
+      (send! packet frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -943,7 +966,7 @@
                                                       (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
-                       {:model (:model result) :output frame :fault-events (:fault-events result)
+                       {:model (advance-light-scenes runtime (:model result) patch frame time-ms bypass?) :output frame :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}})
                      (catch Exception error
@@ -1091,6 +1114,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1103,7 +1127,6 @@
 
                               (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
-                              #(send-output! runtime (into {} (map (fn [u] [u (byte-array 512)])) @(:known-universes runtime)) 0)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))
@@ -1119,24 +1142,33 @@
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
-  (when (and (:expected-epoch metadata)
-             (not= (:expected-epoch metadata) (get-in @(:state runtime) [:model :epoch])))
-    (throw (ex-info "Agent run belongs to a previous show session" {})))
-  (let [arguments (data/normalize-json arguments)
+  (let [state @(:state runtime)
+        model (:model state)
+        _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
+            (throw (ex-info "Agent run belongs to a previous show session" {})))
+        arguments (if (= "set_lighting_scene" tool)
+                    (venue-tools/scene-request model arguments)
+                    (data/normalize-json arguments))
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
                         {:command-id (:command-id metadata)
                          :source {:adapter :agent :session-id (:run-id metadata)}})
         [type payload]
         (case tool
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+                                                            (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
+          "inspect_lighting" [:inspect-lighting arguments]
           "publish_effect" [:definition (merge envelope {:kind :effects :definition (:definition arguments)})]
           "put_cue" [:agent-cue (merge envelope {:cue (:cue arguments)})]
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys envelope [:expected-epoch]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
-    (if (= :inspect type) (snapshot runtime)
+    (case type
+      :inspect (project-snapshot runtime state)
+      :inspect-lighting (venue-tools/inspect state payload)
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
 (defn push-browser-display

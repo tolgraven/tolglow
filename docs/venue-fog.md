@@ -15,6 +15,12 @@ The show holds the last successfully delivered DMX level for the elapsed physica
 
 Read `(get-in (tolglow.show/snapshot runtime) [:output :atmosphere])` for per-source emitted and local volumes, current flow, room volume, mixed volume and mixed density. The model measures relative optical density; a value of 1 represents one room volume of fog at rated output density. This value can exceed 1, and is independent of the light output percentage. Saving a show records the quantities. Restoring rebases the physical clock and starts the pumps' estimated flow at zero until another frame is presented.
 
+Fog is off at its declared physical DMX endpoint when no cue assigns the
+channel, during blackout, while the independent publisher waits for a fresh
+frame, and on shutdown. When repatching, the output continues to send that
+endpoint on the old addresses until another channel or fixture footprint owns
+them. This includes coarse/fine pairs spanning two universes.
+
 ## Calibrate a room with the iPhone
 
 Mount the phone with a fixed view through the room to a stationary, steadily illuminated bright patch and an adjacent dark patch. Measure the distance to the patches. Start the scan in the iPhone rig screen, capture clear air, run a normal fog cue, then switch the cue off and continue recording while the room clears. The phone locks exposure and white balance. The scan endpoint does not issue a fog cue. Leave the illumination, doors, ventilation and camera position steady for that measurement.

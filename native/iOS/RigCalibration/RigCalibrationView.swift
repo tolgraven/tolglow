@@ -11,6 +11,11 @@ struct RigCalibrationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     NavigationLink {
+                        FogCalibrationView()
+                    } label: {
+                        Label("Measure room fog", systemImage: "cloud.fog")
+                    }.disabled(scanner.running || client.busy || client.armed)
+                    NavigationLink {
                         BrightnessCalibrationView()
                     } label: {
                         Label("Measure fixture brightness", systemImage: "sun.max")
