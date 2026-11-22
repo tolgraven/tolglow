@@ -7,9 +7,9 @@ const WIDTH = 960, HEIGHT = 160;
 
 function localDisplayUrl(value) {
   const url = new URL(value);
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+  if (!["http:", "https:"].includes(url.protocol) || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
       url.username || url.password || url.pathname !== "/push-display")
-    throw new Error("Display URL must be an HTTP loopback /push-display page");
+    throw new Error("Display URL must be an HTTP(S) loopback /push-display page");
   return url.href;
 }
 
@@ -27,6 +27,14 @@ async function createWorker(options, launch) {
     throw new Error("Configure the Chromium executable explicitly; no browser is downloaded");
   for (const value of [timeout, startupTimeout])
     if (!Number.isInteger(value) || value < 10 || value > 60000) throw new Error("Display deadlines must be integers in 10..60000 milliseconds");
+  let httpCredentials;
+  if (options.authTokenEnv !== undefined) {
+    if (typeof options.authTokenEnv !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.authTokenEnv))
+      throw new Error("Invalid Studio operator token environment variable name");
+    const password = process.env[options.authTokenEnv];
+    if (!password) throw new Error("Studio operator token environment variable is unset");
+    httpCredentials = { username: "studio", password, origin: new URL(url).origin };
+  }
   let browser, context, page, busy = false, closed = false;
   async function close() {
     if (closed) return;
@@ -37,7 +45,7 @@ async function createWorker(options, launch) {
     browser = await launch({ executablePath: options.executablePath, headless: true, timeout: startupTimeout,
       args: ["--disable-dev-shm-usage", ...(options.noSandbox ? ["--no-sandbox"] : [])] });
     context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1,
-      reducedMotion: "reduce", colorScheme: "dark" });
+      reducedMotion: "reduce", colorScheme: "dark", ...(httpCredentials && { httpCredentials }) });
     page = await context.newPage();
     page.setDefaultTimeout(timeout);
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: startupTimeout });

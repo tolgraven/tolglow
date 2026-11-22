@@ -48,6 +48,21 @@
         (is (= 160 (:time-ms (show/snapshot r))))
         (is (= (inc (:frame-number before)) (:frame-number (show/snapshot r))))))))
 
+(deftest cold-and-live-restores-use-locally-installed-built-in-handlers
+  (with-runtime [original {}]
+    (let [document (show/export-show original)]
+      (with-runtime [fresh {:model (:model document)}]
+        (letfn [(check-graph! []
+                  (is (= 0 @(reactive/subscribe (show/reactions fresh) [:clock/beat])))
+                  (is (= {} @(reactive/subscribe (show/reactions fresh) [:runtime/effect-faults]))))]
+          (check-graph!)
+          (let [prior (show/reactions fresh)
+                reply (show/submit! fresh :import {:source (pr-str document)})]
+            (show/tick! fresh 0)
+            (is (= :accepted (:status @reply)))
+            (is (not (identical? prior (show/reactions fresh))))
+            (check-graph!)))))))
+
 (deftest saved-source-requires-the-runtime-owner-to-opt-in
   (doseq [trusted? [false true]]
     (with-runtime [r {:reactive-options {:trusted-source? trusted?}}]
