@@ -34,14 +34,26 @@
                                              :limit {:type "integer" :minimum 1 :maximum 64}}
                  :additionalProperties false}}
    {:name "set_lighting_scene"
-    :description "Create, vary or release a group's owned look. A 72% target is 0.72. Supply fixture-ids to create a custom group. Optional target-var binds a normalized show variable by path, e.g. [audio,features,energy-envelope], [fog/level] or [fog/observed-level]."
+    :description "Create, vary or release a group's owned look. Supply fixture-ids to create a custom group. Optional target-var binds a normalized show variable by path, e.g. [audio/energy], [fog/level] or [fog/observed-level]."
     :parameters {:type "object" :properties {:op {:type "string" :enum ["apply" "vary" "release"]}
                  :group-id id-schema :target {:type "number" :minimum 0 :maximum 1}
+                 :brightness-reference {:type "string" :enum ["global" "local"]}
                  :fixture-ids {:type "array" :items id-schema :minItems 1}
                  :effect-ids {:type "array" :items id-schema}
                  :target-var {:type "array" :items id-schema :minItems 1 :maxItems 16}
                  :params {:type "object"} :allow-generated? {:type "boolean"}}
                  :required ["op" "group-id"] :additionalProperties false}}
+   {:name "set_lighting_budget"
+    :description "Limit combined emission across active cues. Omit group-id for the rig. limit is the fraction of full weighted output; max-active limits concurrent sources above standby. Proportional shares the available output and priority preserves preferred fixtures first."
+    :parameters {:type "object"
+                 :properties {:group-id id-schema :enabled? {:type "boolean"}
+                              :limit {:type "number" :minimum 0 :maximum 1}
+                              :max-active {:type "integer" :minimum 0}
+                              :standby-level {:type "number" :minimum 0 :maximum 1}
+                              :standby-mode {:type "string" :enum ["shed" "all"]}
+                              :strategy {:type "string" :enum ["proportional" "priority"]}
+                              :fixture-order {:type "array" :items id-schema}}
+                 :additionalProperties false}}
    {:name "configure_energy_scene"
     :description "Save or remove a persistent audio-energy crossing for a group. On rising above 'above', vary its look to target; another rise requires energy to fall back to 'below'. For save supply all three normalized numbers. Saving the binding does not start audio capture."
     :parameters {:type "object" :properties {:op {:type "string" :enum ["save" "remove"]} :group-id id-schema

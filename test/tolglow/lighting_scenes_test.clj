@@ -2,6 +2,7 @@
   (:require [afterglow.render.frame :as frame]
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
+            [tolglow.compiler.batch :as batch]
             [tolglow.event-subscribers :as subs]
             [tolglow.lighting-scenes :as scenes]
             [tolglow.lighting-levels :as levels]
@@ -49,7 +50,7 @@
           (is (= :at-target (:status g)) (pr-str g))
           (is (< (abs (- (:actual g) 0.72)) 0.016))
           (is (= [:left :right] (:fixture-ids g)))
-          (is (nil? (:source-effect-id g)) "Saturated red cannot reach 72%; the owned emitter fill can"))
+          (is (nil? (:source-effect-id g)) "A saturated red source needs emitter fill to reach this target"))
         (is (= 89 (byte-at rt 4)) "Manual light on another fixture was not changed")
         (is (= :rejected (:status (style {:op :apply :group-id :overlap :fixture-ids [:right] :target 1}))))
         (is (= :rejected (:status (style {:op :apply :group-id :pump :fixture-ids [:pump] :target 1}))))
@@ -97,7 +98,7 @@
         analyzer (atom (analysis/new-analyzer {:energy-event-ms 50}))
         offset (atom 0)
         action {:op :lighting/scene :scene {:op :vary :group-id :wash :target 0.72 :effect-ids []}
-                :gate {:path [:data :energy-envelope] :above 0.2 :below 0.08}}
+                :gate {:path [:data :audio/energy] :above 0.2 :below 0.08}}
         send-audio (fn [amplitude]
                      (let [t @offset result (analysis/analyze @analyzer
                              {:samples (double-array (map #(* amplitude (Math/sin (* % (/ (* 2 Math/PI 100) 48000)))) (range 48000)))
@@ -119,6 +120,12 @@
       (dotimes [_ 3] (send-audio 0.0))
       (send-audio 0.9)
       (is (= 2 (:generation (group! rt :wash))))
+      (let [saved (persistence/read-string (show/export-show-source rt))
+            restored (persistence/thaw (demo/model) saved)
+            subscriber (first (get-in restored [:event-subscribers :subscribers]))]
+        (is (= :audio/energy (get-in subscriber [:match :type])))
+        (is (= [:data :audio/energy] (get-in subscriber [:actions 0 :gate :path])))
+        (is (pos? (get-in restored [:variables :audio/energy]))))
       (finally (show/stop! rt)))))
 
 (deftest repeated-agent-requests-and-patch-group-identities
@@ -211,4 +218,114 @@
         (is (= 1 (count reached)))
         (is (= 0.72 (get-in (first reached) [:data :target])))
         (is (every? types [:lighting/group-limited :lighting/group-released :lighting/rig-level :lighting/rig-unavailable])))
+      (finally (show/stop! rt)))))
+
+(deftest calibrated-scenes-match-unlike-fixtures-on-the-whole-rig-scale
+  (doseq [batch? [true false]]
+    (let [source {:id :tint :version 1 :targets [:a :b]
+                  :params {:hue {:type :color :default [1.0 0.5 0.0]}}
+                  :outputs {:color {:op :param :key :hue}}}
+          movers (mapv (fn [id address weight] {:id id :universe 1 :address address :groups [:wash]
+                                                :channels {:red 1 :green 2 :blue 3}
+                                                :measured-relative-brightness weight})
+                       [:a :b] [1 4] [4.0 1.0])
+          rig {:fixtures (conj movers {:id :spot :groups [:others] :universe 1 :address 7
+                                       :channels {:dimmer 1} :measured-relative-brightness 8.0})}
+          model (-> (demo/model) (assoc :rig rig) (assoc-in [:registry :effects :tint] source)
+                    (assoc-in [:registry :effects :manual-red] {:id :manual-red :version 1 :params {} :targets [:a]
+                                                              :outputs {:color (demo/constant [1.0 0.0 0.0])}})
+                    (assoc-in [:registry :cues :manual-red] {:id :manual-red :version 1 :effect-id :manual-red :priority 20}))
+          rt (show/create-runtime {:model model :batch? batch?})
+          time (atom 0)
+          edit (fn [opts] (issue! rt time :lighting-scene (merge {:op :apply :group-id :wash} opts)))
+          current #(group! rt :wash)
+          signal #(mapv :global-brightness (:sources (current)))
+          within? (fn [wanted got] (< (abs (- wanted got)) 0.004))]
+      (try
+        (is (= :accepted (:status (edit {:effect-ids [:tint] :brightness-reference :global :target 0.04}))))
+        (ticks! rt time 5)
+        (let [g (current)
+              [strong weak] (:sources g)
+              dmx (mapv #(bit-and 255 %) (take 7 (get-in @(:state rt) [:output :universes 1])))]
+          (is (= :at-target (:status g)))
+          (is (every? #(within? 0.04 %) (signal)))
+          (is (= [0.5 0.125] (mapv :global-maximum [strong weak])))
+          (is (< 3.8 (/ (:local-brightness weak) (:local-brightness strong)) 4.2))
+          (is (every? false? (map :limited? (:sources g))))
+          (is (within? (:global-brightness g) (:actual g)))
+          (is (= [0 0 0] [(dmx 2) (dmx 5) (dmx 6)]))
+          (is (<= (abs (- (dmx 0) (* 2 (dmx 1)))) 1))
+          (is (<= (abs (- (dmx 3) (* 2 (dmx 4)))) 1)))
+        (let [{:keys [instance-id]} (issue! rt time :command {:op :cue/launch :cue-id :manual-red})]
+          (ticks! rt time 3)
+          (is (= :over-target (:status (current))))
+          (is (< 0.13 (first (signal))))
+          (is (within? 0.04 (second (signal))))
+          (issue! rt time :command {:op :instance/remove :instance-id instance-id}))
+        (edit {:target 0.1})
+        (ticks! rt time 12)
+        (is (= [false true] (mapv :limited? (:sources (current)))) "A saturated hue runs out of headroom before full white")
+        (is (= :limited (:status (current))))
+        (let [id (:instance-id (current))
+              m (:model @(:state rt))]
+          (is (= :global (get-in (persistence/validate-model m) [:extensions ::scenes/control :groups :wash :brightness-reference])))
+          (is (= :accepted (:status (issue! rt time :command {:op :param/set :instance-id id :param :hue :value [0.0 0.0 0.0]}))))
+          (ticks! rt time 12)
+          (is (= [0.0 0.0] (signal)) "Matching a deliberately dark cue cannot turn the fixtures white")
+          (is (= id (:instance-id (current)))))
+        (edit {:brightness-reference :local :target 0.05})
+        (ticks! rt time 20)
+        (is (= :local (:brightness-reference (current))))
+        (is (= :rejected (:status (edit {:brightness-reference :wrong}))))
+        (finally (show/stop! rt))))))
+
+(deftest scene-variation-picks-a-source-that-fits-the-concurrent-budget
+  (let [lamps (mapv (fn [id address watts]
+                      {:id id :universe 1 :address address :channels {:dimmer 1} :max-watts watts :groups [:pair]})
+                    [:a :b] [1 2] [80 20])
+        source (fn [id targets] {:id id :version 1 :targets targets :params {} :outputs {:dimmer 1.0}})
+        m (-> (demo/model)
+              (assoc :rig {:fixtures lamps})
+              (assoc-in [:registry :effects :a-wide] (source :a-wide [:a :b]))
+              (assoc-in [:registry :effects :z-small] (source :z-small [:b]))
+              (assoc-in [:settings :lighting-budget] {:enabled? true :global {:limit 1.0 :max-active 1}}))
+        rt (show/create-runtime {:model m})
+        t (atom 0)]
+    (try
+      (is (= :accepted (:status (issue! rt t :lighting-scene {:op :vary :group-id :pair :target 0.1
+                                                              :effect-ids [:a-wide :z-small]}))))
+      (is (= :z-small (:source-effect-id (group! rt :pair))))
+      (finally (show/stop! rt)))))
+
+
+(deftest generated-global-tints-share-the-normal-typed-renderer
+  (let [capture (fn [batch?]
+                  (let [rt (local batch?) t (atom 0)]
+                    (try
+                      (issue! rt t :lighting-scene {:op :apply :group-id :wash :brightness-reference :global
+                                                    :effect-ids [] :target 0.12})
+                      (ticks! rt t 8)
+                      (let [m (:model @(:state rt))
+                            group (group! rt :wash)
+                            definition (get-in m [:instances (:instance-id group) :definition])]
+                        (is (< (abs (- (:actual group) 0.12)) 0.004))
+                        (is (= :batch (:backend (meta (batch/compile-effect definition fixtures)))))
+                        (mapv #(bit-and 255 %) (take 6 (get-in @(:state rt) [:output :universes 1]))))
+                      (finally (show/stop! rt)))))]
+    (is (= (capture false) (capture true)))))
+
+(deftest a-source-outside-the-table-can-limit-the-whole-group
+  (let [fixtures (mapv (fn [i] {:id (keyword (str "lamp-" i)) :groups [:all] :universe 1
+                                :address (inc i) :channels {:dimmer 1}
+                                :measured-relative-brightness (if (= i 24) 0.1 1.0)})
+                       (range 25))
+        rt (show/create-runtime {:model (assoc (demo/model) :rig {:fixtures fixtures})}) t (atom 0)]
+    (try
+      (issue! rt t :lighting-scene {:group-id :all :op :apply :brightness-reference :global :target 0.4 :effect-ids []})
+      (ticks! rt t 4)
+      (let [group (group! rt :all)]
+        (is (= 25 (:source-count group)))
+        (is (= 24 (count (:sources group))))
+        (is (every? false? (map :limited? (:sources group))))
+        (is (= :limited (:status group))))
       (finally (show/stop! rt)))))

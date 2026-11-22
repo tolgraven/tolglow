@@ -131,6 +131,9 @@
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
    :expressive (settings-module :expressive {}) :agents configure-agents
    :lighting-capacity (settings-module :lighting-capacity {:enabled? true})
+   :lighting-budget (settings-module :lighting-budget {:enabled? true})
+   :output-response (settings-module :output-response {:enabled? true})
+   :lighting-activity (settings-module :lighting-activity {:enabled? true})
    :fog-control (settings-module :fog-control {:enabled? true})
    :lighting-scenes install-lighting-scenes
    :fixtures install-fixtures :cue-pages install-cue-pages})

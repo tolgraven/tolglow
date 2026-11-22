@@ -22,3 +22,33 @@
   .scene-fields, .scene-custom { grid-template-columns:1fr; gap:8px; }
   .scene-controls input, .scene-controls select { font-size:16px; }
 }
+
+.source-readings { margin: 8px 0 14px; }
+.source-readings summary { cursor: pointer; min-height: 44px; align-content: center; color: var(--text); }
+.source-readings table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.source-readings th, .source-readings td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+.source-readings th:first-child { text-align: left; max-width: 14em; overflow-wrap: anywhere; }
+.source-readings small { color: var(--accent); display: block; }
+.output-policy { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; min-width: 0; }
+.output-policy header { flex-wrap: wrap; align-items: center; }
+.output-policy h3 { font-size: 15px; margin: 0; }
+.output-policy fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 14px; margin: 8px 0 12px; }
+.policy-grid label, .policy-scope { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.policy-scope { max-width: 28em; margin-top: 12px; }
+.output-policy .policy-toggle, .auto-panel .policy-toggle { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; font-size: 12px; min-height: 44px; }
+.policy-toggle input[type="checkbox"] { width: 19px; height: 19px; min-height: 0; }
+.policy-stage { display: grid; align-content: start; grid-template-columns: minmax(3.5em,1fr) minmax(5em,1fr); gap: 6px; }
+.policy-stage small { grid-column: 1/-1; color: var(--muted); overflow-wrap: anywhere; }
+.policy-readings { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 8px 0 14px; padding: 0; }
+.policy-readings dt, .policy-effects { font-size: 12px; color: var(--muted); }
+.policy-readings dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; color: var(--text); }
+.policy-effects { list-style: none; padding: 0; }
+.policy-effects li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; }
+@media (max-width: 600px) { .policy-grid { grid-template-columns: minmax(0,1fr); } }
+.scene-fields > .scene-target { grid-column: 1/-1; }
+.priority-order ol { margin: 0 0 8px; padding-left: 1.5em; }
+.priority-order li { padding: 3px 0; overflow-wrap: anywhere; }
+.priority-order li .button { min-width: 44px; min-height: 44px; padding: 4px; margin-left: 6px; }
+
+.policy-binding { grid-column: 1/-1; }

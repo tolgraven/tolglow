@@ -68,7 +68,7 @@
         (is (= :rejected (:status (issue :settings {:scope :lighting-capacity :values {:minimum 0.8 :maximum 0.2}}))))
         (is (= :accepted (:status (issue :settings {:scope :lighting-capacity
                        :values {:enabled? true :follow-energy? true :minimum 0.0 :maximum 1.0
-                                :reference-rms (* 2 (:energy-envelope data)) :signal-timeout-ms 500}}))))
+                                :reference-rms (* 2 (:audio/energy data)) :signal-timeout-ms 500}}))))
         (is (= :no-signal (:mode (tick))))
         (is (true? (get-in (show/export-show rt) [:model :settings :lighting-capacity :follow-energy?])))
         (feed 0.25)
@@ -189,3 +189,45 @@
       (is (empty? (registry/validate-definition :effects {:id field :version 1 :params {} :outputs {field (demo/constant 0.5)}})))
       (is (ifn? (compiler/compile-effect {:id field :version 1 :params {} :outputs {field (demo/constant 1.0)}
                                          :envelope {:attack {:beats 1} :attributes [field]}}))))))
+
+(deftest compare-source-output-on-a-shared-white-reference
+  (let [weak {:id :weak :universe 1 :address 1 :channels {:dimmer 1}
+              :measured-relative-brightness 1}
+        strong {:id :strong :universe 1 :address 2 :channels {:dimmer 1}
+                :measured-relative-brightness 4 :max-watts 100}
+        uv {:id :uv :universe 1 :address 3 :channels {:uv 1} :max-watts 70}
+        patch (frame/compile-patch [weak strong uv])
+        plan (capacity/prepare patch)
+        frame (frame/resolve-frame patch [{:target-id :weak :attribute :dimmer :value 0.8}
+                                          {:target-id :strong :attribute :dimmer :value 0.2}
+                                          {:target-id :uv :attribute :uv :value 0.5}])
+        samples (capacity/measure-sources plan (:universes frame) [:weak :strong :uv])]
+    (is (= (get-in samples [:strong :global-brightness]) (get-in samples [:weak :global-brightness])))
+    (is (= 0.25 (get-in samples [:weak :global-maximum])))
+    (is (near? 0.8 (get-in samples [:weak :local-brightness])))
+    (is (near? 0.2 (get-in samples [:strong :local-brightness])))
+    (is (nil? (get-in samples [:weak :used-rated-watts])))
+    (is (near? 0.8 (get-in samples [:weak :emitter-drive])))
+    (is (near? 20 (get-in samples [:strong :used-rated-watts])))
+    (is (near? 0.5 (get-in samples [:uv :emitter-drive])))
+    (is (zero? (get-in samples [:uv :global-brightness])))
+    (is (= {:strong {:local-drive 0.5 :achievable 0.5 :limited? false}
+            :weak {:local-drive 1.0 :achievable 0.25 :limited? true}}
+           (capacity/match-brightness plan [:strong :weak] 0.5)))))
+
+(deftest closed-shutters-block-visible-output-and-retain-electrical-drive
+  (let [f {:id :device :universe 1 :address 1 :max-watts 120
+           :channels {:white 1 :strobe {:offset 2 :inverted-from 0
+                                        :functions [{:type :shutter-closed :start 10 :end 30}]}}}
+        patch (frame/compile-patch [f])
+        plan (capacity/prepare patch)
+        physical #(hash-map 1 (byte-array [(unchecked-byte 255) (unchecked-byte %)]))]
+    (doseq [[value expected] [[20 0.0] [50 1.0]]]
+      (let [summary (capacity/measure plan (physical value))
+            reading (:device (capacity/measure-sources plan (physical value) [:device]))]
+        (is (near? expected (aget ^doubles (capacity/local-brightnesses plan (physical value)) 0)))
+        (is (near? 1.0 (aget ^doubles (capacity/emitter-drives plan (physical value)) 0)))
+        (is (near? expected (:global-brightness summary)))
+        (is (near? expected (:global-brightness reading)))
+        (is (near? 120 (:used-rated-watts reading)))
+        (is (near? 120 (:used-rated-watts summary)))))))

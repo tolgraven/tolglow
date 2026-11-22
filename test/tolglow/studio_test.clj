@@ -236,10 +236,13 @@
                                   1 (tool "discover" "inspect_lighting" {})
                                   2 (tool "vary" "set_lighting_scene"
                                           {:op "vary" :group-id (get-in (last-result) [:groups :items 0 :group-id])
-                                           :target 0.72})
+                                           :target 0.5})
                                   3 (tool "on-rise" "configure_energy_scene" {:op "save" :group-id "stage/left-movers"
-                                                                               :above 0.5 :below 0.2 :target 0.72})
-                                  4 (tool "readback" "inspect_lighting" {:group-id "stage/left-movers"})
+                                                                               :above 0.5 :below 0.2 :target 0.5})
+                                  4 (tool "budget" "set_lighting_budget" {:group-id "stage/left-movers"
+                                                                           :max-active 1 :limit 0.8
+                                                                           :strategy "priority" :fixture-order ["bank/spot-1"]})
+                                  5 (tool "readback" "inspect_lighting" {:group-id "stage/left-movers"})
                                   {:content "I varied the left movers and checked their measured output."})]
                       (consume! (str "data: " (json/write-str {:choices [{:delta delta}]}) "\n\ndata: [DONE]\n\n"))
                       {:status 200}))
@@ -251,7 +254,8 @@
                   (assoc-in [:rig :fixtures] [{:id "bank/spot-1" :groups ["stage/left-movers"]
                                                :channels {:dimmer 1} :universe 1 :address 3}
                                               {:id :fog :channels {:fog 1} :universe 1 :address 1}])
-                  (assoc-in [:variables :audio :features] {:energy-envelope 0.5 :breakdown? true :time-ms 34})
+                  (assoc-in [:variables :audio/energy] 0.5)
+                  (assoc-in [:variables :audio :features] {:breakdown? true :time-ms 34})
                   (assoc-in [:variables :fog/observation] observation)
                   (assoc-in [:variables :private-value] "DO-NOT-EXPORT-HIDDEN-VARIABLE"))
         rt (app/start! (assoc (app/default-config) :web-server {:port 0}
@@ -261,28 +265,35 @@
                                                   :endpoint "http://unused.test/v1/chat/completions"})
       (let [response ((studio/handler rt) {:request-method :post :uri "/api/chat"
                                            :body (java.io.ByteArrayInputStream.
-                                                  (.getBytes "{\"message\":\"Something different at 72% on the left movers, and again when energy rises above 50% after falling below 20%\"}" "UTF-8"))})
+                                                  (.getBytes "{\"message\":\"Vary the left movers at half brightness now and whenever audio energy rises above half after falling below one fifth\"}" "UTF-8"))})
             stream (java.io.ByteArrayOutputStream.)]
         (protocols/write-body-to-stream (:body response) response stream)
         (is (= 200 (:status response)))
         (is (re-find #"checked their measured output" (.toString stream "UTF-8")))
         (is (contains? (set (map #(get-in % [:function :name]) (:tools (first @requests)))) "inspect_lighting"))
-        (is (= 5 (count @requests)))
+        (is (= 6 (count @requests)))
         (let [read-result (fn [index] (json/read-str (:content (peek (:messages (get @requests index)))) :key-fn keyword))
               discovered (read-result 1)
               varied (read-result 2)
-              measured (read-result 4)]
-          (is (= [{:id "bank/spot-1"}] (get-in discovered [:eligible-fixtures :items])))
+              budgeted (read-result 4)
+              measured (read-result 5)]
+          (is (= ["bank/spot-1"] (mapv :id (get-in discovered [:eligible-fixtures :items]))))
+          (is (= {:local-brightness 0.0 :global-brightness 0.0 :global-maximum 1.0}
+                 (select-keys (get-in discovered [:eligible-fixtures :items 0])
+                              [:local-brightness :global-brightness :global-maximum])))
           (is (= "stage/left-movers" (get-in discovered [:groups :items 0 :group-id])))
-          (is (= 0.5 (get-in discovered [:music :energy-envelope])))
+          (is (= 0.5 (get-in discovered [:music :audio/energy])))
           (is (= 0.32 (get-in discovered [:fog :observation :level])))
           (is (not (clojure.string/includes? (pr-str @requests) "DO-NOT-EXPORT-HIDDEN-VARIABLE")))
           (is (= "accepted" (:status varied)))
-          (is (= {:above 0.5 :below 0.2 :target 0.72 :enabled? true}
+          (is (= "accepted" (:status budgeted)))
+          (is (= 0.8 (get-in measured [:lighting-budget :groups :stage/left-movers :limit-watts])))
+          (is (= ["bank/spot-1"] (get-in (show/snapshot rt) [:settings :lighting-budget :groups "stage/left-movers" :fixture-order])))
+          (is (= {:above 0.5 :below 0.2 :target 0.5 :enabled? true}
                  (get-in measured [:groups :items 0 :energy-binding])))
           (is (= 1 (get-in measured [:groups :items 0 :generation])))
-          (is (= 0.72 (get-in measured [:groups :items 0 :target])))
-          (is (< (abs (- 0.72 (get-in measured [:groups :items 0 :actual]))) 0.004))))
+          (is (= 0.5 (get-in measured [:groups :items 0 :target])))
+          (is (< (abs (- 0.5 (get-in measured [:groups :items 0 :actual]))) 0.004))))
       (finally (app/stop! rt)))))
 
 (deftest group-tool-pages-and-namespaced-signal-bindings
@@ -305,10 +316,10 @@
     (is (= {:enabled? true :target 0.4 :zone :in-band} (get-in single [:fog :controller])))
     (is (= {:epoch 4 :level 0.28 :level-change-per-s -0.03 :current-epoch? false} (get-in single [:fog :observation])))
     (is (= {:group-id :area/one :op :apply :fixture-ids [:bank/left "right"]
-            :target-var [:audio :features :energy-envelope]}
+            :target-var [:audio/energy]}
            (venue/scene-request (:model state)
                                 {:group-id "area/one" :op "apply" :fixture-ids ["bank/left" "right"]
-                                 :target-var ["audio" "features" "energy-envelope"]})))
+                                 :target-var ["audio/energy"]})))
     (is (= [:signals "user/drive"] (:target-var (venue/scene-request (:model state)
                                                                     {:group-id "two" :target-var ["signals" "user/drive"]}))))
     (is (thrown? Exception (venue/scene-request (:model state) {:group-id "two" :target-var ["config" "secret"]})))

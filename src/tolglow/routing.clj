@@ -11,7 +11,7 @@
 (def max-ports 128)
 (def max-pending 1024)
 (def max-diagnostics 64)
-(def audio-keys [:rms :peak :kick-rms :energy-envelope :low-rms :mid-rms :high-rms :bass-pitch-hz :bass-pitch-confidence])
+(def audio-keys [:rms :peak :kick-rms :audio/energy :low-rms :mid-rms :high-rms :bass-pitch-hz :bass-pitch-confidence])
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :routing/error :invalid-routing))))
 (defn- id? [x] (or (keyword? x) (and (string? x) (<= 1 (count x) 128))))

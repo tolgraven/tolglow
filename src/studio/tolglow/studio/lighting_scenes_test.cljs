@@ -19,7 +19,7 @@
         chosen (scene/selection (:lighting-scene-ui db) (scene/choices eligible []) [])]
     (is (= ids (mapv :id eligible)))
     (is (= [:rig/washes ids] ((juxt :id :ids) chosen)))
-    (is (= {:op :apply :group-id :rig/washes :fixture-ids ids :target 0.72 :expected-epoch 3 :runtime-id "test-runtime"}
+    (is (= {:op :apply :group-id :rig/washes :fixture-ids ids :target 0.5 :expected-epoch 3 :runtime-id "test-runtime"}
            (body db :apply)))))
 
 (deftest live-scenes-vary-release-and-disallow-overlapping-groups
@@ -28,7 +28,7 @@
     (is (not (contains? (body live :vary) :target)) "Vary preserves the current target and its variable binding")
     (is (= 0.5 (:target (body (assoc-in live [:lighting-scene-ui :percent "group:rig/washes"] 50) :vary))))
     (is (string? (get-in (scene/request live :vary) [:studio/http :body :command-id])))
-    (let [bound (-> live (assoc-in [:server-projection :view :lighting-scenes :groups 0 :target-var] [:audio :energy])
+    (let [bound (-> live (assoc-in [:server-projection :view :lighting-scenes :groups 0 :target-var] [:audio/energy])
                     (assoc-in [:lighting-scene-ui :percent "group:rig/washes"] 50))]
       (is (not (contains? (body bound :vary) :target)))
       (is (= 0.5 (:target (body bound :apply)))))
@@ -41,7 +41,7 @@
 (deftest new-scene-selection-requires-real-fixtures-and-a-name
   (let [custom (update db :lighting-scene-ui merge {:selected "custom" :name "Back wall" :picked [:rear/wash]})]
     (is (= {:op :apply :group-id :studio.scene/back-wall :fixture-ids [:rear/wash]
-            :expected-epoch 3 :runtime-id "test-runtime" :target 0.72}
+            :expected-epoch 3 :runtime-id "test-runtime" :target 0.5}
            (body custom :apply)))
     (is (nil? (scene/request (assoc-in custom [:lighting-scene-ui :name] " ") :apply)))
     (is (nil? (scene/request (assoc-in custom [:lighting-scene-ui :picked] [:no/light]) :apply)))
@@ -49,3 +49,11 @@
     (testing "replacement shows discard prior fixture selections"
       (let [next-show (assoc-in custom [:server-projection :view :epoch] 4)]
         (is (= :studio/all-lights (get-in (scene/request next-show :apply) [:studio/http :body :group-id])))))))
+
+(deftest match-reference-remains-typed-and-release-only-stops-the-group
+  (let [with-mode (assoc-in db [:lighting-scene-ui :brightness-reference "group:rig/washes"] :global)]
+    (is (= :global (:brightness-reference (body with-mode :apply))))
+    (let [active (assoc-in with-mode [:server-projection :view :lighting-scenes :groups]
+                           [{:group-id :rig/washes :fixture-ids ids :target 0.5 :brightness-reference :global}])]
+      (is (= :release (:op (body active :release))))
+      (is (not (contains? (body active :release) :brightness-reference))))))

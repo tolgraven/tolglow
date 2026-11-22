@@ -175,3 +175,18 @@
         (is (= saved (slurp backup))))
       (is (false? @(:running @runtime)))
       (finally (io/delete-file backup true)))))
+
+(deftest headless-performance-modules-use-the-show-settings
+  (let [options {:lighting-budget {:global {:limit 0.6 :max-active 2}}
+                 :output-response {:global {:release {:beats 1/2}}}
+                 :lighting-activity {}}
+        runtime (app/start! (merge (update-vals options #(assoc % :enabled true))
+                                   {:init {:components [:show] :modules (vec (keys options))}
+                                    :show {:workers 1 :workspace-options nil}}))]
+    (try
+      (let [settings (:settings (show/snapshot runtime))]
+        (doseq [[scope config] options]
+          (is (= (assoc config :enabled? true)
+                 (select-keys (get settings scope) (conj (vec (keys config)) :enabled?)))))
+        (is (number? (get-in (show/variables runtime) [:lighting/activity :scene :score]))))
+      (finally (app/stop! runtime)))))

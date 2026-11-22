@@ -14,6 +14,8 @@
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
     tolglow.lighting-capacity-test tolglow.lighting-scenes-test tolglow.atmosphere.control-test
+    tolglow.lighting-budget-test tolglow.lighting-activity-test tolglow.output-response-test
+    tolglow.performance-controls-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-calibration-test tolglow.venue-performance-test

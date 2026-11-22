@@ -5,6 +5,7 @@
             [afterglow.runtime :as runtime]
             [afterglow.time :as time]
             [tolglow.compiler :as compiler]
+            [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry]))
 
 (defn- fail! [path message & [data]]
@@ -147,14 +148,20 @@
   ([definition fixtures {:keys [enabled? prepare-group bind-pure] :or {enabled? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
-   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
+   (let [definition (or (when (and enabled? (matching/active? definition))
+                          (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
+                        definition)
+         {:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
+                   (matching/active? definition) (conj :matched-chroma)
                    (not enabled?) (conj :disabled)
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
-       (with-meta (compiler/compile-effect definition bind-pure) {:backend :ordinary :fallback-reasons reasons})
+       (with-meta (compiler/compile-effect definition bind-pure
+                    (when (matching/active? definition) (matching/prepare fixtures selected)))
+         {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
              scalar-step (compiler/compile-effect definition bind-pure)
              envelope-attributes (set envelope-attributes)]

@@ -10,7 +10,11 @@
               (let [attribute (if (= type :color) color type)]
                 (when (contains? mapped attribute)
                   (throw (ex-info "Fixture target has duplicate channels for one attribute" {:attribute attribute})))
-                (assoc mapped attribute (select-keys channel [:offset :fine-offset :inverted-from]))))
+                (assoc mapped attribute
+                       (cond-> (select-keys channel [:offset :fine-offset :inverted-from :hz])
+                         (and (#{:strobe :shutter} attribute) (seq (:functions channel)))
+                         (assoc :functions (mapv #(select-keys % [:start :end :type :hz])
+                                                 (:functions channel)))))))
             {} channels)))
 
 (defn- spec [value]

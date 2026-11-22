@@ -1,6 +1,7 @@
 (ns tolglow.registry
   "Pure, versioned authoring definitions. This namespace never starts a show."
   (:require [clojure.string :as str]
+            [tolglow.fixtures.shutter :as shutter]
             [afterglow.time :as time]
             [afterglow.render.layers :as layers]
             [afterglow.render.photometry :as photometry]
@@ -252,7 +253,7 @@
                                           (= (count offsets) (count (distinct offsets)))
                                           (or (not (map? offset))
                                               (and (contains? offset :offset)
-                                                   (every? #{:offset :fine-offset :inverted-from} (keys offset))
+                                                   (shutter/valid-channel-options? attribute offset)
                                                    (or (nil? inversion) (and (finite-number? inversion) (<= 0 inversion 255))))))
                              [(error [:channels attribute] "Channel needs positive distinct coarse/fine offsets and optional finite inversion")])) ) channels))))))))))
 

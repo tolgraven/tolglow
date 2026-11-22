@@ -3,7 +3,8 @@
   connection or stores credentials. invoke! accepts a caller-owned transport;
   incremental transports can call stream-feed as decoded text chunks arrive."
   (:require [clojure.data.json :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [clojure.walk :as walk])
   (:import [java.io InputStream InputStreamReader]
            [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
@@ -22,8 +23,17 @@
   [config]
   (select-keys config [:provider :endpoint :model :stream? :max-tokens :temperature]))
 
-(defn- content-string [content]
-  (if (string? content) content (json/write-str content)))
+(defn- json-data [value]
+  (walk/postwalk (fn [x]
+                   (cond (keyword? x) (subs (str x) 1)
+                         (set? x) (vec (sort-by str x))
+                         (map? x) (into {} (map (fn [[k v]] [(str k) v])) x)
+                         :else x)) value))
+
+(defn content-string
+  "Encode show data for a provider while retaining qualified Clojure identifiers."
+  [content]
+  (if (string? content) content (json/write-str (json-data content))))
 
 (defn- openai-message [{:keys [role content tool-calls tool-call-id]}]
   (cond-> {:role (name role) :content (content-string (or content ""))}

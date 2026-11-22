@@ -268,7 +268,7 @@ heuristic `:confidence`, `:time-ms`, `:observed-at-ms` and `:latency-ms`:
 | --- | --- |
 | `:audio/kick` | Adaptive low-band onset; includes threshold, measured band RMS and optional clock alignment. |
 | `:audio/beat` | A kick within the configured tolerance of a supplied running clock beat, with clock source/epoch, beat number, BPM and signed phase error. |
-| `:audio/energy` | Throttled RMS/envelope/relative-energy update (100 ms by default). |
+| `:audio/energy` | Throttled update with the normalized, smoothed RMS under `:audio/energy` (100 ms by default). The same key names the show variable and patchbay source. |
 | `:audio/breakdown-start` | Confirmed relative-energy drop; includes candidate time, confirmation time and held duration. |
 | `:audio/breakdown-end` | Confirmed recovery above the higher threshold. |
 

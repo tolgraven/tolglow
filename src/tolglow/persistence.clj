@@ -12,9 +12,11 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.show.lighting :as lighting]
             [tolglow.atmosphere.control :as fog-control]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.signals :as signals]
@@ -244,6 +246,7 @@
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
+  (lighting/validate! (:settings model))
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)
@@ -402,7 +405,7 @@
   (validate-document! document)
   (check! (and (natural? (:epoch current-model)) (natural? (:revision current-model)))
           [:current-model] "Current model needs valid epoch/revision")
-  (let [saved (audio-return/disarm (validate-model (:model document)))
+  (let [saved (-> (:model document) saved-audio/restore validate-model audio-return/disarm)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))
         ids (into {} (map-indexed (fn [i instance] [(:id instance) (str epoch ":" (inc i))]) ordered))

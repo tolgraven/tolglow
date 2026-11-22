@@ -16,7 +16,7 @@
 (def keyword-fields
   #{:op :kind :mode :loop :scope :intent :provider :reload-policy :blend :attribute
     :param :type :rgbw-policy :cue-id :effect-id :page-id :show-id :key :axis :curve
-    :timebase :operation :retrigger :unit :distribution :match})
+    :brightness-reference :standby-mode :strategy :timebase :operation :retrigger :unit :distribution :match})
 
 (defn normalize-json [value]
   ;; Studio widgets emit textual enum choices. Keep typed extension values

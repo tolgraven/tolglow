@@ -37,17 +37,20 @@
   {:type :sync/observation
    :observation {:source-id source-id :event-id id :value value :gate? (pos? value)
                  :confidence 1.0 :observed-at-ms time :kind :midi :origin :midi-input}})
-(defn capture-fixture []
-  (let [opened (promise)
+(defn capture-fixture
+  ([] (capture-fixture {}))
+  ([options]
+   (let [opened (promise)
         runtime (show/create-runtime
-                  {:model (model)
-                   :sync-options {:midi-factory (fn [_ _]
-                                                  {:open! (fn [receive!] (deliver opened receive!) :captured)
-                                                   :close! (fn [_])})}})]
+                  (merge {:model (model)
+                          :sync-options {:midi-factory (fn [_ _]
+                                                         {:open! (fn [receive!] (deliver opened receive!) :captured)
+                                                          :close! (fn [_])})}}
+                         options))]
     (show/sync-action! runtime :configure {:midi {:enabled? true :input-index 0}})
     (show/sync-action! runtime :start {})
     {:runtime runtime :receive! (deref opened 2000 nil)
-     :manager (connections/sync (:connections runtime))}))
+     :manager (connections/sync (:connections runtime))})))
 
 (deftest real-midi-observations-use-owner-clock-and-common-command-reducer
   (let [{:keys [runtime receive! manager]} (capture-fixture)]
@@ -82,17 +85,21 @@
         (apply-at! runtime :modulation-start {:id :pulse :seed 4 :every {:beats 1}
                                              :select {:instance-ids [id]} :params [:level]
                                              :ranges {:level [0.1 0.2]}} 0)
-        ((:features! callbacks) {:time-ms 40.0 :rms 0.65 :peak 0.9 :kick-rms 0.2 :energy-envelope 0.3
+        ((:features! callbacks) {:time-ms 40.0 :rms 0.65 :peak 0.9 :kick-rms 0.2 :audio/energy 0.3
                                 :confidence 0.8 :capture {:run-id "capture-1"}})
         (show/tick! runtime 100.0)
         (let [model (:model @(:state runtime))]
           (is (= 0.65 (get-in model [:instances id :params :level])))
           (is (= 4 (count (get-in (show/snapshot runtime) [:patch :sources]))))
+          (is (= 0.3 (:audio/energy (show/variables runtime))
+                 (get-in model [:routing :ports "audio/energy" :value])))
+          (is (not (contains? (get-in model [:variables :audio :features]) :audio/energy)))
           (is (empty? (get-in model [:modulation :holds])))
           (is (<= 0.1 (get-in (show/snapshot runtime) [:modulation :overrides id :level]) 0.2))
           (is (= 40.0 (get-in model [:routing :state :sources "audio/rms" :observed-at-ms]))))
         ((:features! callbacks) {:time-ms 40.0 :rms 0.1})
         (show/tick! runtime 150.0)
+        (is (not (contains? (show/variables runtime) :audio/energy)))
         (is (= 0.65 (get-in @(:state runtime) [:model :instances id :params :level]))))
       (finally (show/stop! runtime)))))
 
@@ -254,4 +261,68 @@
         (publish (:features (analyze (:state tone) (double-array 1600) 200)))
         (show/tick! runtime 400.0)
         (is (false? (get-in @(:state runtime) [:model :routing :ports source :gate?]))))
+      (finally (show/stop! runtime)))))
+
+(deftest saved-audio-energy-bindings-follow-the-canonical-signal-after-load
+  (let [m (-> (model) (assoc-in [:rig :fixtures 0 :groups] [:wash])
+              (assoc-in [:variables :audio :features] {:energy-envelope 0.3 :rms 0.31}))
+        rt (show/create-runtime {:model m})
+        old-field [:data :energy-envelope]
+        action {:op :lighting/scene :scene {:op :vary :group-id :wash :target 0.4}
+                :gate {:path old-field :above 0.7 :below 0.2}}]
+    (try
+      (prepare! rt (spec "audio/energy-envelope" :audio [0.0 1.0]))
+      (is (= :accepted (:status (apply-at! rt :lighting-scene
+                               {:op :apply :group-id :wash :target-var [:audio :features :energy-envelope]} 1))))
+      (doseq [topic [:audio/energy :my/energy]]
+        (is (= :accepted (:status (apply-at! rt :event-subscriber
+                                  {:op :save :subscriber {:id topic :match {:type topic} :actions [action]}} 2)))))
+      (let [saved (persistence/read-string (show/export-show-source rt))
+            reloaded (persistence/thaw (model) saved)
+            subscribers (into {} (map (juxt :id identity)) (get-in reloaded [:event-subscribers :subscribers]))
+            routing (get-in reloaded [:routing :spec])]
+        (is (= 0.3 (get-in reloaded [:variables :audio/energy])))
+        (is (= {:rms 0.31} (get-in reloaded [:variables :audio :features])))
+        (is (= [:audio/energy] (get-in reloaded [:extensions :tolglow.lighting-scenes/control :groups :wash :target-var])))
+        (is (= [:data :audio/energy] (get-in subscribers [:audio/energy :actions 0 :gate :path])))
+        (is (= old-field (get-in subscribers [:my/energy :actions 0 :gate :path])))
+        (is (= ["audio/energy"] (keys (:sources routing))))
+        (is (= "audio/energy" (get-in routing [:routes 0 :source]))))
+      (finally (show/stop! rt)))))
+
+(deftest midi-cue-parameter-shapes-group-emission-and-measured-activity
+  (let [bytes (atom nil)
+        knob {:id :wash :version 1 :params {:rise {:type :number :default 0.0 :bounds [0.0 2.0]}}
+              :targets [:head] :outputs {:dimmer 0.0}}
+        hit {:id :light :version 1 :targets [:head] :outputs {:dimmer 1.0}}
+        rig (control/new-show {:rig {:fixtures [(assoc head :groups [:front] :channels {:dimmer 1})]}
+                               :registry {:effects {:wash knob :light hit}
+                                          :cues {:wash {:id :wash :version 1 :effect-id :wash}
+                                                 :light {:id :light :version 1 :effect-id :light :priority 10}}}})
+        {:keys [runtime receive! manager]} (capture-fixture {:model rig :sink {:send! (fn [us _]
+                                                        (reset! bytes (bit-and 255 (aget ^bytes (get us 1) 0))))}})
+        midi! (fn [t data]
+                (receive! {:type :midi/message :source-id :midi-clock :time-ms t :bytes data})
+                (is (session/flush! manager))
+                (show/tick! runtime t))
+        score #(get-in (show/snapshot runtime) [:output :lighting-activity :scene :score])]
+    (try
+      (is (= :accepted (:status (apply-at! runtime :settings {:scope :lighting-activity :values {:enabled? true}} 0))))
+      (is (= :accepted (:status (apply-at! runtime :settings
+                  {:scope :output-response :values {:enabled? true :groups {:front {:attack {:beats {:cue-id :wash :param :rise}}
+                                                                                    :release {:beats 1}}}}} 0))))
+      (let [id (prepare! runtime (-> (spec) (assoc-in [:destinations :level :param] :rise)
+                                     (assoc-in [:destinations :level :range] [0.0 2.0])))]
+        (midi! 10 [0x90 60 127])
+        (is (= 2.0 (get-in @(:state runtime) [:model :instances id :params :rise])))
+        (let [light (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :light} 10))]
+          (show/tick! runtime 260)
+          (let [soft (score)]
+            (is (<= 55 @bytes 57))
+            (midi! 285 [0x80 60 0])
+            (is (= 255 @bytes))
+            (is (< soft (score))))
+          (apply-at! runtime :command {:op :instance/remove :instance-id light} 285)
+          (show/tick! runtime 785)
+          (is (<= 93 @bytes 95))))
       (finally (show/stop! runtime)))))

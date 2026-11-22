@@ -47,7 +47,7 @@
 
 (defn- requested-percent [state choice scene]
   (get-in state [:percent (get-in choice [:option :value])]
-          (if-let [target (:target scene)] (js/Math.round (* target 100)) 72)))
+          (if-let [target (:target scene)] (js/Math.round (* target 100)) 50)))
 
 (rf/reg-sub ::rig (fn [db _] (get-in (view db) [:rig :fixtures])))
 (rf/reg-sub ::eligible (fn [db _] (get-in (view db) [:lighting-scenes :eligible-fixture-ids])))
@@ -79,6 +79,7 @@
         percent (requested-percent state choice scene)
         key (get-in choice [:option :value])
         edited (get-in state [:percent key])
+        reference (get-in state [:brightness-reference key])
         manual? (or (= :apply op) (and (= :vary op) (some? edited) (nil? (:target-var scene))))
         valid? (and id (seq ids) (not occupied?) (every? (set eligible-fixture-ids) ids)
                     (integer? percent) (<= 0 percent 100))
@@ -90,16 +91,18 @@
                      :body (cond-> {:op op :group-id id :command-id (second token)
                                     :expected-epoch (:epoch v) :runtime-id (:runtime-id v)}
                              (not= :release op) (assoc :fixture-ids ids)
+                             (and (not= :release op) reference) (assoc :brightness-reference reference)
                              manual? (assoc :target (/ percent 100)))
-                     :on-success [::finished token id op key (when manual? edited)] :on-failure [::failed token]}})))
+                     :on-success [::finished token id op key (when manual? edited) reference] :on-failure [::failed token]}})))
 
 (rf/reg-event-fx ::send (fn [{:keys [db]} [_ op]] (or (request db op) {})))
 (rf/reg-event-db ::finished
-  (fn [db [_ token id op key edited _]]
+  (fn [db [_ token id op key edited reference _]]
     (let [state (form db)]
       (if (= token (:pending state))
         (assoc db :lighting-scene-ui (cond-> (dissoc state :pending)
                                        (= edited (get-in state [:percent key])) (update :percent dissoc key)
+                                       (= reference (get-in state [:brightness-reference key])) (update :brightness-reference dissoc key)
                                        (and (not= :release op) (= "custom" (:selected state))) (assoc :selected (option-key id)))) db))))
 (rf/reg-event-db ::failed
   (fn [db [_ token error]]
@@ -128,6 +131,22 @@
 (def status-label {:at-target "At target" :seeking "Adjusting" :limited "Output limited"
                    :over-target "Other light exceeds target" :unlit "No light available"})
 
+(defn- source-readings [{:keys [sources source-count]}]
+  [:details.source-readings
+   [:summary (str "Compare fixture brightness · " source-count)]
+   [:table [:thead [:tr [:th {:scope "col"} "Fixture"] [:th {:scope "col"} "Local"]
+                   [:th {:scope "col"} "Rig scale"] [:th {:scope "col" :title "Full white at maximum output, relative to the brightest fixture"} "Max. white"]]]
+    [:tbody (for [{:keys [fixture-id local-brightness global-brightness global-maximum global-color-maximum limited?]} sources]
+              ^{:key (option-key fixture-id)}
+              [:tr [:th {:scope "row"} (events/wire-id fixture-id)
+                    (when limited? [:small (if (number? global-color-maximum)
+                                              (str "Color limit " (percent-text global-color-maximum)) "At limit")])]
+               [:td (or (percent-text local-brightness) "—")]
+               [:td (or (percent-text global-brightness) "—")]
+               [:td (or (percent-text global-maximum) "—")]])]]
+   (when (< (count sources) source-count)
+     [:p.small.muted (str "Showing the first " (count sources) " of " source-count " fixtures.")])])
+
 (defn panel []
   (let [state @(rf/subscribe [::form]) options @(rf/subscribe [::choices])
         group-count @(rf/subscribe [::group-count]) eligible @(rf/subscribe [::eligible])
@@ -135,6 +154,7 @@
         scene @(rf/subscribe [::active])
         percent (requested-percent state choice scene)
         group-key (:value option)
+        reference (get-in state [:brightness-reference group-key] (:brightness-reference scene :local))
         disabled? (or (:pending state) (not @(rf/subscribe [::online?])))
         invalid? (or disabled? (nil? id) (empty? ids) occupied?)
         status (:status scene)]
@@ -147,7 +167,12 @@
                  :on-change #(edit! [:selected] (.. % -target -value))}
         (for [{:keys [value label ids]} options]
           ^{:key value} [:option {:value value} (str label (when ids (str " · " (count ids))))])]]
-      [:label.scene-target [:span "Light target" [:output (str percent "%")]]
+      [:label "Brightness reference"
+       [:select {:value (name reference) :disabled (boolean disabled?)
+                 :on-change #(edit! [:brightness-reference group-key] (keyword (.. % -target -value)))}
+        [:option {:value "local"} "Local · fixture capacity"]
+        [:option {:value "global"} "Match · brightest fixture in the rig"]]]
+      [:label.scene-target [:span "Brightness target" [:output (str percent "%")]]
        [:input {:type "range" :min 0 :max 100 :step 1 :value percent :aria-label "Group light target"
                 :on-change #(edit! [:percent group-key] (js/Number (.. % -target -value)))}]]]
      (when custom? [custom-fields state @(rf/subscribe [::fixtures])])
@@ -157,6 +182,7 @@
         [:strong (get status-label status "Awaiting measurement")]
         (when-let [path (:target-var scene)] [:span (str "Following " (str/join " / " (map events/wire-id path)))])
         (when-let [source (:source-effect-id scene)] [:span (label source)])])
+     (when (seq (:sources scene)) [source-readings scene])
      [:div.performance-actions
       [:button.button {:type "button" :disabled (boolean invalid?) :on-click #(rf/dispatch [::send :apply])} (if (:target-var scene) "Set manual target" "Apply target")]
       [:button.button {:type "button" :disabled (boolean (or invalid? (nil? scene))) :on-click #(rf/dispatch [::send :vary])} "Something different"]

@@ -323,13 +323,6 @@
     (swap! (:state manager) assoc :selected-conversation-id conversation-id))
   (history manager))
 
-(defn- json-data [value]
-  (walk/postwalk (fn [x]
-                   (cond (keyword? x) (subs (str x) 1)
-                         (set? x) (vec (sort-by str x))
-                         (map? x) (into {} (map (fn [[k v]] [(str k) v])) x)
-                         :else x)) value))
-
 (defn- items [snapshot path fallback]
   (let [value (or (get-in snapshot path) fallback [])]
     (if (map? value) (sort-by (comp str :id) (vals value)) value)))
@@ -357,7 +350,7 @@
                       :auto (select-keys (:auto snapshot) [:enabled? :config])
                       :output-mode (get-in snapshot [:status :output :type])
                       :summary-limit limit}))]
-    (or (first (filter #(<= (count (json/write-str (json-data %))) 40000) (map summarize [64 16 4])))
+    (or (first (filter #(<= (count (providers/content-string %)) 40000) (map summarize [64 16 4])))
         (dissoc (summarize 0) :auto))))
 
 (defn system-prompt
@@ -385,11 +378,11 @@
    "Then launch_cue: {\"cue-id\":\"agent-red-cue\",\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}}}. "
    "Persistent, held, timed and one-shot modes are distinct; timed/one-shot need a positive duration. Stop exact instance IDs, not cue IDs. "
    "set_parameter arguments are {instance-id,param,value}. inspect_show returns fuller current data. If a saved tool outcome is unknown after interruption, inspect current show state before retrying any action. "
-   "For 'something different at 72% on the left movers', call inspect_lighting to find the actual patched group ID, then set_lighting_scene with op vary and target 0.72. Inspect the group again for its measured actual and status before claiming success. Seeking means the controller is settling; limited, unlit or over-target mean the requested level has not been reached. The human master, blackout and other cues remain authoritative. inspect_lighting also returns measured music energy, estimated room fog and the last camera observation with its time and epoch. Missing data is unknown. For a requested repeatable energy rise, configure_energy_scene saves a group subscriber with distinct rearm and trigger thresholds; inspection reports the saved binding. "
+   "Use inspect_lighting to discover patched groups and measured output. set_lighting_scene chooses a look and brightness target. Choose brightness-reference global to match unlike fixtures against the brightest patched source. set_lighting_budget controls concurrent sources and their combined estimated watts, with an optional group, limit, active count, standby level, strategy or fixture order. Inspect the result for actual local/global brightness, budget use and visual activity. A seeking group is settling; limited, unlit and over-target describe an unmet target. Human master, blackout and cue priority remain authoritative. For a repeating audio-energy crossing, configure_energy_scene saves an upper trigger and lower rearm threshold. Inspection reports the binding, current audio energy and available fog observations. "
    "Example configure_auto: {\"configuration\":{\"enabled?\":true,\"interval\":{\"bars\":1},\"count\":1,\"scope\":{\"cue-ids\":[\"agent-red-cue\"]},"
    "\"launch\":{\"mode\":\"one-shot\",\"duration\":{\"beats\":4}},\"seed\":42}}. Scope may instead be \"all\" or {\"page-id\":\"actual-page-id\"}; "
    "scope also constrains any required emission companion. Disable auto with {\"configuration\":{\"enabled?\":false}}.\n\n"
-   "Current show snapshot (bounded JSON):\n" (json/write-str (json-data (summarize-snapshot snapshot)))))
+   "Current show snapshot (bounded JSON):\n" (providers/content-string (summarize-snapshot snapshot))))
 
 (defn- conversation [manager payload snapshot credential]
   (let [message (:message payload)

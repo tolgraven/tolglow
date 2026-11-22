@@ -1,7 +1,25 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :rig/stationary-fog-calibration :title "Measure venue clearing and mixing from a locked iPhone sightline"
+ [{:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Unequal lamps at the same achievable global target deliver comparable estimated brightness."] :evidence ["Tolglow #94 measures the same common brightness on unequal fixtures at approximately 30% and 60% local drive. Per-source readback includes the white and color-limited ceilings."]}
+  {:id :show/concurrent-light-budget :title "Budget concurrent sources and choose cues using their emitting footprints" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/src/tolglow/lighting_budget.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Multiple overlapping cues respect the active source ceiling, standby glow and weighted output cap."] :evidence ["Tolglow #94 captures three overlapping manual cues on nine fixtures, checks decoded watts and source count, and tests closed shutters, UV, standby, and cue selection and retirement with shared lamps."]}
+  {:id :show/perceptual-light-activity :title "Score temporal and spatial activity independently of output power" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/src/tolglow/lighting_activity.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Read emitted output and movement after response smoothing, including sparse flashes and rapid strobes."] :evidence ["Tolglow #94 tests slow and abrupt edges, sparse sparkles, actual shutter rate, lit movement and compound ownership. It profiles 2,048 changing RGBW pixels with 64 moving heads."]}
+  {:id :show/emission-response :title "Shape the actual rise and fall of light globally or per group" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/src/tolglow/output_response.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Cue and device parameters control a response that survives authored changes and cue removal."] :evidence ["Afterglow #49/#50 and Tolglow #94 verify packed coarse/fine output, response after cue removal, and MIDI-mapped attack in a capture sink. The same launch measured 0.069 visual activity with a long attack and 0.846 with immediate attack."]}
+  {:id :music/audio-energy-naming :title "Use a single public audio energy signal across show interfaces" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/docs/group-lighting-scenes.md"] :depends-on [:foundation/tests]
+   :acceptance ["Studio, show variables, event data, and documented subscriber examples agree."] :evidence ["Tolglow #94 verifies :audio/energy across PCM analysis, show variables, subscriber gates, patchbay and chat. A saved show with the prior built-in binding restores to the canonical signal."]}
+  {:id :studio/light-budget-controls :title "Perform calibrated matching and budgeted looks in Studio" :kind :implementation :status :done
+   :owner nil :paths ["tolglow/src/studio/tolglow/studio/lighting_scenes.cljs"] :depends-on [:foundation/tests]
+   :acceptance ["Touch controls change the same settings as the headless show and expose actual output."] :evidence ["Tolglow #94 exercises headless and re-frame controls. Chromium on the Ring host changed brightness reference, shared and group budget, standby and response. Phone and tablet viewports were checked."]}
+  {:id :rig/stationary-fog-calibration :title "Measure venue clearing and mixing from a locked iPhone sightline"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/atmosphere/calibration.clj" "tolglow/src/tolglow/rig/fog_calibration.clj" "tolglow/native/iOS/FogCalibration"]
    :depends-on [:foundation/tests]
@@ -18,7 +36,7 @@
    :paths ["tolglow/src/tolglow/lighting_scenes.clj" "tolglow/docs/group-lighting-scenes.md" "tolglow/test/tolglow/venue_performance_test.clj"]
    :depends-on [:music/lighting-capacity]
    :acceptance ["Generate and adjust group effects, allow music and show variables to drive targets, and show actual output beside the target"]
-   :evidence ["Tolglow #87 tests registry selection, generated effects, group feedback and PCM energy events. #82 exercises touch controls and #90 drives a running show through chat with a simulated provider. #91 verifies that reaching 72% can launch a cue once and subsequent steady frames do not retrigger it. A captured front dimmer delivered 72.16% at a 72% target while a second group followed estimated fog."]}
+   :evidence ["Tolglow #87 tests registry selection, generated effects, group feedback and PCM energy events. #82 exercises touch controls and #90 drives a running show through chat with a simulated provider. #91 verifies that reaching the requested light level can launch a cue once. Stable frames keep the same look while a second group follows measured fog independently."]}
   {:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
    :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence ["Afterglow #37 passed 387 JVM tests and 5 native OpenGL tests, including color, vector, beat-ratio and deferred shader results."]}

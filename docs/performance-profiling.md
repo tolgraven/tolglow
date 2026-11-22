@@ -202,3 +202,5 @@ oracle; including its allocations would incorrectly attribute oracle cost to
 the production typed pipeline. JFR-weighted allocation samples locate candidate
 code paths; they do not replace the recorded thread-allocation counters or an
 uninstrumented matched timing run.
+
+The [mixed lighting controls profile](performance/lighting-controls.md) measures calibrated source processing, output envelopes, budgeting and activity scoring on moving heads and a changing LED strip.

@@ -16,7 +16,7 @@
   (into (set (keys (scenes/groups model))) (mapcat :groups) (get-in model [:rig :fixtures])))
 
 (def ^:private built-in-signals
-  #{[:audio :features :energy-envelope] [:fog/level] [:fog/observed-level]})
+  #{[:audio/energy] [:fog/level] [:fog/observed-level]})
 
 (defn scene-request [model arguments]
   (cond-> (update arguments :group-id (partial resolve-id (group-ids model)))
@@ -25,6 +25,7 @@
     (:effect-ids arguments)
     (update :effect-ids #(mapv (partial resolve-id (keys (get-in model [:registry :effects]))) %))
     (:op arguments) (update :op keyword)
+    (:brightness-reference arguments) (update :brightness-reference keyword)
     (:target-var arguments)
     (update :target-var
             (fn [path]
@@ -37,6 +38,23 @@
                       (when (and (number? node) (<= 0 node 1)) resolved)))
                   (throw (ex-info "Choose a normalized show variable as the lighting target" {})))))))
 
+(defn budget-request [model {:keys [enabled? group-id fixture-order standby-mode strategy] :as args}]
+  (let [groups (group-ids model)
+        group (when group-id (resolve-id groups group-id))
+        ids (set (map :id (get-in model [:rig :fixtures])))
+        order (when fixture-order (mapv (partial resolve-id ids) fixture-order))
+        controls (cond-> (select-keys args [:limit :max-active :standby-level])
+                   strategy (assoc :strategy (keyword strategy))
+                   standby-mode (assoc :standby-mode (keyword standby-mode))
+                   order (assoc :fixture-order order))]
+    (when (or (and group (not (groups group))) (some #(not (ids %)) order))
+      (throw (ex-info "Choose an existing group and patched fixtures" {:group group :order order})))
+    (when (and (empty? controls) (nil? enabled?))
+      (throw (ex-info "Supply a brightness budget or enable setting" {})))
+    {:scope :lighting-budget
+     :values (cond-> {:enabled? (if (nil? enabled?) true enabled?)}
+               (seq controls) (assoc-in (if group [:groups group] [:global]) controls))}))
+
 (defn- energy-subscriber-id [id]
   (keyword "agent.energy" (java.net.URLEncoder/encode (wire-id id) java.nio.charset.StandardCharsets/UTF_8)))
 
@@ -44,7 +62,7 @@
   (let [[action] (:actions subscriber)]
     (when (and (= 1 (count (:actions subscriber))) (= {:type :audio/energy} (:match subscriber))
                (= :lighting/scene (:op action)) (= id (get-in action [:scene :group-id]))
-               (= [:data :energy-envelope] (get-in action [:gate :path])))
+               (= [:data :audio/energy] (get-in action [:gate :path])))
       action)))
 
 (defn energy-binding [model {:keys [op group-id target above below]}]
@@ -62,7 +80,7 @@
                 {:op :save :expected-subscriber prior
                  :subscriber {:id id :match {:type :audio/energy}
                               :actions [{:op :lighting/scene :scene {:op :vary :group-id group :target target}
-                                         :gate {:path [:data :energy-envelope] :above above :below below}}]}}))))
+                                         :gate {:path [:data :audio/energy] :above above :below below}}]}}))))
 
 (defn- page [items offset limit]
   (let [rows (vec (take limit (drop offset items)))
@@ -75,9 +93,10 @@
   (let [capacity (:lighting-capacity output)
         observation (:fog/observation variables)
         features (get-in variables [:audio :features])]
-    {:music (when features
-              (select-keys features [:time-ms :energy-envelope :energy-dbfs :energy-class :relative-energy
-                                     :rms :breakdown? :confidence :calibrated?]))
+    {:music (when (or features (contains? variables :audio/energy))
+              (merge (select-keys variables [:audio/energy])
+                     (select-keys features [:time-ms :energy-dbfs :energy-class :relative-energy
+                                            :rms :breakdown? :confidence :calibrated?])))
      :lighting (when capacity
                  (select-keys capacity [:utilization :relative-capacity :relative-output :rated-watts
                                         :used-rated-watts :headroom :color :target :mode :operator-master]))
@@ -91,12 +110,15 @@
            :observation (when observation
                           (assoc (select-keys observation [:level :level-change-per-s :sample-time-ms :epoch :phase :path-m])
                                  :current-epoch? (= epoch (:epoch observation))))}
+     :lighting-budget (:lighting-budget output)
+     :lighting-activity (when-let [activity (:lighting-activity output)] (select-keys activity [:scene]))
      :show-time-ms time-ms}))
 
 (defn inspect
   "Return only optical/audio measurements and paged emitter/group discovery.
   Full-resolution fixture frames, PCM, pump commands and provider settings stay out."
-  [{:keys [model output]} {:keys [group-id offset fixture-offset limit] :or {offset 0 fixture-offset 0 limit 24}}]
+  ([state request] (inspect state request (constantly {})))
+  ([{:keys [model output]} {:keys [group-id offset fixture-offset limit] :or {offset 0 fixture-offset 0 limit 24}} read-sources]
   (when-not (and (every? #(and (integer? %) (<= 0 % Integer/MAX_VALUE)) [offset fixture-offset])
                  (integer? limit) (<= 1 limit 64))
     (throw (ex-info "Invalid lighting inspection page" {})))
@@ -121,7 +143,7 @@
                                action (assoc :energy-binding (merge (select-keys (:gate action) [:above :below])
                                                                     {:target (get-in action [:scene :target])
                                                                      :enabled? (:enabled? subscriber true)}))
-                               g (merge (select-keys g [:target :actual :status :gain :generation])
+                               g (merge (select-keys g [:target :actual :brightness-reference :status :gain :generation])
                                         {:instance-id (wire-id (:instance-id g)) :source-effect-id (wire-id (:source-effect-id g))
                                          :numeric-inputs (into {} (comp (filter (comp number? val)) (take 32)
                                                                          (map (fn [[k v]] [(wire-id k) v])))
@@ -130,9 +152,10 @@
         members (when-let [g (get controlled selected)] (set (:fixture-ids g)))
         fixtures (filter #(and (eligible (:id %)) (or (nil? selected)
                                                       (if members (members (:id %)) (some #{selected} (:groups %))))) rig)
-        fixture-page (page fixtures fixture-offset limit)]
+        fixture-page (page fixtures fixture-offset limit)
+        source-readings (read-sources (mapv :id (:items fixture-page)))]
     (merge (select-keys model [:epoch :master :blackout?])
            (venue-signals model output)
            {:groups (assoc group-page :items group-rows)
             :eligible-fixtures (update fixture-page :items
-                                       #(mapv (fn [f] (cond-> {:id (wire-id (:id f))} (:name f) (assoc :name (:name f)))) %))})))
+                                       #(mapv (fn [f] (cond-> (assoc (get source-readings (:id f) {}) :id (wire-id (:id f))) (:name f) (assoc :name (:name f)))) %))}))))

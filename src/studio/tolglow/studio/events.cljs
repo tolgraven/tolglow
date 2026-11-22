@@ -166,6 +166,8 @@
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
+        updated (cond-> updated
+                  epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
                   (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
         updated (if (get-in updated [:ui :rig-dirty?])
@@ -699,12 +701,22 @@
                                                                   existing-cue (assoc :expected-version (:version existing-cue)))
                                                           :on-success [:studio/success "Effect and matching cue published."]}]))})))
 
+(defn auto-activity [db]
+  (let [form (get-in db [:ui :auto-form])
+        saved (get-in db [:show :auto :config :activity-target])]
+    {:enabled? (get form :target-activity? (some? saved))
+     :target (or (:activity-target form) saved 0.5)}))
+
 (rf/reg-event-fx :studio/auto-start
   (fn [{:keys [db]} _]
-    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit]} (get-in db [:ui :auto-form])]
-      {:studio/http {:path "/api/auto" :body {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
-                                              :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
-                                              :launch {:mode mode :duration (musical-duration duration-value duration-unit)} :seed 42}
+    (let [{:keys [interval-value interval-unit count scope mode duration-value duration-unit seed]} (get-in db [:ui :auto-form])
+          {:keys [enabled? target]} (auto-activity db)]
+      {:studio/http {:path "/api/auto"
+                     :body (cond-> {:enabled? true :interval (musical-duration interval-value interval-unit) :count count
+                                    :scope (if (= scope "all") "all" {:page-id (get-in db [:ui :page-id])})
+                                    :launch {:mode mode :duration (musical-duration duration-value duration-unit)}
+                                    :seed (or seed (get-in db [:show :auto :config :seed]) 42)}
+                             enabled? (assoc :activity-target target))
                      :on-success [:studio/success "Auto mode started. You can keep playing alongside it."]}})))
 (rf/reg-event-fx :studio/auto-stop
   (fn [_ _] {:studio/http {:path "/api/auto" :body {:enabled? false} :on-success [:studio/success "Auto mode stopped."]}}))

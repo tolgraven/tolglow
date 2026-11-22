@@ -4,6 +4,7 @@
   (:require [afterglow.render.ir :as ir]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.lighting-match :as matching]
             [tolglow.modulation :as modulation]
             [tolglow.composition.tween :as tween]
             [tolglow.composition.envelope :as envelope]))
@@ -127,7 +128,8 @@
   :aim/:direction use finite 3D world coordinates/vectors;
   invalid computed values throw before any caller can publish a frame."
   ([definition] (compile-effect definition nil))
-  ([definition bind-pure]
+  ([definition bind-pure] (compile-effect definition bind-pure nil))
+  ([definition bind-pure match-plan]
   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)]
     (fn [{:keys [frame instance state] :as context}]
@@ -162,13 +164,14 @@
                                   (assoc output :sampled-value
                                          (with-path [:outputs i :value] #((:evaluate output) env)))
                                   output)) (range) outputs))
+            targets (when (matching/active? definition) (or match-plan (matching/prepare fixtures selected)))
             assignments
             (if done? []
               (into []
                     (mapcat
                      (fn [fixture]
                        (when (or (nil? selected) (selected (:id fixture)))
-                         (keep-indexed
+                         (let [rows (keep-indexed
                           (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value]}]
                             (when (or (nil? targets) (some #{(:id fixture)} targets))
                               (let [value (try
@@ -184,7 +187,10 @@
                                                 (* (:value envelope-result) value)) value)]
                                 (when-not (normalized-output? attribute value)
                                   (fail! [:outputs i :value] "Computed fixture output must be finite and within [0,1]"))
-                                {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs))))
+                                {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs)]
+                           (if targets
+                             (matching/match-rows (get targets (:id fixture)) (get params matching/target-param) rows)
+                             rows)))))
                     fixtures))]
         (-> context
             (assoc :state state :done? done?)

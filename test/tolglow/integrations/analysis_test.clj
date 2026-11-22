@@ -29,6 +29,16 @@
            (recur (+ position n) (:state result) (into events (:events result)))))))))
 (defn events-of [result type] (filterv #(= type (:type %)) (:events result)))
 
+(deftest above-full-scale-pcm-publishes-a-bounded-control-signal
+  (let [result (analysis/analyze (analysis/new-analyzer)
+                                {:samples (double-array (repeat 4800 2.5))
+                                 :sample-rate sample-rate :started-at-ms 0 :received-at-ms 100})
+        events (events-of result :audio/energy)]
+    (is (= 2.5 (get-in result [:features :rms])))
+    (is (= 1.0 (get-in result [:features :audio/energy])))
+    (is (seq events))
+    (is (every? #(= 1.0 (:audio/energy %)) events))))
+
 (deftest kick-onsets-align-with-clock-without-changing-tempo
   (let [initial-clock clock result (run-signal kick-train 4000)
         kicks (events-of result :audio/kick) beats (events-of result :audio/beat)]

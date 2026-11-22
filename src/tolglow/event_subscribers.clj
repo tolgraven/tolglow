@@ -12,7 +12,7 @@
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
   {:atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
-   :lighting (into lighting-levels/group-event-types lighting-levels/rig-event-types)
+   :lighting (into [:lighting/activity] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
    :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
    :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
