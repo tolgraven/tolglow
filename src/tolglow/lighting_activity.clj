@@ -169,6 +169,33 @@
           [(:opacity native-layer) (:member-opacity native-layer) (:opacity batch)
            (when (seq assignments) (mapv :opacity assignments))]) blocks))
 
+(defn- opacity-class [x]
+  (cond (or (nil? x) (== 1.0 (double x))) :opaque (pos? x) :partial :else :muted))
+
+(defn emission-writer-targets
+  "Identify the heads each actual source contributes emission to after native
+  layering, opaque replacements and device-channel precedence. Reuse a prior
+  result when only values or nonzero partial opacity change."
+  [patch blocks previous]
+  (let [shape (ownership-shape blocks)
+        alpha (mapv (fn [[layer member batch rows]]
+                      [(opacity-class layer) (opacity-class member) (opacity-class batch)
+                       (mapv opacity-class rows)]) (opacities blocks))]
+    (if (and (identical? patch (:patch previous)) (= shape (:shape previous)) (= alpha (:alpha previous)))
+      previous
+      (let [;; Keep cue instances distinct even when they run the same effect.
+            tagged (mapv (fn [block]
+                           (assoc block :source (when-let [source (:source block)] {:effect-id source}))) blocks)
+            by-head (owners tagged)]
+        {:patch patch :shape shape :alpha alpha
+         :targets (reduce-kv
+                   (fn [acc id fields]
+                     (if-let [fixture (get-in patch [:by-id id])]
+                       (reduce-kv (fn [m [source _version] share]
+                                    (if (pos? share) (update m source (fnil conj #{}) id) m))
+                                  acc (light-shares fields fixture)) acc))
+                   {} by-head)}))))
+
 (defn- layout [patch levels indices]
   (let [total (reduce + 0.0 (map :global-maximum (vals levels)))
         groups (reduce-kv
