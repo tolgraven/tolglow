@@ -85,3 +85,15 @@
   (is (= "no eligible look" (autopilot/action-label :no-eligible-look)))
   (is (= "param/set · level" (autopilot/action-label {:op :param/set :param :level :instance-id "a"})))
   (is (nil? (autopilot/action-label nil))))
+
+(deftest target-response-edits-preserve-independent-attack-and-release
+  (let [saved (assoc-in db [:server-projection :view :settings :autopilot :target-response]
+                        {:release {:blend 0.25}})
+        edited (autopilot/edit-db saved :autopilot [:target-response :attack] {:beats "3/8"})
+        request (autopilot/write-settings edited :autopilot nil)]
+    (is (= {:target-response {:attack {:beats 0.375}}} (get-in request [:studio/http :body :values])))
+    (is (= {:attack {:beats 0.375} :release {:blend 0.25}}
+           (:target-response (policy/visible-settings (:db request) :autopilot))))
+    (is (= {:ms 0} (autopilot/target-stage {:ms "0"})))
+    (is (= {:blend 0.25} (autopilot/target-stage {:blend "1/4"})))
+    (is (thrown? js/Error (autopilot/target-stage {:blend 2})))))

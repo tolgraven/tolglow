@@ -36,11 +36,22 @@
 (rf/reg-event-db ::edit (fn [db [_ section path change]] (edit-db db section path change)))
 (defn- edit! [section path value] (rf/dispatch-sync [::edit section path value]))
 
+(defn target-stage [v]
+  (if (contains? v :blend)
+    (let [fraction (modulation/number-value (:blend v) "Target blend per frame")]
+      (when-not (<= 0 fraction 1) (throw (js/Error. "Enter a per-frame blend between zero and one.")))
+      {:blend fraction})
+    (let [[u value] (first v) n (modulation/number-value value "Target response")]
+      (when-not (and (= 1 (count v)) (some #{u} (map first signal/units)) (<= 0 n))
+        (throw (js/Error. "Target response needs a nonnegative duration.")))
+      {u n})))
+
 (defn patch [draft]
   (reduce-kv
     (fn [m path v]
       (assoc-in m path
         (case (first path)
+          :target-response (target-stage v)
           (:window :interval :duration) (signal/parse-duration v (name (first path)))
           :seed (let [n (modulation/number-value v "Rotation seed")]
                   (when-not (js/Number.isSafeInteger n) (throw (js/Error. "Rotation seed must be a whole number.")))
@@ -181,7 +192,7 @@
         :else nil))
 
 (defn- telemetry []
-  (let [{:keys [statistics targets decision last-action]} @(rf/subscribe [::report])]
+  (let [{:keys [statistics targets requested-targets decision last-action]} @(rf/subscribe [::report])]
     (when (seq statistics)
       [:section.conduct-meters {:aria-label "Measured energy"}
        (for [[k text] [[:brightness "Fixture brightness"] [:activity "Visual activity"]]
@@ -189,7 +200,10 @@
          ^{:key k} [:div.conduct-meter
                     [:div.conduct-meter-title [:span text] [:strong (signal/percent (:mean s))]]
                     [:meter {:min 0 :max 1 :value (or (:mean s) 0) :aria-label (str text " rolling average")}]
-                    [:span (str "Target " (signal/percent (k targets)) " · now " (signal/percent (:instant s)))]
+                    [:span (str "Target " (signal/percent (k targets))
+                                (when (and (number? (k requested-targets)) (not= (signal/percent (k requested-targets)) (signal/percent (k targets))))
+                                  (str " · requested " (signal/percent (k requested-targets))))
+                                " · now " (signal/percent (:instant s)))]
                     [:small (str (signal/percent (:min s)) " – " (signal/percent (:max s))
                                  " · in band " (signal/percent (:target-hit-fraction s)))]
                     (when (number? (:stddev s)) [:small (str "Std. deviation " (signal/percent (:stddev s)))])
@@ -198,6 +212,20 @@
          [:div.conduct-action
           [:span (str (:active-count decision 0) " active sources")]
           (when-let [action (action-label last-action)] [:span (str "Last action · " action)])])])))
+
+(defn- target-stage-field [stage v]
+  (let [title (str "Target " (name stage))
+        write! #(edit! :autopilot [:target-response stage] %)
+        mode (if (contains? v :blend) :blend :duration)]
+    [:div.policy-stage
+     [:div.policy-binding
+      [signal/choice (str title " response") mode [[:duration "Reach in duration"] [:blend "Blend per frame"]]
+       #(write! (if (= % :blend) {:blend 0.1} {:beats 0}))]]
+     (if (= mode :duration)
+       [signal/duration-field (str title " duration") (or v {:beats 0}) write!]
+       [:label (str title " fraction")
+        [:input {:type "text" :input-mode "text" :value (str (:blend v))
+                 :on-change #(write! {:blend (.. % -target -value)})}]])]))
 
 (defn- settings-panel [controls draft signals busy?]
   (let [section :autopilot edit #(edit! section [%1] %2)]
@@ -215,7 +243,11 @@
         [:generate "Compose one-shot effects"] [:author "Request an agent-authored effect"]] #(edit :preference %)]]
      [:label.policy-toggle [:input {:type "checkbox" :checked (:rotate? controls)
                                     :on-change #(edit :rotate? (.. % -target -checked))}] "Rotate active fixtures"]
-     [:details.source-readings [:summary "Controller response"]
+     [:details.source-readings [:summary "Target attack and release"]
+      [:div.policy-grid
+       (for [stage [:attack :release]]
+         ^{:key stage} [target-stage-field stage (get-in controls [:target-response stage])])]]
+     [:details.source-readings [:summary "Decision limits"]
       [:div.conduct-fields
        (for [[k label opts] [[:step "Change per decision" unit-opts] [:standby-level "Standby level" unit-opts]
                              [:max-gain "Maximum emission gain" (assoc gain-opts :min 1)] [:overshoot "Allowed overshoot" unit-opts] [:tolerance "Target tolerance" unit-opts]]]

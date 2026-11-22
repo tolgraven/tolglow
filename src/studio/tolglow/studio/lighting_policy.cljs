@@ -24,7 +24,7 @@
       (reduce-kv (fn [updated key value]
                    (case key
                      :global (update updated key merge value)
-                     (:targets :hdr :signals :cue-gains :instance-gains :source-gains) (update updated key merge value)
+                     (:targets :target-response :hdr :signals :cue-gains :instance-gains :source-gains) (update updated key merge value)
                      :groups (update updated key
                                      #(reduce-kv (fn [m id rule]
                                                    (if (nil? rule) (dissoc m id) (update m id merge rule))) % value))
