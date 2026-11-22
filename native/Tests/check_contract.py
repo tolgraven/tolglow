@@ -58,6 +58,9 @@ class Contract(unittest.TestCase):
         store = (ROOT / "iOS/PairingStore.swift").read_text()
         self.assertIn("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", store)
         self.assertNotRegex(store, r"UserDefaults\..*set")
+        self.assertEqual(2, store.count("kSecAttrService as String: destination.keychainService"))
+        osc = (ROOT / "iOS/OSCConnection.swift").read_text()
+        self.assertIn("credential.destination == destination, credential.device == observation.deviceID", osc)
         watch = (ROOT / "watchOS/TolglowWatchApp.swift").read_text()
         self.assertNotIn("pairingToken", watch)
 

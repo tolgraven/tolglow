@@ -108,6 +108,11 @@ acknowledgement, encryption or ordering guarantee; use a trusted lighting LAN or
 an authenticated network tunnel. A pairing token is bearer authorization, not
 transport confidentiality.
 
+The iPhone stores each enrollment against the entered OSC host, UDP port and
+device ID. Pick that destination before saving the phone or Watch token. Changing
+venue or port requires its own enrollment. After upgrading from device-only
+pairing, re-enter the issuing host's token once.
+
 ## Sensor protocol and units
 
 One OSC 1.0 datagram at `/tolglow/sensor/v1`, type tag `,s`, contains one UTF-8 JSON

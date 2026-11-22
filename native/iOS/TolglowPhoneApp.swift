@@ -7,8 +7,8 @@ import TolglowSensorCore
     let relay = WatchRelay()
     let studio = StudioClient()
     let rigCalibration = RigCalibrationClient()
-    private var phoneToken: String?
-    private var watchToken: String?
+    private var phoneToken: SensorCredential?
+    private var watchToken: SensorCredential?
     @Published var relayArmed = false
     @Published var pairedWatchID = UserDefaults.standard.string(forKey: "paired-watch-id") ?? ""
     @Published var status = "Enroll device IDs in the host before arming"
@@ -16,7 +16,7 @@ import TolglowSensorCore
     init() {
         motion.onObservation = { [weak self] observation in
             guard let self, let token = self.phoneToken else { self?.motion.disarm(); return }
-            self.osc.send(observation, token: token)
+            self.osc.send(observation, credential: token)
         }
         osc.onFailure = { [weak self] in self?.disarmPhone(); self?.disarmRelay() }
         relay.onFailure = { [weak self] in self?.disarmRelay() }
@@ -24,13 +24,16 @@ import TolglowSensorCore
             guard let self, self.relayArmed, self.osc.ready,
                   observation.deviceID == self.pairedWatchID,
                   let token = self.watchToken else { return false }
-            self.osc.send(observation, token: token)
+            self.osc.send(observation, credential: token)
             return self.osc.ready
         }
     }
-    func savePairing(device: String, token: String) {
+    func savePairing(device: String, token: String, host: String, port: UInt16) {
+        guard let destination = PairingDestination(host: host, port: port) else {
+            status = "Choose the issuing OSC host and port first"; return
+        }
         do {
-            try PairingStore.save(token, for: device)
+            try PairingStore.save(token, for: device, destination: destination)
             if device == motion.deviceID { disarmPhone() }
             if device == pairedWatchID { disarmRelay() }
             status = "Host-issued token saved in Keychain"
@@ -38,13 +41,15 @@ import TolglowSensorCore
         catch { status = "Pairing credential could not be saved" }
     }
     func armPhone() {
-        guard osc.ready, let token = PairingStore.load(for: motion.deviceID) else {
+        guard osc.ready, let destination = osc.destination,
+              let token = PairingStore.load(for: motion.deviceID, destination: destination) else {
             status = "Connect OSC and enroll this iPhone first"; return
         }
         phoneToken = token; motion.arm()
     }
     func armRelay() {
-        guard osc.ready, !pairedWatchID.isEmpty, let token = PairingStore.load(for: pairedWatchID) else {
+        guard osc.ready, let destination = osc.destination, !pairedWatchID.isEmpty,
+              let token = PairingStore.load(for: pairedWatchID, destination: destination) else {
             status = "Connect OSC and enroll the selected Watch first"; return
         }
         UserDefaults.standard.set(pairedWatchID, forKey: "paired-watch-id")
@@ -209,7 +214,8 @@ struct PairingView: View {
                     Toggle("Save token for Watch", isOn: $forWatch)
                     SecureField("Host-issued pairing token", text: $token).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Save pairing token") {
-                        model.savePairing(device: forWatch ? model.pairedWatchID : model.motion.deviceID, token: token)
+                        model.savePairing(device: forWatch ? model.pairedWatchID : model.motion.deviceID, token: token,
+                                         host: host, port: UInt16(port) ?? 0)
                         token = ""
                     }
                     Text("Enroll this exact device in the host, then paste its token. Device IDs alone do not authenticate a controller. UDP is plaintext: use a trusted lighting LAN or an authenticated network tunnel.")
