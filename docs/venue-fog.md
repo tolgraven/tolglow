@@ -35,3 +35,8 @@ Read `:fog/level` and `:fog/target` in model `:variables`. A reaction can change
 To set manufacturer duty limits, add `:duty {:max-on-s 0.4 :min-off-s 6 :max-level 0.5}` to the fixture's `:fogger` map. These are the defaults. A pulse ends on its own publisher-clock deadline, including when rendering is stalled and the publisher repeats the last frame. The capture reports delivered DMX, so a lost connection suspends feedback for that pump once its last delivery is older than 500 ms. A real machine can continue to hold its last received DMX setting during a transport failure.
 
 An authored cue can take over a pump. Music-triggered pulses use the remaining pumps, with the same device caps on profiled machines. Pause, blackout, a zero master or calibration suspends autonomous demand. A calibration operator can still drive an ordinary cue. The profile maps demand into the physical DMX range, including reversed ranges and coarse/fine inversion. When a lease expires, the publisher sends the configured off bytes for that pump. Loading a show preserves the target and selected fixtures and disarms its automatic controller.
+Fog is off at its declared physical DMX endpoint when no cue assigns the
+channel, during blackout, while the independent publisher waits for a fresh
+frame, and on shutdown. When repatching, the output continues to send that
+endpoint on the old addresses until another channel or fixture footprint owns
+them. This includes coarse/fine pairs spanning two universes.
