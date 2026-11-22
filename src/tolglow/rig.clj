@@ -3,6 +3,7 @@
   Unknown portable scene metadata is preserved; validation never fills defaults."
   (:require [clojure.string :as str]
             [afterglow.render.frame :as render]
+            [afterglow.render.atmosphere :as atmosphere]
             [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
@@ -45,6 +46,9 @@
           :else
           (map #(-> % (assoc :code :invalid-patch) (update :path (fn [path] (or path [:fixtures]))))
                (render/validate-patch fixtures))))
+      (when (some #(contains? (:room rig) %) [:air-changes-per-hour :fog-half-life-s])
+        (try (atmosphere/plan (:room rig) {:fixtures []}) nil
+             (catch Exception e [(error [:room] :invalid-atmosphere (.getMessage e))])))
       (when (contains? rig :room)
         (if-not (map? (:room rig))
           [(error [:room] :invalid-room "Room must be a map with width, height and depth")]

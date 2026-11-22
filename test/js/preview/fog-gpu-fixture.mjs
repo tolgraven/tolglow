@@ -101,6 +101,33 @@ window.fogTest = () => {
   camera.position.set(0, 2.98, 3); camera.lookAt(0, 2.98, 0); camera.updateMatrixWorld();
   const aperture = render([finiteEntry]);
   result.apertureCoverage = [47, 48, 49, 50, 51].map(x => aperture[(49 * width + x) * 4]);
+  // Actual accepted-equivalent volumes. A room of 256 m³ at 10% mixed haze
+  // contains 25.6 m³ equivalent. Test the halo with a central ray whose fixed
+  // x=.26 is outside the entire optical cone at the ray's y.
+  scene.background.setRGB(.45,.45,.45); fog.setAmbient();
+  camera.position.set(0,1.5,4); camera.lookAt(0,1.5,0); camera.updateMatrixWorld();
+  const host=(time,mixed,local,emitted,flow)=>({'sample-time-ms':time,epoch:1,'volume-m3':256,'mixed-m3':mixed,'mixed-density':mixed/256,
+    sources:[{'fixture-id':'jet',position:[-.7,1.25,0],direction:[1,.1,0],'local-m3':local,'emitted-m3':emitted,'flow-m3-s':flow}]});
+  fog.setAtmosphere('venue',host(0,0,0,0,0)); result.manualDuringShow=fog.burst();
+  const dry=render([]); result.dryHostDifference=difference(dry,pixels(target));
+  fog.setAtmosphere('venue',host(500,0,3,3,6));
+  const jet=render([]), red=jet.filter((_,i)=>i%4===0);
+  result.jetDarkest=Math.min(...red)/dry[0]; result.jetClearest=Math.max(...red)/dry[0];
+  fog.setAtmosphere('venue',host(50000,25.6,0,25.6,0)); const room=render([]);
+  const mid=(49*width+49)*4; result.roomTransmission=room[mid]/dry[mid];
+  const calibrated = {...host(50000,25.6,0,25.6,0),'extinction-per-m':2.5,'reference-path-m':8,'fog-level':1-Math.exp(-2)};
+  fog.setAtmosphere('venue', calibrated); result.calibratedTransmission=render([])[mid]/dry[mid];
+  result.calibratedMass=fog.field.stats().massEstimate;
+  fog.setAtmosphere('venue',host(50001,25.6,0,25.6,0));
+  scene.background.setRGB(0,0,0);
+  const vertical={position:new THREE.Vector3(0,3,0),direction:new THREE.Vector3(0,-1,0),
+    color:new THREE.Color(1,0,0), angle:.035,penumbra:.3,intensity:160,distance:8};
+  result.opticalCore=render([vertical])[mid];
+  camera.position.x=.26; camera.lookAt(.26,1.5,0); camera.updateMatrixWorld();
+  const halo=render([vertical]); result.halo=halo[mid]; result.haloGreen=halo[mid+1];
+  result.brighterHalo=render([{...vertical,intensity:320}])[mid];
+  fog.setAtmosphere('venue',host(55000,0,0,25.6,0));
+  result.dryHalo=render([vertical])[mid];
   result.glError = gl.getError();
   renderer.setRenderTarget(null); renderer.clear();
   scene.remove(blocker); blocker.geometry.dispose(); blocker.material.dispose();
