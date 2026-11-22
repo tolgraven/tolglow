@@ -48,7 +48,7 @@ In this example, up to four sources can run above standby, including up to two i
 
 ## Shape visual activity
 
-Enable `:lighting-activity` to score the final, visible output from zero to one. A fast strobe or square dimmer LFO raises the flashing component. A softer edge reduces it. Moving-head speed contributes while the head is lit. A handful of sparkles can score highly on their own fixtures while contributing little to the whole room.
+Enable `:lighting-activity` to score the final, visible output from zero to one. A faster fixture strobe raises the strobe component. A square dimmer LFO raises the flashing component, and rounding its edges reduces it. Moving-head speed contributes while the head is lit. A handful of sparkles can score highly on their own fixtures while contributing little to the whole room.
 
 Read the score and its brightness, coverage, flashing, movement and strobe components under `[:lighting/activity :scene]` in `(show/variables runtime)`. Use `[:lighting/activity :effects effect-id]` or `[:lighting/activity :groups patch-group-id]` for a narrower view. The scene reads the combined output. Per-effect scores estimate how much each writer contributed when arithmetic blends share a channel.
 
