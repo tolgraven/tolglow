@@ -192,3 +192,15 @@ On iPhone choose **Scan rig → Measure fixture brightness**, connect to the Stu
 Set the master to full and release blackout. Choose a shutter speed before arming. Arming lights the reference at full white. After a reading, the next unmeasured type lights for alignment. During measurement the host darkens other patched emitters. The iPhone uses the rear physical wide camera, minimum ISO, fixed shutter, locked focus and white balance, unity zoom and SDR color. A capture waits for the host to confirm physical presentation, allows settling, then samples 15 frames for each of dark and full white. The center grid uses linearized Rec. 709 luminance. Clipped, unstable and low-contrast readings can be retaken. If the shutter or diffuser needs changing, stop and start the whole run again. At a mains or PWM frequency that produces unstable readings, try a longer shutter and a denser neutral diffuser.
 
 Once every type has a complete dark/white pair, Save sends the measurements in reference order to the show. The host computes ratios using each pair’s white-minus-dark signal. Navigating away, backgrounding, a camera interruption or a lost connection stops the session. The host lease also releases output when an iPhone cannot send cancellation. iPhone ISP tone processing and spectral sensitivity can vary, especially for narrowband LEDs. Camera repeatability and fixture-to-fixture agreement require physical measurements on the intended hardware.
+
+## Signing into an operator-protected Studio
+
+In the iPhone or iPad app, open **Connect → Studio operator**, enter the
+Studio HTTPS origin and save the venue’s operator password. The device keeps
+it in its Keychain. Perform, rig scanning, photometry, fog calibration and
+the embedded re-frame app share this setting. Enter the same origin on each
+surface you use. A different hostname, port, or scheme has its own credential.
+The server challenge must identify the Tolglow Studio realm. **Forget saved
+password** removes the local credential for the selected origin. Existing
+browser sessions expire on their normal schedule. OSC pairing for the phone
+and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).

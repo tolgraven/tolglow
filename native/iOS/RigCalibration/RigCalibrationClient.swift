@@ -26,6 +26,8 @@ import Foundation
     private let http: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 4; config.timeoutIntervalForResource = 6
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
     init() {

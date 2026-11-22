@@ -194,6 +194,7 @@ struct PairingView: View {
     var body: some View {
         NavigationStack {
             Form {
+                StudioOperatorAccessSection()
                 Section("OSC destination") {
                     TextField("Host", text: $host).textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("UDP port", text: $port).keyboardType(.numberPad)

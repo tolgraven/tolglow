@@ -38,6 +38,8 @@ struct StudioSnapshot: Decodable {
     private let http: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5; config.timeoutIntervalForResource = 8
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
 

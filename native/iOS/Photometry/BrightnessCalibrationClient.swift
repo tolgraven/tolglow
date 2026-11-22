@@ -85,6 +85,8 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 4
         config.timeoutIntervalForResource = 6
+        config.urlCredentialStorage = nil
+        config.httpShouldSetCookies = false
         return URLSession(configuration: config)
     }()
 

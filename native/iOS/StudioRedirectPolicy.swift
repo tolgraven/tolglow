@@ -4,6 +4,11 @@ import Foundation
 final class StudioRedirectPolicy: NSObject, URLSessionTaskDelegate {
     static let shared = StudioRedirectPolicy()
 
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        StudioOperatorAccess.respond(to: challenge, requestURL: task.originalRequest?.url, completion: completionHandler)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,

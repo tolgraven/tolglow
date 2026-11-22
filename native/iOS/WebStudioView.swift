@@ -68,6 +68,17 @@ private struct OwnedStudioWebView: UIViewRepresentable {
                 status.wrappedValue = "Navigation outside the configured studio was blocked"
             }
         }
+        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            guard active else { completionHandler(.cancelAuthenticationChallenge, nil); return }
+            StudioOperatorAccess.respond(to: challenge, requestURL: origin) { disposition, credential in
+                if disposition == .rejectProtectionSpace {
+                    self.status.wrappedValue = "Enter the password for this Studio in Connect"
+                }
+                completionHandler(disposition, credential)
+            }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             if active { status.wrappedValue = "Connected to web studio" }
         }
