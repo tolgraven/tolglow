@@ -42,7 +42,7 @@
         options (reduce (fn [opts k]
                           (if (and (map? (get edit k)) (map? (get current k)))
                             (update opts k #(merge (get current k) %)) opts))
-                        options (case scope :autopilot [:targets :hdr :signals] :hdr [:cue-gains :instance-gains :source-gains] []))]
+                        options (case scope :autopilot [:targets :hdr :signals :target-response] :hdr [:cue-gains :instance-gains :source-gains] []))]
     (when-let [validate (validators scope)] (validate options))
     options))
 

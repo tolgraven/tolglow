@@ -2,6 +2,7 @@
   "Portable controls shared by the performer, REPL, Studio and renderer."
   (:require [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.autopilot.target-response :as target-response]
             [tolglow.registry :as registry]))
 
 (def hdr-defaults {:gain 1.0 :max-excess 1.0 :white-mix 1.0 :spill 0.0 :spill-white-mix 1.0
@@ -11,7 +12,7 @@
    :window {:bars 2} :interval {:beats 1} :duration {:bars 1}
    :strategy :gradual :preference :parameters :step 0.10 :tolerance 0.025
    :standby-level 0.0 :max-gain 2.0 :overshoot 0.0 :rotate? true :seed 1
-   :hdr hdr-defaults :signals {}})
+   :hdr hdr-defaults :signals {} :target-response {}})
 
 (defn enabled? [model]
   (let [{:keys [enabled? enable-cue]} (get-in model [:settings :autopilot])]
@@ -56,7 +57,8 @@
 (defn settings [opts]
   (let [s (-> (merge defaults opts)
               (update :targets #(merge (:targets defaults) %))
-              (update :hdr hdr-settings))]
+              (update :hdr hdr-settings)
+              (update :target-response target-response/validate!))]
     (when-not (and (every? (conj (set (keys defaults)) :enable-cue) (keys opts))
                    (boolean? (:enabled? s)) (boolean? (:rotate? s))
                    (scope? (:scope s)) (or (nil? (:enable-cue s)) (id? (:enable-cue s)))

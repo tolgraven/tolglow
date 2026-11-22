@@ -440,7 +440,8 @@
                 (update-in [:extensions :tolglow.autopilot/run]
                            (fn [run] (-> run (update :actions conductor-actions/restore ids epoch)
                                       (assoc-in [:controller :epoch] epoch)
-                                      (assoc-in [:history :clock :epoch] epoch))))
+                                      (assoc-in [:history :clock :epoch] epoch)
+                                      (cond-> (:target-response run) (assoc-in [:target-response :clock :epoch] epoch)))))
                 (contains? saved :composition-runs) (assoc :composition-runs runs)
                 (contains? saved :composition-tokens) (assoc :composition-tokens tokens)
                 (get-in saved [:auto :state]) (update :auto #(-> (remap-references % ids owners) (assoc-in [:state :epoch] epoch)))

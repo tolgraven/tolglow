@@ -85,3 +85,32 @@
         (submit rt 75 :command {:op :blackout/set :value true})
         (is (every? zero? (get-in @(:state rt) [:output :universes 1])))
         (finally (show/stop! rt))))))
+
+(deftest conductor-eases-the-setpoint-between-musical-decisions
+  (let [rig [(fixture :lamp 1 :stage)]
+        rt (runtime rig [(look :wash [:lamp] {:dimmer 1.0})] true)
+        target #(get-in (show/snapshot rt) [:autopilot :targets :brightness])]
+    (try
+      (submit rt 0 :command {:op :cue/launch :cue-id :wash})
+      (submit rt 25 :settings {:scope :autopilot
+                               :values {:enabled? true :targets {:brightness 0.0 :activity 0.0}
+                                        :interval {:bars 2} :target-response {:release {:ms 100}}}})
+      (is (== 1 (target)))
+      (is (zero? (get-in (show/snapshot rt) [:autopilot :requested-targets :brightness])))
+      (tick rt 75)
+      (is (== 0.5 (target)))
+      (tick rt 125)
+      (is (zero? (target)))
+      (finally (show/stop! rt)))))
+
+(deftest repatching-to-a-new-universe-resets-the-conductor-meter
+  (let [lamp (fixture :lamp 1 :stage)
+        rt (runtime [lamp] [(look :wash [:lamp] {:dimmer 1.0})] true)]
+    (try
+      (submit rt 0 :command {:op :cue/launch :cue-id :wash})
+      (submit rt 25 :settings {:scope :autopilot :values {:enabled? true :interval {:ms 25}}})
+      (submit rt 50 :rig {:fixtures [(assoc lamp :universe 3)]})
+      (is (contains? (get-in @(:state rt) [:output :universes]) 3))
+      (tick rt 75)
+      (is (number? (get-in (show/snapshot rt) [:autopilot :statistics :brightness :mean])))
+      (finally (show/stop! rt)))))

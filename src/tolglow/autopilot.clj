@@ -7,6 +7,7 @@
             [tolglow.autopilot.config :as config]
             [tolglow.autopilot.controller :as controller]
             [tolglow.autopilot.statistics :as statistics]
+            [tolglow.autopilot.target-response :as target-response]
             [tolglow.autopilot.signal :as signal]
             [tolglow.autopilot.scope :as scope]
             [tolglow.lighting-activity :as activity]
@@ -38,15 +39,20 @@
          :ids ids :cue-ids (when page (vec (scope/page-cue-ids model (:page-id scope))))
          :scoped-meter (if (= scope :global) meter (assoc meter :source-capacities (select-keys capacities ids)))}))))
 
+(defn- metered-frame? [meter frame]
+  (and (:universes frame) (every? (partial contains? (:universes frame)) (:universes meter))))
+
 (defn- source-rows [meter ids frame]
-  (let [readings (when (:universes frame) (capacity/measure-sources meter (:universes frame) ids))]
+  (let [readings (when (metered-frame? meter frame) (capacity/measure-sources meter (:universes frame) ids))]
     (mapv (fn [id] {:id id :capacity (get-in meter [:source-capacities id :relative-capacity])
                     :level (get-in readings [id :local-brightness] 0.0)}) ids)))
 
 (defn- perform [model state decisions time-ms command]
   (reduce (fn [{:keys [model state author-request]} decision]
             (let [result (actions/apply-decision model state decision time-ms command)]
-              (cond-> result author-request (assoc :author-request author-request))))
+              (if-let [pending (get-in result [:state :pending])]
+                (cond-> result (= author-request pending) (assoc :author-request pending))
+                (dissoc result :author-request))))
           (actions/cleanup model state time-ms command) decisions))
 
 (defn- stop-run [model prior time-ms command]
@@ -72,24 +78,31 @@
             plan (scope-plan (:plan previous-cache) model patch meter scope)
             changed? (and prior (or (not= scope (:scope prior))
                                     (and (:plan previous-cache)
-                                         (not= (:ids plan) (get-in previous-cache [:plan :ids])))))
+                                         (or (not (identical? patch (get-in previous-cache [:plan :patch])))
+                                             (not= (:ids plan) (get-in previous-cache [:plan :ids]))))))
             model (if changed? (stop-run model prior time-ms command) model)
             prior (when-not changed? prior)
             clock (assoc (time/frame-clock (assoc model :time-ms time-ms)) :epoch (:epoch model))
             context {:start-clock (or (:start-clock prior) clock) :modulation-view modulation-view
                      :prepared (signal/prepare (:signals previous-cache) (:waveforms model))}
             model (assoc model :time-ms time-ms)
-            targets (config/targets model opts context)
+            requested (config/targets model opts context)
             knobs (config/policy-values model opts context)
             previous-state (:controller prior)
             due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
             previous-report (or (:statistics prior)
-                                (when (and due? (:universes last-frame))
+                                (when (metered-frame? meter last-frame)
                                   (let [baseline (get-in (activity/advance-meter nil patch (:scoped-meter plan)
                                                            last-frame [] time-ms) [:report :scene])]
                                     {:window (:window opts)
                                      :brightness {:mean (:brightness baseline) :instant (:brightness baseline)}
                                      :activity {:mean (:score baseline) :instant (:score baseline)}})))
+            initial (when previous-report
+                      {:brightness (get-in previous-report [:brightness :instant])
+                       :activity (get-in previous-report [:activity :instant])})
+            response (target-response/advance (:target-response prior)
+                       (cond-> clock suspended? (assoc :playing? false)) requested initial (:target-response opts))
+            targets (:targets response)
             sources (when due? (source-rows meter (:ids plan) (force raw-frame)))
             result (when due?
                      (controller/advance previous-state
@@ -97,8 +110,8 @@
                         :statistics previous-report :cue-ids (:cue-ids plan) :options knobs}))
             action-state (or (:actions prior) (actions/initial-state model scope))
             performed (perform model action-state (:actions result) time-ms command)
-            next-run (cond-> (assoc prior :scope scope :start-clock (:start-clock context) :targets targets
-                                    :actions (:state performed))
+            next-run (cond-> (assoc prior :scope scope :start-clock (:start-clock context) :requested-targets requested :targets targets
+                                    :target-response (:state response) :actions (:state performed))
                        due? (assoc :controller (:state result) :gains (:gains result) :decision (:report result))
                        (seq (:actions result)) (assoc :last-action (:result performed)))]
         {:model (assoc-in (:model performed) run-path next-run)
@@ -146,7 +159,7 @@
           levels {:brightness (:brightness scene 0.0) :activity (:score scene 0.0)}
           history (statistics/advance (:history prior) (cond-> clock suspended? (assoc :playing? false))
                                     (get-in prepared [:options :window]) levels (:targets prior) (:tolerance prepared))
-          view {:enabled? true :scope (:scope prior) :targets (:targets prior) :statistics (:report history)
+          view {:enabled? true :scope (:scope prior) :requested-targets (:requested-targets prior) :targets (:targets prior) :statistics (:report history)
                 :decision (:decision prior) :last-action (:last-action prior)}
           model (-> model (assoc-in (conj run-path :history) (:state history))
                     (assoc-in (conj run-path :statistics) (:report history))
