@@ -53,7 +53,7 @@ Group stages override the corresponding global stage. To use a mapped control fo
 
 ## Trigger a look from sound
 
-`:audio/energy` names the normalized, smoothed RMS signal from the configured audio capture. The show variable uses that key, the patchbay source is `audio/energy`, and a subscriber to the `:audio/energy` event reads the same key in its event data. Silence measures zero. The analyzer publishes the variable per measurement and throttles event delivery separately.
+`:audio/energy` names the normalized, smoothed RMS signal from the configured audio capture. The show variable uses that key, the patchbay source is `audio/energy`, and a subscriber to the `:audio/energy` event reads the same key in its event data. Silence measures zero and above-full-scale input saturates the control signal at one. The analyzer publishes the variable per measurement and throttles event delivery separately.
 
 For continuous control, add `:target-var [:audio/energy]` to a lighting-scene request. For a new look on each loud passage, use a threshold with a lower rearm point. This example waits for audio energy to cross 0.4 and varies the front group once. A later reading at or below 0.15 rearms it.
 

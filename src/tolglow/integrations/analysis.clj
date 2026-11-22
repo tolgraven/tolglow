@@ -131,7 +131,7 @@
         kick? (and onset? (or (nil? (:last-kick-ms state))
                               (>= (- time-ms (:last-kick-ms state)) (:kick-refractory-ms opts))))
         kick-confidence (if kick? (clamp (- 1.0 (/ threshold kick)) 0.0 1.0) 0.0)
-        old-envelope (get state :audio/energy rms)
+        old-envelope (get state :unclipped-rms-envelope rms)
         energy (approach old-envelope rms duration (if (> rms old-envelope)
                                                     (:energy-attack-ms opts) (:energy-release-ms opts)))
         baseline (get state :energy-baseline energy)
@@ -148,7 +148,7 @@
         breakdown? (if confirmed? (not breakdown-before?) breakdown-before?)
         [bands band-features] (bands/finish-hop (:bands state) (:noise-floor opts))
         features (merge band-features {:time-ms time-ms :rms rms :peak (:peak hop) :kick-rms kick
-                  :kick-threshold threshold :kick-rise rise :audio/energy energy
+                  :kick-threshold threshold :kick-rise rise :audio/energy (clamp energy 0.0 1.0)
                   :energy-dbfs (* 20.0 (Math/log10 (max 1.0e-12 rms)))
                   :energy-baseline reference :relative-energy relative
                   :energy-class (cond (< relative (:breakdown-enter-ratio opts)) :low
@@ -162,7 +162,7 @@
                      :kick-deviation (approach deviation (Math/abs (- kick mean)) duration (:kick-baseline-ms opts))
                      :kick-armed? (and armed? (not kick?))
                      :kick-latch-level (if kick? kick (if armed? 0.0 (max kick (:kick-latch-level state))))
-                     :audio/energy energy
+                     :unclipped-rms-envelope energy
                      :energy-baseline (if breakdown? baseline (approach baseline energy duration (:energy-baseline-ms opts)))
                      :breakdown? breakdown? :breakdown-candidate-since (when-not confirmed? candidate-since)
                      :breakdown-reference (if breakdown? (or (:breakdown-reference state) reference) nil))
