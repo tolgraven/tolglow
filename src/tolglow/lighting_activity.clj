@@ -48,47 +48,74 @@
                  (nil? owner) old
                  :else (update old owner (fnil max 0.0) opacity))]
       (assoc-in by-target [id field] next))
-    by-target))
+    (if (and (pos? opacity) (not (contains? by-target id))) (assoc by-target id {}) by-target)))
 
-(defn- ordered-members [blocks]
-  (if-not (some :native-layer blocks) blocks
-    (let [indexed (map-indexed vector blocks)
-          groups (group-by #(get-in % [1 :native-layer :id]) indexed)]
-      (mapcat (fn [[i b]]
-                (if-let [layer (:native-layer b)]
-                  (let [members (get groups (:id layer))]
-                    (when (= i (first (peek members)))
-                      (map second (sort-by #(get-in % [1 :native-layer :member]) members))))
-                  [b])) indexed))))
+(defn- batch-fields [batch]
+  (or (keys (:outputs batch))
+      (mapv :attribute (get-in batch [:field-request :group :cpu-plan :outputs]))))
+
+(defn- assignments [fields {:keys [source assignments batch]}]
+  (let [owner (when-let [id (:effect-id source)] [id (:effect-version source)])
+        assigned (reduce (fn [m {:keys [target-id attribute opacity blend]}]
+                           (write-field m target-id attribute owner (or opacity 1) (or blend :replace)))
+                         fields assignments)
+        attributes (batch-fields batch)]
+    (reduce (fn [m id]
+              (reduce (fn [m attr] (write-field m id attr owner (:opacity batch 1.0) (:blend batch :replace)))
+                      m attributes)) assigned (:target-ids batch))))
+
+(defn- crossfade [before after alpha]
+  (cond
+    (zero? alpha) before
+    (== 1 alpha) after
+    :else
+    (reduce-kv
+     (fn [mixed id fields]
+       (let [old (get before id)]
+         (if (identical? old fields) mixed
+           (assoc mixed id
+                  (reduce-kv (fn [row attr shares]
+                               (let [previous (get old attr)]
+                                 (if (identical? previous shares) row
+                                   (assoc row attr (merge-with + (update-vals previous #(* (- 1.0 alpha) %))
+                                                                (update-vals shares #(* alpha %)))))))
+                             (or old {}) fields))))) before after)))
+
+(defn- apply-member [{:keys [fields touched] :as state} blocks]
+  (let [{:keys [native-layer source]} (first blocks)
+        {:keys [member-opacity transforms targets inherit-backdrop? target-ids] :or {member-opacity 1}} native-layer]
+    (if (zero? member-opacity) state
+      (let [owner (when-let [id (:effect-id source)] [id (:effect-version source)])
+            assigned (reduce assignments fields blocks)
+            inputs (into #{} (mapcat (fn [{:keys [assignments batch]}]
+                                       (concat (keep #(when (pos? (:opacity % 1)) (:target-id %)) assignments)
+                                               (when (pos? (:opacity batch 1)) (:target-ids batch))))) blocks)
+            transform-targets (when (seq transforms)
+                                (into (set (concat target-ids
+                                                   (when (= :previous targets)
+                                                     (if inherit-backdrop? (keys fields) touched))))
+                                      (mapcat (fn [{:keys [assignments batch]}]
+                                                (concat (map :target-id assignments) (:target-ids batch)))) blocks))
+            updated (reduce (fn [m id]
+                              (reduce (fn [m {:keys [attribute value]}]
+                                        (write-field m id attribute owner 1.0 (if (map? value) :add :replace)))
+                                      m transforms)) assigned transform-targets)]
+        {:fields (crossfade fields updated member-opacity) :touched (into (into touched inputs) transform-targets)}))))
 
 (defn- owners [blocks]
-  (:fields (reduce
-   (fn [{:keys [fields scopes]} {:keys [source assignments batch native-layer]}]
-     (let [owner (when-let [id (:effect-id source)] [id (:effect-version source)])
-           opacity (* (:opacity native-layer 1.0) (:member-opacity native-layer 1.0))
-           assigned (reduce (fn [m {:keys [target-id attribute blend] a :opacity}]
-                              (write-field m target-id attribute owner (* opacity (or a 1)) (or blend :replace)))
-                            fields assignments)
-           batched (reduce (fn [m id]
-                             (reduce (fn [m attr] (write-field m id attr owner (* opacity (:opacity batch 1.0))
-                                                              (:blend batch :replace)))
-                                     m (or (keys (:outputs batch))
-                                           (map :attribute (get-in batch [:field-request :group :cpu-plan :outputs])))))
-                           assigned (:target-ids batch))
-           group-id (:id native-layer)
-           scopes (if group-id (update scopes group-id (fnil into #{})
-                                       (concat (when (pos? opacity) (map :target-id assignments))
-                                               (when (pos? opacity) (:target-ids batch))
-                                               (:target-ids native-layer))) scopes)
-           targets (if (= :previous (:targets native-layer))
-                     (if (:inherit-backdrop? native-layer) (keys batched) (get scopes group-id))
-                     (:target-ids native-layer))]
-       {:scopes scopes
-        :fields (reduce (fn [m id]
-                 (reduce (fn [m {:keys [attribute value]}]
-                           (write-field m id attribute owner opacity (if (map? value) :add :replace)))
-                         m (:transforms native-layer)))
-               batched targets)})) {:fields {} :scopes {}} (ordered-members blocks))))
+  (if-not (some :native-layer blocks) (reduce assignments {} blocks)
+    (let [groups (group-by #(get-in % [:native-layer :id]) blocks)
+          anchors (reduce-kv (fn [anchors i block] (assoc anchors (get-in block [:native-layer :id]) i)) {} blocks)]
+      (reduce-kv
+       (fn [fields i {:keys [native-layer] :as block}]
+         (cond
+           (nil? native-layer) (assignments fields block)
+           (not= i (anchors (:id native-layer))) fields
+           :else
+           (let [ordered (sort-by #(get-in % [:native-layer :member]) (groups (:id native-layer)))
+                 members (partition-by (juxt #(get-in % [:native-layer :member]) :source) ordered)
+                 inner (reduce apply-member {:fields fields :touched #{}} members)]
+             (crossfade fields (:fields inner) (:opacity native-layer 1.0))))) {} blocks))))
 
 (defn- shares [field-owners fields]
   (reduce (fn [m attr] (merge-with max m (get field-owners attr))) {} fields))
@@ -131,11 +158,16 @@
 
 (defn- ownership-shape [blocks]
   (mapv (fn [{:keys [source native-layer assignments batch]}]
-          [source native-layer
-           (when (seq assignments)
-             (mapv (fn [{:keys [target-id attribute opacity blend]}] [target-id attribute opacity blend]) assignments))
-           (when batch [(:target-ids batch) (keys (:outputs batch)) (:opacity batch) (:blend batch)
-                        (mapv :attribute (get-in batch [:field-request :group :cpu-plan :outputs]))])]) blocks))
+          [source
+           (when native-layer [(select-keys native-layer [:id :member :targets :target-ids :inherit-backdrop?])
+                               (mapv (fn [{:keys [attribute value]}] [attribute (map? value)]) (:transforms native-layer))])
+           (when (seq assignments) (mapv (juxt :target-id :attribute :blend) assignments))
+           (when batch [(:target-ids batch) (batch-fields batch) (:blend batch)])]) blocks))
+
+(defn- opacities [blocks]
+  (mapv (fn [{:keys [native-layer assignments batch]}]
+          [(:opacity native-layer) (:member-opacity native-layer) (:opacity batch)
+           (when (seq assignments) (mapv :opacity assignments))]) blocks))
 
 (defn- layout [patch levels indices]
   (let [total (reduce + 0.0 (map :global-maximum (vals levels)))
@@ -156,32 +188,68 @@
                                         [id (if (pos? sum) (/ global-maximum sum) 0.0) (/ 1.0 n)]))
                                     (distinct (:groups fixture)))})) levels)}))
 
-;; Compile the fixed patch and current writers once. The render loop reads
-;; these primitive coefficients for every pixel and reads the share maps only
-;; when an outgoing writer has a visible release or flash tail.
 (deftype GroupShare [id ^double weight ^double fraction])
-(deftype WriterShare [id ^double light ^double movement ^double strobe])
+(deftype WriterShare [id ^double light ^double flashing ^double movement ^double strobe])
+(deftype SourceMix [light motion strobe ^objects writers])
 (deftype SampleTarget [id fixture ^long index ^long meterIndex ^double weight
-                       ^boolean moving ^boolean shutter ^objects groups ^objects writers
-                       lightShares motionShares strobeShares ownerIds])
+                       ^boolean moving ^boolean shutter ^objects groups ^long recipe])
 
-(defn- with-writers [layout blocks]
-  (let [fields (owners blocks)]
-    (update layout :rows
-            (fn [rows]
-              (object-array
-               (for [{:keys [id fixture index meter-index weight moving? shutter? groups]} rows]
-                 (let [writers (fields id)
-                       light (light-shares writers fixture)
-                       movement (if (or (:aim writers) (:direction writers))
-                                  (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
-                       strobe (shares writers shutter-fields)
-                       ids (into #{} (mapcat keys) [light movement strobe])]
-                   (SampleTarget. id fixture index (or meter-index -1) weight (boolean moving?) (boolean shutter?)
-                                  (object-array (map (fn [[group part n]] (GroupShare. group part n)) groups))
-                                  (object-array (map #(WriterShare. % (get light % 0.0) (get movement % 0.0)
-                                                                   (get strobe % 0.0)) ids))
-                                  light movement strobe ids))))))))
+(defn- writer-shares [light flashing movement strobe]
+  (object-array
+   (for [id (into #{} (mapcat keys) [light flashing movement strobe])]
+     (WriterShare. id (get light id 0.0) (get flashing id 0.0) (get movement id 0.0) (get strobe id 0.0)))))
+
+(defn- source-mix [field-owners fixture]
+  (let [light (light-shares field-owners fixture)
+        movement (if (or (:aim field-owners) (:direction field-owners))
+                   (shares field-owners [:aim :direction]) (shares field-owners [:pan :tilt]))
+        strobe (shares field-owners shutter-fields)]
+    (SourceMix. light movement strobe (writer-shares light light movement strobe))))
+
+(defn- writer-plan [layout blocks]
+  ;; Rows can share writer arithmetic if every batch and layer addresses them
+  ;; identically and their emitter policy matches. Independently writable
+  ;; scalar assignments retain their own row because their opacities may vary.
+  (let [memberships (mapv (comp frequencies :target-ids) (mapcat (juxt :batch :native-layer) blocks))
+        individual (into #{} (comp (mapcat :assignments) (map :target-id)) blocks)
+        recipe-key (fn [{:keys [id fixture]}]
+                     [(when (individual id) id) (set (keys (:compiled-channels fixture))) (:rgbw-policy fixture)
+                      (mapv #(get % id) memberships)])
+        rows (:rows layout)
+        recipe-keys (mapv recipe-key rows)
+        unique-keys (vec (distinct recipe-keys))
+        by-key (zipmap recipe-keys rows)
+        representatives (mapv by-key unique-keys)
+        recipes (zipmap unique-keys (range))
+        selected (into #{} (map :id) representatives)]
+    (assoc layout
+           :representatives representatives
+           :target-lists (mapv (fn [{:keys [batch native-layer]}]
+                                 [(filterv selected (:target-ids batch))
+                                  (filterv selected (:target-ids native-layer))]) blocks)
+           :rows (object-array
+                  (map (fn [{:keys [id fixture index meter-index weight moving? shutter? groups]} k]
+                         (SampleTarget. id fixture index (or meter-index -1) weight (boolean moving?) (boolean shutter?)
+                                        (object-array (map (fn [[group part n]] (GroupShare. group part n)) groups))
+                                        (recipes k))) rows recipe-keys)))))
+
+(defn- mix-writers [plan blocks]
+  (let [projected (mapv (fn [{:keys [batch native-layer] :as block} [batch-ids layer-ids]]
+                          (cond-> block
+                            batch (assoc-in [:batch :target-ids] batch-ids)
+                            native-layer (assoc-in [:native-layer :target-ids] layer-ids))) blocks (:target-lists plan))
+        fields (owners projected)]
+    (object-array (map (fn [{:keys [fixture id]}] (source-mix (get fields id) fixture)) (:representatives plan)))))
+
+(defn- tail-writers ^objects [^java.util.IdentityHashMap transitions ^SourceMix mix light previous]
+  ;; The previous visible writer can still own a release or flash. A strip
+  ;; usually has just one such transition, even across thousands of pixels.
+  (let [^java.util.IdentityHashMap prior (or (.get transitions mix)
+                                             (let [m (java.util.IdentityHashMap.)] (.put transitions mix m) m))]
+    (or (.get prior previous)
+        (let [writers (writer-shares light (merge-with max light previous) (.-motion mix) (.-strobe mix))]
+          (.put prior previous writers)
+          writers))))
 
 (defn- writer-totals ^doubles [^java.util.HashMap effects id]
   (or (.get effects id) (let [a (double-array 6)] (.put effects id a) a)))
@@ -193,10 +261,11 @@
                      (let [other (get b id)]
                        (and other (java.util.Arrays/equals ^bytes packet ^bytes other)))) a))))
 
-(defn- measure [layout source-levels ^doubles measured frame prior dt]
+(defn- measure [layout ^objects mixes source-levels ^doubles measured frame prior dt]
   (let [group-totals (zipmap (:groups layout) (repeatedly #(double-array 6)))
         scene (double-array 6)
         effects (java.util.HashMap.)
+        transitions (java.util.IdentityHashMap.)
         ^objects rows (:rows layout)
         n (alength rows)
         count-weight (double (:count-weight layout))
@@ -217,7 +286,8 @@
       (let [^SampleTarget row (aget rows i)
             id (.-id row) fixture (.-fixture row) index (.-index row)
             weight (.-weight row) moving? (.-moving row)
-            light-share (.-lightShares row)
+            ^SourceMix mix (aget mixes (.-recipe row))
+            light-share (.-light mix)
             [open? strobing] (if (.-shutter row) (shutter fixture (:universes frame)) [true 0.0])
             j (* 5 i)
             light (if open? (unit (if measured (aget measured (int (.-meterIndex row)))
@@ -245,9 +315,9 @@
             inherited (when (and (nil? light-share) (or (pos? light) (> flash 0.005))) previous-share)
             light-share (or light-share inherited)
             tail (when (and (> flash 0.005) (not (identical? light-share previous-share))) previous-share)
-            flash-share (if tail (merge-with max light-share tail) light-share)
             ^objects groups (.-groups row)
-            ^objects shares (.-writers row)]
+            ^objects shares (if (or inherited tail) (tail-writers transitions mix light-share previous-share)
+                              (.-writers mix))]
         (aset samples j light)
         (aset samples (inc j) r)
         (aset samples (+ j 2) g)
@@ -259,16 +329,11 @@
         (dotimes [k (alength groups)]
           (let [^GroupShare group (aget groups k)]
             (add! (group-totals (.-id group)) (.-weight group) (.-fraction group) light flash movement strobe)))
-        (if (or inherited tail)
-          (doseq [id (into (.-ownerIds row) (keys flash-share))]
-            (add! (writer-totals effects id) weight count-weight
-                  (* light (get light-share id 0.0)) (* flash (get flash-share id 0.0))
-                  (* movement (get (.-motionShares row) id 0.0)) (* strobe (get (.-strobeShares row) id 0.0))))
-          (dotimes [k (alength shares)]
-            (let [^WriterShare writer (aget shares k)]
-              (add! (writer-totals effects (.-id writer)) weight count-weight
-                    (* light (.-light writer)) (* flash (.-light writer))
-                    (* movement (.-movement writer)) (* strobe (.-strobe writer))))))))
+        (dotimes [k (alength shares)]
+          (let [^WriterShare writer (aget shares k)]
+            (add! (writer-totals effects (.-id writer)) weight count-weight
+                  (* light (.-light writer)) (* flash (.-flashing writer))
+                  (* movement (.-movement writer)) (* strobe (.-strobe writer)))))))
     (let [by-effect (reduce (fn [m [[id version] values]]
                               (if (and (contains? m id) (< (or version 0) (or (get-in m [id :version]) 0))) m
                                 (assoc m id (assoc (summary values) :version version)))) {} effects)]
@@ -280,7 +345,9 @@
         dt (when (and elapsed (< 0 elapsed 1000)) (/ elapsed 1000.0))
         same-rig? (and (identical? patch (:patch previous)) (identical? meter (:meter previous)))
         shape (ownership-shape blocks)
-        same-writers? (and same-rig? (= shape (:shape previous)))
+        same-plan? (and same-rig? (= shape (:shape previous)))
+        alpha (opacities blocks)
+        same-writers? (and same-plan? (= alpha (:alpha previous)))
         before (:report previous)
         packets (:universes frame)]
     (if (and same-writers? dt
@@ -289,10 +356,11 @@
       {:state (assoc previous :time-ms time-ms :packets packets) :report before}
       (let [base (if same-rig? (:layout previous)
                    (layout patch (or (:source-capacities meter) source-levels) (:writers-by-head meter)))
-            plan (if same-writers? (:plan previous) (with-writers base blocks))
+            plan (if same-plan? (:plan previous) (writer-plan base blocks))
+            mixes (if same-writers? (:mixes previous) (mix-writers plan blocks))
             local (when meter (capacity/local-brightnesses meter packets))
-            {:keys [samples report]} (measure plan source-levels local frame (when (and same-rig? dt) (:samples previous)) dt)]
-        {:state {:time-ms time-ms :patch patch :meter meter :layout base :plan plan :shape shape
+            {:keys [samples report]} (measure plan mixes source-levels local frame (when (and same-rig? dt) (:samples previous)) dt)]
+        {:state {:time-ms time-ms :patch patch :meter meter :layout base :plan plan :shape shape :alpha alpha :mixes mixes
                  :packets packets :samples samples :report report}
          :report report}))))
 

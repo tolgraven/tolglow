@@ -164,3 +164,61 @@
     (is (= 1.0 (get-in pause-look [:report :scene :brightness])))
     (is (empty? (get-in pause-look [:report :effects])))
     (is (= 0.5 (get-in halfway [:report :effects :wash :brightness])))))
+
+(defn- dimmer-batch [effect ids opacity]
+  {:kind :batch :source {:effect-id effect :effect-version 1}
+   :batch {:target-ids ids :blend :replace :opacity opacity
+           :outputs {:dimmer {:type :number :components 1 :values (double-array (repeat (count ids) 1.0))}}}})
+
+(deftest continuous-alpha-sweep-retains-attribution-for-lower-layers
+  (let [ids [:a :b :c :d]
+        patch (frame/compile-patch (mapv (fn [i id] {:id id :universe 1 :address (inc i) :channels {:dimmer 1}})
+                                         (range) ids))
+        meter (capacity/prepare patch)
+        sample (fn [prior upper-ids layer-alpha member-alpha batch-alpha scalar-alpha]
+                 (let [layer {:id :compound :opacity layer-alpha}
+                       blocks [(dimmer-batch :base ids 1.0)
+                               (assoc (dimmer-batch :wash upper-ids 1.0) :native-layer (assoc layer :member 0))
+                               (assoc (dimmer-batch :sweep upper-ids batch-alpha)
+                                      :native-layer (assoc layer :member 1 :member-opacity member-alpha))
+                               (update (block :trim [:b] {:dimmer 1.0}) :assignments
+                                       #(mapv (fn [a] (assoc a :opacity scalar-alpha)) %))]
+                       t (+ 25 (get-in prior [:state :time-ms] -25))
+                       frame (frame/resolve-contributions patch blocks {:include-values? false :compact-values? true})]
+                   (activity/advance-meter (:state prior) patch meter frame blocks t)))
+        first-sample (sample nil [:a :b :c] 0.1 0.2 0.3 0.25)
+        last-sample
+        (reduce (fn [prior n]
+                  (let [layer (/ n 43.0)
+                        member (/ (- 42 n) 42.0)
+                        batch (/ (mod (* n 7) 43) 42.0)
+                        trim (/ (mod (* n 5) 41) 40.0)
+                        result (sample prior [:a :b :c] layer member batch trim)
+                        ;; The last scalar affects only B. The compound's outer
+                        ;; opacity crosses its complete member mix with the base.
+                        affected (/ (- 3.0 trim) 4.0)
+                        expected {:base (+ 0.25 (* affected (- 1.0 layer)))
+                                  :wash (* affected layer (- 1.0 (* member batch)))
+                                  :sweep (* affected layer member batch)
+                                  :trim (/ trim 4.0)}]
+                    (is (identical? (get-in first-sample [:state :plan]) (get-in result [:state :plan])))
+                    (doseq [[id fraction] expected]
+                      (is (< (abs (- fraction (get-in result [:report :effects id :brightness] 0.0))) 1e-9)
+                          (str "writer " id " at step " n)))
+                    result))
+                first-sample (range 43))
+        retargeted (sample last-sample [:a :b] 1.0 1.0 1.0 0.0)]
+    (is (= 3 (count (get-in last-sample [:state :plan :representatives]))) "A and C share the same recipe")
+    (is (not (identical? (get-in last-sample [:state :plan]) (get-in retargeted [:state :plan]))))
+    (is (= 0.5 (get-in retargeted [:report :effects :sweep :brightness])))
+    (is (= 0.5 (get-in retargeted [:report :effects :base :brightness])))))
+
+(deftest native-transforms-receive-addressed-targets-at-zero-assignment-opacity
+  (let [tick (capture [{:id :a :universe 1 :address 1 :channels {:dimmer 1}}
+                       {:id :b :universe 1 :address 2 :channels {:dimmer 1}}])
+        blocks [(dimmer-batch :base [:a :b] 1.0)
+                (assoc (dimmer-batch :adjust [:a] 0.0) :native-layer
+                       {:id :edited :member 0 :transforms [{:attribute :dimmer :value 0.5}]})]
+        report (:report (tick nil 0 blocks))]
+    (is (< 0.24 (get-in report [:effects :adjust :brightness]) 0.26))
+    (is (= 0.5 (get-in report [:effects :base :brightness])))))
