@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [tolglow.automation.random :as random]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-budget :as budget]
             [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry])
   (:import [java.util Arrays]))
@@ -114,7 +115,13 @@
        (not (:modulation entry)) (not (:layer entry)) (not (:scene-owner entry))
        (not-any? special-tags (concat (:tags entry) (:categories entry)))))
 
-(defn- choose-source [model heads {:keys [effect-ids params last-source-id]} generation]
+(defn- candidate-params [effect group generation]
+  (let [schemas (:params effect)
+        varied (when (and (> generation 1) (seq schemas))
+                 (:params (random/randomize-params schemas {} (bit-and 0xffffffff (hash [(:group-id group) generation])))))]
+    (merge {} varied (:params group))))
+
+(defn- choose-source [model heads {:keys [effect-ids params last-source-id group-id instance-id] :as group} generation]
   (let [allowed (when (some? effect-ids) (set effect-ids))
         cues (vals (get-in model [:registry :cues]))
         by-effect (group-by :effect-id cues)
@@ -126,16 +133,21 @@
                      (sort-by (comp str :id)) vec)]
     (when (seq ordered)
       (let [offset (mod (dec generation) (count ordered))
-            rotated (concat (subvec ordered offset) (subvec ordered 0 offset))]
-        (some (fn [effect]
+            rotated (concat (subvec ordered offset) (subvec ordered 0 offset))
+            choices (keep (fn [effect]
                 (let [outs (scoped-outputs effect heads)]
                   (when (and (seq outs)
                              (or (some #(not= :dimmer (:attribute %)) outs)
                                  (some #(and (:dimmer (:channels %))
                                              (not (some registry/emitter-attributes (keys (:channels %))))) heads)))
-                    {:effect effect :outputs outs})))
-              (concat (remove #(= last-source-id (:id %)) rotated)
-                      (filter #(= last-source-id (:id %)) rotated)))))))
+                    {:effect effect :outputs outs :params (candidate-params effect group generation)})))
+                          (concat (remove #(= last-source-id (:id %)) rotated)
+                                  (filter #(= last-source-id (:id %)) rotated)))
+            planning (if (= {:adapter :lighting-scene :group-id group-id}
+                            (get-in model [:instances instance-id :source]))
+                       (update model :instances dissoc instance-id) model)]
+        (first (if (and (budget/enabled? model) (seq choices))
+                 (budget/rank-candidates planning heads choices) choices))))))
 
 (defn- generated [heads target generation]
   (let [fields (sort (filter (disj light-fields :color :uv) (set (mapcat (comp keys :channels) heads))))
@@ -197,12 +209,7 @@
                 (:model (issue model group-id now {:op :registry/publish :kind :effects :definition definition})))
         model (if (= cue (dissoc old-cue :version)) model
                 (:model (issue model group-id now {:op :cue/put :cue cue})))
-        ;; Only opt-in randomizable source parameters change, and explicit
-        ;; caller overrides always win. Replaying the same state is deterministic.
-        schemas (:params definition)
-        varied (when (and (:id effect) (> generation 1) (seq schemas))
-                 (:params (random/randomize-params schemas {} (bit-and 0xffffffff (hash [group-id generation])))))
-        launch-params (cond-> (if (:id effect) (merge {} varied params) {}) global? (assoc matching/target-param target))
+        launch-params (cond-> (:params choice {}) global? (assoc matching/target-param target))
         opacity (if global? 1.0 target)
         res (issue model group-id now {:op :cue/launch :cue-id id
                                        :launch {:mode :persistent :params launch-params

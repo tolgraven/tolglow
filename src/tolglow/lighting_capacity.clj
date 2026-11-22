@@ -1,7 +1,8 @@
 (ns tolglow.lighting-capacity
   "Headless show policy and metering. Read resolved universes after blending;
   the audio gain is a limit on the authored look, owned separately from master."
-  (:require [afterglow.render.photometry :as photometry]))
+  (:require [afterglow.render.photometry :as photometry]
+            [tolglow.fixtures.shutter :as shutter]))
 
 (def defaults
   {:enabled? false :follow-energy? false :minimum 0.1 :maximum 0.9
@@ -45,6 +46,10 @@
         response (reduce + (map :response emitters))]
     (when (or lamp? (seq emitters))
       {:id id :dimmer dimmer :emitters emitters :lamp-color (:emission-color fixture [1 1 1])
+       :shutters (keep (fn [k]
+                         (let [ch (get compiled-channels k)
+                               closed (shutter/closed-ranges (:functions ch))]
+                           (when (seq closed) [ch closed]))) [:strobe :shutter])
        :response response :weight (if (or lamp? (pos? response)) weight 0.0)
        :watts (when max-watts (* max-watts (or emission-share 1.0)))
        :attributes (into (cond-> #{:dimmer} (every? channels [:red :green :blue]) (conj :color))
@@ -52,7 +57,7 @@
 
 (deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot])
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
-(deftype MeterHead [^MeterAddress dimmer ^objects emitters])
+(deftype MeterHead [^MeterAddress dimmer ^objects emitters shutters])
 
 (defn- address [indices {:keys [coarse fine inverted-from]}]
   (when coarse
@@ -60,7 +65,7 @@
                    (if fine (indices (first fine)) -1) (if fine (second fine) -1)
                    (or inverted-from -1.0))))
 
-(defn- meter-head [indices {:keys [emitters dimmer lamp-color response weight watts]}]
+(defn- meter-head [indices {:keys [emitters dimmer lamp-color response weight watts shutters]}]
   (let [n (count emitters)
         channels (if (zero? n)
                    [(MeterEmitter. nil weight (or watts 0.0)
@@ -72,7 +77,8 @@
                        (MeterEmitter. (address indices channel)
                          (if (pos? response) (* weight (/ sensitivity response)) 0.0) (/ (or watts 0.0) n)
                          (* color-scale (nth tint 0)) (* color-scale (nth tint 1)) (* color-scale (nth tint 2))))))]
-    (MeterHead. (address indices dimmer) (object-array channels))))
+    (MeterHead. (address indices dimmer) (object-array channels)
+                (seq (mapv (fn [[channel ranges]] [(address indices channel) ranges]) shutters)))))
 
 (defn prepare
   "Compile a meter plan alongside an Afterglow compiled patch, once per rig."
@@ -103,14 +109,21 @@
           drive (if (and (>= pivot 0.0) (>= raw pivot)) (- 255.0 (- raw pivot)) raw)]
       (/ drive 255.0))))
 
+(defn- open-shutter? [^objects buffers ^MeterHead head]
+  (not (some (fn [[^MeterAddress channel ranges]]
+               (shutter/closed? ranges (bit-and 255 (aget ^bytes (aget buffers (.-universe channel)) (.-slot channel)))))
+             (.-shutters head))))
+
 (defn- meter-head! [^doubles totals ^objects buffers ^MeterHead head]
   (let [dimmer (level buffers (.-dimmer head))
+        optical (if (and (.-shutters head) (not (open-shutter? buffers head))) 0.0 dimmer)
         ^objects emitters (.-emitters head)]
     (dotimes [i (alength emitters)]
       (let [^MeterEmitter emitter (aget emitters i)
-            drive (* dimmer (level buffers (.-address emitter)))]
+            amount (level buffers (.-address emitter))
+            drive (* optical amount)]
         (aset totals 0 (+ (aget totals 0) (* drive (.-brightness emitter))))
-        (aset totals 1 (+ (aget totals 1) (* drive (.-watts emitter))))
+        (aset totals 1 (+ (aget totals 1) (* dimmer amount (.-watts emitter))))
         (aset totals 2 (+ (aget totals 2) (* drive (.-red emitter))))
         (aset totals 3 (+ (aget totals 3) (* drive (.-green emitter))))
         (aset totals 4 (+ (aget totals 4) (* drive (.-blue emitter))))))))
@@ -122,7 +135,7 @@
         n (alength emitters)]
     (loop [i 0 unscaled 0.0 peak 0.0 drive 0.0]
       (if (= i n)
-        (let [light (* dimmer unscaled)
+        (let [light (if (and (.-shutters head) (not (open-shutter? buffers head))) 0.0 (* dimmer unscaled))
               mean-drive (* dimmer (/ drive n))]
           (assoc source :relative-output light :emitter-drive mean-drive
                  :used-rated-watts (when rated-watts (* rated-watts mean-drive))
@@ -145,6 +158,24 @@
                      (when-let [[index] (get writers-by-head id)]
                        [id (source-reading buffers (aget ^objects meter-heads (int index))
                                            (source-capacities id) reference-brightness)]))) ids)))
+
+(defn emitter-drives
+  "Mean physical emitter drive times dimmer, in compiled meter-head order.
+  The caller owns this array. Closed optical shutters leave electrical drive intact."
+  [{:keys [meter-heads] :as plan} universes]
+  (let [buffers (object-array (map universes (:universes plan)))
+        ^objects heads meter-heads
+        result (double-array (alength heads))]
+    (dotimes [i (alength heads)]
+      (let [^MeterHead head (aget heads i)
+            ^objects emitters (.-emitters head)
+            n (alength emitters)
+            total (loop [j 0 sum 0.0]
+                    (if (== j n) sum
+                      (let [^MeterEmitter emitter (aget emitters j)]
+                        (recur (inc j) (+ sum (level buffers (.-address emitter)))))))]
+        (aset-double result i (* (level buffers (.-dimmer head)) (/ total n)))))
+    result))
 
 (defn match-brightness
   "Inverse of the visible-light meter at full white. Local drive saturates

@@ -214,3 +214,18 @@
     (is (= {:strong {:local-drive 0.5 :achievable 0.5 :limited? false}
             :weak {:local-drive 1.0 :achievable 0.25 :limited? true}}
            (capacity/match-brightness plan [:strong :weak] 0.5)))))
+
+(deftest closed-shutters-block-visible-output-and-retain-electrical-drive
+  (let [f {:id :device :universe 1 :address 1 :max-watts 120
+           :channels {:white 1 :strobe {:offset 2 :inverted-from 0
+                                        :functions [{:type :shutter-closed :start 10 :end 30}]}}}
+        patch (frame/compile-patch [f])
+        plan (capacity/prepare patch)
+        physical #(hash-map 1 (byte-array [(unchecked-byte 255) (unchecked-byte %)]))]
+    (doseq [[value expected] [[20 0.0] [50 1.0]]]
+      (let [summary (capacity/measure plan (physical value))
+            reading (:device (capacity/measure-sources plan (physical value) [:device]))]
+        (is (near? expected (:global-brightness summary)))
+        (is (near? expected (:global-brightness reading)))
+        (is (near? 120 (:used-rated-watts reading)))
+        (is (near? 120 (:used-rated-watts summary)))))))

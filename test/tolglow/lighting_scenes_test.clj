@@ -268,3 +268,21 @@
         (is (= :local (:brightness-reference (current))))
         (is (= :rejected (:status (edit {:brightness-reference :wrong}))))
         (finally (show/stop! rt))))))
+
+(deftest scene-variation-picks-a-source-that-fits-the-concurrent-budget
+  (let [lamps (mapv (fn [id address watts]
+                      {:id id :universe 1 :address address :channels {:dimmer 1} :max-watts watts :groups [:pair]})
+                    [:a :b] [1 2] [80 20])
+        source (fn [id targets] {:id id :version 1 :targets targets :params {} :outputs {:dimmer 1.0}})
+        m (-> (demo/model)
+              (assoc :rig {:fixtures lamps})
+              (assoc-in [:registry :effects :a-wide] (source :a-wide [:a :b]))
+              (assoc-in [:registry :effects :z-small] (source :z-small [:b]))
+              (assoc-in [:settings :lighting-budget] {:enabled? true :global {:limit 1.0 :max-active 1}}))
+        rt (show/create-runtime {:model m})
+        t (atom 0)]
+    (try
+      (is (= :accepted (:status (issue! rt t :lighting-scene {:op :vary :group-id :pair :target 0.1
+                                                              :effect-ids [:a-wide :z-small]}))))
+      (is (= :z-small (:source-effect-id (group! rt :pair))))
+      (finally (show/stop! rt)))))
