@@ -8,6 +8,7 @@
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.photometry :as photometry]
+            [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.studio.debug-stream :as debug-stream]
             [tolglow.development :as development]
             [tolglow.expressive :as expressive]
@@ -64,6 +65,10 @@
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
             :export! #(show/export-show-source runtime)
+            :fog-calibration! #(let [model (:model @(:state runtime))]
+                                 {:runtime-id (:id runtime) :epoch (:epoch model)
+                                  :fixtures (fog-scan/fixtures model)
+                                  :session (some-> (fog-scan/current model) (select-keys [:session-id :fixture-id :fit]))})
             :photometry! #(let [model (:model @(:state runtime))]
                             {:runtime-id (:id runtime) :epoch (:epoch model)
                              :output-capable? (boolean (and (:independent-output? runtime) (get-in runtime [:sink :send!])))

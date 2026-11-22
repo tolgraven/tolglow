@@ -45,7 +45,7 @@
           :else
           (map #(-> % (assoc :code :invalid-patch) (update :path (fn [path] (or path [:fixtures]))))
                (render/validate-patch fixtures))))
-      (when (some #(contains? (:room rig) %) [:air-changes-per-hour :fog-half-life-s])
+      (when (some #(contains? (:room rig) %) [:air-changes-per-hour :fog-half-life-s :measured-fog])
         (try (atmosphere/plan (:room rig) {:fixtures []}) nil
              (catch Exception e [(error [:room] :invalid-atmosphere (.getMessage e))])))
       (when (contains? rig :room)
