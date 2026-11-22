@@ -23,6 +23,7 @@ on:
     branches: [master]
     paths:
       - 'dev/tolglow/bench_*.clj'
+      - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-*'
       - '.github/workflows/performance.yml'
   push:
@@ -33,6 +34,7 @@ on:
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
       - 'dev/tolglow/bench_movers_reference.clj'
+      - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
@@ -120,6 +122,12 @@ jobs:
           ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
             --warmup 40 --samples 120 --period-ms 25 --output ../performance-artifact/subscribers.edn \
             2>&1 | tee ../performance-artifact/subscribers.log
+      - name: Measure ordered compound cues on 64 moving heads
+        if: hashFiles('tolglow/dev/tolglow/perf/compound_layers.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.perf.compound-layers > ../performance-artifact/compound-layers.edn
       - name: Profile rotated moving heads and competing opacity layers
         working-directory: tolglow
         env:
@@ -155,6 +163,9 @@ jobs:
               ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
                 --warmup 40 --samples 120 --period-ms 25 --output "$artifact_root/subscribers.edn" \
                 2>&1 | tee "$artifact_root/subscribers.log"
+              if [[ -f dev/tolglow/perf/compound_layers.clj ]]; then
+                lein with-profile +benchmark run -m tolglow.perf.compound-layers > "$artifact_root/compound-layers.edn"
+              fi
               ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
                 --output "$artifact_root/movers.edn" 2>&1 | tee "$artifact_root/movers.log"
             )
