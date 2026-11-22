@@ -10,7 +10,13 @@ def api(*args):
     return json.loads(subprocess.check_output(["gh", "api", *args], text=True))
 
 def pages(endpoint):
-    return [row for page in api("--paginate", "--slurp", endpoint) for row in page]
+    number = 1
+    while True:
+        page = api(f"{endpoint}?per_page=100&page={number}")
+        yield from page
+        if len(page) < 100:
+            return
+        number += 1
 
 def threads(owner, repo, number):
     query = """query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
