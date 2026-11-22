@@ -2,7 +2,6 @@
   "Settings and frame ordering for Tolglow's optical and performance controls."
   (:require [tolglow.lighting-activity :as activity]
             [tolglow.lighting-budget :as budget]
-            [tolglow.lighting-capacity :as capacity]
             [tolglow.output-response :as response]))
 
 (defn activity-settings [options]
@@ -66,8 +65,7 @@
         delivered (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)
         scoring? (get-in settings [:lighting-activity :enabled?])
         scored (when scoring?
-                 (let [sources (capacity/measure-sources plan (:universes delivered) (keys (:source-capacities plan)))]
-                   (activity/advance (:activity previous) patch sources delivered blocks time-ms)))]
+                 (activity/advance-meter (:activity previous) patch plan delivered blocks time-ms))]
     {:frame (cond-> delivered scored (assoc :lighting-activity (:report scored)))
      :state (when (or budget-context shaped scored)
               {:budget budget-context :response (:state shaped) :activity (:state scored)})}))
