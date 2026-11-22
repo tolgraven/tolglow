@@ -31,12 +31,20 @@ try {
     assert.ok(!snap.status.error, JSON.stringify(snap.status));
     return snap;
   }
-  async function reset(root, label) {
-    const toggle = root.getByRole('checkbox', {name: label, exact: true});
-    if (await toggle.isChecked()) await write(toggle);
+  async function reset(root, label, scope) {
+    const on = Boolean((await state()).settings?.[scope]?.['enabled?']);
+    const ready = expected => page.waitForFunction(({label, expected}) => {
+      const control = Array.from(document.querySelectorAll('input[type=checkbox]')).find(el => el.getAttribute('aria-label') === label);
+      return control && !control.disabled && control.checked === expected;
+    }, {label, expected});
+    await ready(on);
+    if (on) {
+      await write(root.getByRole('checkbox', {name: label, exact: true}));
+      await ready(false);
+    }
   }
-  await reset(pilot, 'Enable autopilot');
-  await reset(hdr, 'Enable HDR emission');
+  await reset(pilot, 'Enable autopilot', 'autopilot');
+  await reset(hdr, 'Enable HDR emission', 'hdr');
   // Configure before enabling; the first committed frame must use the chosen scope.
   const scope = box(pilot, 'Affected fixtures');
   const pageScope = await scope.locator('option').filter({hasText: 'Cue page ·'}).first().textContent();
@@ -122,7 +130,7 @@ try {
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391, 'Panel overflows the phone');
     assert.ok((await box(root, 'Affected fixtures').boundingBox()).height >= 44);
   }
-  await reset(hdr, 'Enable HDR emission');
+  await reset(hdr, 'Enable HDR emission', 'hdr');
   assert.deepEqual(problems, []);
   console.log('Verified mixed energy control and standalone HDR through Ring on tablet and phone widths.');
 } finally {
