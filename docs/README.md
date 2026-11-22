@@ -46,6 +46,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |
 | [Compatibility repairs](compatibility-progress.md) | Actual namespace and legacy API repairs |
 | [V1 implementation contract](implementation-contract-v1.md) | Shared model/command/runtime boundaries |
+| [Paired repository review, November 2026](reviews/2026-11-22.md) | Review history, security boundaries, source findings and compositor timings |
 | [Testing](testing.md) | Commands, observed checkpoints and verification limits |
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
 | [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |

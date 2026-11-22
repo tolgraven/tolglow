@@ -29,6 +29,11 @@
    :owner nil :paths ["tolglow/src/tolglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Verify moving and HDR contacts, event-driven commands and restoration using physical packet capture."]
    :evidence ["test/tolglow/spatial_host_test.clj checks delivered DMX channels for a timed contact between frames, HDR contact and blackout, a Transit restore, and an independent performer's cue. A capture sink replaces physical lighting hardware."]}
+  {:id :quality/november-repository-review :title "Audit both repository baselines and account for earlier review feedback"
+   :kind :documentation :status :done :owner nil
+   :paths ["tolglow/docs/reviews"] :depends-on [:foundation/tests]
+   :acceptance ["Trace every historical inline discussion to its disposition and record security checks, source findings and verification limits."]
+   :evidence ["docs/reviews/2026-11-22.md links all 56 Tolglow discussions, the 19 Afterglow discussions, trust boundaries, dependency checks, clj-kondo findings and measured worker timing gaps."]}
   {:id :show/energy-autopilot :title "Steer rolling brightness and visual activity in a musical scope"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/autopilot.clj" "tolglow/src/tolglow/autopilot/controller.clj" "tolglow/src/tolglow/autopilot/statistics.clj" "tolglow/src/tolglow/autopilot/signal.clj" "tolglow/src/tolglow/autopilot/target_response.clj"]

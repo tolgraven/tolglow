@@ -60,7 +60,7 @@
               ")
 
 (def fx-data {:bloom {:name "Bloom color"
-                      :arg-spec #({:vars {:color (color/create :white), :fraction 0, :width 1
+                      :arg-spec (fn [] {:vars {:color (color/create :white), :fraction 0, :width 1
                                           :halo 0.1  ;part, as percent of width, where bloom has ended but some bleeds through/fades out
                                           :keyhole? false, :keyhole-opacity 0.8 ; allow some through even outside keyhole
                                           :hue-mod (/ 30 360) :lightness-mod -0.05 :saturation-mod -0.15}
@@ -78,23 +78,16 @@
   & {:keys [active-fn end-fn effect-def-fn]
      :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
  {:pre [(some? *show*)]}
- (fn [fixtures & args]
-  (let [p (param/assemble args arg-spec-fn)
-       inters (inters-fn)
-       ;; heads (chan/find-rgb-heads fixtures)
-       ;; furthest (tf/max-distance (:measure p) heads)
-       ;;
-       ;; ^^ example from bloom. How would we deal with that. More like effect requests these things to be available, it gets test-launched and central learns this?
-       ;; basically in f, refer to things not passed in args and lookup will be attempted
-       f (fn [show snap head was]
-          (let [r (apply merge (map (param/auto-resolve) [p inters]))]
-           (gen-fn show snap head was r)))]
-  (if effect-def-fn
-   (effect-def-fn #_pass-shit-somehow) ;if creating scene or whatever
-   (Effect. fx-name
-            active-fn
-            (fn [show snapshot] (assigners-fn gen-fn))
-            end-fn)))))
+ (fn [_fixtures & {:as args}]
+   (let [inputs (param/assemble args arg-spec-fn)
+         intermediate (inters-fn)
+         assign (fn [show snapshot head previous]
+                  (let [resolve-values #(param/auto-resolve % :show show :snapshot snapshot :head head)]
+                    (gen-fn show snapshot head previous
+                            (merge (resolve-values inputs) (resolve-values intermediate)))))]
+     (if effect-def-fn
+       (effect-def-fn)
+       (Effect. fx-name active-fn (fn [_ _] (assigners-fn assign)) end-fn)))))
 
 (defn make-effect "Create an Effect. with name, gen-fn, and optional overridden active and end-fns (defaulting to always-active and end-immediately)"
  [fx-name gen-fn & {:keys [active-fn end-fn] :or {active-fn fx/always-active, end-fn fx/end-immediately}}]
