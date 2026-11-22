@@ -4,6 +4,7 @@
   (:require [clojure.data.json :as json]
             [ring.adapter.jetty :as jetty]
             [tolglow.show :as show]
+            [tolglow.effects.faults :as faults]
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
@@ -23,7 +24,9 @@
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
             stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %)
-                     {:frame-rate (:frame-rate runtime)
+                     {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
+                      :get-graph #(show/reactions runtime)
+                      :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
             projections (projection/create)]
@@ -51,6 +54,13 @@
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :output :status :auto :compositions :modulation :patch]) :partial? true)
       :else view))))
+
+(defn client-faults
+  "Recent browser event and subscription failures across the attached Studio servers."
+  [runtime]
+  (->> (vals @(:observers runtime))
+       (keep #(get-in % [:state-stream :client-faults])) (mapcat deref)
+       (sort-by :at) (take-last 64) vec))
 
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."

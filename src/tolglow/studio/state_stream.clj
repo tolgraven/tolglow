@@ -2,6 +2,7 @@
   "Push committed snapshots to Studio over Transit WebSockets."
   (:require [ring.websocket :as ws]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.query-stream :as queries]
             [tolglow.transit :as transit])
   (:import [java.util UUID]
            [java.util.concurrent Semaphore]
@@ -61,6 +62,7 @@
   (locking (:clients hub)
     (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)]
       (release-unused-interest! hub)
+      (when (seq (:queries (some-> removed deref))) (wake! hub))
       removed)))
 
 (defn- retire! [hub socket code reason]
@@ -73,12 +75,14 @@
   (let [base (:base before)
         token (:token target)]
     (when (and target (not= token (:token base)))
-      (let [key [token (:token base)]
+      (let [checkpoint? (>= (long (:deltas before 0)) (:checkpoint-every hub))
+            base (when-not checkpoint? base)
+            key [token (:token base)]
             encoded (or (get @cache key)
                         (let [wire (transit/encode (message base target))]
                           (vswap! cache assoc key wire)
                           wire))]
-        (when (compare-and-set! client before (assoc before :pending target :sending token))
+        (when (compare-and-set! client before (assoc before :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0)))
           (ws/send socket encoded
                    (fn []
                      (swap! client #(if (= token (:sending %)) (dissoc % :sending) %))
@@ -90,7 +94,8 @@
 (defn- common-target [hub source]
   (let [last @(:projected hub)]
     (if (identical? source (:source last)) (:target last)
-        (let [target (new-target ((:project hub) source))]
+        (let [view ((:project hub) source)
+              target (if (= view (get-in last [:target :view])) (:target last) (new-target view))]
           (vreset! (:projected hub) {:source source :target target})
           target))))
 
@@ -112,17 +117,39 @@
           (vreset! (:projection interest) {:common common :version version :target target})
           target))))
 
+(defn- query-target [hub source client leases common]
+  (let [wanted (:queries client)
+        query-only? (:query-only? client)
+        base (:base client)
+        values (into {} (keep (fn [q] (when-let [lease (get leases q)] [q @(:result lease)]))) wanted)]
+    (cond
+      query-only?
+      (let [model (:model source)
+            identity (assoc (select-keys model [:epoch :show-id]) :runtime-id (:runtime-id hub))]
+        (when-not (and (= identity (identity-of (:view base))) (= values (get-in base [:view :subscriptions])))
+          (new-target (merge identity (select-keys model [:frame-number :revision]) {:subscriptions values}))))
+
+      (empty? wanted) @common
+
+      :else
+      (let [target @common]
+        (when (and target (or (not= (:token target) (:common-token base))
+                              (not= values (get-in base [:view :subscriptions]))))
+          (assoc (new-target (assoc (:view target) :subscriptions values)) :common-token (:token target)))))))
+
 (defn- deliver-latest! [hub]
   (when-let [source (.get ^AtomicReference (:latest hub))]
     (let [common (delay (common-target hub source))
+          clients (mapv (fn [[socket client]] [socket client @client]) @(:clients hub))
+          desired (into #{} (mapcat (comp :queries peek)) clients)
+          leases (when-let [store (:query-store hub)] (queries/reconcile! store source desired))
           cache (volatile! {})]
-      (doseq [[socket client] @(:clients hub)
-              :let [before @client] :when (ready? before)]
+      (doseq [[socket client before] clients :when (ready? before)]
         (try
-          (offer! hub socket client before
-                  (if-let [interest (:interest before)]
-                    (connections-target hub interest source @common)
-                    @common) cache)
+          (let [target (if-let [interest (:interest before)]
+                         (delay (connections-target hub interest source @common))
+                         common)]
+            (offer! hub socket client before (query-target hub source before leases target) cache))
           (catch Exception _ (retire! hub socket 1011 "Could not project show state")))))))
 
 (defn- run-worker [hub]
@@ -139,19 +166,23 @@
 (defn create
   "Create an inert stream service. Starts one daemon worker on first connection."
   ([project heartbeat!] (create project heartbeat! {}))
-  ([project heartbeat! {:keys [frame-rate observe-status! capture-status] :or {frame-rate 40}}]
-   (let [hub {:observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
+  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault!]
+                        :or {frame-rate 40 checkpoint-every 240}}]
+   (when-not (pos-int? checkpoint-every) (throw (ex-info "Checkpoint interval must be positive" {})))
+   (let [hub {:client-faults (atom []) :report-fault! client-fault! :runtime-id runtime-id :checkpoint-every checkpoint-every :observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
               :period-ms (long (Math/ceil (/ 1000.0 (min 40 frame-rate))))
               :project project :heartbeat! heartbeat! :clients (atom {}) :closed? (atom false)
               :projected (volatile! nil) :latest (AtomicReference.) :wake (Semaphore. 0)}]
-     (assoc hub :worker (delay (doto (Thread. #(run-worker hub) "tolglow-state-stream")
-                                 (.setDaemon true) (.start)))))))
+     (let [hub (cond-> hub get-graph (assoc :query-store (queries/create get-graph #(wake! hub))))]
+       (assoc hub :worker (delay (doto (Thread. #(run-worker hub) "tolglow-state-stream")
+                                 (.setDaemon true) (.start))))))))
 
 (defn close! [hub]
   (locking (:closed? hub)
     (reset! (:closed? hub) true)
     (when (realized? (:worker hub)) (.interrupt ^Thread @(:worker hub))))
-  (doseq [socket (keys @(:clients hub))] (retire! hub socket 1001 "Studio stopped")))
+  (doseq [socket (keys @(:clients hub))] (retire! hub socket 1001 "Studio stopped"))
+  (when-let [store (:query-store hub)] (queries/close! store)))
 
 (defn- grant-lease! [hub session clock]
   ;; An acknowledged stream may run at 40Hz. One renewal per second suffices
@@ -161,12 +192,27 @@
                (compare-and-set! clock last now))
       ((:heartbeat! hub) session))))
 
+(defn- client-fault! [hub client session fault]
+  (when-not (and (map? fault) (#{:event :source :subscription} (:kind fault))
+                 (keyword? (:id fault)) (string? (:message fault))
+                 (every? #(or (nil? %) (string? %) (keyword? %))
+                         (map fault [:stack :cue-id :instance-id])))
+    (throw (ex-info "Invalid Studio fault" {})))
+  (let [now (System/currentTimeMillis)
+        before (first (swap-vals! client (fn [c] (if (>= (- now (:fault-at c 0)) 100)
+                                                   (assoc c :fault-at now) c))))]
+    (when (>= (- now (:fault-at before 0)) 100)
+      (let [event (assoc (select-keys fault [:kind :id :message :stack :cue-id :instance-id])
+                         :type :studio/handler-failed :session-id session :at now)]
+        (swap! (:client-faults hub) #(vec (take-last 64 (conj % event))))
+        (when-let [report! (:report-fault! hub)] (report! event))))))
+
 (defn- receive! [hub socket session lease-clock text]
   (when-let [client (get @(:clients hub) socket)]
     (try
-      (when-not (and (string? text) (<= (count text) 2048))
+      (when-not (and (string? text) (<= (count text) 8192))
         (throw (ex-info "Invalid stream control" {})))
-      (let [{:keys [op token enabled?]} (transit/decode text)]
+      (let [{:keys [op token enabled? queries fault]} (transit/decode text)]
         (case op
           :ack (let [[old _] (swap-vals! client
                                 (fn [{:keys [pending] :as state}]
@@ -176,6 +222,12 @@
                    (grant-lease! hub session lease-clock)
                    (wake! hub)))
           :resync (do (swap! client dissoc :base :pending) (wake! hub))
+          :client-fault (client-fault! hub client session fault)
+          :queries (let [desired (queries/validate queries)]
+                     (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
+                     (swap! client (fn [c] (if (= desired (:queries c #{})) c
+                                              (-> c (assoc :queries desired) (dissoc :pending :base)))))
+                     (wake! hub))
           :connections (set-interest! hub socket enabled?)
           :heartbeat (grant-lease! hub session lease-clock)
           (throw (ex-info "Unknown stream control" {}))))
@@ -205,7 +257,7 @@
                    (locking (:closed? hub)
                      (if (or @(:closed? hub) (>= (count @(:clients hub)) max-clients))
                        (ws/close socket 1013 "State stream unavailable")
-                       (do (swap! (:clients hub) assoc socket (atom {}))
+                       (do (swap! (:clients hub) assoc socket (atom {:query-only? (= "queries" (get-in request [:query-params "view"]))}))
                            (force (:worker hub))
                            (wake! hub)))))
         :on-message #(receive! hub %1 session lease-clock %2)
