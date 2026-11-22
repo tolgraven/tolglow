@@ -80,3 +80,8 @@
     (is (= "a/b" (get-in result [:range 0 :cue-id])))
     (is (= :random (signal/signal-kind (get-in result [:range 1]))))
     (is (= :cue (signal/signal-kind (get-in result [:range 0]))))))
+
+(deftest action-readback-shows-ownership-and-no-action-reasons
+  (is (= "no eligible look" (autopilot/action-label :no-eligible-look)))
+  (is (= "param/set · level" (autopilot/action-label {:op :param/set :param :level :instance-id "a"})))
+  (is (nil? (autopilot/action-label nil))))

@@ -78,3 +78,4 @@
 .conduct-new-signal { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .conduct-new-signal label { flex: 1 1 12em; }
 .conduct-new-signal button { width: auto; }
+.conduct-action { grid-column: 1/-1; display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }

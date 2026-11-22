@@ -170,6 +170,15 @@
        ^{:key i} [:span {:title (str (* i 10) "–" (* (inc i) 10) "% · " (signal/percent value) " of time")
                          :style {:height (str (max 2 (* 100 value)) "%")}}])]))
 
+(defn action-label [result]
+  (cond (or (keyword? result) (string? result)) (str/replace (events/wire-id result) "-" " ")
+        (map? result) (let [operation (or (:op result) (:error result))]
+                        (when operation
+                          (str (events/wire-id operation)
+                               (when-let [id (or (:cue-id result) (:param result) (:instance-id result))]
+                                 (str " · " (events/wire-id id))))))
+        :else nil))
+
 (defn- telemetry []
   (let [{:keys [statistics targets decision last-action]} @(rf/subscribe [::report])]
     (when (seq statistics)
@@ -184,8 +193,10 @@
                                  " · in band " (signal/percent (:target-hit-fraction s)))]
                     (when (number? (:stddev s)) [:small (str "Std. deviation " (signal/percent (:stddev s)))])
                     [hist (:histogram s)]])
-       (when-let [op (or (:op last-action) (:type last-action) (:reason decision))]
-         [:p.conduct-action (str "Last decision · " (events/wire-id op))])])))
+       (when (map? decision)
+         [:div.conduct-action
+          [:span (str (:active-count decision 0) " active sources")]
+          (when-let [action (action-label last-action)] [:span (str "Last action · " action)])])])))
 
 (defn- settings-panel [controls draft signals busy?]
   (let [section :autopilot edit #(edit! section [%1] %2)]
@@ -223,9 +234,12 @@
         draft @(rf/subscribe [::draft :autopilot])
         controls (edited :autopilot settings draft)
         busy? @(rf/subscribe [::busy])
-        ui @(rf/subscribe [::policy/form])]
+        ui @(rf/subscribe [::policy/form])
+        run @(rf/subscribe [::report])]
     [:section.panel.scene-controls.conduct {:aria-label "Energy autopilot"}
      [:header [:h2 "Energy autopilot"] [enable :autopilot "Enable autopilot" (:enabled? settings) busy?]]
+     (when (and (:enabled? run) (not (:enabled? settings)) (:enable-cue settings))
+       [:p.conduct-action (str "Running with cue " (events/wire-id (:enable-cue settings)))])
      [telemetry]
      [settings-panel controls draft (:signals controls {}) busy?]
      (when-let [error (:error ui)] [:p.performance-error {:role "alert"} error])]))
