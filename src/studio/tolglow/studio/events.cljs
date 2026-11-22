@@ -168,7 +168,15 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
                   (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
-        updated (if (get-in updated [:ui :rig-dirty?]) updated (assoc-in updated [:ui :rig-draft] (:rig show)))]
+        updated (if (get-in updated [:ui :rig-dirty?])
+                  (let [previous (get-in db [:show :rig :room :measured-fog])
+                        current (get-in show [:rig :room :measured-fog])]
+                    (cond
+                      (= previous current) updated
+                      current (update-in updated [:ui :rig-draft :room]
+                                         #(assoc (or % (get-in show [:rig :room])) :measured-fog current))
+                      :else (update-in updated [:ui :rig-draft :room] dissoc :measured-fog)))
+                  (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db updated
      :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]]

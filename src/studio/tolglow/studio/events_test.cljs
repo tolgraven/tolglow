@@ -614,3 +614,21 @@
     (is (= rig (get-in removed [:server-projection :view :rig])) "The live calibration lasts until Save rig")
     (is (= (dissoc (:room rig) :measured-fog) (submit removed)))
     (is (= 3 (:air-changes-per-hour (submit (:db (transition removed [:studio/rig-atmosphere :air-changes-per-hour 3]))))))))
+
+(deftest a-new-phone-fit-reaches-dirty-rig-drafts-without-discarding-placement
+  (let [fit {:clearance-half-life-s 85 :method :clearance-tail}
+        view (assoc (:show base) :show-id :stage :runtime-id "rig-test"
+                    :rig {:fixtures [] :room {:width 12 :height 5 :depth 10 :measured-fog fit}})
+        start (:db (full-frame base view))
+        draft (:db (transition start [:studio/rig-set [:room :width] 15]))
+        cleared (:db (transition draft [:studio/rig-atmosphere :measured-fog nil]))
+        patch (fn [token next changes] {:protocol projection/protocol :kind :patch :base-token token :token next
+                                        :identity (projection/identity-of view) :changes changes})
+        idle (:db (stream-event cleared (patch "full" "idle" [[:set [:frame-number] 13]])))
+        newer (assoc fit :clearance-half-life-s 90)
+        updated (:db (stream-event idle (patch "idle" "refit" [[:set [:frame-number] 14]
+                                                                [:set [:rig :room :measured-fog] newer]])))
+        saved (get-in (transition updated [:studio/rig-save]) [:studio/http :body :room])]
+    (is (nil? (get-in idle [:ui :rig-draft :room :measured-fog])))
+    (is (= newer (:measured-fog saved)) "Saving placement retains a concurrent phone calibration")
+    (is (= 15 (:width saved)))))
