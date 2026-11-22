@@ -4,6 +4,7 @@
             [tolglow.config :as config]
             [tolglow.fixtures :as fixtures]
             [tolglow.fixtures.patch :as patch]
+            [tolglow.fixtures.heads :as heads]
             [afterglow.render.frame :as render]))
 
 (deftest original-mover-and-multi-universe-pixel-builders
@@ -39,3 +40,10 @@
         (is (= 10 (count (filter #(= :tube-1 (:fixture-id %)) fixtures))))
         (is (= #{1 2 10 11} (set (map :universe fixtures)))))
       (finally (app/stop! runtime)))))
+
+(deftest splitting-heads-retains-required-physical-channel-validation
+  (let [template {:id :strip :version 1 :channels {:dimmer 1}
+                  :heads [{:channels {:red 2}}]
+                  :channel-definitions [{:key :dimmer :offset 1} {:key :red :offset 2} {:key :shutter :offset 3}]}
+        e (try (heads/targets template {:id :strip-1} 0) (catch clojure.lang.ExceptionInfo e e))]
+    (is (= [:unmapped-required-channel] (mapv :code (:diagnostics (ex-data e)))))))

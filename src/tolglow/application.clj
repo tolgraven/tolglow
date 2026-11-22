@@ -46,12 +46,12 @@
     (doseq [action actions]
       (if (fn? action) (action) (accepted! (show/submit! runtime action))))
     {:value {:load-file load-file :save-file save-file}
-     :abort! (constantly nil)
-     :stop! (when save-file #(show/save-show! runtime save-file))}))
+     :before-stop! (when save-file #(show/save-show! runtime save-file))}))
 
 (defn- start-audio [context options]
   (let [runtime (need-show context)]
-    {:value (show/audio-action! runtime :start options)
+    {:value (if (connections/restart-requested? (:connections runtime) :audio)
+              (show/audio-action! runtime :status {}) (show/audio-action! runtime :start options))
      :stop! #(show/audio-action! runtime :stop {})}))
 
 (defn- start-sensor-osc [context {:keys [address port-in host port]}]
@@ -78,8 +78,10 @@
 
 (defn- start-sync [context options]
   (let [runtime (need-show context)]
-    (when (seq options) (show/sync-action! runtime :configure {:config (sync-config options)}))
-    {:value (show/sync-action! runtime :start {})
+    {:value (if (connections/restart-requested? (:connections runtime) :sync)
+              (show/sync-action! runtime :status {})
+              (do (when (seq options) (show/sync-action! runtime :configure {:config (sync-config options)}))
+                  (show/sync-action! runtime :start {})))
      :stop! #(show/sync-action! runtime :stop {})}))
 
 (defn- install-fixtures [context {:keys [definitions patches factories fixture-types groups]}]

@@ -62,7 +62,7 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body typed? on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? raw-response? on-success on-failure timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -78,11 +78,11 @@
                               (let [type (or (.get (.-headers response) "content-type") "")
                                     data (cond
                                            (str/includes? type "application/transit+json")
-                                           (projection/presentation (transit/decode text))
+                                           (let [v (transit/decode text)] (if raw-response? v (projection/presentation v)))
                                            (str/includes? type "application/json")
                                            (js->clj (js/JSON.parse text) :keywordize-keys true)
                                            :else {:message text})]
-                                (if (or (not (.-ok response)) (= "rejected" (:status data)) (:error data))
+                                (if (or (not (.-ok response)) (contains? #{"rejected" :rejected} (:status data)) (:error data))
                                   (throw (js/Error. (str (error-message data))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
@@ -153,6 +153,18 @@
 (rf/reg-event-fx :studio/initialize
   (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
 
+(defn- settle-connection-drafts [db old-presentation old-typed]
+  (let [show (:show db) owner ((juxt :runtime-id :epoch) show)
+        old-pause (get-in old-presentation [:settings :output :pause-look])
+        new-pause (get-in show [:settings :output :pause-look])
+        old-routing (get-in old-typed [:settings :audio-returns])
+        new-routing (get-in db [:server-projection :view :settings :audio-returns])]
+    (cond-> db
+      (and (get-in db [:connections :pause-save]) (not= old-pause new-pause))
+      (update-in [:connections :pause-save] dissoc :form)
+      (and (get-in db [:audio-returns owner]) (not= old-routing new-routing))
+      (update-in [:audio-returns owner] dissoc :baseline :submitted))))
+
 (defn- install-show [db server]
   (let [presentation (projection/presentation (:view server)
                                               (get-in db [:server-projection :view]) (:server-presentation db))
@@ -166,6 +178,7 @@
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
+        updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))

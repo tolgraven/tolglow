@@ -377,7 +377,10 @@
     :command (command model payload time-ms)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :event-subscriber {:model (subscribers/configure model payload) :ack {:status :accepted}}
+    :event-subscriber (let [updated (subscribers/configure model payload)]
+                        (when-let [handler (::inline-handler payload)]
+                          (event-callbacks/register! (:event-callbacks runtime) (get-in payload [:subscriber :id]) handler))
+                        {:model updated :ack {:status :accepted}})
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
@@ -1197,10 +1200,10 @@
                              definition (-> registration (dissoc :middleware)
                                             (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
                          (subscribers/validate-definition definition)
-                         (when (fn? middleware) (event-callbacks/register! (:event-callbacks runtime) id middleware))
                          definition)
                        registration)]
-    (submit! runtime :event-subscriber {:op :save :subscriber registration})))
+    (submit! runtime :event-subscriber (cond-> {:op :save :subscriber registration}
+                                         (fn? middleware) (assoc ::inline-handler middleware)))))
 
 (defmacro reg-event-subscriber!
   "Register a literal middleware fn as restorable REPL source. Supply lexical

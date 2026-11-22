@@ -115,3 +115,19 @@
     (is (= {:cue-id "auto/red" :param :shape :type :enum :values [:sine :saw :square] :lane-note 101}
            (get-in config [:parameters 7])))
     (is (= 0xff0000 (:live-color (first (live/pad-page [{:color (thi.ng.color.core/rgba 1 0 0)}])))))))
+
+(deftest parameter-note-before-ack-targets-each-non-held-launch
+  (doseq [mode [:persistent :timed :one-shot]]
+    (let [bridge (live/new-bridge {:mappings {36 {:cue-id :red :mode mode :duration {:beats 1}}}
+                                   :parameters {1 {:cue-id :red :param :level :bounds [0 1] :lane-note 100}}})
+          press (live/midi->commands bridge note-on envelope)
+          swept (live/midi->commands (:state press) (assoc note-on :note 100 :velocity 127)
+                                     (assoc envelope :command-id "knob") "older-instance")
+          released (live/midi->commands (:state swept) note-off (assoc envelope :command-id "off"))
+          ack {:status :accepted :command-id (:command-id (first (:commands press))) :instance-id "this-instance"}
+          acked (live/acknowledge-launch (:state released) 36 ack envelope)]
+      (is (empty? (:commands swept)))
+      (is (empty? (:commands released)))
+      (is (= [{:op :param/set :instance-id "this-instance" :value 1.0}]
+             (mapv #(select-keys % [:op :instance-id :value]) (:commands acked))))
+      (is (empty? (:pending-launches (:state acked)))))))

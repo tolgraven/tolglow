@@ -199,6 +199,12 @@
                                      {:version 1 :config nil :capture-wanted? false})
                     :cleanup-errors []})})))
 
+(defn restart-requested? [connections resource]
+  (let [state @(:state connections)]
+    (boolean (case resource
+               :audio (get-in state [:audio-state :capture-wanted?])
+               :sync (:sync-wanted? state)))))
+
 (defn status [connections]
   (select-keys @(:state connections) [:closed? :restoring? :generation :cleanup-errors]))
 

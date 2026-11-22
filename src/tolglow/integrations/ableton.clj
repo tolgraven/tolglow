@@ -206,10 +206,12 @@
        (let [cmd (command state envelope :param/set
                           {:param (:param target)
                            :value (decode-value target (if (= :cc type) (/ value 127.0) (/ (dec velocity) 126.0)))})
+             pending (get-in state [:pending-cues (:cue-id target)])
              pending-note (first (for [[n h] (:held state)
                                        :when (and (not (:released? h)) (nil? (:instance-id h))
                                                   (= (:cue-id target) (get-in state [:mappings n :cue-id])))] n))]
          (cond
+           pending {:state (assoc-in state [:pending-launches pending :updates (:param target)] cmd) :commands []}
            pending-note {:state (assoc-in state [:held pending-note :updates (:param target)] cmd) :commands []}
            (:instance-id target) {:state state :commands [(assoc cmd :instance-id (:instance-id target))]}
            :else {:state (assoc-in state [:next-params (:cue-id target) (:param target)] (:value cmd)) :commands []}))
@@ -220,8 +222,13 @@
                       (:duration-ms mapping) (assoc :duration-ms (:duration-ms mapping))
                       (:velocity-param mapping) (assoc-in [:params (:velocity-param mapping)] (/ velocity 127.0)))
              cmd (command state envelope :cue/launch {:cue-id (:cue-id mapping) :launch launch})]
-         {:state (cond-> (update state :next-params dissoc (:cue-id mapping)) (= mode :held) (assoc-in [:held note] {:command-id (:command-id cmd)}))
-          :commands [cmd]})
+         (if (and (not= mode :held) (>= (count (:pending-launches state)) (:history-limit state)))
+           {:state state :commands [] :events [{:type :live/launch-queue-full :cue-id (:cue-id mapping)}]}
+           {:state (cond-> (update state :next-params dissoc (:cue-id mapping))
+                     (= mode :held) (assoc-in [:held note] {:command-id (:command-id cmd)})
+                     (not= mode :held) (assoc-in [:pending-launches (:command-id cmd)] {:note note :cue-id (:cue-id mapping)})
+                     (not= mode :held) (assoc-in [:pending-cues (:cue-id mapping)] (:command-id cmd)))
+            :commands [cmd]}))
        :else {:state state :commands []}))))
 
 (defn acknowledge-launch
@@ -229,10 +236,18 @@
   the ack generates an immediate end for that exact instance. Stale acks cannot
   steal a newer note binding. envelope identifies any generated end command."
   [state note ack envelope]
-  (let [pending (get-in state [:held note])]
-    (if (or (nil? pending) (not= (:command-id pending) (:command-id ack)))
-      {:state state :commands []}
-      (if (and (= :accepted (:status ack)) (:instance-id ack))
+  (if-let [entry (get-in state [:pending-launches (:command-id ack)])]
+    (if (= note (:note entry))
+      {:state (cond-> (update state :pending-launches dissoc (:command-id ack))
+                (= (:command-id ack) (get-in state [:pending-cues (:cue-id entry)]))
+                (update :pending-cues dissoc (:cue-id entry)))
+       :commands (if (and (= :accepted (:status ack)) (:instance-id ack))
+                   (mapv #(assoc % :instance-id (:instance-id ack)) (vals (:updates entry))) [])}
+      {:state state :commands []})
+    (let [pending (get-in state [:held note])]
+      (if (or (nil? pending) (not= (:command-id pending) (:command-id ack)))
+        {:state state :commands []}
+        (if (and (= :accepted (:status ack)) (:instance-id ack))
         (let [instance (:instance-id ack)
               updates (mapv #(assoc % :instance-id instance) (vals (:updates pending)))]
           (if (:released? pending)
@@ -240,7 +255,7 @@
              :commands (conj updates (command state envelope :instance/end {:instance-id instance}))}
             {:state (assoc-in state [:held note] (assoc (dissoc pending :updates) :instance-id instance))
              :commands updates}))
-        {:state (update state :held dissoc note) :commands []}))))
+        {:state (update state :held dissoc note) :commands []})))))
 
 (defn handoff
   "Transfer surface ownership, ending held lighting instances. Pending launches
@@ -250,7 +265,7 @@
   (if (= mode (:mode state))
     {:state state :commands [] :events []}
     (let [held (sort-by key (:held state))]
-      {:state (assoc state :mode mode :next-params {} :held
+      {:state (assoc state :mode mode :next-params {} :pending-launches {} :pending-cues {} :held
                      (into {} (for [[note entry] held :when (nil? (:instance-id entry))]
                                 [note (assoc entry :released? true)])))
        :commands (mapv (fn [[note entry]]
