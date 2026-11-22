@@ -120,3 +120,14 @@
     (is (not= (activity/predicted-score again cue) (activity/predicted-score (assoc-in again [:registry :effects :pulse :version] 2) cue)))
     (is (nil? (activity/predicted-score model {:effect-id :missing})))
     (is (nil? (get-in (activity/publish report nil) [:variables :lighting/activity])))))
+
+(deftest provisional-scores-honor-effect-output-scope-and-saved-dimmer
+  (let [model {:fixtures lamps
+               :registry {:effects {:shot {:id :shot :version 1 :params {:level {:type :number :default 1}}
+                                          :outputs [{:attribute :dimmer :value {:op :param :key :level}}
+                                                    {:attribute :color :value full}
+                                                    {:attribute :strobe :value 1.0 :targets [:head-0]}]}}}}
+        cue {:effect-id :shot}
+        sparse (activity/predicted-score model cue)]
+    (is (zero? (activity/predicted-score model (assoc cue :saved-params {:level 0}))))
+    (is (< sparse (activity/predicted-score (update-in model [:registry :effects :shot :outputs 2] dissoc :targets) cue)))))

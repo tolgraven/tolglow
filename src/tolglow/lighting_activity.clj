@@ -18,8 +18,9 @@
 (defn- channel-value [universes {:keys [coarse fine inverted-from]}]
   (when coarse
     (let [read-byte (fn [[u i]] (bit-and 255 (int (nth (get universes u) i))))
-          raw (+ (read-byte coarse) (if fine (/ (read-byte fine) 255.0) 0.0))]
-      {:byte (long raw)
+          hi (read-byte coarse)
+          raw (+ hi (if fine (/ (read-byte fine) 255.0) 0.0))]
+      {:byte hi
        :value (unit (/ (if (and inverted-from (>= raw inverted-from))
                          (- 255.0 (- raw inverted-from)) raw) 255.0))})))
 
@@ -42,35 +43,60 @@
           next (cond
                  (and (= blend :replace) (>= opacity 1.0)) (if owner {owner 1.0} {})
                  (nil? owner) old
-                 :else (assoc (if (= blend :replace)
-                                (update-vals old #(* % (- 1.0 opacity))) old)
-                              owner (max (double opacity) (double (get old owner 0)))))]
+                 (= blend :replace) (update (update-vals old #(* % (- 1.0 opacity))) owner (fnil + 0.0) opacity)
+                 :else (update old owner (fnil max 0.0) opacity))]
       (assoc-in by-target [id field] next))
     by-target))
 
+(defn- ordered-members [blocks]
+  (if-not (some :native-layer blocks) blocks
+    (let [indexed (map-indexed vector blocks)
+          groups (group-by #(get-in % [1 :native-layer :id]) indexed)]
+      (mapcat (fn [[i b]]
+                (if-let [layer (:native-layer b)]
+                  (let [members (get groups (:id layer))]
+                    (when (= i (first (peek members)))
+                      (map second (sort-by #(get-in % [1 :native-layer :member]) members))))
+                  [b])) indexed))))
+
 (defn- owners [blocks]
-  (reduce
-   (fn [by-target {:keys [source assignments batch native-layer]}]
+  (:fields (reduce
+   (fn [{:keys [fields scopes]} {:keys [source assignments batch native-layer]}]
      (let [owner (when-let [id (:effect-id source)] [id (:effect-version source)])
            opacity (* (:opacity native-layer 1.0) (:member-opacity native-layer 1.0))
            assigned (reduce (fn [m {:keys [target-id attribute blend] a :opacity}]
                               (write-field m target-id attribute owner (* opacity (or a 1)) (or blend :replace)))
-                            by-target assignments)
+                            fields assignments)
            batched (reduce (fn [m id]
                              (reduce (fn [m attr] (write-field m id attr owner (* opacity (:opacity batch 1.0))
                                                               (:blend batch :replace)))
                                      m (or (keys (:outputs batch))
                                            (map :attribute (get-in batch [:field-request :group :cpu-plan :outputs])))))
                            assigned (:target-ids batch))
-           targets (if (= :previous (:targets native-layer)) (keys batched) (:target-ids native-layer))]
-       (reduce (fn [m id]
+           group-id (:id native-layer)
+           scopes (if group-id (update scopes group-id (fnil into #{})
+                                       (concat (when (pos? opacity) (map :target-id assignments))
+                                               (when (pos? opacity) (:target-ids batch))
+                                               (:target-ids native-layer))) scopes)
+           targets (if (= :previous (:targets native-layer))
+                     (if (:inherit-backdrop? native-layer) (keys batched) (get scopes group-id))
+                     (:target-ids native-layer))]
+       {:scopes scopes
+        :fields (reduce (fn [m id]
                  (reduce (fn [m {:keys [attribute value]}]
                            (write-field m id attribute owner opacity (if (map? value) :add :replace)))
                          m (:transforms native-layer)))
-               batched targets))) {} blocks))
+               batched targets)})) {:fields {} :scopes {}} (ordered-members blocks))))
 
 (defn- shares [field-owners fields]
   (reduce (fn [m attr] (merge-with max m (get field-owners attr))) {} fields))
+
+(defn- light-shares [writers fixture]
+  (let [channels (:compiled-channels fixture)
+        physical (filter #(and (channels %) (not= :uv %)) registry/emitter-attributes)
+        rgb (cond-> [:red :green :blue] (= :extract-min (:rgbw-policy fixture)) (conj :white))
+        use-color? (some #(and (channels %) (not (contains? writers %))) rgb)]
+    (shares writers (cond-> (conj physical :dimmer) use-color? (conj :color)))))
 
 (defn- score [brightness flashing movement strobe]
   (- 1.0 (* (- 1.0 (* 0.23 brightness)) (- 1.0 (* 0.80 flashing))
@@ -145,11 +171,12 @@
                        {:keys [light flashing movement strobe] :as current}
                        (sample fixture frame local-brightness old dt)
                        writers (get fields id)
-                       light-share (or (not-empty (shares writers light-fields))
+                       light-share (or (not-empty (light-shares writers fixture))
                                        (when (or (pos? light) (> flashing 0.005)) (:light-share old)))
                        flash-share (merge-with max light-share
                                                (when (> flashing 0.005) (:light-share old)))
-                       motion-share (shares writers motion-fields)
+                       motion-share (if (or (:aim writers) (:direction writers))
+                                      (shares writers [:aim :direction]) (shares writers [:pan :tilt]))
                        strobe-share (shares writers shutter-fields)
                        weight (if (pos? total) (/ global-maximum total) 0.0)]
                    (add! scene weight count-weight light flashing movement strobe)
@@ -195,26 +222,54 @@
         (events/collect :lighting {:kind :lighting-rig :id (:show-id model)}
                         [(assoc (:scene report) :type :lighting/activity)])))))
 
+(defn- constant-or-midpoint [value params]
+  (cond
+    (number? value) [(unit value) false]
+    (and (vector? value) (every? number? value)) [(unit (reduce max 0.0 value)) false]
+    (= :const (:op value)) (constant-or-midpoint (:value value) params)
+    (= :param (:op value)) (constant-or-midpoint (get params (:key value) 0.5) params)
+    :else [0.5 true]))
+
+(defn- provisional [outputs params fixture]
+  (let [fields (into {} (keep (fn [{:keys [attribute value targets]}]
+                                (when (or (nil? targets) (contains? targets (:id fixture)))
+                                  [attribute (constant-or-midpoint value params)]))) outputs)
+        emitters (select-keys fields (conj registry/emitter-attributes :color))
+        dimmer (get-in fields [:dimmer 0] 1.0)
+        ;; A movement- or shutter-only program needs an independent light source.
+        ;; The provisional estimate assumes that companion is lit.
+        drive (* dimmer (if (seq emitters) (reduce max 0.0 (map first (vals emitters))) 1.0))
+        emits? (or (fields :dimmer) (seq emitters))
+        changing? (fn [attributes] (some second (vals (select-keys fields attributes))))
+        shutter-value (or (get-in fields [:strobe 0]) (get-in fields [:shutter 0]))
+        attr (if (fields :strobe) :strobe :shutter)
+        [open? strobe] (if shutter-value
+                         (shutter-profile/response attr (get-in fixture [:channels attr])
+                                                   (Math/round (* 255.0 shutter-value)) shutter-value)
+                         [true 0.0])
+        visible (if open? drive 0.0)]
+    (score (if emits? visible 0.0)
+           (* visible (if (changing? light-fields) 0.45 0.0))
+           (* visible (if (changing? motion-fields) 0.55 0.0))
+           (* visible strobe))))
+
 (defn predicted-score
-  "Return a learned peak for a registered effect revision or a rough provisional
-  score for its authored fields. Unknown code-only output has no prediction."
+  "Peak observed on this effect revision, or an approximate score for an
+  unperformed declarative cue. Its resolved parameters, lit target count and
+  physical strobe ranges inform the provisional estimate. Code-only effects
+  without measurements have no prediction."
   [model cue]
   (let [id (:effect-id cue)
         effect (get-in model [:registry :effects id])
-        learned (get-in model [:variables :lighting/activity :history id])
-        entries (registry/output-entries (:outputs effect))]
-    (cond
-      (and effect learned (= (:version effect) (:version learned))) (:score learned)
-      (seq entries)
-      (let [fixtures (or (:fixtures model) (get-in model [:rig :fixtures]))
-            ids (set (map :id fixtures))
-            targets (set (or (:targets effect) ids))
-            fraction (if (seq ids) (/ (count (set/intersection ids targets)) (double (count ids))) 1.0)
-            estimate (fn [fields] (reduce max 0.0
-                                   (for [{:keys [attribute value]} entries :when (fields attribute)]
-                                     (cond (number? value) (unit value)
-                                           (and (vector? value) (every? number? value)) (unit (reduce max 0.0 value))
-                                           :else 0.5))))
-            dynamic? (fn [fields] (some #(and (fields (:attribute %)) (map? (:value %))) entries))]
-        (* fraction (score (estimate light-fields) (if (dynamic? light-fields) 0.4 0.0)
-                           (if (dynamic? motion-fields) 0.55 0.0) (estimate shutter-fields)))))))
+        learned (get-in model [:variables :lighting/activity :history id])]
+    (if (and effect learned (= (:version effect) (:version learned))) (:score learned)
+      (when-let [entries (seq (registry/output-entries (:outputs effect)))]
+        (let [params (merge (update-vals (:params effect) :default) (:saved-params cue) (:params cue))
+              fixtures (or (:fixtures model) (get-in model [:rig :fixtures]))
+              eligible (filter #(some (conj registry/emitter-attributes :dimmer) (keys (:channels %))) fixtures)
+              targets (when (:targets effect) (set (:targets effect)))
+              entries (mapv #(cond-> % (:targets %) (update :targets set)) entries)]
+          (when (seq eligible)
+            (/ (reduce (fn [sum f] (if (and targets (not (targets (:id f)))) sum
+                                     (+ sum (provisional entries params f)))) 0.0 eligible)
+               (double (count eligible)))))))))
