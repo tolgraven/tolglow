@@ -1,7 +1,22 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
+ [{:id :render/native-compound-layers :title "Composite compound members in typed fixture space before packing" :kind :implementation :status :in-progress :owner "native-layer-renderer"
+   :paths ["afterglow/src/afterglow/render/layers.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Composite compound members in typed fixture space before packing in the normal show path with regression coverage"] :evidence []}
+  {:id :studio/compound-native-editor :title "Author and perform ordered native layer modifiers from the composition editor" :kind :implementation :status :in-progress :owner "composition-authoring"
+   :paths ["tolglow/src/tolglow/composition.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Author and perform ordered native layer modifiers from the composition editor in the normal show path with regression coverage"] :evidence []}
+  {:id :render/dmx-venue-atmosphere :title "Integrate delivered fogger output with venue diffusion and air exchange" :kind :implementation :status :in-progress :owner "venue-fog"
+   :paths ["afterglow/src/afterglow/render/atmosphere.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Integrate delivered fogger output with venue diffusion and air exchange in the normal show path with regression coverage"] :evidence []}
+  {:id :studio/dmx-volumetric-atmosphere :title "Render synchronized local jets and the fully mixed venue fog" :kind :implementation :status :in-progress :owner "studio-atmosphere"
+   :paths ["tolglow/js/preview/fog.js"] :depends-on [:foundation/tests]
+   :acceptance ["Render synchronized local jets and the fully mixed venue fog in the normal show path with regression coverage"] :evidence []}
+  {:id :music/lighting-capacity :title "Map audio energy to the fraction of calibrated rig light output in use" :kind :implementation :status :in-progress :owner "energy-coupling"
+   :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
+   :acceptance ["Map audio energy to the fraction of calibrated rig light output in use in the normal show path with regression coverage"] :evidence []}
+  {:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
    :paths ["afterglow/src/afterglow/render/optics.cljc"] :depends-on [:foundation/tests]
    :acceptance ["Calibrated cone footprints and tangential tracking on finite surfaces through the production entry point and regression tests"] :evidence []}
   {:id :fixtures/optical-definitions :title "Fixture beam angle, lamp power, and measured white response" :kind :implementation :status :in-progress :owner "fixture-photometry"
