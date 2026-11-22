@@ -14,7 +14,7 @@
 (defn initial-db [session]
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
-   :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false :fog 0.3
+   :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false
         :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
         :definition-search "" :assign-cue "" :toast nil :action-cell nil :clipboard nil :prompt nil
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
@@ -728,7 +728,7 @@
 (rf/reg-event-fx :studio/preview-ready
   (fn [{:keys [db]} [_ supported?]]
     {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
-     :fx (into [[:studio/preview [:fog (get-in db [:ui :fog] 0.3)]]]
+     :fx (into [[:studio/preview [:fog (get-in db [:ui :fog])]]]
                (when supported? (mapv (fn [[key value]] [:studio/preview [key value]])
                                       (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting

@@ -304,7 +304,7 @@
                              (str "DMX · " (.toFixed flow 1) " m³/min"))
                            "preview")]]
     [:input#fog-density {:type "range" :aria-label "Preview fog density" :min 0 :max 1 :step 0.01
-                         :value (get-in db [:ui :fog] 0.3)
+                         :value (or (get-in db [:ui :fog]) (if (get-in db [:show :output :atmosphere]) 1 0.3))
                          :on-change #(when-let [value (number-value %)] (send! [:studio/preview-fog value]))}]
     (when-not (get-in db [:show :output :atmosphere])
       [button "fog-burst" "+ Plume" [:studio/preview-burst] "text-button"])

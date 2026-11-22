@@ -38,7 +38,7 @@ export class SceneRenderer {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.ready = false; this.disposed = false;
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.qualityChoice = 'auto';
-    this.fogAmount = .3; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
+    this.fogOverride = null; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
     this.lastFrame = 0; this.renderScale = 1; this.scaleChangedAt = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
     this.abort = new AbortController(); this.reducedMotion = platform.worker
       ? {matches: Boolean(platform.reducedMotion)} : matchMedia('(prefers-reduced-motion: reduce)');
@@ -122,7 +122,11 @@ export class SceneRenderer {
     if (this.scene) this.scene.environmentIntensity = this.workLight * 1.25;
     if (this.ready) this.updateStatus();
   }
-  setFog(value) { this.fogAmount = clamp(Number(value) || 0, 0, 1); this.fog?.setAmount(this.fogAmount); }
+  get fogAmount() {return this.fogOverride ?? (this.snapshot?.output?.atmosphere ? 1 : .3);}
+  setFog(value) {
+    this.fogOverride = value == null ? null : clamp(Number(value) || 0, 0, 1);
+    this.fog?.setAmount(this.fogAmount);
+  }
   burst(options) {
     if (!this.visible || !this.fog?.burst(options)) return false;
     this.fogAnimationUntil = this.clock + 8; return true;
@@ -166,6 +170,7 @@ export class SceneRenderer {
       if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
     }
     this.fog?.setAtmosphere(showIdentity(snapshot), snapshot.output?.atmosphere);
+    this.fog?.setAmount(this.fogAmount);
     this.lighting.accept(snapshot, rig, receivedAt);
     const selection = snapshot.editor?.selection;
     const selected = selection?.kind === 'fixtures' ? String(selection.id) : null;
