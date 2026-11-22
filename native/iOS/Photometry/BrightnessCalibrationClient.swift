@@ -69,6 +69,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
 @MainActor final class BrightnessCalibrationClient: ObservableObject {
     let camera = PhotometryCamera()
     @Published private(set) var fixtures: [PhotometryFixture] = []
+    @Published private(set) var illuminated: String?
     @Published private(set) var running = false
     @Published private(set) var busy = false
     @Published private(set) var outputAvailable = false
@@ -112,6 +113,12 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
         }
     }
 
+    func originChanged() {
+        guard !busy, !running else { return }
+        host = nil; url = nil; fixtures = []; readings = [:]; outputAvailable = false
+        status = "Connect to this Studio origin before arming output."
+    }
+
     func start(ids: [String], shutter: Int32) {
         guard !busy, !running, let host, let url, host.output, !ids.isEmpty,
               Set(ids).count == ids.count else { return }
@@ -130,7 +137,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
             try Task.checkCancellation()
             self.running = true
             self.renew(session)
-            self.status = "Position the diffuser one metre from the first fixture, centered in its beam."
+            try await self.light(ids[0], session)
         }
     }
 
@@ -150,7 +157,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
         }
     }
 
-    private func measure(_ phase: String, _ id: String, _ session: BrightnessLease) async throws -> Double {
+    private func setPhase(_ phase: String, _ id: String, _ session: BrightnessLease) async throws {
         var reply = try await session.send("step", ["fixture-id": id, "phase": phase])
         let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while reply.fixture != id || reply.phase != phase || reply.presented != true {
@@ -159,6 +166,21 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
             reply = try await session.send("heartbeat")
         }
         try Task.checkCancellation()
+        illuminated = phase == "white" ? id : nil
+    }
+
+    private func light(_ id: String, _ session: BrightnessLease) async throws {
+        try await setPhase("white", id, session)
+        status = "Full white · " + id + ". Center the diffuser one metre from its lens, then capture."
+    }
+
+    func select(_ id: String) {
+        guard !busy, running, let lease, lease.ids.contains(id) else { return }
+        perform { try await self.light(id, lease) }
+    }
+
+    private func measure(_ phase: String, _ id: String, _ session: BrightnessLease) async throws -> Double {
+        try await setPhase(phase, id, session)
         let reading = try await camera.measure()
         try Task.checkCancellation()
         let check = try await session.send("heartbeat")
@@ -177,14 +199,16 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
                 self.status = "Measuring full white · " + id
                 let white = try await self.measure("white", id, lease)
                 let pair = try BrightnessReading(dark: dark, white: white)
-                _ = try await lease.send("step", ["fixture-id": id, "phase": "dark"])
-                try Task.checkCancellation()
                 self.readings[id] = pair
-                self.status = "Reading captured. Move to the next fixture or repeat this pair."
+                if let next = lease.ids.first(where: { self.readings[$0] == nil }) {
+                    try await self.light(next, lease)
+                } else {
+                    try await self.setPhase("dark", id, lease)
+                    self.status = "All readings captured. Review the ratios and save."
+                }
             } catch let error as PhotometryError {
                 // A failed repeat preserves the previous complete dark/white pair.
-                _ = try await lease.send("step", ["fixture-id": id, "phase": "dark"])
-                try Task.checkCancellation()
+                try await self.setPhase("dark", id, lease)
                 self.status = error.localizedDescription
             }
         }
@@ -196,6 +220,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
             guard let reading = readings[id] else { return nil }
             return ["fixture-id": id, "dark": reading.dark, "white": reading.white]
         }
+        renewal?.cancel(); renewal = nil
         perform {
             _ = try await lease.send("apply", ["readings": rows, "distance-m": 1.0])
             try Task.checkCancellation()
@@ -220,7 +245,7 @@ private func brightnessJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest,
         generation = UUID()
         action?.cancel(); action = nil
         renewal?.cancel(); renewal = nil
-        running = false; busy = false; lease = nil; camera.stop()
+        running = false; busy = false; illuminated = nil; lease = nil; camera.stop()
         status = message
         if let previous {
             // The host lease also expires when a backgrounded or disconnected

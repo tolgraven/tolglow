@@ -47,13 +47,14 @@ struct BrightnessCalibrationView: View {
                     }
                 }
                 Section("Camera and output") {
+                    Text("Set the show master to full and release blackout. While measuring, each reference runs at full visible white and other patched emitters go dark.")
                     Text("Cover the rear wide camera with a neutral diffuser. For every reading, hold the same diffuser 1.00 m from the lens of the fixture, centered on its beam and facing it squarely. Keep room lighting steady.")
                     Picker("Locked shutter", selection: $shutter) {
                         ForEach([Int32(50), 60, 125, 250, 500, 1000, 2000], id: \.self) { v in
                             Text("1/\(v) s").tag(v)
                         }
                     }.disabled(locked)
-                    Button("Lock camera and arm selected fixtures") { client.start(ids: selected, shutter: shutter) }
+                    Button("Lock camera and light reference") { client.start(ids: selected, shutter: shutter) }
                         .disabled(locked || !client.outputAvailable || selected.isEmpty)
                 }
             }
@@ -61,7 +62,7 @@ struct BrightnessCalibrationView: View {
                 Section("Locked camera") {
                     MeterPreview(session: client.camera.session).frame(height: 160)
                         .overlay { Image(systemName: "plus").foregroundStyle(.white).shadow(radius: 2) }
-                    Text("Keep the diffuser evenly lit across the center of the image. Capture briefly switches the selected fixture from dark to full white, then back to dark.")
+                    Text("Keep the diffuser evenly lit across the center of the image. Capture takes a dark reading and a full-white reading, then lights the next fixture.")
                 }
             }
             if client.running || !client.readings.isEmpty {
@@ -76,8 +77,12 @@ struct BrightnessCalibrationView: View {
                             }
                             Spacer()
                             if client.running {
-                                Button(client.readings[id] == nil ? "Capture" : "Repeat") { client.capture(id) }
-                                    .buttonStyle(.bordered).disabled(client.busy)
+                                if client.illuminated == id {
+                                    Button(client.readings[id] == nil ? "Capture" : "Repeat") { client.capture(id) }
+                                        .buttonStyle(.borderedProminent).disabled(client.busy)
+                                } else {
+                                    Button("Light") { client.select(id) }.buttonStyle(.bordered).disabled(client.busy)
+                                }
                             }
                         }
                     }
@@ -94,6 +99,7 @@ struct BrightnessCalibrationView: View {
         }
         .navigationTitle("Fixture brightness")
         .onDisappear { client.stop() }
+        .onChange(of: origin) { _, _ in selected = []; client.originChanged() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { client.stop("Calibration stopped when the app left the foreground.") }
         }
