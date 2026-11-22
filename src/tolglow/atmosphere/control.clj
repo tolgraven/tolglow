@@ -154,8 +154,12 @@
         pumps (into {} (for [id ids
                              :let [fixture (get-in patch [:by-id id])] :when (:fogger fixture)
                              :let [musical (get requested id)
-                                   cap (min (:value musical 0.5) (get-in fixture [:fogger :duty :max-level] 0.5))
-                                   p (pump (assoc-in fixture [:fogger :duty :max-level] cap) (get sources id)
+                                   duty (get-in fixture [:fogger :duty] {})
+                                   limited (if (valid-duty? duty)
+                                             (assoc-in fixture [:fogger :duty :max-level]
+                                                       (min (:value musical 0.5) (:max-level duty 0.5)))
+                                             fixture)
+                                   p (pump limited (get sources id)
                                            (prior-pump previous id) now
                                            (some? musical) (not bypass?))]]
                          [id (if (some (partial manual-fog? id) blocks)

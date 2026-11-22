@@ -136,3 +136,12 @@
         (scheduler/publish! (:publisher rt))
         (is (= [220 64] @bytes)))
       (finally (show/stop! rt)))))
+
+(deftest malformed-device-duty-suspends-both-automatic-sources
+  (let [bad (frame/compile-patch [(assoc-in jet [:fogger :duty] {:max-level "full"})])
+        raw {:kind :assignments :assignments [{:target-id :jet :attribute :fog :value 0.5 :blend :max}]}
+        setpoint (fog/frame armed bad (observed 0.05 0) nil 0 false [] raw)
+        music (fog/frame base bad (observed 0.05 0) nil 0 false [] raw)]
+    (is (= :invalid-duty (get-in setpoint [:status :pumps :jet :mode])))
+    (is (= :invalid-duty (get-in music [:status :music-pumps :jet :mode])))
+    (is (every? empty? (map :leases [setpoint music])))))
