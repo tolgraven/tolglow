@@ -75,3 +75,37 @@
                        [:data :version])))
       (is (empty? (:instances (:model @(:state runtime)))))
       (finally (show/stop! runtime)))))
+
+(deftest tapped-surface-controls-use-the-current-patch-and-normal-frame-packing
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        aim {:targets ["head-1" "head-2"] :surface-id "floor" :point [2 0 1] :mode "together"}
+        post #(post! runtime "/api/surface-aim" % 100)]
+    (try
+      (is (= #{:stage :floor :back :left :right} (set (map :id (:receiver-surfaces (show/snapshot runtime))))))
+      (is (= "accepted" (get-in (post aim) [:data :status])))
+      (let [view (show/snapshot runtime)]
+        (is (= {:head-1 [2 0 1] :head-2 [2 0 1]} (:surface-aim view)))
+        (is (= [2.0 0.0 1.0] (get-in view [:output :values :head-1 :aim])))
+        (is (= [2.0 0.0 1.0] (get-in view [:output :values :head-2 :aim])))
+        (is (pos? (get-in view [:output :values :head-1 :pan])))
+        (doseq [invalid [(assoc aim :expected-epoch 99) (assoc aim :point [2 3 1]) (assoc aim :targets ["missing"])
+                         (assoc aim :point [2000 0 0]) (assoc aim :mode "edge-to-edge" :along "other")]]
+          (is (= "rejected" (get-in (post invalid) [:data :status])))
+          (is (= (:surface-aim view) (:surface-aim (show/snapshot runtime))))))
+      (is (= "accepted" (get-in (post (assoc aim :point [-1 1.5 2] :surface-id nil)) [:data :status])))
+      (is (= [-1 1.5 2] (get-in (show/snapshot runtime) [:surface-aim :head-1])))
+      (is (= "accepted" (get-in (post (assoc aim :mode "edge-to-edge" :along "negative-u")) [:data :status])))
+      (let [view (show/snapshot runtime) link {:leader :head-1 :follower :head-2 :surface-id :floor :along [-1.0 0.0 0.0]}]
+        (is (= [link] (get-in view [:rig :edge-tracking])))
+        (is (= {:head-1 [2 0 1]} (:surface-aim view)))
+        (is (= [link] (get-in (show/export-show runtime) [:model :rig :edge-tracking])))
+        (is (= "accepted" (get-in (post (assoc aim :mode "follow" :point nil)) [:data :status])))
+        (is (empty? (:surface-aim (show/snapshot runtime))))
+        (is (= "accepted" (get-in (post (assoc aim :mode "release" :targets ["head-1"])) [:data :status])))
+        (is (empty? (get-in (show/snapshot runtime) [:rig :edge-tracking]))))
+      (post aim)
+      (let [saved (show/export-show runtime)]
+        (is (= (:surface-aim (show/snapshot runtime)) (get-in saved [:model :variables :surface-aim])))
+        (submit-at! runtime :command {:op :show/restart} 101)
+        (is (empty? (:surface-aim (show/snapshot runtime)))))
+      (finally (show/stop! runtime)))))

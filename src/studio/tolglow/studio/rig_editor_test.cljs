@@ -102,3 +102,15 @@
         (is (= "saved-cue" (get-in request [:body :cue-id])))
         (is (= "draw" (:tool state))))
       (finally (restore)))))
+
+(deftest surface-aim-keeps-target-order-and-binds-commands-to-the-displayed-show
+  (let [state (assoc (editor/editor base) :tool "aim" :targets ["rig/first" "second"] :along "negative-u")
+        db (editor/put-editor base state)
+        {next-db :db request :studio/http} (editor/surface-command db "edge-to-edge" [1 0 2] "floor")]
+    (is (= "/api/surface-aim" (:path request)))
+    (is (= ["rig/first" "second"] (get-in request [:body :targets])))
+    (is (= [1 0 2] (get-in request [:body :point])))
+    (is (= (get-in db [:show :epoch]) (get-in request [:body :expected-epoch])))
+    (is (= (editor/identity-key db) (second (:on-success request))))
+    (is (nil? (:studio/http (editor/surface-command next-db "follow" [0 0 0] "back"))))
+    (is (nil? (:studio/http (editor/surface-command (assoc-in db [:ui :rig-dirty?] true) "together" [1 0 2] "floor"))))))

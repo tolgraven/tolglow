@@ -1,5 +1,6 @@
 (ns tolglow.studio.events-test
   (:require [cljs.test :refer-macros [deftest is testing]]
+            [cljs.reader :as reader]
             [clojure.string :as str]
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
@@ -562,3 +563,39 @@
     (is (not (contains? (fixtures/form-definition (assoc-in s [:field-edits :pseudo-fixture] "")) :pseudo-fixture)))
     (is (zero? (:lens-radius-m (fixtures/form-definition (assoc-in s [:field-edits :lens-radius-m] "0")))))
     (is (thrown? js/Error (fixtures/form-definition (assoc-in s [:field-edits :beam-angle] "180"))))))
+
+(deftest fog-profile-controls-publish-preserve-and-remove-through-re-frame
+  (let [source {:id :fog-type :version 1 :channels {:fog 1} :fogger {:flow-m3-min 12 :extra "vendor"}}
+        db (assoc-in base [:ui :fixture-library] {:definition source :draft-source (pr-str source)})
+        edit (fn [db entry] (:db (transition db (into [:fixtures/edit-fogger] entry))))
+        edited (reduce edit db [[:flow-m3-min "60.5"] [:mixing-seconds "12"]
+                                [[:dmx-range 0] "255"] [[:dmx-range 1] "0"]
+                                [[:direction 0] "-1"] [[:direction 2] "0"]])
+        publish #(some-> (transition % [:fixtures/publish]) :studio/http :body :source reader/read-string)
+        saved (publish edited)
+        removed (:db (transition edited [:fixtures/remove-channel :fog]))]
+    (is (= {:flow-m3-min 60.5 :mixing-seconds 12 :dmx-range [255 0] :direction [-1 0 0] :extra "vendor"}
+           (:fogger saved)))
+    (is (= (:channels source) (:channels saved)))
+    (is (nil? (:mixing-seconds (:fogger (publish (edit edited [:mixing-seconds ""]))))))
+    (is (nil? (:fogger (publish (edit edited [:enabled? false])))))
+    (is (nil? (get-in removed [:ui :fixture-library :definition :fogger])))
+    (is (nil? (get-in removed [:ui :fixture-library :definition :channels :fog])))
+    (doseq [invalid [[[:direction 0] "0"] [[:dmx-range 1] "255"] [:flow-m3-min "0"] [:mixing-seconds "-2"]]]
+      (is (= :fixtures/error (first (:dispatch (transition (edit edited invalid) [:fixtures/publish]))))))))
+
+(deftest room-atmosphere-controls-save-the-whole-rig-via-re-frame
+  (let [draft {:fixtures [{:id :head}] :trusses [] :room {:width 20 :height 8 :depth 12 :name "venue"}}
+        db (assoc-in base [:ui :rig-draft] draft)
+        change (fn [db k v] (:db (transition db [:studio/rig-atmosphere k v])))
+        edited (-> db (change :air-changes-per-hour 1.5) (change :fog-half-life-s 150))
+        saved #(dissoc (get-in (transition % [:studio/rig-save]) [:studio/http :body]) :expected-epoch)]
+    (is (= (update draft :room assoc :air-changes-per-hour 1.5 :fog-half-life-s 150) (saved edited)))
+    (is (= draft (saved (-> edited (change :air-changes-per-hour nil) (change :fog-half-life-s nil)))))
+    (is (true? (get-in edited [:ui :rig-dirty?])))
+    (doseq [[field invalid] [[:air-changes-per-hour 3601] [:fog-half-life-s 0]]]
+      (let [result (transition (change edited field invalid) [:studio/rig-save])]
+        (is (nil? (:studio/http result)))
+        (is (= :studio/toast (first (:dispatch result))))))
+    (is (= {:width 12 :height 5 :depth 10 :fog-half-life-s 60}
+           (:room (saved (change (update-in db [:ui :rig-draft] dissoc :room) :fog-half-life-s 60)))))))
