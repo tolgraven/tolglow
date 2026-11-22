@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {existsSync, readFileSync} from 'node:fs';
 import {chromium} from 'playwright-core';
 import {fixtureSlots} from '../../../js/preview/fixture-selection.js';
-import {beamAngle} from '../../../js/preview/math.js';
+import {beamAngle, roomDimensions} from '../../../js/preview/math.js';
 
 test('full included fixed beam angle and zoom range use fixture data in degrees', () => {
   const degrees = half => half * 360 / Math.PI;
@@ -11,6 +11,11 @@ test('full included fixed beam angle and zoom range use fixture data in degrees'
   assert.equal(degrees(beamAngle({'beam-angle':20,'zoom-range-deg':[8,40]}, {channels:{zoom:.25}})),16);
   assert.equal(degrees(beamAngle({}, {zoom:.5})),29);
   for (const full of [.2,175]) assert.ok(Math.abs(degrees(beamAngle({'beam-angle':full})) - full) < 1e-10);
+});
+
+test('room receiver and camera coordinates keep the physical dimensions', () => {
+  assert.deepEqual(roomDimensions({width:120,height:.8,depth:18}),[120,.8,18]);
+  assert.deepEqual(roomDimensions({}),[12,5,10]);
 });
 
 test('calibration weights the scarce visible light slots, including a fixture with no visible emitters', () => {

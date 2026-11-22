@@ -2,6 +2,10 @@
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const radians = d => d * Math.PI / 180;
 const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+export function roomDimensions(room) {
+  return [room?.width, room?.height, room?.depth].map((value, i) =>
+    Number.isFinite(value) && value > 0 ? value : [12, 5, 10][i]);
+}
 export function normalize(v) {
   const n = Math.hypot(...v);
   return n > 1e-9 ? v.map(x => x / n) : [0, -1, 0];

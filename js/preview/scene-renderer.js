@@ -11,7 +11,7 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
-import {clamp, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
+import {clamp, roomDimensions, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
 import {SurfaceReflections} from './reflections.js';
 import {VolumetricFog} from './fog.js';
 import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.js';
@@ -240,7 +240,8 @@ export class SceneRenderer {
       for (const light of this.spots || []) light.dispose();
       this.reflections?.dispose();
     }
-    const r = rig.room || {}; this.room = [r.width || 12, r.height || 5, r.depth || 10].map(v => clamp(Number(v) || 1, 1, 100));
+    this.room = roomDimensions(rig.room);
+    this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.fog?.setRoom(this.room);
     this.content = new THREE.Group(); this.scene.add(this.content); this.content.add(createRoom(this.room, this.materials, rig.surfaces || []));
     this.trusses = [];

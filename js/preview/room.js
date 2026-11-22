@@ -21,7 +21,7 @@ export function createRoom(dimensions, materials, surfaces = []) {
   const stageWidth = width * .68, stageDepth = Math.min(2.3, depth * .27), stageZ = -depth / 2 + stageDepth / 2 + .16;
   box(root, [stageWidth, .42, stageDepth], [0, .21, stageZ], materials.stage, .025).userData.receiver = 'stage';
   box(root, [stageWidth, .025, .045], [0, .435, stageZ + stageDepth / 2 - .02], materials.metal, .008);
-  for (let x = -stageWidth / 2 + 1; x < stageWidth / 2; x += 1.2)
+  for (let x = -stageWidth / 2 + 1; x < stageWidth / 2; x += Math.max(1.2, stageWidth / 64))
     box(root, [.008, .003, stageDepth - .08], [x, .423, stageZ], materials.rubber);
   for (let step = 0; step < 2; step++) box(root, [.85, .14 * (step + 1), .34], [stageWidth / 2 + .35, .07 * (step + 1), stageZ + stageDepth / 2 - step * .34], materials.stage, .015);
   // Pleated dark curtain: actual displaced surface, lit and shadowed by fixtures.
