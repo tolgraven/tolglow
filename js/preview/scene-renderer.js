@@ -1,3 +1,4 @@
+import {showIdentity} from './presentation.js';
 import {RigEditorInput} from './editor.js';
 import {RigOverlay} from './overlay.js';
 import * as THREE from 'three';
@@ -37,7 +38,7 @@ export class SceneRenderer {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.ready = false; this.disposed = false;
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.qualityChoice = 'auto';
-    this.fogAmount = .3; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
+    this.fogOverride = null; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
     this.lastFrame = 0; this.renderScale = 1; this.scaleChangedAt = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
     this.abort = new AbortController(); this.reducedMotion = platform.worker
       ? {matches: Boolean(platform.reducedMotion)} : matchMedia('(prefers-reduced-motion: reduce)');
@@ -121,8 +122,15 @@ export class SceneRenderer {
     if (this.scene) this.scene.environmentIntensity = this.workLight * 1.25;
     if (this.ready) this.updateStatus();
   }
-  setFog(value) { this.fogAmount = clamp(Number(value) || 0, 0, 1); this.fog?.setAmount(this.fogAmount); }
-  burst(options) { if (!this.visible) return false; this.fog?.burst(options); this.fogAnimationUntil = this.clock + 8; }
+  get fogAmount() {return this.fogOverride ?? (this.snapshot?.output?.atmosphere ? 1 : .3);}
+  setFog(value) {
+    this.fogOverride = value == null ? null : clamp(Number(value) || 0, 0, 1);
+    this.fog?.setAmount(this.fogAmount);
+  }
+  burst(options) {
+    if (!this.visible || !this.fog?.burst(options)) return false;
+    this.fogAnimationUntil = this.clock + 8; return true;
+  }
   setQuality(value = 'auto') {
     if (!['auto', ...Object.keys(TIERS)].includes(value)) throw new Error('Unknown preview quality');
     const choiceChanged = this.qualityChoice !== value;
@@ -134,7 +142,7 @@ export class SceneRenderer {
     const next = value === 'auto' ? this.autoQuality() : value;
     if (next === this.quality) {if (choiceChanged) this.resize(); return;}
     const previousFog = this.fog, nextFog = new VolumetricFog(this.renderer, {quality: TIERS[next].fog || next});
-    if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
+    if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.showAtmosphere = previousFog.showAtmosphere; nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
     else nextFog.setRoom(this.room);
     nextFog.setAmount(this.fogAmount);
     this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.options.fps;
@@ -161,6 +169,8 @@ export class SceneRenderer {
       const spec = (rig.trusses || []).find(t => String(t.id) === entry.id);
       if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
     }
+    this.fog?.setAtmosphere(showIdentity(snapshot), snapshot.output?.atmosphere);
+    this.fog?.setAmount(this.fogAmount);
     this.lighting.accept(snapshot, rig, receivedAt);
     const selection = snapshot.editor?.selection;
     const selected = selection?.kind === 'fixtures' ? String(selection.id) : null;
@@ -225,7 +235,7 @@ export class SceneRenderer {
     if (this.spots.length) {
       if (candidates.length) this.content.updateMatrixWorld(true);
       this.reflections.resolve(candidates);
-      this.reflections.illuminate(this.fog.field, this.fogAmount);
+      this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
       this.spotUniformOrder.forEach((light, i) => {
         this.apertureUniform.value[i] = light.userData.apexDistance || 0;
         this.patchRadii.value[i] = light.userData.patchRadius || 0;
@@ -321,7 +331,7 @@ export class SceneRenderer {
     this.controls.target.fromArray(fixture.position || [0, 0, 0]); this.camera.position.copy(this.controls.target).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
   }
   changeActivity(active) {
-    this.visible = active; this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
+    this.visible = active; if (!active) this.fog?.showAtmosphere?.suspend(); this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
     this.displayClock.cancel(); this.navigation?.refreshActivity();
     if (!active || this.disposed || this.error) return;
     try {
@@ -371,7 +381,7 @@ export class SceneRenderer {
     if (this.bounceColor) ambient.add(this.bounceColor);
     this.fog.setAmbient?.({color: ambient, intensity: 1, groundColor: ambient.clone().multiplyScalar(.5)});
     this.fog.update(simulate ? dt : 0, this.lightEntries || []);
-    this.reflections.illuminate(this.fog.field, this.fogAmount);
+    this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);

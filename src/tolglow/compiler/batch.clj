@@ -20,26 +20,25 @@
                                   (every? registry/finite-number? position)))) fixtures))
     (fail! [:fixtures] "Batch compiler needs distinct fixture IDs and finite xyz positions")))
 
-(defn- selection [fixtures selected targets]
+(defn- select-targets [fixtures selected {:keys [targets] :as output}]
   (let [targets (when (some? targets) (set targets))
         fixtures (filterv #(and (or (nil? selected) (contains? selected (:id %)))
                                 (or (nil? targets) (contains? targets (:id %)))) fixtures)]
-    {:target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures)}))
+    (when (seq fixtures)
+      (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures)))))
 
-(defn- output-groups [fixtures selected outputs prepare-group bind-pure]
+(defn- output-groups [outputs prepare-group bind-pure]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
-  (let [groups (reduce (fn [groups output]
-                         (let [{:keys [target-ids positions]} (selection fixtures selected (:targets output))
-                               previous (peek groups)
+  (let [groups (reduce (fn [groups {:keys [target-ids positions] :as output}]
+                         (let [previous (peek groups)
                                compatible? (and previous (= (:blend previous) (:blend output))
                                                 (= (:target-ids previous) target-ids)
                                                 (not (contains? (:expressions previous) (:attribute output))))]
-                           (if (empty? target-ids) groups
-                               (if compatible?
-                                 (conj (pop groups) (assoc-in previous [:expressions (:attribute output)] (:expression output)))
-                                 (conj groups {:target-ids target-ids :positions positions :blend (:blend output)
-                                               :expressions {(:attribute output) (:expression output)}})))))
+                           (if compatible?
+                             (conj (pop groups) (assoc-in previous [:expressions (:attribute output)] (:expression output)))
+                             (conj groups {:target-ids target-ids :positions positions :blend (:blend output)
+                                           :expressions {(:attribute output) (:expression output)}}))))
                        [] outputs)]
     (mapv (fn [{:keys [expressions positions] :as group}]
             (let [plan (ir/compile-batch expressions)
@@ -94,14 +93,22 @@
       (or (ratio? value) (instance? java.math.BigDecimal value)
           (and (integer? value) (not (<= (- 9007199254740992) value 9007199254740992))))))
 
-(defn- numeric-contract [outputs fixtures]
+(defn- needs-scalar? [value arithmetic?]
+  (or (exact-value? value) (and arithmetic? (not (floating-value? value)))))
+
+(defn- exact-position? [{:keys [nodes arithmetic? positions]}]
+  (let [axes (into #{} (keep #(when (= :position (:op %)) ({:x 0 :y 1 :z 2} (:axis %)))) nodes)]
+    (and (seq axes)
+         (some (fn [position] (some #(needs-scalar? (nth position %) arithmetic?) axes)) positions))))
+
+(defn- numeric-contract [outputs]
   (let [expressions (mapv (fn [output]
                             (let [nodes (tree-seq #(and (map? %) (vector? (:args %))) :args (:expression output))]
-                              {:nodes nodes :arithmetic? (some #(not (#{:const :param :position :time :beat :bar :phrase :vec2 :vec3 :vec4} (:op %))) nodes)})) outputs)
+                              {:nodes nodes :positions (:positions output)
+                               :arithmetic? (some #(not (#{:const :param :position :time :beat :bar :phrase :vec2 :vec3 :vec4} (:op %))) nodes)})) outputs)
         nodes (mapcat :nodes expressions)
         arithmetic-nodes (mapcat :nodes (filter :arithmetic? expressions))
-        params (fn [nodes] (set (keep #(when (= :param (:op %)) (:key %)) nodes)))
-        axes (set (keep #(when (= :position (:op %)) ({:x 0 :y 1 :z 2} (:axis %))) arithmetic-nodes))]
+        params (fn [nodes] (set (keep #(when (= :param (:op %)) (:key %)) nodes)))]
     {:parameter-keys (params nodes)
      :arithmetic-parameter-keys (params arithmetic-nodes)
      :clock-keys (set (keep #(case (:op %)
@@ -110,17 +117,16 @@
                              nil) nodes))
      :reasons (cond-> []
                 (some (fn [{:keys [nodes arithmetic?]}]
-                        (some #(or (exact-value? %) (and arithmetic? (not (floating-value? %))))
+                        (some #(needs-scalar? % arithmetic?)
                               (map :value (filter #(= :const (:op %)) nodes)))) expressions)
                 (conj :exact-literal)
-                (some (fn [fixture]
-                        (some #(not (floating-value? (nth (:position fixture [0 0 0]) %))) axes)) fixtures)
+                (some exact-position? expressions)
                 (conj :exact-position))}))
 
 (defn- exact-environment? [{:keys [arithmetic-parameter-keys parameter-keys clock-keys]} env]
   (or (some (fn [key]
               (let [value (get-in env [:params key])]
-                (or (exact-value? value) (and (contains? arithmetic-parameter-keys key) (not (floating-value? value)))))) parameter-keys)
+                (needs-scalar? value (contains? arithmetic-parameter-keys key)))) parameter-keys)
       (some #(not (floating-value? (get env %))) clock-keys)))
 
 (defn compile-effect
@@ -142,13 +148,14 @@
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
    (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
-         numeric (numeric-contract outputs fixtures)
+         selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
+         numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
                    (not enabled?) (conj :disabled)
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
        (with-meta (compiler/compile-effect definition bind-pure) {:backend :ordinary :fallback-reasons reasons})
-       (let [groups (output-groups fixtures selected outputs prepare-group bind-pure)
+       (let [groups (output-groups selected-outputs prepare-group bind-pure)
              scalar-step (compiler/compile-effect definition bind-pure)
              envelope-attributes (set envelope-attributes)]
          (with-meta

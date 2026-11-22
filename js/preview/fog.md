@@ -102,3 +102,40 @@ The available Chromium renderer is SwiftShader: this proves shader execution and
 pixel behaviour, not hardware acceleration, mobile thermal stability or AAA
 visual quality. Full-scene screenshots and physical device performance remain
 separate acceptance gates.
+
+## Fog from the show
+
+When a snapshot supplies `:output :atmosphere`, Studio follows the fog output
+that Afterglow accepted for the physical rig. Each source supplies its nozzle
+position and direction, present flow in m³/s, cumulative emitted equivalent
+m³ and the equivalent m³ still concentrated near that nozzle. The host also
+supplies the volume that has mixed throughout the room and its concentration.
+The slider adjusts preview visibility. The flow readout displays m³/min.
+
+A rise in cumulative output deposits fresh material. The renderer carries up
+to eight local parcels per active fogger. They travel along the nozzle axis,
+rise, spread and mix. It normalizes each deposit over the receiving voxels so
+that integrating density over cell volume reproduces the local equivalent m³.
+The homogeneous background uses mixed equivalent m³ divided by room volume.
+These are manufacturer-rated output equivalents. Real optical extinction also
+depends on fluid, particle size, ventilation and surfaces.
+
+A stationary show sample emits once, independent of display FPS. When the
+window resumes or an epoch changes, the renderer reconstructs the local
+plumes from the current quantities. A fully dispersed show can resume with
+uniform haze and quiet nozzles. A configured, empty atmosphere renders clear
+air. The manual preview plume remains available for rigs without show fog data.
+
+The direct surface beam retains its calibrated angle and finite lens. In the
+volume, material along the incident path attenuates the light. An additional
+soft, density-dependent lobe represents scattering beyond the bright shaft.
+It widens away from the physical aperture and uses the shadow on the edge of
+the shaft, preserving opaque occlusion and the dry-room appearance. The direct
+and scattered light scale with the fixture's calibrated brightness.
+
+The show's `:extinction-per-m` is the optical extinction coefficient of the
+rated output at unit density. The default is 1.25 m⁻¹. At unit preview strength
+the transmission of a homogeneous layer with density `d` and length `L` is
+`exp(-extinction-per-m × d × L)`. Viewer, lamp and reflected-light paths use
+the same coefficient. A different fluid calibration changes apparent opacity
+without changing emitted or mixed volume.
