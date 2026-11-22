@@ -216,7 +216,7 @@
     (is (> (:bass-pitch-confidence sub) 0.95))
     (is (= (select-keys sub [:low-rms :mid-rms :high-rms :bass-pitch-hz])
            (select-keys irregular [:low-rms :mid-rms :high-rms :bass-pitch-hz])))
-    (doseq [tone [190 300 450 700]]
+    (doseq [tone [190 300 450 700 1510 3300]]
       (is (nil? (:bass-pitch-hz (measured-tone tone 80))) (str tone " Hz must not open the bass gate")))
     (is (nil? (:bass-pitch-hz silent)))
     (is (zero? (:bass-pitch-confidence silent)))))

@@ -11,9 +11,15 @@
   (let [previews (:previews registered)]
     (if owner (get previews owner) (or (:rig previews) (:perform previews)))))
 
+(defn preview-recipients [registered action owner]
+  ;; Both views display the same saved light/camera settings. Momentary actions belong to the visible view.
+  (if (and (nil? owner) (#{:fog :worklight :lighting-mode :quality :camera :reset} action))
+    (vals (:previews registered))
+    (when-let [engine (preview-engine registered owner)] [engine])))
+
 (rf/reg-fx :studio/preview
   (fn [[action value owner]]
-    (when-let [engine (preview-engine @engines owner)]
+    (doseq [engine (preview-recipients @engines action owner)]
       (case action
         :fog (js-invoke engine "setFog" value)
         :burst (js-invoke engine "burst")

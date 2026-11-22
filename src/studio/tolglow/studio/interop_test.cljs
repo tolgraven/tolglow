@@ -40,6 +40,9 @@
 
 (deftest preview-controls-return-to-mounted-perform-engine-after-rig-unmount
   (let [views {:previews {:rig :rig-view :perform :live-view}}]
+    (is (= #{:rig-view :live-view} (set (interop/preview-recipients views :worklight nil))))
+    (is (= [:rig-view] (interop/preview-recipients views :burst nil)))
+    (is (= [:live-view] (interop/preview-recipients views :worklight :perform)))
     (is (= :rig-view (interop/preview-engine views nil)))
     (is (= :live-view (interop/preview-engine views :perform)))
     (is (= :live-view (interop/preview-engine (update views :previews dissoc :rig) nil)))
