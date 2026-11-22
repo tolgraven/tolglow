@@ -21,11 +21,17 @@
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.studio.web :as web]))
 
+(defn stream-view
+  "Common Studio fields for a committed show state. A client leases spatial
+  signals or membership separately through the state stream's query controls."
+  [runtime state]
+  (dissoc (show/project-snapshot runtime state) :spatial))
+
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
-            stream (state-stream/create #(dissoc (show/project-snapshot runtime %) :spatial) #(show/heartbeat! runtime %)
+            stream (state-stream/create #(stream-view runtime %) #(show/heartbeat! runtime %)
                      {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
                       :get-graph #(show/reactions runtime)
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])

@@ -98,6 +98,34 @@
           (finally (.abort ^WebSocket (:socket slow)) (.abort ^WebSocket (:socket fast)))))
       (finally (show/stop! runtime) (.stop server)))))
 
+(deftest common-view-reconstructs-show-fields-and-spatial-members-are-leased
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (let [client (connect server "spatial-lease") initial (receive client)
+            query [:spatial/members :room]]
+        (try
+          (acknowledge client initial)
+          (let [receipt (show/submit! runtime :settings {:scope :spatial :values
+                         {:enabled? true :run-when :enabled
+                          :volumes {:room {:shape :sphere :position [0 0 0] :radius 100}}}})]
+            (show/tick! runtime 25)
+            (is (= :accepted (:status @receipt))))
+          (let [common-message (receive client)
+                common (apply-patch (:view initial) common-message)
+                domain (show/snapshot runtime)
+                members (get-in domain [:spatial :members :room])]
+            (is (seq members))
+            (is (= (dissoc domain :spatial :status) (dissoc common :status)))
+            (is (not (contains? common :spatial)))
+            (acknowledge client common-message)
+            (send-control client {:op :queries :queries [query]})
+            (let [leased (:view (receive client))]
+              (is (= members (get-in leased [:subscriptions query :value])))
+              (is (= (dissoc common :status) (dissoc leased :status :subscriptions)))))
+          (finally (.abort ^WebSocket (:socket client)))))
+      (finally (show/stop! runtime) (.stop server)))))
+
 (deftest rendering-does-not-wait-for-projection
   (let [entered (promise) release (promise)
         hub (stream/create (fn [source] (deliver entered true) @release source) identity)
