@@ -127,9 +127,13 @@
                                                (deref release 10000 false)
                                                (try (apply run! args)
                                                     (finally (deliver finished true))))]
-        (let [tick (future (show/tick! runtime 25.0) :published)]
+        ;; Change a captured uniform so the frame actually requires a new draw.
+        (let [id (:id (first (filter #(= :shader-wash (:cue-id %)) (:instances (show/snapshot runtime)))))
+              ack (show/submit! runtime :command {:op :param/set :instance-id id :param :gain :value 0.7})
+              tick (future (show/tick! runtime 25.0) :published)]
           (is (= true (deref entered 3000 false)))
           (is (= :published (deref tick 2000 :stalled)))
+          (is (= :accepted (:status (deref ack 1000 ::timeout))))
           (is (= 1 @draws) "The first wait consumes the GPU budget for all groups")
           (is (not (realized? finished)))
           (is (= :timeout (get-in (show/snapshot runtime) [:status :movement :reason])))
