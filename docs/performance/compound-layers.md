@@ -26,9 +26,8 @@ CPU, JVM and heap size, as `compound-layers.edn`.
 ## Opaque layer optimization
 
 The following measurements used the same corpus, two workers and a fixed 768 MiB
-heap with OpenJDK 21.0.13 on a shared AMD EPYC 9V74 host. The Tolglow checkout
-included [compound cue authoring](../native-composition.md). The comparison
-used Afterglow `c15bb7e` and `6feda96`.
+heap with OpenJDK 21.0.13 on a shared AMD EPYC 9V74 host. The comparison used Tolglow `1d4606d` and
+Afterglow `c15bb7e` and `6feda96`. [Full measurements](../benchmarks/2026-11-22-compound-layer-batches.edn)
 
 | Case | Previous median MB/frame | Optimized median MB/frame | Previous median ms | Optimized median ms |
 | --- | ---: | ---: | ---: | ---: |
