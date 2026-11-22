@@ -140,3 +140,14 @@ projected horizontal axis. The five standard room IDs are reserved.
 
 Define links in leader-first order. Each follower has one leader. The show
 rejects cycles, unpatched heads and links whose direction leaves the plane.
+
+## Room clearance
+
+Open **Rig → Room & fixtures** to inspect the phone calibration. **Measured fog
+clearance** gives the total half-life in seconds, extinction per metre, sightline
+length and the fit's R². A clearing-tail measurement can leave extinction
+unmeasured. The total already includes ventilation. The configured air changes
+per hour and deposition half-life are visible as a fallback.
+
+Choose **Use manual clearance** to remove the measurement from the draft and
+edit those two inputs. **Save rig** applies the change to the running show.
