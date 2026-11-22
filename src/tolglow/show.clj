@@ -180,6 +180,7 @@
    (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         _ (lighting-scenes/validate-state! model)
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
