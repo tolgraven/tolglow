@@ -483,8 +483,9 @@
   Explicit :messages still overrides prior history. :message and optional :run-id
   retain their previous meaning. Returns {:run-id :conversation-id :cancel! :result}.
   Current system context replaces old prompts. Completion retains bounded text,
-  tool calls/results and failure status; restore never replays tool operations."
-  [manager payload {:keys [snapshot! dispatch! emit! done!]}]
+  tool calls/results and failure status. Trusted host hooks may supply a limited
+  tool set, system message and :background? to run without touching chat history."
+  [manager payload {:keys [snapshot! dispatch! emit! done! tools system-message background?]}]
   (when-not (and (map? payload) (every? ifn? [snapshot! dispatch! emit! done!]))
     (throw (failure :invalid-callbacks "Chat requires message data and snapshot/dispatch/event/completion callbacks")))
   (let [run-id (or (:run-id payload) (str (UUID/randomUUID)))
@@ -506,13 +507,12 @@
                       (locking (:lock manager)
                         (swap! (:state manager)
                                (fn [state]
-                                 (-> state
-                                     (remember-result run-id value (get-in manager [:options :history-limit]))
-                                     (update-in [:conversations conversation-id]
+                                 (cond-> (remember-result state run-id value (get-in manager [:options :history-limit]))
+                                     (not background?) (update-in [:conversations conversation-id]
                                                 #(cond-> (assoc % :messages bounded :status (:status value) :updated-at-ms updated-at)
                                                    (:error value) (assoc :error (:error value))
                                                    (not= bounded messages) (assoc :truncated? true)))
-                                     (trim-conversations (:options manager))))))
+                                     (not background?) (trim-conversations (:options manager))))))
                       (try (done! value) (catch Exception _)
                            (finally (deliver result value))))))
         cancel! (fn []
@@ -544,12 +544,11 @@
                      (catch Exception _ (throw (failure :invalid-message "Chat history contains invalid tool-call/result data"))))
               entry {:id conversation-id :title (or (:title prior) (subs (redact (:message payload) secret) 0 (min 120 (count (redact (:message payload) secret)))))
                      :messages stored :status :running :updated-at-ms (now-ms manager)}
-              next-state (-> @(:state manager)
-                             (assoc-in [:runs run-id] handle)
-                             (assoc-in [:conversations conversation-id] entry)
-                             (update :conversation-order #(conj (filterv (fn [id] (not= id conversation-id)) %) conversation-id))
-                             (assoc :selected-conversation-id conversation-id)
-                             (trim-conversations (:options manager)))
+              next-state (cond-> (assoc-in @(:state manager) [:runs run-id] handle)
+                             (not background?) (assoc-in [:conversations conversation-id] entry)
+                             (not background?) (update :conversation-order #(conj (filterv (fn [id] (not= id conversation-id)) %) conversation-id))
+                             (not background?) (assoc :selected-conversation-id conversation-id)
+                             (not background?) (trim-conversations (:options manager)))
               _ (when (or (> (count (:conversation-order next-state)) (get-in manager [:options :conversation-limit]))
                            (> (count (json/write-str (vals (:conversations next-state)))) 4194304))
                   (throw (failure :busy "Conversation history capacity is full")))
@@ -560,9 +559,10 @@
                      (try
                        (if @cancelled?
                          (finish! {:status :cancelled :run-id run-id :error :cancelled})
-                         (let [messages (conversation manager payload (snapshot!) secret)
+                         (let [messages (cond-> (conversation manager payload (snapshot!) secret)
+                                          system-message (assoc-in [0 :content] system-message))
                                _ (reset! initial messages)
-                               outcome (agent/run! config secret messages agent/default-tools dispatch!
+                               outcome (agent/run! config secret messages (or tools agent/default-tools) dispatch!
                                                    (fn [event]
                                                      (let [event (redact event secret)]
                                                        (swap! ledger capture-event event (get-in manager [:options :max-history-chars]))
@@ -580,9 +580,9 @@
           (reset! (:state manager) next-state)
           (try (.execute ^ThreadPoolExecutor (:executor manager) job)
                (catch RejectedExecutionException _
-                 (swap! (:state manager) #(-> % (update :runs dissoc run-id)
-                                               (assoc-in [:conversations conversation-id :status] :error)
-                                               (assoc-in [:conversations conversation-id :error] :capacity-rejected)))
+                 (swap! (:state manager) #(cond-> (update % :runs dissoc run-id)
+                                               (not background?) (assoc-in [:conversations conversation-id :status] :error)
+                                               (not background?) (assoc-in [:conversations conversation-id :error] :capacity-rejected)))
                  (throw (failure :busy "Agent worker capacity is full")))))))
     (dissoc handle :initial :ledger)))
 
