@@ -2,6 +2,7 @@
   (:require [afterglow.render.frame :as frame]
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
+            [tolglow.compiler.batch :as batch]
             [tolglow.event-subscribers :as subs]
             [tolglow.lighting-scenes :as scenes]
             [tolglow.lighting-levels :as levels]
@@ -286,3 +287,20 @@
                                                               :effect-ids [:a-wide :z-small]}))))
       (is (= :z-small (:source-effect-id (group! rt :pair))))
       (finally (show/stop! rt)))))
+
+
+(deftest generated-global-tints-share-the-normal-typed-renderer
+  (let [capture (fn [batch?]
+                  (let [rt (local batch?) t (atom 0)]
+                    (try
+                      (issue! rt t :lighting-scene {:op :apply :group-id :wash :brightness-reference :global
+                                                    :effect-ids [] :target 0.12})
+                      (ticks! rt t 8)
+                      (let [m (:model @(:state rt))
+                            group (group! rt :wash)
+                            definition (get-in m [:instances (:instance-id group) :definition])]
+                        (is (< (abs (- (:actual group) 0.12)) 0.004))
+                        (is (= :batch (:backend (meta (batch/compile-effect definition fixtures)))))
+                        (mapv #(bit-and 255 %) (take 6 (get-in @(:state rt) [:output :universes 1]))))
+                      (finally (show/stop! rt)))))]
+    (is (= (capture false) (capture true)))))

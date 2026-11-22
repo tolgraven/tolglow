@@ -33,7 +33,9 @@
                    :p95 (values (int (* 0.95 (count values))))}]))
          [:wall-ms :owner-cpu-ms :owner-allocated-bytes])))
 
-(defn run [size samples]
+(defn run
+  ([size samples] (run size samples :local))
+  ([size samples brightness-reference]
   (let [model (assoc-in (demo/model) [:rig :fixtures] (strip size))
         live (show/create-runtime {:model model})
         time (volatile! 0)
@@ -42,7 +44,7 @@
         tid (.getId (Thread/currentThread))]
     (try
       (dotimes [_ 12] (tick live))
-      (let [reply (show/submit! live :lighting-scene {:group-id :strip :op :apply :target 0.72 :effect-ids []})
+      (let [reply (show/submit! live :lighting-scene {:group-id :strip :op :apply :target 0.4 :brightness-reference brightness-reference :effect-ids []})
             activation (measure bean tid #(tick live))]
         (assert (= :accepted (:status @reply)))
         (dotimes [_ 42] (tick live))
@@ -60,12 +62,12 @@
               (assert (every? (fn [[u buffer]] (Arrays/equals ^bytes buffer ^bytes (baseline u)))
                               (get-in @(:state live) [:output :universes])))
               {:heads size :samples-per-owner samples
-               :target 0.72 :actual (get-in (scenes/groups settled) [:strip :actual])
+               :target 0.4 :brightness-reference brightness-reference :actual (get-in (scenes/groups settled) [:strip :actual])
                :first-scene (zipmap [:wall-ms :owner-cpu-ms :owner-allocated-bytes] activation)
                :steady (update-vals rows summarize)})
             (finally (show/stop! base)))))
-      (finally (show/stop! live)))))
+      (finally (show/stop! live))))))
 
-(defn -main [& [size samples]]
-  (prn (run (Long/parseLong (or size "2048")) (Long/parseLong (or samples "60"))))
+(defn -main [& [size samples reference]]
+  (prn (run (Long/parseLong (or size "2048")) (Long/parseLong (or samples "60")) (keyword (or reference "local"))))
   (shutdown-agents))

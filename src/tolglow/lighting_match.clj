@@ -4,10 +4,11 @@
   (:require [afterglow.render.photometry :as photometry]
             [tolglow.lighting-capacity :as capacity]))
 
-(def target-param :lighting/global-brightness)
+(def target-param ::target)
 
 (defn active? [definition]
-  (and (:scene-owner definition) (= :global (:brightness-reference definition))))
+  (and (:scene-owner definition) (= :global (:brightness-reference definition))
+       (contains? (:params definition) target-param)))
 
 (defn prepare [fixtures selected]
   (let [reference (reduce max 0.0 (map capacity/full-brightness fixtures))]
@@ -19,7 +20,7 @@
                     :response (reduce + 0.0 (vals emitters)) :extract-white? (= :extract-min (:rgbw-policy f))}]))))
 
 (defn- blend-value [old value mode]
-  (if (or (nil? old) (= :replace mode)) value
+  (if (or (nil? old) (nil? mode) (= :replace mode)) value
     (let [f (if (= :max mode) max (fn [a b] (min 1.0 (+ a b))))]
       (if (vector? value) (mapv f old value) (f old value)))))
 
@@ -44,3 +45,49 @@
                 (if (fields attribute)
                   (assoc row :value (if (vector? value) (mapv #(* gain %) value) (* gain value)))
                   row)) rows)))))
+
+(defn- constant-value [value]
+  (cond (or (number? value) (vector? value)) value
+        (= :const (:op value)) (:value value)))
+
+(defn static-definition
+  "Lower a static tint (including generated scenes) into ordinary typed
+  expressions. Compute each rig-specific chromatic ceiling once on patch or
+  definition changes. Fixtures with the same ceiling share a batch."
+  [definition fixtures entries]
+  (when (and (active? definition) (seq entries)
+             (every? #(some? (constant-value (:value %))) entries)
+             (every? #{:dimmer} (get-in definition [:envelope :attributes] [:dimmer])))
+    (let [selected (when (:targets definition) (set (:targets definition)))
+          profiles (prepare fixtures selected)
+          rows (mapv #(-> % (update :targets (fn [ts] (when ts (set ts)))) (update :value constant-value)) entries)
+          ;; Capture the full rig when finding the reference, then restrict
+          ;; the emitted code to the definition and individual output selectors.
+          by-field (reduce
+                    (fn [groups {:keys [id]}]
+                      (if-let [profile (profiles id)]
+                        (let [own? #(or (nil? (:targets %)) ((:targets %) id))
+                              maximum (chroma-maximum profile (filter own? rows))]
+                          (reduce-kv
+                           (fn [groups i {:keys [attribute] :as row}]
+                             (if-not (own? row) groups
+                               (let [scale? (if (seq (:emitters profile))
+                                              (or (= :color attribute) (contains? (:emitters profile) attribute))
+                                              (= :dimmer attribute))]
+                                 (update-in groups [i (when scale? maximum)] (fnil conj []) id))))
+                           groups rows))
+                        groups))
+                    (vec (repeat (count entries) {})) fixtures)
+          outputs (into [] (mapcat
+                            (fn [entry groups]
+                              (for [[maximum ids] groups]
+                                (cond-> (assoc entry :targets ids)
+                                  (some? maximum)
+                                  (update :value (fn [value]
+                                                   {:op :multiply
+                                                    :args [value (if (pos? maximum)
+                                                                   {:op :min :args [1.0 {:op :divide :args [{:op :param :key target-param} maximum]}]}
+                                                                   0.0)]})))))
+                            entries by-field))]
+      (when (seq outputs)
+        (-> definition (dissoc :brightness-reference) (assoc :outputs outputs))))))

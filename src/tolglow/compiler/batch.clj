@@ -148,7 +148,10 @@
   ([definition fixtures {:keys [enabled? prepare-group bind-pure] :or {enabled? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
-   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
+   (let [definition (or (when (and enabled? (matching/active? definition))
+                          (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
+                        definition)
+         {:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
