@@ -85,3 +85,13 @@ the subscriber for the next rise. No group must be running beforehand.
 Any registered event can supply the target itself using
 `:event-path [:data :intensity]` on the action. In both cases the emitter,
 measurement, gate and scene run through the same show owner as Studio.
+
+## Ask Studio chat for a different look
+
+With a show provider configured, ask **“Something different at 72% on the left movers. Tell me what they actually reach.”** The show agent can call `inspect_lighting` to discover the patched group ID and its light-emitting members, then call `set_lighting_scene` with the discovered ID, `"op": "vary"` and `"target": 0.72`. A second inspection reports the current generation, target, measured fraction and controller status. A group marked `seeking` is still settling. A group marked `limited`, `unlit` or `over-target` has an unmet target. Studio’s master, blackout and independently authored cues still apply.
+
+Inspection returns the musical energy envelope and its measurement time, the estimated mixed-room fog level with its reference distance and last presentation time, and the last stationary camera observation with its epoch and sample time. A missing measurement is reported as null. The groups and eligible fixtures have separate page cursors. Filter by group ID to inspect the members of a large rig.
+
+For a continuously modulated look, ask to bind the group’s light target to the music energy envelope. The tool accepts `"target-var": ["audio", "features", "energy-envelope"]`; built-in fog paths are `["fog/level"]` for the modeled room level and `["fog/observed-level"]` for the last camera reading. An existing user-defined show variable whose value is in 0–1 can also supply the target. A fixed target disconnects that binding. These tools operate on the current show.
+
+A one-off variation and a repeating event are separate controls. For example, **“Whenever audio energy rises above 50% after dropping below 20%, vary the left movers to 72%.”** Chat can save or remove that group's `configure_energy_scene` binding. It uses the same `:audio/energy` subscriber and crossing action shown above. Inspection reports its thresholds and target. The operator's configured audio source supplies the measured energy.

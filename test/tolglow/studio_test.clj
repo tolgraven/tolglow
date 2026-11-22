@@ -6,6 +6,8 @@
             [tolglow.studio :as studio]
             [tolglow.application :as app]
             [tolglow.data :as data]
+            [tolglow.demo :as demo]
+            [tolglow.agents.venue :as venue]
             [tolglow.transit :as wire]
             [tolglow.agents :as agents]))
 
@@ -220,3 +222,95 @@
       (is (= :agent-red (get-in @(:state r) [:model :pages :agent :cells [0 0]])))
       (is (= [0.8 0.0 0.0] (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
       (finally (app/stop! r)))))
+
+(deftest show-chat-discovers-and-varies-a-group-at-measured-capacity
+  (let [requests (atom [])
+        tool (fn [id name input]
+               {:tool_calls [{:index 0 :id id :function {:name name :arguments (json/write-str input)}}]})
+        transport (fn [request consume! _]
+                    (let [body (json/read-str (:body request) :key-fn keyword)
+                          n (count (swap! requests conj body))
+                          messages (:messages body)
+                          last-result (fn [] (json/read-str (:content (peek messages)) :key-fn keyword))
+                          delta (case n
+                                  1 (tool "discover" "inspect_lighting" {})
+                                  2 (tool "vary" "set_lighting_scene"
+                                          {:op "vary" :group-id (get-in (last-result) [:groups :items 0 :group-id])
+                                           :target 0.72})
+                                  3 (tool "on-rise" "configure_energy_scene" {:op "save" :group-id "stage/left-movers"
+                                                                               :above 0.5 :below 0.2 :target 0.72})
+                                  4 (tool "readback" "inspect_lighting" {:group-id "stage/left-movers"})
+                                  {:content "I varied the left movers and checked their measured output."})]
+                      (consume! (str "data: " (json/write-str {:choices [{:delta delta}]}) "\n\ndata: [DONE]\n\n"))
+                      {:status 200}))
+        observation {:level 0.32 :epoch 0 :sample-time-ms 120 :path-m 7 :phase :clearing}
+        model (-> (demo/model)
+                  (assoc-in [:registry :effects] {})
+                  (assoc-in [:registry :cues] {})
+                  (assoc :pages {})
+                  (assoc-in [:rig :fixtures] [{:id "bank/spot-1" :groups ["stage/left-movers"]
+                                               :channels {:dimmer 1} :universe 1 :address 3}
+                                              {:id :fog :channels {:fog 1} :universe 1 :address 1}])
+                  (assoc-in [:variables :audio :features] {:energy-envelope 0.5 :breakdown? true :time-ms 34})
+                  (assoc-in [:variables :fog/observation] observation)
+                  (assoc-in [:variables :private-value] "DO-NOT-EXPORT-HIDDEN-VARIABLE"))
+        rt (app/start! (assoc (app/default-config) :web-server {:port 0}
+                              :show {:model model :agent-options {:transport transport}}))]
+    (try
+      (agents/configure! (show/agent-manager rt) {:provider :self-hosted :model "scripted"
+                                                  :endpoint "http://unused.test/v1/chat/completions"})
+      (let [response ((studio/handler rt) {:request-method :post :uri "/api/chat"
+                                           :body (java.io.ByteArrayInputStream.
+                                                  (.getBytes "{\"message\":\"Something different at 72% on the left movers, and again when energy rises above 50% after falling below 20%\"}" "UTF-8"))})
+            stream (java.io.ByteArrayOutputStream.)]
+        (protocols/write-body-to-stream (:body response) response stream)
+        (is (= 200 (:status response)))
+        (is (re-find #"checked their measured output" (.toString stream "UTF-8")))
+        (is (contains? (set (map #(get-in % [:function :name]) (:tools (first @requests)))) "inspect_lighting"))
+        (is (= 5 (count @requests)))
+        (let [read-result (fn [index] (json/read-str (:content (peek (:messages (get @requests index)))) :key-fn keyword))
+              discovered (read-result 1)
+              varied (read-result 2)
+              measured (read-result 4)]
+          (is (= [{:id "bank/spot-1"}] (get-in discovered [:eligible-fixtures :items])))
+          (is (= "stage/left-movers" (get-in discovered [:groups :items 0 :group-id])))
+          (is (= 0.5 (get-in discovered [:music :energy-envelope])))
+          (is (= 0.32 (get-in discovered [:fog :observation :level])))
+          (is (not (clojure.string/includes? (pr-str @requests) "DO-NOT-EXPORT-HIDDEN-VARIABLE")))
+          (is (= "accepted" (:status varied)))
+          (is (= {:above 0.5 :below 0.2 :target 0.72 :enabled? true}
+                 (get-in measured [:groups :items 0 :energy-binding])))
+          (is (= 1 (get-in measured [:groups :items 0 :generation])))
+          (is (= 0.72 (get-in measured [:groups :items 0 :target])))
+          (is (< (abs (- 0.72 (get-in measured [:groups :items 0 :actual]))) 0.004))))
+      (finally (app/stop! rt)))))
+
+(deftest group-tool-pages-and-namespaced-signal-bindings
+  (let [state {:model {:epoch 5 :rig {:fixtures [{:id :bank/left :groups [:area/one] :channels {:red 1}}
+                                                   {:id "right" :groups ["two"] :channels {:dimmer 2}}]}
+                       :variables {:signals {"user/drive" 0.48} :fog/observation {:epoch 4 :level 0.28 :session-id "private"}}}
+               :output {:atmosphere {:fog-level 0.42 :sample-time-ms 10 :last-presented-ms 8 :reference-path-m 7
+                                     :sources [{:dmx-coarse 255}]}
+                        :fog-control {:enabled? true :target 0.4 :zone :in-band :pumps {:jet {:active? true}}}}}
+        listing (venue/inspect state {:limit 1})
+        single (venue/inspect state {:group-id "area/one"})
+        next-page (venue/inspect state {:fixture-offset 1 :offset 1 :limit 1})]
+    (is (= 2 (get-in listing [:groups :total])))
+    (is (= 1 (get-in listing [:eligible-fixtures :next-offset])))
+    (is (= "two" (get-in next-page [:groups :items 0 :group-id])))
+    (is (= "right" (get-in next-page [:eligible-fixtures :items 0 :id])))
+    (is (= "bank/left" (get-in single [:eligible-fixtures :items 0 :id])))
+    (is (= {:fog-level 0.42 :sample-time-ms 10 :last-presented-ms 8 :reference-path-m 7}
+           (get-in single [:fog :estimate])))
+    (is (= {:enabled? true :target 0.4 :zone :in-band} (get-in single [:fog :controller])))
+    (is (= {:epoch 4 :level 0.28 :current-epoch? false} (get-in single [:fog :observation])))
+    (is (= {:group-id :area/one :op :apply :fixture-ids [:bank/left "right"]
+            :target-var [:audio :features :energy-envelope]}
+           (venue/scene-request (:model state)
+                                {:group-id "area/one" :op "apply" :fixture-ids ["bank/left" "right"]
+                                 :target-var ["audio" "features" "energy-envelope"]})))
+    (is (= [:signals "user/drive"] (:target-var (venue/scene-request (:model state)
+                                                                    {:group-id "two" :target-var ["signals" "user/drive"]}))))
+    (is (thrown? Exception (venue/scene-request (:model state) {:group-id "two" :target-var ["config" "secret"]})))
+    (is (thrown? Exception (venue/inspect state {:limit 1000})))
+    (is (thrown? Exception (venue/inspect state {:group-id "stage/missing"})))))
