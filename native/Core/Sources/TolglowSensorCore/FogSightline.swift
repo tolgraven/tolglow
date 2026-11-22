@@ -40,7 +40,7 @@ public struct FogPatchMeter {
     }
 }
 
-public enum FogPhase: String, CaseIterable { case baseline, active, clearing }
+public enum FogPhase: String, CaseIterable, Codable { case baseline, active, clearing }
 
 public struct FogReading {
     public let bright: Double, dark: Double
@@ -80,5 +80,29 @@ public struct FogPose {
     public func holds(_ next: Self, accelerationG: Double) -> Bool {
         let dot = abs(x * next.x + y * next.y + z * next.z + w * next.w)
         return dot >= cos(Double.pi / 180) && accelerationG <= 0.12
+    }
+}
+
+public struct FogFit: Decodable {
+    public let clearance: Double
+    public let mixing: Double?
+    public let extinction: Double?
+    public let rSquared: Double?
+    public let samples: Int?
+    enum CodingKeys: String, CodingKey {
+        case clearance = "clearance-half-life-s", mixing = "mixing-seconds", extinction = "extinction-per-m"
+        case rSquared = "r-squared", samples
+    }
+}
+
+public struct FogTraceSample {
+    public let phase: FogPhase, reading: FogReading, elapsedMilliseconds: Int
+    public init(phase: FogPhase, reading: FogReading, cameraUptime: Double, sessionStart: Double) {
+        self.phase = phase
+        self.reading = reading
+        self.elapsedMilliseconds = Int(((cameraUptime - sessionStart) * 1000).rounded())
+    }
+    public var fields: [String: Any] {
+        ["elapsed-ms": elapsedMilliseconds, "bright": reading.bright, "dark": reading.dark, "phase": phase.rawValue]
     }
 }

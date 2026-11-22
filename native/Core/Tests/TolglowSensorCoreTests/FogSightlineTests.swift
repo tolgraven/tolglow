@@ -41,6 +41,20 @@ final class FogSightlineTests: XCTestCase {
         XCTAssertThrowsError(try FogReading(bright: 0.1, dark: 0.2))
     }
 
+    func testHostWireObservationsAndPartialFit() throws {
+        let reading = try FogReading(bright: 0.6, dark: 0.2)
+        let sample = FogTraceSample(phase: .clearing, reading: reading, cameraUptime: 512003.35, sessionStart: 512001.2)
+        XCTAssertEqual(sample.fields["elapsed-ms"] as? Int, 2150)
+        XCTAssertEqual(sample.fields["phase"] as? String, "clearing")
+        let decoder = JSONDecoder()
+        let complete = try decoder.decode(FogFit.self, from: Data(#"{"clearance-half-life-s":45,"mixing-seconds":6,"extinction-per-m":0.7,"r-squared":0.89,"samples":65}"#.utf8))
+        XCTAssertEqual(complete.mixing, 6)
+        XCTAssertEqual(complete.rSquared, 0.89)
+        let clearance = try decoder.decode(FogFit.self, from: Data(#"{"clearance-half-life-s":45}"#.utf8))
+        XCTAssertEqual(clearance.clearance, 45)
+        XCTAssertNil(clearance.extinction)
+    }
+
     func testMovingOrRotatingThePhoneInvalidatesTheSightline() {
         let home = FogPose(x: 0, y: 0, z: 0, w: 1)
         XCTAssertTrue(home.holds(FogPose(x: 0, y: 0, z: 0, w: -1), accelerationG: 0.001))

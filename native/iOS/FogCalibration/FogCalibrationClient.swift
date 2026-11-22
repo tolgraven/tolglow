@@ -14,17 +14,6 @@ private struct FogHost: Decodable {
     let fixtures: [FogFixture]
     enum CodingKeys: String, CodingKey { case runtime = "runtime-id", epoch, fixtures }
 }
-struct FogFit: Decodable {
-    let clearance: Double
-    let mixing: Double?
-    let extinction: Double?
-    let rSquared: Double?
-    let samples: Int?
-    enum CodingKeys: String, CodingKey {
-        case clearance = "clearance-half-life-s", mixing = "mixing-seconds", extinction = "extinction-per-m"
-        case rSquared = "r-squared", samples
-    }
-}
 private struct FogReply: Decodable { let status: String; let message: String?; let fit: FogFit? }
 
 private struct FogSession {
@@ -80,6 +69,7 @@ private struct FogSession {
     private var generation = UUID()
     private var baseline = FogBaseline()
     private var pose: FogPose?
+    private var latestMotion: CMDeviceMotion?
     private var startTime = 0.0
     private var lastTime = 0.0
     private var lastFrame = 0.0
@@ -120,8 +110,10 @@ private struct FogSession {
             let feed = FogCameraFeed()
             try await self.camera.start(shutter: shutter, fogFeed: feed)
             try Task.checkCancellation()
-            self.motion.deviceMotionUpdateInterval = 0.05
-            self.motion.startDeviceMotionUpdates(using: .xArbitraryZVertical)
+            self.motion.deviceMotionUpdateInterval = 0.1
+            self.motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] reading, _ in
+                Task { @MainActor in self?.observeMotion(reading) }
+            }
             self.prepared = true
             self.lastFrame = self.uptime
             self.status = "Align each patch in its box and keep the phone fixed."
@@ -144,8 +136,17 @@ private struct FogSession {
         }
     }
 
+    private func observeMotion(_ reading: CMDeviceMotion?) {
+        latestMotion = reading
+        if recording, let pose {
+            guard let (current, acceleration) = motionReading(), pose.holds(current, accelerationG: acceleration) else {
+                stop("The phone moved or motion data was interrupted. Realign and start a new sightline."); return
+            }
+        }
+    }
+
     private func motionReading() -> (FogPose, Double)? {
-        guard let reading = motion.deviceMotion, abs(uptime - reading.timestamp) <= 1 else { return nil }
+        guard let reading = latestMotion, abs(uptime - reading.timestamp) <= 1 else { return nil }
         let q = reading.attitude.quaternion, a = reading.userAcceleration
         return (FogPose(x: q.x, y: q.y, z: q.z, w: q.w), sqrt(a.x*a.x + a.y*a.y + a.z*a.z))
     }
@@ -194,12 +195,11 @@ private struct FogSession {
             do { try nextBaseline.accept(reading) }
             catch { quality = error.localizedDescription; return }
         }
-        let sample: [String: Any] = ["elapsed-ms": Int(((frame.uptime - startTime) * 1000).rounded()),
-                                     "bright": reading.bright, "dark": reading.dark, "phase": currentPhase.rawValue]
+        let sample = FogTraceSample(phase: currentPhase, reading: reading, cameraUptime: frame.uptime, sessionStart: startTime)
         lastTime = frame.uptime; posting = true
         let token = generation
         do {
-            _ = try await session.send("samples", ["samples": [sample]])
+            _ = try await session.send("samples", ["samples": [sample.fields]])
             guard token == generation else { return }
             if currentPhase == .baseline { baseline = nextBaseline }
             counts[currentPhase, default: 0] += 1
@@ -259,7 +259,7 @@ private struct FogSession {
 
     private func releaseCamera() {
         cameraTask?.cancel(); cameraTask = nil; watchdog?.cancel(); watchdog = nil
-        motion.stopDeviceMotionUpdates(); camera.stop(); prepared = false
+        motion.stopDeviceMotionUpdates(); latestMotion = nil; camera.stop(); prepared = false
         preview = nil; lastReading = nil
     }
 

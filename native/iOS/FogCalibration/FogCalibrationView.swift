@@ -4,6 +4,7 @@ import TolglowSensorCore
 struct FogCalibrationView: View {
     @StateObject private var client = FogCalibrationClient()
     @AppStorage("studio-origin") private var origin = "http://tolglow.local:8500"
+    @State private var previousIdleTimer: Bool?
     @State private var fixture = ""
     @State private var path: Double?
     @State private var shutter: Int32 = 60
@@ -85,12 +86,22 @@ struct FogCalibrationView: View {
             if !ids.contains(fixture) { fixture = ids.first ?? "" }
         }
         .onChange(of: origin) { _, _ in client.resetHost() }
-        .onDisappear { client.stop() }
+        .onChange(of: client.prepared) { _, prepared in
+            if prepared {
+                previousIdleTimer = UIApplication.shared.isIdleTimerDisabled
+                UIApplication.shared.isIdleTimerDisabled = true
+            } else { restoreIdleTimer() }
+        }
+        .onDisappear { client.stop(); restoreIdleTimer() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || (phase == .inactive && (client.prepared || client.recording || client.fit != nil)) {
                 client.stop("Fog measurement ended when the app left the foreground.")
             }
         }
+    }
+    private func restoreIdleTimer() {
+        if let previousIdleTimer { UIApplication.shared.isIdleTimerDisabled = previousIdleTimer }
+        previousIdleTimer = nil
     }
 }
 
