@@ -560,4 +560,5 @@
         definition (fixtures/form-definition s)]
     (is (= {:id :spot :beam-angle 14.25 :pseudo-fixture false :measured-relative-brightness 2.2} definition))
     (is (not (contains? (fixtures/form-definition (assoc-in s [:field-edits :pseudo-fixture] "")) :pseudo-fixture)))
+    (is (zero? (:lens-radius-m (fixtures/form-definition (assoc-in s [:field-edits :lens-radius-m] "0")))))
     (is (thrown? js/Error (fixtures/form-definition (assoc-in s [:field-edits :beam-angle] "180"))))))
