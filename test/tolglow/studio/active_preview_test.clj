@@ -79,3 +79,11 @@
     (doseq [{:keys [values]} (project-both fixtures work)]
       (is (= 128 (count values)))
       (is (= 16 (count (filter #(pos? (second (:emitted-color %))) (vals values))))))))
+
+(deftest measured-output-ranks-a-dim-command-among-saturated-fixtures
+  (let [fixtures (assoc-in (pixels 160) [159 :measured-relative-brightness] 4)
+        id (:id (peek fixtures))
+        work (mapv (fn [f] {:target-id (:id f) :attribute :green :value (if (= id (:id f)) 0.5 1.0)}) fixtures)]
+    (doseq [{:keys [values]} (project-both fixtures work)]
+      (is (= 128 (count values)))
+      (is (= 0.5 (get-in values [id :emitted-color 1]))))))

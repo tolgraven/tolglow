@@ -28,7 +28,7 @@
                           :test-paths ["test-native"]}
              :benchmark {:source-paths [~(tolglow.build-manifest/fork-source "dev")]
                          :jvm-opts ["-Xms768m" "-Xmx768m"]}
-             :cljs {:source-paths ^:replace ["src/studio" "src/shared"]
+             :cljs {:source-paths ^:replace ["src/studio" "src/shared" ~(tolglow.build-manifest/fork-source "src")]
                     :dependencies ^:replace [[org.clojure/clojure "1.12.7"]
                                    [org.clojure/clojurescript "1.12.145"]
                                    [thi.ng/color "1.5.1" :exclusions [org.clojure/clojurescript]]

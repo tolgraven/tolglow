@@ -1,6 +1,7 @@
 (ns tolglow.show.preview
   "Bounded Studio projection of a committed Afterglow frame."
-  (:require [afterglow.render.frame :as render])
+  (:require [afterglow.render.frame :as render]
+            [afterglow.render.photometry :as photometry])
   (:import [java.util PriorityQueue]))
 
 (def ^:private active-limit 128)
@@ -56,12 +57,31 @@
           (into lit (take (- idle-limit (count lit)) (remove lit (range idle-limit))))
           lit)))))
 
+(defn brightness-gains
+  "Compile optional full-white gains once when the installed rig changes."
+  [fixtures]
+  (into {} (keep (fn [{:keys [max-watts measured-relative-brightness id] :as fixture}]
+                   (when (or max-watts measured-relative-brightness)
+                     [id (photometry/relative-brightness fixture)]))) fixtures))
+
+(defn- calibrated-score [score gains]
+  (if (empty? gains) score
+    (fn [index id]
+      (let [raw (double (score index id))
+            mover? (> raw 1.0)
+            emitted (* (if mover? (- raw 2.0) raw) (double (get gains id 1.0)))]
+        ;; Keep both classes of score distinct even for gains greater than one.
+        (if (pos? emitted)
+          (+ (if mover? 2.0 0.0) (/ emitted (+ 1.0 emitted)))
+          0.0)))))
+
 (defn values
   "Prefer emitting moving heads, then the brightest emitting pixels. Keep a
   small idle selection for inspection. Never changes packaged universe data."
-  [{:keys [target-order compact] rich :values} fixtures]
+  ([output fixtures] (values output fixtures (brightness-gains fixtures)))
+  ([{:keys [target-order compact] rich :values} fixtures gains]
   (when (or rich compact)
-    (let [indices (preview-indices target-order (emission-score rich compact))
+    (let [indices (preview-indices target-order (calibrated-score (emission-score rich compact) gains))
           rows (if rich (map #(get rich (nth target-order %)) indices)
                    (render/project-compact compact indices))
           by-id (delay (into {} (map (juxt :id identity)) fixtures))]
@@ -74,4 +94,4 @@
                            fixture (if (= id (:id same-slot)) same-slot (get @by-id id))
                            pose (when fixture (render/fixture-pose fixture row))]
                        [id (cond-> row pose (assoc :pose pose))])))
-                 indices rows)))))
+                 indices rows))))))

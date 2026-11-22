@@ -63,3 +63,36 @@ parent target. A head's coarse and fine channels must fit within its span.
 configured fixture module and `(show/submit! runtime :rig {:fixtures groups})`
 accept the same grouped representation. A rejected rig keeps the previous
 patch and its physical outputs.
+
+## Beam optics and brightness
+
+Add optical properties to the fixture type in EDN or edit **Beam and brightness**
+in Studio’s fixture library. A placement can override the type. For example,
+
+```clojure
+{:id :spot :version 1 :channels {:red 1 :green 2 :blue 3 :white 4}
+ :beam-angle 12.5 :lens-radius-m 0.055 :max-watts 125 :pseudo-fixture true}
+```
+
+`:beam-angle` is the full opening angle in degrees. Both it and the two optional
+`:zoom-range-deg` endpoints must be strictly between 0° and 180°. Give the zoom
+angles in DMX order. The lens radius is in metres. Set it to zero for a point aperture. A head can have its own beam
+angle, zoom range, lens radius and reflected-light setting. Omitting the
+reflection setting preserves the preview default.
+
+`:max-watts` means total rated electrical power. The preview estimates relative
+full-white brightness assuming equal power per emitter and equal electrical
+efficiency. It averages representative photopic weights for red (625 nm), green
+(525 nm), blue (465 nm), amber (590 nm), broad white (300 lm per optical watt)
+and UV (no visible output). A 100 W RGB fixture is 1.0. A dimmer-only white
+fixture uses the broadband white assumption. Real emitter efficiency, drivers,
+motor draw and optics can make nameplate estimates inaccurate.
+
+Set `:measured-relative-brightness` to a positive measured full-white ratio
+to override the estimate. A fixture without either input uses unit gain.
+Type-wide wattage and measured output are shared equally over a compound
+fixture’s emitting heads. A master-control group carries zero of that budget.
+The editable rig and Transit show file retain the input properties. Studio
+calculates `:relative-brightness` when a changed rig goes to the preview.
+These properties affect the visual model. Physical channel packing continues
+to use the authored cue and master levels.

@@ -1,7 +1,19 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
+ [{:id :fixtures/optical-properties
+   :title "Keep beam optics and relative brightness from fixture definitions through Studio projection"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/photometry.cljc" "tolglow/src/tolglow/fixtures/library.clj"
+           "tolglow/src/tolglow/fixtures/heads.clj" "tolglow/src/studio/tolglow/studio/fixture_library.cljs"]
+   :depends-on [:fixtures/patch-groups]
+   :acceptance ["Retain optional physical fields in portable rig data and validate them at publication and patch time"
+                "Resolve calibrated and wattage-based full-white levels once per changed preview rig"
+                "Edit optional optical data in the fixture library"]
+   :evidence ["Afterglow #33, 52 optics/fixture tests with 820 assertions; includes physical patch validation."
+              "Tolglow focused tests 36/269 and Studio ClojureScript tests 187/1001, plus production build with zero warnings."
+              "Chromium in a 1024 × 768 touch viewport published and patched a fixture with four edited optical properties; server snapshot retained them."]}
+  {:id :render/beam-footprints :title "Calibrated cone footprints and tangential tracking on finite surfaces" :kind :implementation :status :in-progress :owner "afterglow-optics"
    :paths ["afterglow/src/afterglow/render/optics.cljc"] :depends-on [:foundation/tests]
    :acceptance ["Calibrated cone footprints and tangential tracking on finite surfaces through the production entry point and regression tests"] :evidence []}
   {:id :fixtures/optical-definitions :title "Fixture beam angle, lamp power, and measured white response" :kind :implementation :status :in-progress :owner "fixture-photometry"

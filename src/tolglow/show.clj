@@ -78,7 +78,12 @@
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
-  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))]
+  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+        fixtures (get-in model [:rig :fixtures])
+        patch @(:patch runtime)
+        gains (if (identical? fixtures (:fixtures patch))
+                (:brightness-gains patch)
+                (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
             :receiver-surfaces (:receivers optics)
@@ -111,7 +116,7 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (reflections/with-footprints optics (preview/values output (get-in model [:rig :fixtures])))
+            :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
                      :edge-tracking (:edge-tracking output [])
                      :preview-only? true
                      :universes (vec (sort (keys (:universes output))))}
@@ -223,7 +228,7 @@
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
       :optics-plan (atom (reflections/plan (:rig model)))
-      :patch (atom {:fixtures (get-in model [:rig :fixtures]) :compiled patch})
+      :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
                    (or (get @cache definition)
@@ -544,7 +549,7 @@
   (let [cached @(:patch runtime)]
     (if (= fixtures (:fixtures cached)) (:compiled cached)
         (let [patch (render/compile-patch fixtures)]
-          (reset! (:patch runtime) {:fixtures fixtures :compiled patch}) patch))))
+          (reset! (:patch runtime) {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)}) patch))))
 
 (defn- response-middleware! [runtime responses]
   (let [cached @(:response-cache runtime)]
