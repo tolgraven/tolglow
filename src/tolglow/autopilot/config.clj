@@ -4,7 +4,7 @@
             [tolglow.autopilot.signal :as signal]
             [tolglow.registry :as registry]))
 
-(def hdr-defaults {:gain 1.0 :max-excess 1.0 :white-mix 0.0 :spill 0.0 :spill-white-mix 0.0
+(def hdr-defaults {:gain 1.0 :max-excess 1.0 :white-mix 1.0 :spill 0.0 :spill-white-mix 1.0
                    :radius 1.0 :falloff :linear})
 (def defaults
   {:enabled? false :scope :global :targets {:brightness 0.5 :activity 0.4}
@@ -62,7 +62,7 @@
                    (scope? (:scope s)) (or (nil? (:enable-cue s)) (id? (:enable-cue s)))
                    (integer? (:seed s))
                    (#{:instant :gradual} (:strategy s)) (#{:parameters :cues :generate :author} (:preference s))
-                   (map? (:signals s)) (every? id? (keys (:signals s))) (every? signal/valid? (vals (:signals s)))
+                   (signal/valid-bank? (:signals s))
                    (= #{:brightness :activity} (set (keys (:targets s))))
                    (every? #(between? % 0.0 1.0) (vals (:targets s)))
                    (every? (fn [[k [lo hi]]] (between? (s k) lo hi)) policy-ranges)

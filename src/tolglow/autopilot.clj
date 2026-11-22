@@ -7,12 +7,19 @@
             [tolglow.autopilot.config :as config]
             [tolglow.autopilot.controller :as controller]
             [tolglow.autopilot.statistics :as statistics]
+            [tolglow.autopilot.signal :as signal]
+            [tolglow.autopilot.scope :as scope]
             [tolglow.lighting-activity :as activity]
             [tolglow.lighting-capacity :as capacity]))
 
 (def run-path [:extensions ::run])
 
 (defn- run [model] (get-in model run-path))
+
+(defn- live-scope [model scope]
+  ;; A saved page or a group can disappear while a show is playing.
+  (try (controller/scope-ids model scope)
+       (catch clojure.lang.ExceptionInfo _ [])))
 
 (defn- scope-plan [previous model patch meter scope]
   (let [page? (and (map? scope) (:page-id scope))
@@ -26,9 +33,9 @@
       previous
       (let [capacities (:source-capacities meter)
             ids (into [] (filter #(pos? (get-in capacities [% :relative-capacity] 0)))
-                      (controller/scope-ids model scope))]
+                      (live-scope model scope))]
         {:patch patch :meter meter :scope scope :page page :groups groups :registry registry
-         :ids ids :cue-ids (when page (vec (distinct (vals (:cells page)))))
+         :ids ids :cue-ids (when page (vec (scope/page-cue-ids model (:page-id scope))))
          :scoped-meter (if (= scope :global) meter (assoc meter :source-capacities (select-keys capacities ids)))}))))
 
 (defn- source-rows [meter ids frame]
@@ -53,21 +60,24 @@
   "Decide and edit the model before effects run. raw-frame is delayed: a vetoed
   or non-due decision never renders a forecast. A cue launched by this decision
   participates in this tick's ordinary composition."
-  [model previous-cache patch meter time-ms suspended? raw-frame command]
+  [model previous-cache patch meter time-ms suspended? raw-frame command modulation-view]
   (let [prior (run model)]
     (if-not (config/enabled? model)
       {:model (stop-run model prior time-ms command)}
       (let [opts (merge config/defaults (get-in model [:settings :autopilot]))
             scope (:scope opts)
-            changed? (and prior (not= scope (:scope prior)))
+            plan (scope-plan (:plan previous-cache) model patch meter scope)
+            changed? (and prior (or (not= scope (:scope prior))
+                                    (and (:plan previous-cache)
+                                         (not= (:ids plan) (get-in previous-cache [:plan :ids])))))
             model (if changed? (stop-run model prior time-ms command) model)
             prior (when-not changed? prior)
             clock (assoc (time/frame-clock (assoc model :time-ms time-ms)) :epoch (:epoch model))
-            context {:start-clock (or (:start-clock prior) clock)}
+            context {:start-clock (or (:start-clock prior) clock) :modulation-view modulation-view
+                     :prepared (signal/prepare (:signals previous-cache) (:waveforms model))}
             model (assoc model :time-ms time-ms)
             targets (config/targets model opts context)
             knobs (config/policy-values model opts context)
-            plan (scope-plan (:plan previous-cache) model patch meter scope)
             previous-state (:controller prior)
             due? (and (not suspended?) (controller/due? previous-state clock (:epoch model) knobs))
             previous-report (:statistics prior)
@@ -100,13 +110,13 @@
             fields (config/hdr-values model opts (:context prepared))
             scope (if independent? (:scope opts :global) (:scope current))
             ids (when-not (= :global scope)
-                  (if independent? (controller/scope-ids model scope) (get-in prepared [:plan :ids])))]
+                  (if independent? (live-scope model scope) (get-in prepared [:plan :ids])))]
         (cond-> fields
           ids (assoc :fixture-ids (vec ids))
-          managed? (update :source-gains multiply-gains (:gains current))
-          managed? (update :instance-gains multiply-gains (get-in current [:actions :instance-gains])))))))
+          (seq (:gains current)) (update :source-gains multiply-gains (:gains current))
+          (seq (get-in current [:actions :instance-gains])) (update :instance-gains multiply-gains (get-in current [:actions :instance-gains])))))))
 
-(defn observe [model prepared previous-cache frame blocks suspended? raw-options]
+(defn observe [model prepared previous-cache frame blocks suspended? raw-options raw-blocks]
   (if-let [plan (:plan prepared)]
     (let [prior (run model)
           clock (:clock prepared)
@@ -123,7 +133,8 @@
           model (-> model (assoc-in (conj run-path :history) (:state history))
                     (assoc-in (conj run-path :statistics) (:report history))
                     (assoc-in [:variables :lighting/autopilot] view))]
-      {:model model :cache {:plan plan :activity (:state measured) :raw-options raw-options :blocks blocks}})
+      {:model model :cache {:plan plan :activity (:state measured) :signals (get-in prepared [:context :prepared])
+                            :raw-options raw-options :blocks (when-not suspended? raw-blocks)}})
     {:model model}))
 
 (defn accept-authored [model {:keys [request definition error]} time-ms command]

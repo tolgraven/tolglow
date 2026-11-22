@@ -983,7 +983,7 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 (:output before))) command))
+                                                 (:output before))) command (:modulation-view before)))
                            model (or (:model prepared) model)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
                            hdr-opts (when hdr? (or (autopilot/render-options model prepared suspended?) {}))
@@ -1055,7 +1055,7 @@
                                                         fog (assoc :fog (:state fog))))))]
                        (let [observation (autopilot/observe (:model result) prepared previous-cache frame
                                           (lighting/contributions standby (:contributions result) extra-blocks) suspended?
-                                          {:master (:master render-options) :hdr {} :compact-values? true :include-values? false})]
+                                          {:master (:master render-options) :hdr {} :compact-values? true :include-values? false} (:contributions result))]
                        {:model (let [with-fog (cond-> (:model observation)
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
