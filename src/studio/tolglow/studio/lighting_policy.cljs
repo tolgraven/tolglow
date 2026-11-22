@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
-            [tolglow.studio.performance :as performance]
+            [tolglow.studio.lighting-response :as response-editor]
             [tolglow.studio.lighting-scenes :as scenes]
             [tolglow.studio.projection :as projection]))
 
@@ -69,8 +69,7 @@
   (let [fields (case section
                  :lighting-budget (cond-> changes
                                     (contains? changes :max-active) (update :max-active checked-count))
-                 :output-response (update-vals changes (fn [{:keys [value unit]}]
-                                                         (performance/envelope-duration value unit)))
+                 :output-response (update-vals changes response-editor/stage-duration)
                  changes)]
     (assoc-in {} location fields)))
 
@@ -210,28 +209,6 @@
       (when (= :priority (:strategy controls)) [fixture-priority location (:fixture-order controls []) edit])
       [apply-buttons scope location (seq draft) (some? saved) "Apply budget"]]]))
 
-(def units ["beats" "bars" "phrases" "ms"])
-
-(defn- stage-field [location stage duration draft]
-  (let [[unit amount] (first (or duration {:beats 0}))
-        bound? (map? amount)
-        unit (name unit)
-        shown (merge {:unit unit :value (if bound? "" (str amount))} draft)
-        edit #(edit! :output-response location stage (assoc shown %1 %2))
-        title (if (= stage :attack) "Attack" "Release")]
-    [:div.policy-stage
-     [:label title [:input {:type "text" :input-mode "decimal" :value (:value shown)
-                            :placeholder (if bound? "Bound" "0")
-                            :aria-label (str title " duration")
-                            :on-change #(edit :value (.. % -target -value))}]]
-     [:label "Unit" [:select {:aria-label (str title " unit") :value (:unit shown)
-                              :on-change #(edit :unit (.. % -target -value))}
-                     (for [u units] ^{:key u} [:option {:value u} u])]]
-     (when bound?
-       [:small (if-let [path (:variable amount)]
-                 (str "Following " (str/join " / " (map events/wire-id path)))
-                 (str "Following " (events/wire-id (:cue-id amount)) " · " (events/wire-id (:param amount))))])]))
-
 (defn- response [location disabled?]
   (let [scope :output-response settings @(rf/subscribe [::settings scope])
         saved (get-in settings location)
@@ -242,7 +219,8 @@
      [:fieldset {:disabled disabled?}
       [:div.policy-grid
        (for [stage [:attack :release]]
-         ^{:key stage} [stage-field location stage (get effective stage) (get draft stage)])]
+         ^{:key stage} [response-editor/stage-field stage (get effective stage) (get draft stage)
+                        #(edit! scope location stage %)])]
       [apply-buttons scope location (seq draft) (some? saved) "Apply response"]]]))
 
 (defn- activity [disabled?]

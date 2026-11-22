@@ -50,3 +50,5 @@
 .priority-order ol { margin: 0 0 8px; padding-left: 1.5em; }
 .priority-order li { padding: 3px 0; overflow-wrap: anywhere; }
 .priority-order li .button { min-width: 44px; min-height: 44px; padding: 4px; margin-left: 6px; }
+
+.policy-binding { grid-column: 1/-1; }

@@ -107,6 +107,22 @@ try {
   await response.getByLabel('Attack unit').selectOption('beats');
   saved = await apply(response, 'Apply response');
   assert.equal(saved.settings['output-response'].groups[applied['group-id']].attack.beats, 0.5);
+  await response.getByLabel('Release time source').selectOption('variable');
+  await response.getByLabel('Release variable path').fill('[:audio/energy]');
+  await response.getByLabel('Release fallback duration').fill('1/8');
+  saved = await apply(response, 'Apply response');
+  assert.deepEqual(saved.settings['output-response'].groups[applied['group-id']].release.beats,
+    { variable: ['audio/energy'], default: 0.125 });
+  await response.getByLabel('Release time source').selectOption('cue');
+  const cue = response.getByLabel('Release control cue');
+  await cue.selectOption({ index: 1 });
+  const parameter = response.getByLabel('Release control parameter');
+  await parameter.locator('option').nth(1).waitFor({state:'attached'});
+  await parameter.selectOption({ index: 1 });
+  saved = await apply(response, 'Apply response');
+  const binding = saved.settings['output-response'].groups[applied['group-id']].release.beats;
+  assert.ok(binding['cue-id'] && binding.param);
+  assert.equal(binding.default, 0.125);
   await policyEdit(() => intensity.getByLabel('Meter activity').tap());
   await page.waitForFunction(() => {
     const panel = document.querySelector('[aria-label="Perceived lighting intensity"]');

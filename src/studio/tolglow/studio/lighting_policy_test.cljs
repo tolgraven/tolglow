@@ -1,6 +1,7 @@
 (ns tolglow.studio.lighting-policy-test
   (:require [cljs.test :refer-macros [deftest is]]
-            [tolglow.studio.lighting-policy :as policy]))
+            [tolglow.studio.lighting-policy :as policy]
+            [tolglow.studio.lighting-response :as response]))
 
 (def identity-key {:epoch 2 :runtime-id "show-process" :show-id :club})
 (def db {:connection {:connected? true} :server-projection {:view identity-key}})
@@ -35,3 +36,12 @@
     (is (true? (:enabled? (policy/visible-settings acked :lighting-budget))))
     (is (nil? (policy/visible-settings (assoc-in acked [:server-projection :view :revision] 5) :lighting-budget)))
     (is (nil? (policy/visible-settings (assoc-in state [:server-projection :view :epoch] 3) :lighting-budget)))))
+
+(deftest bound-response-stages-roundtrip-with-typed-identities-and-a-fallback
+  (doseq [stored [{:beats {:cue-id :rig/feel :param "attack" :default 0.25}}
+                  {:bars {:variable [:user :cue-rate] :default 0.5}}]]
+    (is (= stored (response/stage-duration (response/stage-form stored)))))
+  (is (= {:beats {:variable [:audio/energy] :default 0.25}}
+         (response/stage-duration {:source :variable :unit "beats" :path "[:audio/energy]" :value "1/4"})))
+  (is (thrown? js/Error (response/stage-duration {:source :cue :unit "beats" :value "0" :cue-id :rig/feel})))
+  (is (thrown? js/Error (response/stage-duration {:source :variable :unit "beats" :value "1" :path ":audio/energy"}))))
