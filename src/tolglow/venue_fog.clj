@@ -1,6 +1,7 @@
 (ns tolglow.venue-fog
   "Own one venue estimate independently of any Studio clients or display clock."
-  (:require [afterglow.render.atmosphere :as fog]))
+  (:require [afterglow.render.atmosphere :as fog]
+            [tolglow.rig.fog-calibration :as scan]))
 
 (def saved-path [:extensions ::state])
 
@@ -35,13 +36,36 @@
                         (fog/initial plan epoch now)))]
           (reset! owner {:rig rig :epoch epoch :plan plan :state state}))))))
 
+(defn- record-flow [trace state now]
+  (let [id (:fixture-id trace)
+        sources (:sources state)
+        rate (or (some #(when (= id (:fixture-id %)) (:flow-m3-s %)) sources) 0.0)
+        other? (some #(and (not= id (:fixture-id %)) (pos? (:flow-m3-s %))) sources)]
+    (cond-> trace
+      other? (assoc :other-source? true)
+      (not= rate (:rate trace))
+      (as-> t (if (< (count (:flows t)) 8192)
+                (-> t (assoc :rate rate)
+                    (update :flows conj {:elapsed-ms (max 0 (- now (:started-at-ms t))) :flow-m3-s rate}))
+                (assoc t :overflow? true))))))
+
+(defn- sync-trace! [owner session]
+  (when (not= (:session-id session) (get-in @owner [:trace :session-id]))
+    (locking owner
+      (if session
+        (let [trace (assoc (select-keys session [:session-id :fixture-id :epoch :started-at-ms]) :flows [])]
+          (swap! owner assoc :trace (record-flow trace (:state @owner) (:started-at-ms session))))
+        (swap! owner dissoc :trace)))))
+
 (defn presented! [owner now universes]
   (when (:plan @owner)
     (locking owner
-      (let [{:keys [plan state] :as current} @owner]
+      (let [{:keys [plan state trace] :as current} @owner]
         (when plan
-          (let [t (max now (:sample-time-ms state))]
-            (reset! owner (assoc current :state (fog/present plan state t universes)))))))))
+          (let [t (max now (:sample-time-ms state))
+                next-state (fog/present plan state t universes)]
+            (reset! owner (cond-> (assoc current :state next-state)
+                            trace (assoc :trace (record-flow trace next-state t))))))))))
 
 (defn sample [owner now]
   (let [{:keys [plan state]} @owner]
@@ -62,6 +86,7 @@
         now (if physical? ((get-in runtime [:publisher :now-ms])) (:time-ms model))
         owner (:venue-fog runtime)]
     (configure! owner model compiled-patch now restored?)
+    (sync-trace! owner (when physical? (scan/current model)))
     (if (:plan @owner)
       (do
         (when (and (not physical?) (not restored?)) (presented! owner now (:universes output)))
