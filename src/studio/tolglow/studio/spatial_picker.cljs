@@ -106,4 +106,3 @@
                        :on-select #(reset! choice {:identity identity :row %})}]
        [:button.button {:disabled (nil? selection) :on-click #(rf/dispatch [::launch cue-id (:selector selection)])}
         (if selection (str "Launch on " (:label selection)) "Launch on targets")]])))
-
