@@ -9,7 +9,8 @@
 
 (def actions [:cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
-  {:audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
+  {:atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
+   :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
    :show [:show/restored]
    :clock [:clock/beat :clock/bar :clock/phrase]
    :control [:instance/launched :instance/removed :instance/released :instance/system-changed
