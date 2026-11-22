@@ -297,11 +297,17 @@
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
        [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])
-   [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere " [:span.muted "preview"]]
+   [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere "
+                        [:span.muted
+                         (if-let [air (get-in db [:show :output :atmosphere])]
+                           (let [flow (* 60 (reduce + 0 (keep :flow-m3-s (:sources air))))]
+                             (str "DMX · " (.toFixed flow 1) " m³/min"))
+                           "preview")]]
     [:input#fog-density {:type "range" :aria-label "Preview fog density" :min 0 :max 1 :step 0.01
-                         :value (get-in db [:ui :fog] 0.3)
+                         :value (or (get-in db [:ui :fog]) (if (get-in db [:show :output :atmosphere]) 1 0.3))
                          :on-change #(when-let [value (number-value %)] (send! [:studio/preview-fog value]))}]
-    [button "fog-burst" "+ Plume" [:studio/preview-burst] "text-button"]
+    (when-not (get-in db [:show :output :atmosphere])
+      [button "fog-burst" "+ Plume" [:studio/preview-burst] "text-button"])
     [:button#reset-camera.icon-button {:aria-label "Reset preview camera" :title "Reset preview camera"
                                        :on-click #(send! [:studio/preview-reset])} "⟳"]]])
 
