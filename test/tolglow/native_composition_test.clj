@@ -52,7 +52,7 @@
           (is (= [owner owner] (mapv :id members)))
           (is (= [(double -0.5) 0.5 4.0] (mapv double (:aim target))))
           (is (= [0 128 128] (mapv #(bit-and 255 %) (take 3 (get-in output [:universes 1])))))
-          (let [restored (persistence/thaw model (persistence/freeze model))
+          (let [restored (persistence/thaw model (persistence/read-string (persistence/write-string model)))
                 new-owner (get-in restored [:composition-runs :combine :owner-id])
                 layers (keep #(get-in % [:source :native-layer]) (vals (:instances restored)))]
             (is (not= owner new-owner))
@@ -113,3 +113,17 @@
                  {:targets :other :transforms [ratio-step]}
                  {:transforms [{:attribute :color :value {:op :unknown}}]}]]
     (is (seq (registry/validate-definition :effects {:id :filter :version 1 :layer layer})))))
+
+(deftest restored-release-tails-remain-in-their-layer-after-the-execution-stops
+  (let [started (-> (scene) (composition/save compound) (composition/start :combine 0))
+        owner (get-in started [:composition-runs :combine :owner-id])
+        stopped (composition/stop started :combine 10)
+        restored (persistence/thaw stopped (persistence/read-string (persistence/write-string stopped)))
+        tails (vals (:instances restored))
+        layers (sort-by :member (map #(get-in % [:source :native-layer]) tails))]
+    (is (empty? (:composition-runs restored)))
+    (is (= [:releasing :releasing] (mapv :phase tails)))
+    (is (= [0 1] (mapv :member layers)))
+    (is (apply = (map :id layers)))
+    (is (not= owner (:id (first layers))))
+    (is (= (:transforms (second layers)) (get-in compound [:slots 1 :transforms])))))

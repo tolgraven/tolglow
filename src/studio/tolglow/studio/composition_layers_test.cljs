@@ -19,6 +19,8 @@
     (is (= :previous (get-in body [:slots 0 :targets])))
     (is (= [:ratio :beat-hue] (mapv (comp first layers/preset-for) program)))
     (is (= [1 8] (get-in program [0 :value :args])))
+    (doseq [denominator [0 -1 0.25]]
+      (is (= db (update-db db [:composition-layer/value 0 0 [:value :args 1] denominator]))))
     (is (= 1 (count (get-in (update-db db [:composition-layer/remove 0 0])
                             [:ui :composition :slots 0 :transforms]))))))
 

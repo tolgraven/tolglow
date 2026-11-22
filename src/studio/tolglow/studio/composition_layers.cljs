@@ -50,9 +50,14 @@
 
 (rf/reg-event-db :composition-layer/value
   (fn [db [_ i j key-path number]]
-    (if (and (number? number) (js/Number.isFinite number))
-      (assoc-in db (into (conj (path i) j) key-path) number)
-      db)))
+    (let [transform (get-in db (conj (path i) j))
+          ratio? (= :ratio (first (preset-for transform)))
+          denominator? (= key-path [:value :args 1])]
+      (if (and (js/Number.isFinite number)
+               (or (not ratio?) (and (js/Number.isSafeInteger number)
+                                     (or (not denominator?) (pos? number)))))
+        (assoc-in db (into (conj (path i) j) key-path) number)
+        db))))
 
 (defn opacity-control [opacity]
   [:label.layer-opacity "Layer opacity"
@@ -68,8 +73,8 @@
 (defn slot-controls [i {:keys [transforms targets]}]
   [:details.slot-parameter-editor.layer-transforms
    [:summary (str "Layer transforms · " (count transforms))]
-   [:label [:input {:type "checkbox" :checked (= :previous (some-> targets keyword))
-                    :on-change #(rf/dispatch [:composition-layer/include-previous i (.. % -target -checked)])}]
+   [:label.layer-targets [:input {:type "checkbox" :checked (= :previous (some-> targets keyword))
+                    :on-change #(rf/dispatch-sync [:composition-layer/include-previous i (.. % -target -checked)])}]
     "Include earlier members’ heads"]
    (for [[j transform] (map-indexed vector transforms)
          :let [[_ title _ fields] (preset-for transform)]]
