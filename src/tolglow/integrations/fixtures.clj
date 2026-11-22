@@ -90,6 +90,21 @@
         (or (field definition :capabilities)
             (when-let [cap (field definition :capability)] [cap]) [])))
 
+(defn- ofl-optics [fixture mode]
+  ;; A mode can override only some of the type's physical specifications.
+  (let [physical (field fixture :physical)
+        override (field mode :physical)
+        power (or (field override :power) (field physical :power))
+        angles (or (field (field override :lens) :degreesMinMax)
+                   (field (field physical :lens) :degreesMinMax))]
+    (cond-> {}
+      (and (number? power) (pos? power)) (assoc :max-watts power)
+      (and (vector? angles) (= 2 (count angles))
+           (every? #(and (number? %) (< 0 % 180)) angles))
+      (merge (if (= (first angles) (second angles))
+               {:beam-angle (first angles)}
+               {:zoom-range-deg angles})))))
+
 (defn import-ofl
   "Import an OFL JSON string or parsed map. opts accepts :mode, :id, :version,
   :manufacturer, :source, :license. Multi-mode files require :mode. Complex mode
@@ -133,10 +148,11 @@
                                   (nil? attribute) [(diagnostic :warning :unmapped-channel [:channels key]
                                                                "Channel preserved as data; no generic renderer attribute inferred")]
                                   :else [])) entries))]
-     (finish {:format :ofl :name (field raw :name)
+     (finish (merge (ofl-optics raw mode)
+                    {:format :ofl :name (field raw :name)
               :manufacturer (or (:manufacturer opts) (field raw :manufacturer))
               :mode (field mode :name) :footprint (count entries)
-              :physical (or (field mode :physical) (field raw :physical))}
+              :physical (or (field mode :physical) (field raw :physical))})
              entries diagnostics (if (string? data) data (json/write-str (canonical data)))
              raw (assoc opts :checksum-kind (if (string? data) :source-text :canonical-json))))))
 

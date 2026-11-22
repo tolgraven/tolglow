@@ -14,7 +14,7 @@ export function fixtureSlots(fixtures, values, selectedId, meshes, lights, shado
     const spec = fixtures.get(id);
     const rgb = row?.['emitted-color'];
     if (!spec || !Array.isArray(rgb) || rgb.length !== 3 || !rgb.every(Number.isFinite)) continue;
-    const level = Math.max(...rgb);
+    const level = Math.max(...rgb) * (spec['relative-brightness'] ?? 1);
     if (level <= 0) continue;
     const moving = spec.channels?.pan != null && spec.channels?.tilt != null;
     active.push({id, level, moving});

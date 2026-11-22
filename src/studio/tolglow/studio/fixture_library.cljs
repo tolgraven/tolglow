@@ -1,7 +1,8 @@
 (ns tolglow.studio.fixture-library
   "Re-frame fixture discovery, import review, publication and explicit rig patching."
   (:require [clojure.string :as str] [cljs.reader :as reader] [cljs.pprint :as pprint] [re-frame.core :as rf] [reagent.core :as r]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [afterglow.render.photometry :as photometry]))
 
 (def defaults
   {:query "" :manufacturer "" :results [] :total 0 :busy nil :error nil :notice nil
@@ -200,11 +201,19 @@
 (defn form-definition [s]
   (let [definition (parse-definition (:draft-source s))]
     (when-not (map? definition) (throw (js/Error. "Fixture definition must be a map.")))
-    (let [definition (reduce-kv (fn [definition key value]
-                                 (assoc definition key
-                                        (cond (#{:version :footprint} key) (number! value (name key) true)
-                                              (and (= :id key) (keyword? (:id definition))) (keyword value)
-                                              :else value))) definition (:field-edits s {}))]
+    (let [definition (reduce-kv
+                      (fn [definition key value]
+                        (cond
+                          (and (some #{key} photometry/fixture-keys) (= "" value)) (dissoc definition key)
+                          (#{:beam-angle :max-watts :measured-relative-brightness :lens-radius-m} key)
+                          (assoc definition key (number! value (name key) false))
+                          (= key :pseudo-fixture) (assoc definition key (= "true" value))
+                          (#{:version :footprint} key) (assoc definition key (number! value (name key) true))
+                          (and (= :id key) (keyword? (:id definition))) (assoc definition key (keyword value))
+                          :else (assoc definition key value)))
+                      definition (:field-edits s {}))]
+      (when-let [error (first (photometry/errors definition))]
+        (throw (js/Error. (:message error))))
       (reduce-kv (fn [definition attribute edits]
                    (let [spec (get-in definition [:channels attribute])
                          offsets (channel-offsets spec)
@@ -353,7 +362,7 @@
 (defn- type-field [s key title numeric?]
   [:label {:for (str "fixture-type-" (name key))} title
    [:input {:id (str "fixture-type-" (name key)) :type "text" :disabled (boolean (:busy s))
-            :input-mode (if numeric? "numeric" "text")
+            :input-mode (if numeric? "decimal" "text")
             :value (get-in s [:field-edits key] (wire (get-in s [:definition key] "")))
             :on-change #(rf/dispatch-sync [:fixtures/edit-field key (event-value %)])}]])
 (defn- mapping-form [s]
@@ -363,6 +372,21 @@
       [type-field s :id "Fixture type ID" false] [type-field s :name "Display name" false]
       [type-field s :manufacturer "Manufacturer" false] [type-field s :mode "Mode name" false]
       [type-field s :version "Definition version" true] [type-field s :footprint "DMX footprint" true]]
+     [:fieldset.fixture-type-fields
+      [:legend "Beam and brightness"]
+      [type-field s :beam-angle "Full beam angle (°)" true]
+      [type-field s :lens-radius-m "Lens radius (m)" true]
+      [type-field s :max-watts "Maximum electrical power (W)" true]
+      [type-field s :measured-relative-brightness "Measured brightness (× reference)" true]
+      [:label {:for "fixture-type-pseudo-fixture"} "Reflected light"
+       [:select#fixture-type-pseudo-fixture
+        {:value (get-in s [:field-edits :pseudo-fixture]
+                        (str (get-in s [:definition :pseudo-fixture])))
+         :disabled (boolean (:busy s))
+         :on-change #(rf/dispatch-sync [:fixtures/edit-field :pseudo-fixture (event-value %)])}
+        [:option {:value ""} "Preview default"]
+        [:option {:value "true"} "Enable reflected light"]
+        [:option {:value "false"} "Disable reflected light"]]]]
      [:div.fixture-channel-heading [:strong "Channel mapping"]
       [:span.small.muted "Offsets start at 1 · fine and inversion are optional"]]
      [:div.fixture-channel-list
