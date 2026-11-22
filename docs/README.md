@@ -31,6 +31,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | Document | Purpose |
 | --- | --- |
 | [Relative fixture brightness](relative-fixture-brightness.md) | Measure full-white output with a locked camera and save per-type calibration |
+| [Venue fog](venue-fog.md) | Rated fogger output, elapsed DMX time, mixing and venue ventilation |
 | [Starting a show](application-startup.md) | Config module order, headless and Studio entry points, REPL and shutdown |
 | [Fog machine and venue controls](studio-atmosphere.md) | Configure rated fog output, DMX response, nozzle direction, ventilation and decay |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
@@ -62,6 +63,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Scene contract](architecture/preview-scene-contract.md) | Shared fixture/rig optics and active visual acceptance |
 | [Live audio sends and returns](live-audio-returns.md) | Single-track and Drum Rack routing, processed return cues, patch sources and retained echo voices |
 | [3D rig editor](rig-editor.md) | Draft fixture/truss placement, direct musical aim paths, explicit cue creation and saved-path editing |
+| [Lighting capacity](lighting-capacity.md) | Rig-wide output metering, audio-energy limits and selected fog pulses |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |
 | [Reactive REPL](reactive.md) | Durable subscriptions, ratoms, watchers and queued actions |
