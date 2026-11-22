@@ -82,3 +82,28 @@
 .conduct-new-signal button { width: auto; }
 .conduct-action { grid-column: 1/-1; display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
 .conduct .policy-stage > .conduct-duration { grid-column: 1/-1; }
+
+/* Active cue inspection uses the studio controls' existing type and accents. */
+.live-effect-card.has-fault{border-color:#e67670;box-shadow:inset 3px 0 #e67670}
+.live-effect-card.has-fault .live-effect-phase,.cue-fault>summary{color:#ffaaa1}
+.cue-inspector,.cue-inspected-effect,.cue-patch-row{display:grid;gap:.5rem;min-width:0}
+.cue-inspector h4{margin:0}.cue-inspected-effect{border-top:1px solid var(--line,#404640);padding-top:.55rem}
+.cue-inspected-effect header,.axis-popover header{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.cue-inspected-effect small,.cue-patch-expression{color:var(--muted,#a2a99f)}
+.cue-patch-row{padding:.5rem 0}.cue-patch-path{display:flex;gap:.5rem;align-items:center;min-width:0}
+.cue-patch-inputs{display:flex;flex-wrap:wrap;gap:.3rem;min-width:0}
+.cue-patch-inputs>span,.cue-patch-path>strong{background:#292f2c;border-radius:.35rem;padding:.25rem .45rem;font-size:.78rem;overflow-wrap:anywhere}
+.cue-patch-inputs b{margin-left:.35rem;color:#add4c8}
+.cue-patch-wire{height:2px;min-width:1rem;flex:1;background:#699c90}
+.cue-patch-expression,.cue-fault pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.76rem}
+.cue-patch-editor>summary,.cue-fault>summary,.cue-fault-log>summary{cursor:pointer;padding:.5rem 0;min-height:44px;align-content:center}
+.cue-patch-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(7rem,100%),1fr));gap:.5rem}
+.cue-patch-form label,.axis-component{display:grid;gap:.25rem;min-width:0}
+.cue-patch-form select,.cue-patch-form input:not([type=checkbox]),.axis-component input{width:100%;min-width:0;min-height:44px}
+.cue-patch-form .cue-patch-clamp{display:flex;align-items:center;gap:.45rem}
+.cue-fault,.cue-fault-log{min-width:0}.cue-fault>code,.cue-fault>span{display:block}
+.axis-trigger{display:flex;flex-wrap:wrap;gap:.55rem;align-items:center;min-height:44px;width:100%;border-radius:.5rem;padding:.4rem .65rem;color:inherit;background:#252d29;border:1px solid #58685e}
+.axis-trigger span{font-variant-numeric:tabular-nums}.axis-trigger b{color:#a1c9b9;margin-right:.3rem}
+.axis-popover{max-width:min(29rem,92vw);max-height:80dvh;overflow:auto;border:1px solid #607268;border-radius:.8rem;background:#202723;color:#e5eae3;padding:1rem}
+.axis-popover::backdrop{background:rgba(8,13,10,.45)}.axis-dials{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:.5rem}
+.axis-component{flex:1 1 5rem;max-width:8rem;text-align:center}.axis-component .parameter-rotary-control{margin:auto}

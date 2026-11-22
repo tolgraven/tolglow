@@ -1,6 +1,7 @@
 (ns tolglow.studio.parameter-widgets
   "Pure presentation shared by the web inspector and device displays."
   (:require [clojure.string :as str]
+            [reagent.core :as r]
             [thi.ng.color.core :as color]))
 
 (defn label [value]
@@ -160,6 +161,36 @@
                        (when (.hasPointerCapture (.-currentTarget event) (.-pointerId event))
                          (.releasePointerCapture (.-currentTarget event) (.-pointerId event))))}
      [rotary schema value options]]))
+
+(defn axes-control [title schemas values change!]
+  (r/with-let [popover-id (str "axes-" (random-uuid))]
+    [:div.axis-control
+     [:button.axis-trigger {:type "button" :popoverTarget popover-id :aria-haspopup "dialog"
+                            :aria-label (str "Edit " title " components")}
+      (for [[i schema] (map-indexed vector schemas)]
+        ^{:key i} [:span [:b (:axis-label schema)] (number-label (get values i))])]
+     [:div.axis-popover {:id popover-id :popover "auto" :role "dialog" :aria-label (str title " components")}
+      [:header [:strong title]
+       [:button.text-button {:type "button" :popoverTarget popover-id :popoverTargetAction "hide"} "Done"]]
+      [:div.axis-dials
+       (for [[i schema] (map-indexed vector schemas)
+             :let [v (get values i) axis (:axis-label schema) text (str title " " axis)]]
+         ^{:key i}
+         [:div.axis-component
+          [:label axis]
+          (when (numeric-range schema)
+            [rotary-control schema v #(change! i %) {:name (str text " rotary")}])
+          [:input {:type "number" :aria-label (str text " value") :value (or v "") :step "any"
+                   :min (first (:bounds schema)) :max (second (:bounds schema))
+                   :on-change (fn [e] (let [n (.. e -target -valueAsNumber)]
+                                        (when (and (finite? n) (.. e -target -validity -valid))
+                                          (change! i n))))}]])]]]))
+
+(defn vector-control [title schema values change!]
+  (let [labels (:component-labels schema ["X" "Y" "Z" "W"])
+        axes (mapv (fn [i] (assoc schema :type "number" :axis-label (get labels i (str (inc i)))))
+                   (range (or (:size schema) (count values))))]
+    [axes-control title axes values change!]))
 
 (defn- component-track [title schema value color]
   [:div.typed-component {:style (when color {"--widget-accent" color})}
