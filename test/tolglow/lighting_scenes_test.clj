@@ -218,3 +218,53 @@
         (is (= 0.72 (get-in (first reached) [:data :target])))
         (is (every? types [:lighting/group-limited :lighting/group-released :lighting/rig-level :lighting/rig-unavailable])))
       (finally (show/stop! rt)))))
+
+(deftest calibrated-scenes-match-unlike-fixtures-on-the-whole-rig-scale
+  (doseq [batch? [true false]]
+    (let [source {:id :tint :version 1 :targets [:a :b]
+                  :params {:hue {:type :color :default [1.0 0.5 0.0]}}
+                  :outputs {:color {:op :param :key :hue}}}
+          movers (mapv (fn [id address weight] {:id id :universe 1 :address address :groups [:wash]
+                                                :channels {:red 1 :green 2 :blue 3}
+                                                :measured-relative-brightness weight})
+                       [:a :b] [1 4] [4.0 1.0])
+          rig {:fixtures (conj movers {:id :spot :groups [:others] :universe 1 :address 7
+                                       :channels {:dimmer 1} :measured-relative-brightness 8.0})}
+          model (-> (demo/model) (assoc :rig rig) (assoc-in [:registry :effects :tint] source))
+          rt (show/create-runtime {:model model :batch? batch?})
+          time (atom 0)
+          edit (fn [opts] (issue! rt time :lighting-scene (merge {:op :apply :group-id :wash} opts)))
+          current #(group! rt :wash)
+          signal #(mapv :global-brightness (:sources (current)))
+          within? (fn [wanted got] (< (abs (- wanted got)) 0.004))]
+      (try
+        (is (= :accepted (:status (edit {:effect-ids [:tint] :brightness-reference :global :target 0.04}))))
+        (ticks! rt time 5)
+        (let [g (current)
+              [strong weak] (:sources g)
+              dmx (mapv #(bit-and 255 %) (take 7 (get-in @(:state rt) [:output :universes 1])))]
+          (is (= :at-target (:status g)))
+          (is (every? #(within? 0.04 %) (signal)))
+          (is (= [0.5 0.125] (mapv :global-maximum [strong weak])))
+          (is (< 3.8 (/ (:local-brightness weak) (:local-brightness strong)) 4.2))
+          (is (every? false? (map :limited? (:sources g))))
+          (is (within? (:global-brightness g) (:actual g)))
+          (is (= [0 0 0] [(dmx 2) (dmx 5) (dmx 6)]))
+          (is (<= (abs (- (dmx 0) (* 2 (dmx 1)))) 1))
+          (is (<= (abs (- (dmx 3) (* 2 (dmx 4)))) 1)))
+        (edit {:target 0.1})
+        (ticks! rt time 12)
+        (is (= [false true] (mapv :limited? (:sources (current)))) "A saturated hue runs out of headroom before full white")
+        (is (= :limited (:status (current))))
+        (let [id (:instance-id (current))
+              m (:model @(:state rt))]
+          (is (= :global (get-in (persistence/validate-model m) [:extensions ::scenes/control :groups :wash :brightness-reference])))
+          (is (= :accepted (:status (issue! rt time :command {:op :param/set :instance-id id :param :hue :value [0.0 0.0 0.0]}))))
+          (ticks! rt time 12)
+          (is (= [0.0 0.0] (signal)) "Matching a deliberately dark cue cannot turn the fixtures white")
+          (is (= id (:instance-id (current)))))
+        (edit {:brightness-reference :local :target 0.05})
+        (ticks! rt time 20)
+        (is (= :local (:brightness-reference (current))))
+        (is (= :rejected (:status (edit {:brightness-reference :wrong}))))
+        (finally (show/stop! rt))))))

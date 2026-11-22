@@ -120,16 +120,21 @@
   (let [dimmer (level buffers (.-dimmer head))
         ^objects emitters (.-emitters head)
         n (alength emitters)]
-    (loop [i 0 light 0.0 drive 0.0]
+    (loop [i 0 unscaled 0.0 peak 0.0 drive 0.0]
       (if (= i n)
-        (let [mean-drive (/ drive n)]
+        (let [light (* dimmer unscaled)
+              mean-drive (* dimmer (/ drive n))]
           (assoc source :relative-output light :emitter-drive mean-drive
                  :used-rated-watts (when rated-watts (* rated-watts mean-drive))
+                 :global-color-maximum (when (and (pos? reference) (pos? peak))
+                                         (/ unscaled (* reference peak)))
                  :local-brightness (if (pos? relative-capacity) (/ light relative-capacity) 0.0)
                  :global-brightness (if (pos? reference) (/ light reference) 0.0)))
         (let [^MeterEmitter emitter (aget emitters i)
-              amount (* dimmer (level buffers (.-address emitter)))]
-          (recur (inc i) (+ light (* amount (.-brightness emitter))) (+ drive amount)))))))
+              amount (level buffers (.-address emitter))
+              brightness (.-brightness emitter)]
+          (recur (inc i) (+ unscaled (* amount brightness))
+                 (if (pos? brightness) (max peak amount) peak) (+ drive amount)))))))
 
 (defn measure-sources
   "Read selected heads from the committed DMX buffers. Global brightness uses

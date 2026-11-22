@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [tolglow.automation.random :as random]
             [tolglow.lighting-capacity :as capacity]
+            [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry])
   (:import [java.util Arrays]))
 
@@ -27,13 +28,19 @@
   {:eligible-fixture-ids eligible
    :groups (mapv (fn [g]
                    (assoc (select-keys g [:group-id :fixture-ids :target :actual :status :source-effect-id
-                                         :gain :instance-id :generation :target-var :effect-ids :allow-generated?])
-                          :source-params (get-in model [:instances (:instance-id g) :params])))
+                                         :gain :instance-id :generation :target-var :effect-ids :allow-generated?
+                                         :brightness-reference :local-brightness :global-brightness :sources :source-count])
+                          :sources (mapv (fn [{:keys [global-maximum global-color-maximum] :as source}]
+                                           (assoc source :limited? (and (= :global (:brightness-reference g))
+                                                                        (> (:target g) (+ (or global-color-maximum global-maximum) 1.0e-8)))))
+                                         (:sources g))
+                          :source-params (dissoc (get-in model [:instances (:instance-id g) :params]) matching/target-param)))
                  (sort-by (comp str :group-id) (vals (groups model))))})
 
-(defn validate-request [{:keys [op group-id target fixture-ids effect-ids target-var params allow-generated?]}]
+(defn validate-request [{:keys [op group-id target fixture-ids effect-ids target-var params allow-generated? brightness-reference]}]
   (when-not (and (#{:apply :vary :release} op) (identifier? group-id)
                  (or (nil? target) (unit? target))
+                 (or (nil? brightness-reference) (#{:local :global} brightness-reference))
                  (or (nil? fixture-ids) (and (vector? fixture-ids) (every? identifier? fixture-ids)))
                  (or (nil? effect-ids) (and (vector? effect-ids) (every? identifier? effect-ids)))
                  (or (nil? target-var) (and (vector? target-var) (seq target-var)
@@ -81,6 +88,7 @@
         group-ids (if (contains? active (existing-id active (:group-id request))) active
                     (into active (mapcat :groups) rig))]
     (cond-> (update request :group-id (partial existing-id group-ids))
+      (string? (:brightness-reference request)) (update :brightness-reference keyword)
       (:fixture-ids request) (update :fixture-ids #(mapv (partial existing-id (set (map :id rig))) %))
       (:effect-ids request) (update :effect-ids #(mapv (partial existing-id (set (keys (get-in model [:registry :effects])))) %)))))
 
@@ -177,8 +185,11 @@
         _ (when (and old-cue (not= group-id (:scene-owner old-cue)))
             (fail "A user cue already owns the scene name" {:id id}))
         effect (:effect choice)
-        definition {:id id :version (inc (:version existing 0)) :name id :scene-owner group-id
+        global? (= :global (:brightness-reference group))
+        definition (cond-> {:id id :version (inc (:version existing 0)) :name id :scene-owner group-id
                     :tags [:emission :scene] :auto? false :targets (:fixture-ids group) :params (:params effect {}) :outputs (:outputs choice)}
+                     global? (assoc :brightness-reference :global)
+                     global? (assoc-in [:params matching/target-param] {:type :number :bounds [0 1] :default 1.0}))
         cue {:id id :name id :effect-id id :scene-owner group-id :tags [:scene] :auto? false
              :priority Integer/MIN_VALUE :reload-policy :pinned}
         model (retire model group now)
@@ -191,12 +202,13 @@
         schemas (:params definition)
         varied (when (and (:id effect) (> generation 1) (seq schemas))
                  (:params (random/randomize-params schemas {} (bit-and 0xffffffff (hash [group-id generation])))))
-        launch-params (if (:id effect) (merge {} varied params) {})
+        launch-params (cond-> (if (:id effect) (merge {} varied params) {}) global? (assoc matching/target-param target))
+        opacity (if global? 1.0 target)
         res (issue model group-id now {:op :cue/launch :cue-id id
                                        :launch {:mode :persistent :params launch-params
-                                                :system {:opacity target}}})
+                                                :system {:opacity opacity}}})
         instance-id (get-in res [:ack :instance-id])
-        group (assoc group :generation generation :instance-id instance-id :gain target :saturated 0
+        group (assoc group :generation generation :instance-id instance-id :gain opacity :saturated 0
                      :source-effect-id (:id effect) :last-source-id (or (:id effect) (:last-source-id group)) :status :seeking)]
     (assoc-in (:model res) (group-path group-id) group)))
 
@@ -206,15 +218,15 @@
     (if (= op :release)
       (-> (retire model old now) (update-in location dissoc group-id))
       (let [heads (targets model request old)
-            group (merge {:allow-generated? true :generation 0}
+            group (merge {:allow-generated? true :generation 0 :brightness-reference :local}
                          (cond-> old (contains? request :target) (dissoc :target-var))
-                         (select-keys request [:group-id :target :effect-ids :target-var :params :allow-generated?])
+                         (select-keys request [:group-id :target :effect-ids :target-var :params :allow-generated? :brightness-reference])
                          {:fixture-ids (mapv :id heads)})
             group (if (:target-var group)
                     (assoc group :target (get-in (:variables model) (:target-var group) (:target group))) group)
             _ (when-not (unit? (:target group)) (fail "Supply a normalized lighting target or a bound show variable" {:group group-id}))
             replace? (or (= op :vary) (nil? old)
-                         (some #(not= (get group %) (get old %)) [:fixture-ids :effect-ids :params :allow-generated?]))]
+                         (some #(not= (get group %) (get old %)) [:fixture-ids :effect-ids :params :allow-generated? :brightness-reference]))]
         (if replace?
           (let [generation (inc (:generation group))
                 choice (or (choose-source model heads group generation)
@@ -229,7 +241,7 @@
   [model request now]
   (let [request (normalize-ids model request)
         id (:command-id request)
-        body (select-keys request [:op :group-id :target :fixture-ids :effect-ids :params :target-var :allow-generated?])
+        body (select-keys request [:op :group-id :target :fixture-ids :effect-ids :params :target-var :allow-generated? :brightness-reference])
         receipts (get-in model [:extensions ::control :receipts] [])
         previous (when id (some #(when (and (= (:epoch model) (:epoch %)) (= id (:id %))) %) receipts))]
     (if previous
@@ -242,14 +254,31 @@
                     (conj (vec (take-last 127 receipts)) {:id id :epoch (:epoch model) :request body}))
           updated)))))
 
-(defn prepare [patch ids]
+(defn prepare
+  ([patch ids] (prepare patch ids (reduce max 0.0 (map capacity/full-brightness (:fixtures patch)))))
+  ([patch ids reference]
   (let [lookup (:by-id patch)
         fixtures (into [] (keep lookup) ids)
         universes (into (sorted-set)
                         (comp (mapcat (comp vals :compiled-channels))
                               (mapcat (juxt :coarse :fine)) (keep first))
                         fixtures)]
-    (capacity/prepare {:fixtures fixtures :universes (vec universes)})))
+    (capacity/prepare {:fixtures fixtures :universes (vec universes)} reference))))
+
+(defn- group-measurement [plan universes ids reference]
+  (let [display-ids (take 24 ids)
+        global? (= :global reference)
+        rows (capacity/measure-sources plan universes (if global? ids display-ids))
+        levels (select-keys (capacity/measure plan universes) [:local-brightness :global-brightness])
+        sources (into [] (keep (fn [id]
+                                 (when-let [row (rows id)]
+                                   (assoc (select-keys row [:local-brightness :global-brightness
+                                                           :global-maximum :global-color-maximum])
+                                          :fixture-id id)))) display-ids)]
+    (cond-> (assoc levels :source-count (count ids) :sources sources)
+      global? (assoc :dimmest-source (reduce min 1.0 (map :global-brightness (vals rows)))
+                     :brightest-source (reduce max 0.0 (map :global-brightness (vals rows)))
+                     :lowest-ceiling (reduce min 1.0 (map #(or (:global-color-maximum %) (:global-maximum %)) (vals rows)))))))
 
 (defn meter-frame
   "Keep plans and the last committed immutable DMX buffers at the frame owner.
@@ -258,6 +287,8 @@
   [prior patch groups universes]
   (let [old-buffers (:universes prior)
         same-patch? (identical? (:patch prior) patch)
+        reference (if same-patch? (:reference-brightness prior)
+                    (reduce max 0.0 (map capacity/full-brightness (:fixtures patch))))
         ;; Multiple disjoint groups can occupy the same DMX universe.
         comparisons (java.util.HashMap.)
         stable? (fn [u]
@@ -265,15 +296,17 @@
                     (let [same (Arrays/equals ^bytes (get old-buffers u) ^bytes (get universes u))]
                       (.put comparisons u same) same)))
         plans (reduce-kv
-               (fn [out id {:keys [fixture-ids]}]
+               (fn [out id {:keys [fixture-ids brightness-reference]}]
                  (let [old (get-in prior [:plans id])
                        reuse-plan? (and old same-patch? (= fixture-ids (:ids old)))
-                       plan (if reuse-plan? (:plan old) (prepare patch fixture-ids))]
+                       plan (if reuse-plan? (:plan old) (prepare patch fixture-ids reference))]
                    (assoc out id
-                          (if (and reuse-plan? (every? stable? (:universes plan))) old
-                            {:ids fixture-ids :plan plan :actual (:utilization (capacity/measure plan universes))}))))
+                          (if (and reuse-plan? (= brightness-reference (:reference old)) (every? stable? (:universes plan))) old
+                            (let [measurement (group-measurement plan universes fixture-ids brightness-reference)]
+                              {:ids fixture-ids :plan plan :reference brightness-reference
+                               :actual (:local-brightness measurement) :measurement measurement})))))
                {} groups)]
-    {:patch patch :universes universes :plans plans}))
+    {:patch patch :universes universes :plans plans :reference-brightness reference}))
 
 (defn feedback
   "Use one committed normalized measurement per group. Each update is bounded;
@@ -283,7 +316,9 @@
   (reduce-kv
    (fn [m id group]
      (let [{:keys [target instance-id gain saturated target-var]} group
-           value (get measurements id)
+           measurement (get measurements id)
+           global? (= :global (:brightness-reference group))
+           value (if (map? measurement) (get measurement (if global? :global-brightness :local-brightness)) measurement)
            target (if target-var (get-in (:variables m) target-var target) target)
            owned? #(= {:adapter :lighting-scene :group-id id} (:source %))
            instance (or (when-let [inst (get-in m [:instances instance-id])] (when (owned? inst) inst))
@@ -297,25 +332,34 @@
          (let [suspended? (or suspended? (:blackout? m) (get-in instance [:system :paused?]) (= :releasing (:phase instance))
                               (zero? (:master m)) (false? (get-in m [:transport :playing?])))
                error (- target value)
-               close? (<= (abs error) 0.015)
-               next-gain (cond (or close? suspended?) gain
+               close? (if (and global? (map? measurement))
+                        (and (<= (abs (- target (:dimmest-source measurement))) 0.015)
+                             (<= (abs (- target (:brightest-source measurement))) 0.015))
+                        (<= (abs error) 0.015))
+               next-gain (cond global? 1.0 (or close? suspended?) gain
                                :else (max 0.0 (min 1.0 (+ gain (max -0.2 (min 0.2 (* error 0.7)))))))
                capped? (and (> error 0.015) (>= gain 0.999))
                saturated (if (and capped? (not suspended?)) (min 6 (inc (or saturated 0))) 0)
-               status (cond suspended? :limited close? :at-target
+               status (cond suspended? :limited
+                            (and global? (:lowest-ceiling measurement)
+                                 (> target (+ (:lowest-ceiling measurement) 1.0e-8))) :limited
+                            close? :at-target
                             (and (> saturated 2) (zero? value)) :unlit
                             (> saturated 2) :limited
                             (and (< error -0.015) (zero? gain)) :over-target :else :seeking)
-               same-group? (and (= instance-id (:instance-id (get-in m (group-path id))))
+               metrics (when (map? measurement) measurement)
+               same-group? (and (or (nil? metrics) (every? (fn [[k v]] (= v (get group k))) metrics)) (= instance-id (:instance-id (get-in m (group-path id))))
                                 (= target (:target group)) (= value (:actual group))
                                 (= gain next-gain) (= saturated (:saturated group)) (= status (:status group)))
                adjusted (if same-group? group
-                          (assoc group :actual value :target target :gain next-gain :saturated saturated :status status))
+                          (assoc (merge group metrics) :actual value :target target :gain next-gain :saturated saturated :status status))
                m (cond-> m
                    (not same-group?) (assoc-in (group-path id) adjusted)
+                   (and global? (not= (get-in instance [:params matching/target-param]) target))
+                   (assoc-in [:instances instance-id :params matching/target-param] target)
                    (not= next-gain (get-in instance [:system :opacity]))
                    (assoc-in [:instances instance-id :system :opacity] next-gain))]
-           (if (and (= saturated 5) (:allow-generated? group) (:source-effect-id group))
+           (if (and (not global?) (= saturated 5) (:allow-generated? group) (:source-effect-id group))
              (let [wanted (set (:fixture-ids group))
                    heads (filterv #(and (wanted (:id %)) (eligible? %)) (fixtures m))]
                (if (seq heads) (launch m adjusted (generated heads target (:generation group)) now) m))
