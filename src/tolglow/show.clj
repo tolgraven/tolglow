@@ -603,12 +603,12 @@
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
-            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
-        {:model (-> (if (= scope :fog-control)
-                      (fog-control/configure model values)
-                      (assoc-in model [:settings scope] settings))
-                    (update :revision inc))
-         :ack {:status :accepted}}))
+            settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
+            updated (-> (if (= scope :fog-control)
+                          (fog-control/configure model values)
+                          (assoc-in model [:settings scope] settings))
+                        (update :revision inc))]
+        {:model updated :ack {:status :accepted :revision (:revision updated)}}))
     :auto
     (let [old-state (get-in model [:auto :state])
           model (if old-state

@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.autopilot-signal :as signal]
+            [tolglow.studio.spatial-drafts :as drafts]
             [tolglow.studio.spatial-picker :as picker]
             [tolglow.studio.spatial-preview :as preview]))
 
@@ -19,40 +20,36 @@
 (defn sorted-ids [m] (sort-by (juxt picker/label pr-str) (keys m)))
 (defn fresh-id [prefix ids] (first (remove (set ids) (map #(str prefix "-" %) (iterate inc 1)))))
 (defn view [db] (picker/show db))
-(defn state [db]
-  (let [saved (::ui db) id (picker/identity-of db)]
-    (if (= id (:owner saved)) saved {:owner id})))
-(defn ui-db [db f & args] (assoc db ::ui (apply f (state db) args)))
 (defn config [db] (get-in (view db) [:settings :spatial] {}))
 (defn active-id [db]
-  (let [id (:chosen (state db)) volumes (:volumes (config db))]
+  (let [id (:chosen (drafts/state db)) volumes (:volumes (config db))]
     (if (contains? volumes id) id (first (sorted-ids volumes)))))
-(rf/reg-sub ::state (fn [db _] (state db)))
+(rf/reg-sub ::state (fn [db _] (drafts/state db)))
 (rf/reg-sub ::settings (fn [db _] (config db)))
 (rf/reg-sub ::selected (fn [db _] (active-id db)))
 (rf/reg-sub ::connected (fn [db _] (get-in db [:connection :connected?])))
-(rf/reg-event-db ::choose (fn [db [_ id]] (ui-db db assoc :chosen id :message nil)))
+(rf/reg-event-db ::choose (fn [db [_ id]] (drafts/update-ui db assoc :chosen id :message nil)))
 (rf/reg-event-db ::select-preview
   (fn [db [_ key]]
     (if-let [id (some #(when (= (pr-str %) key) %) (keys (:volumes (config db))))]
-      (ui-db db assoc :chosen id) db)))
-(rf/reg-event-db ::edit (fn [db [_ path value]] (ui-db db assoc-in path value)))
+      (drafts/update-ui db assoc :chosen id) db)))
+(rf/reg-event-db ::edit (fn [db [_ path value]] (drafts/update-ui db assoc-in path value)))
 
 (rf/reg-event-db ::volume-field
   (fn [db [_ id field value]]
-    (let [path [:drafts id] current (or (get-in (state db) path) (get-in (config db) [:volumes id]))
+    (let [path [:drafts id] current (or (get-in (drafts/state db) path) (get-in (config db) [:volumes id]))
           value (if (fn? value) (value current) value)]
       (if current
-        (ui-db db assoc-in path (if (nil? value) (dissoc current field) (assoc current field value)))
+        (drafts/update-ui db assoc-in path (if (nil? value) (dissoc current field) (assoc current field value)))
         db))))
 
 (defn save [db values message draft-key selected]
   (let [owner (picker/identity-of db) token (str (random-uuid))]
-    (when (and (:runtime-id owner) (get-in db [:connection :connected?]) (nil? (:pending (state db))))
-      {:db (ui-db db assoc :pending token :message nil)
+    (when (and (:runtime-id owner) (get-in db [:connection :connected?]) (nil? (:pending (drafts/state db))))
+      {:db (drafts/update-ui db assoc :pending token :message nil)
        :studio/http {:path "/api/settings" :typed? true
                      :body {:scope :spatial :values values :runtime-id (:runtime-id owner) :expected-epoch (:epoch owner)}
-                     :on-success [::saved owner token message draft-key (get-in (state db) draft-key) selected]
+                     :on-success [::saved owner token message draft-key (get-in (drafts/state db) draft-key) selected]
                      :on-failure [::failed owner token]}})))
 (defn- parse-volumes [volumes]
   (update-vals volumes (fn [spec] (if (:radius-source spec) (update spec :radius-source signal/parse-spec) spec))))
@@ -60,17 +57,12 @@
 (rf/reg-event-fx ::save
   (fn [{:keys [db]} [_ values message draft-key selected]]
     (try (save db (cond-> values (:volumes values) (update :volumes parse-volumes)) message draft-key selected)
-         (catch js/Error e {:db (ui-db db assoc :message (.-message e))}))))
-(rf/reg-event-db ::saved
-  (fn [db [_ owner token message k draft selected _]]
-    (if (and (= owner (picker/identity-of db)) (= token (:pending (state db))))
-      (ui-db db (fn [s] (cond-> (assoc s :pending nil :message message)
-                           (and k (= draft (get-in s k))) (update-in (butlast k) dissoc (last k))
-                           selected (assoc :chosen selected)))) db)))
+         (catch js/Error e {:db (drafts/update-ui db assoc :message (.-message e))}))))
+(rf/reg-event-db ::saved drafts/acknowledge)
 (rf/reg-event-db ::failed
   (fn [db [_ owner token error]]
-    (if (and (= owner (picker/identity-of db)) (= token (:pending (state db))))
-      (ui-db db assoc :pending nil :message (str error)) db)))
+    (if (and (= owner (picker/identity-of db)) (= token (:pending (drafts/state db))))
+      (drafts/update-ui db assoc :pending nil :message (str error)) db)))
 
 (defn thrown [spec point velocity throw-id]
   (assoc spec :shape :ball :position point :velocity velocity :throw-id throw-id))

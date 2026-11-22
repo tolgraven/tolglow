@@ -37,7 +37,10 @@
       ack)))
 
 (defn settings [rt now settings]
-  (submit rt now :settings {:scope :spatial :values settings}))
+  (let [receipt (submit rt now :settings {:scope :spatial :values settings})]
+    (is (pos-int? (:revision receipt)))
+    (is (<= (:revision receipt) (:revision (show/snapshot rt))))
+    receipt))
 
 (defn output [rt]
   @(::captured-dmx rt))
