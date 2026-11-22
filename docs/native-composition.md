@@ -70,7 +70,7 @@ outputs can read those outputs and transform them in the same member.
 
 Use `:default` on any field reference when a previous value may be absent.
 Colors accept normalized RGB triples or portable thi.ng colors. Aim points use
-signed XYZ world coordinates in meters; directions use XYZ vectors.
+signed XYZ world coordinates in meters. Directions use XYZ vectors.
 `:beat-ratio` is a musical value shared within the layer for the current head
 and frame. Afterglow converts the resulting physical attributes to DMX after
 composition. A scratch beat ratio never consumes a fixture channel.
