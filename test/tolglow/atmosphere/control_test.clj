@@ -38,6 +38,8 @@
     (is (empty? (fog/demands (fog/advance armed patch (observed 0.1 0) nil 20 true))))
     (is (= [:other] (mapv :target-id (get-in (fog/music-pulses patch (observed 0.24 0) nil low
                   {:assignments [{:target-id :jet} {:target-id :other}]} [] 0 false) [:block :assignments]))))
+    (is (nil? (:block (fog/music-pulses patch (observed 0.36 50) low high
+                                        {:assignments [{:target-id :other :value 0.5}]} [] 50 false))))
     (is (thrown? Exception (fog/configure armed {:hysteresis 0})))
     (is (false? (get-in (fog/disarm-restored armed) [:settings :fog-control :enabled?])))))
 

@@ -11,7 +11,7 @@
 (defn settings [values]
   (let [{:keys [enabled? target hysteresis fog-fixture-ids] :as s} (merge defaults values)]
     (when-not (and (boolean? enabled?) (unit? target) (unit? hysteresis) (pos? hysteresis)
-                   (vector? fog-fixture-ids) (<= (count fog-fixture-ids) 64)
+                   (vector? fog-fixture-ids)
                    (every? #(or (keyword? %) (string? %)) fog-fixture-ids)
                    (= (count fog-fixture-ids) (count (set fog-fixture-ids))))
       (throw (ex-info "Fog control requires a unit target, a positive unit band and distinct selected fogger IDs" {})))
@@ -32,8 +32,8 @@
 (defn valid-duty? [duty]
   (and (map? duty)
        (let [{:keys [max-on-s min-off-s max-level]} (merge default-duty duty)]
-         (and (finite? max-on-s) (<= 0.025 max-on-s 3600)
-         (finite? min-off-s) (<= 0 min-off-s 86400) (unit? max-level) (pos? max-level)))))
+         (and (finite? max-on-s) (pos? max-on-s) (Double/isFinite (* 1000.0 max-on-s))
+              (finite? min-off-s) (not (neg? min-off-s)) (Double/isFinite (* 1000.0 min-off-s)) (unit? max-level) (pos? max-level)))))
 
 (defn- recent? [now stamp] (and (finite? stamp) (<= 0 (- now stamp) 500)))
 
@@ -148,7 +148,11 @@
   existing pulse. Manual cues take precedence on both kinds of device."
   [patch observation previous control block blocks now bypass?]
   (let [reserved (automatic-ids control)
-        assignments (remove #(contains? reserved (:target-id %)) (:assignments block))
+        venue-hold? (and (seq reserved)
+                         (or (:coasting? control) (= :above (:zone control)) (not (:fresh? control))
+                             (not (and (unit? (:target control)) (pos? (:target control))))))
+        assignments (when-not (or bypass? venue-hold?)
+                      (remove #(contains? reserved (:target-id %)) (:assignments block)))
         requested (into {} (map (juxt :target-id identity)) assignments)
         sources (into {} (map (juxt :fixture-id identity)) (:sources observation))
         previous-pumps (:music-pumps previous)
