@@ -23,6 +23,7 @@
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
@@ -50,6 +51,7 @@
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.photometry :as photometry]
+            [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
             [tolglow.calibration.session :as calibration-session]
             [tolglow.audio.capture :as audio]
@@ -79,9 +81,15 @@
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view]}]
+  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+        fixtures (get-in model [:rig :fixtures])
+        patch @(:patch runtime)
+        gains (if (identical? fixtures (:fixtures patch))
+                (:brightness-gains patch)
+                (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
-            :receiver-surfaces (surfaces/receivers (:rig model))
+            :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
             :waveform-revision (get-in model [:waveforms :revision] 0)
@@ -111,12 +119,8 @@
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
                                         :playback (get-in model [:composition-runs (:id %) :playback]))
                                 (sort-by (comp str :id) (vals (:compositions model))))
-            :output {:values (let [fixtures (get-in model [:rig :fixtures])
-                                   cached @(:patch runtime)]
-                               (preview/values output fixtures
-                                               (if (identical? fixtures (:fixtures cached))
-                                                 (:brightness-gains cached)
-                                                 (preview/brightness-gains fixtures))))
+            :output {:values (reflections/with-footprints optics (preview/values output fixtures gains))
+                     :edge-tracking (:edge-tracking output [])
                      :atmosphere (:atmosphere output)
                      :preview-only? true
                      :lighting-capacity (:lighting-capacity output)
@@ -127,7 +131,7 @@
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})}))
+                                   :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
@@ -168,7 +172,7 @@
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (photometry/disarm (calibration/disarm-restored (or model (demo/model))))
+   (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
@@ -232,6 +236,7 @@
       :retired-buffers (atom {}) :known-universes (atom (set (:universes patch)))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :brightness-gains (preview/brightness-gains fixtures)})
       :compile (fn [definition]
                  (let [{:keys [compiler cache]} @compiler-context]
@@ -337,6 +342,7 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
+    :fog-calibration (fog-scan/operation model payload ((:now-ms (:publisher runtime))))
     :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
                                            (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
     :calibration (do (when (and (= :start (:op payload)) (photometry/current model))
@@ -845,7 +851,8 @@
                          restored? restored-output])))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms)) time-ms))
                        (calibration/advance physical-receipts physical-now)
-                       (photometry/advance physical-receipts physical-now)) [] false nil] messages)
+                       (photometry/advance physical-receipts physical-now)
+                       (fog-scan/expire physical-now)) [] false nil] messages)
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
                      (when restored? (reset! (:clock runtime) {:origin-nanos (System/nanoTime) :time-ms time-ms}))
@@ -925,6 +932,8 @@
                                      patch (into % extra-blocks)
                                      {:master (get limit :effective-master (:master model)) :blackout? (pause-look/blackout? model)
                                       :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
+                                      :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
+                                                       (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
                                       :previous-values (or (get-in before [:output :values]) {})
                                       :previous-compact (get-in before [:output :compact])}))
                            result (:result resolved)
@@ -990,17 +999,20 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
-                        (or (not= type :photometry) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
+                        (or (not (#{:photometry :fog-calibration} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
                          (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+               payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
+                         (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
+                         payload)
                payload (if (= :import type)
                          (let [document (persistence/read-string (:source payload))
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -1180,7 +1192,7 @@
   (let [[model output] (locking (:lock runtime)
                          (let [{:keys [model output]} @(:state runtime)
                                atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (merge model (connections/export-state (:connections runtime) model))
+                           [(cond-> (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))
                               atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
     (format-show model (render/portable-frame output))))
 
