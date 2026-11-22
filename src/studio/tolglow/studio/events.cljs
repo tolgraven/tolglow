@@ -62,7 +62,7 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body typed? on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? raw-response? on-success on-failure timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -78,11 +78,11 @@
                               (let [type (or (.get (.-headers response) "content-type") "")
                                     data (cond
                                            (str/includes? type "application/transit+json")
-                                           (projection/presentation (transit/decode text))
+                                           (let [v (transit/decode text)] (if raw-response? v (projection/presentation v)))
                                            (str/includes? type "application/json")
                                            (js->clj (js/JSON.parse text) :keywordize-keys true)
                                            :else {:message text})]
-                                (if (or (not (.-ok response)) (= "rejected" (:status data)) (:error data))
+                                (if (or (not (.-ok response)) (contains? #{:rejected "rejected"} (:status data)) (:error data))
                                   (throw (js/Error. (str (error-message data))))
                                   data)))))))
         (.then #(dispatch-result on-success %))

@@ -10,7 +10,10 @@
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :display-mode :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
-        (assoc :preset (when (map? (:preset view))
+        (assoc :target-picker (when-let [picker (:target-picker view)]
+                                 (assoc (select-keys picker [:open? :page :pages :armed])
+                                        :rows (mapv #(select-keys % [:kind :label]) (take 8 (:rows picker)))))
+               :preset (when (map? (:preset view))
                          (select-keys (:preset view) [:saved? :changed? :record? :action]))
                :touched-control (when (map? (:touched-control view))
                                   (select-keys (:touched-control view) [:target :editable?])))
@@ -116,6 +119,15 @@
                      compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
                      :else [widgets/typed-display parameter])])])
 
+(defn- target-choices [{:keys [rows page pages]}]
+  [:section.push-targets {:aria-label "Cue launch targets"}
+   [:div.push-targets-heading [:strong "Launch targets"] [:span (str "Page " page " / " pages)]
+    [:small "Choose with a pad in the bottom row"]]
+   [:div.push-target-columns
+    (for [i (range 8) :let [row (get rows i)]]
+      ^{:key i} [:article {:class (if row "available" "empty")}
+                 (when row [:<> [:small (widgets/label (:kind row))] [:strong (:label row)]])])]])
+
 (defn display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
@@ -126,7 +138,9 @@
       [:span.push-brand (or (:title view) "Tolglow")]
       [:span.push-page (widgets/label (:page view))]
       [:strong.push-selection (or (:name cue) (:name effect) (some-> (:selected view) widgets/label) "Choose a cue")]
-      [navigation view]
+      (if-let [armed (get-in view [:target-picker :armed])]
+        [:span.push-armed-target (str "Next cue → " (:label armed))]
+        [navigation view])
       [preset-feedback view]
       (if global
         [global-control global]
@@ -136,10 +150,11 @@
          [:span.push-master (str (widgets/number-label (when (widgets/finite? (:master view)) (* 100 (:master view)))) "%")]])
       [:span.push-status {:class (cond (:blackout? view) "blackout" (:releasing? cue) "releasing" active? "active")}
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
-     (if audio?
-       [:<> [:section.push-audio {:aria-label "Captured audio display"} [widgets/audio-waveform (:audio-waveform view)]]
+     (cond
+       (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
+       audio? [:<> [:section.push-audio {:aria-label "Captured audio display"} [widgets/audio-waveform (:audio-waveform view)]]
         [parameters view true]]
-       [:<> [parameters view false]
+       :else [:<> [parameters view false]
         [:footer.push-cells
          (for [index (range 8) :let [cell (get (:cells view) index)
                                     color (widgets/color-css (:color cell))

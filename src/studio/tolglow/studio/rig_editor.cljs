@@ -3,7 +3,8 @@
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.interop :as interop]
-            [tolglow.studio.camera-controls :as camera]))
+            [tolglow.studio.camera-controls :as camera]
+            [tolglow.studio.spatial-preview :as spatial-preview]))
 
 (defn identity-key [db]
   (js/JSON.stringify (clj->js (mapv #(get-in db [:show %]) [:runtime-id :show-id :epoch]))))
@@ -91,6 +92,8 @@
   (fn [{:keys [db]} [_ {:keys [type point surface-id identity] :as detail}]]
     (cond
       (not= identity (identity-key db)) {}
+      (= type "throw") {:dispatch [:tolglow.studio.spatial/throw identity point (:velocity detail)]}
+      (= type "select-volume") {:dispatch [:tolglow.studio.spatial/select-preview (:volume-id detail)]}
       (= type "surface") (if (= "aim" (:tool (editor db))) (surface-command db (:aim-mode (editor db)) point surface-id) {})
       (= type "missed-surface") {:db (put-editor db (assoc (editor db) :message "Tap a receiving surface within the room."))}
       :else {:db (interaction db detail)})))
@@ -289,14 +292,14 @@
      [:div.panel-top [:span.section-label "PLACE & CHOREOGRAPH"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
-       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["aim" "Aim at surface"]]]
+       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["aim" "Aim at surface"] ["volume-select" "Select volume"]]]
          ^{:key tool} [:button.button {:aria-pressed (= tool (:tool state)) :on-click #(dispatch! [:rig-editor/set [:tool] tool])} label])]
       [:div.rig-editor-actions
        [:button.button {:disabled (empty? (:undo state)) :on-click #(dispatch! [:rig-editor/undo])} "Undo"]
        [:button.button {:on-click #(dispatch! [:rig-editor/cancel])} "Discard draft"]]]
      [:div.rig-editor-layout
       [:div.rig-editor-scene
-       [interop/preview show]
+       [spatial-preview/scene show (get-in db [:server-projection :view :settings :spatial])]
        [camera/controls]
        [:div.rig-view-controls
         [:label "Camera view" [:select {:aria-label "Rig camera view" :value (get-in db [:ui :preview-settings :camera] "audience")
@@ -311,7 +314,10 @@
         [number-field "Snap · m" (:snap state) [:rig-editor/set [:snap]] {:min 0 :step 0.05}]]
        [:p.small.muted "Move keeps an object's depth in the chosen plane. Rotate turns around the plane normal. Choose Explore to move the camera; Escape cancels a drag."]
        [pose-fields db state]]
-      (if (= "aim" (:tool state)) [aim-fields db state] [path-fields db state])]]))
+      (case (:tool state) "aim" [aim-fields db state]
+        "throw" [:p.small "Drag from the launch point in the selected plane. Release to throw; Escape cancels."]
+        "volume-select" [:p.small "Tap the centre of a volume to edit it below."]
+        [path-fields db state])]]))
 
 
 (def panel

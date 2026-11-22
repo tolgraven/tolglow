@@ -39,9 +39,9 @@ test('fixture and truss pose changes preserve actual geometry instances and cali
 });
 test('overlay reuses hints until authoring changes and disposes removed geometry', () => {
   const overlay = new RigOverlay(), snapshot = {rig, editor: {tool: 'draw', points: [[0, 0, 0], [1, 0, 0]], plane: 'xz'}};
-  overlay.update(snapshot); const first = overlay.scene.children[0]; let disposed = false; first.geometry.addEventListener('dispose', () => {disposed = true;});
-  overlay.update(snapshot); assert.equal(first, overlay.scene.children[0]);
-  overlay.update({rig}); assert.equal(overlay.scene.children.length, 0); assert.equal(disposed, true); overlay.dispose();
+  overlay.update(snapshot); const first = overlay.rig.children[0]; let disposed = false; first.geometry.addEventListener('dispose', () => {disposed = true;});
+  overlay.update(snapshot); assert.equal(first, overlay.rig.children[0]);
+  overlay.update({rig}); assert.equal(overlay.rig.children.length, 0); assert.equal(disposed, true); overlay.dispose();
 });
 test('pointer gestures retain offsets, reject unrelated fingers, cancel on show replacement and release navigation on disposal', () => {
   const messages = [], canvas = new EventTarget(); Object.assign(canvas, {style: {}, focus(){}, getBoundingClientRect: () => bounds, setPointerCapture(){}, hasPointerCapture: () => false});
@@ -109,4 +109,20 @@ test('aim selects the nearest bounded receiver only on a completed tap', () => {
   input.down(tap); input.finish(tap, false);
   assert.equal(messages.at(-1).type, 'missed-surface');
   input.dispose();
+});
+
+test('throw uses drag distance and elapsed time in the chosen plane and cancels cleanly', () => {
+  const messages = [], canvas = new EventTarget();
+  Object.assign(canvas, {style:{}, focus(){}, getBoundingClientRect: () => bounds, setPointerCapture(){}, hasPointerCapture: () => false});
+  canvas.addEventListener('tolglow-editor', e => messages.push(e.detail));
+  const input = new RigEditorInput({canvas, camera, setInteractionActive(){}});
+  input.update({rig, 'show-id':'show', epoch:1, editor:{tool:'throw',plane:'xz','plane-value':1,snap:0}});
+  const p = projectPoint(camera,bounds,[0,1,0]), end = projectPoint(camera,bounds,[1,1,0]);
+  const down = {pointerId:2, clientX:p.x, clientY:p.y, timeStamp:100, button:0, preventDefault(){},stopImmediatePropagation(){}};
+  const up = {...down,clientX:end.x,clientY:end.y,timeStamp:350};
+  input.down(down); input.finish(up,true); assert.ok(!messages.some(x => x.type === 'throw'));
+  input.down(down); input.finish(up,false);
+  const toss = messages.find(x => x.type === 'throw');
+  assert.ok(Math.abs(toss.velocity[0]-4) < .00001); assert.ok(Math.abs(toss.velocity[1]) < .00001);
+  assert.equal(toss.point[1],1); input.dispose();
 });

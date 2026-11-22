@@ -135,3 +135,10 @@
   (is (nil? (widgets/audio-bins {:bins [{:min -1 :max js/NaN :rms 0.5}]})))
   (is (nil? (widgets/audio-bins {:bins (vec (repeat 513 {:min 0 :max 0 :rms 0}))})))
   (is (= 1 (count (widgets/audio-bins {:bins [{:min 0 :max 0 :rms 0}]})))))
+
+(deftest target-picker-bounds-visible-rows-and-omits-device-internals
+  (let [view (display/normalize-view {:target-picker {:open? true :page 2 :pages 4
+                                                     :rows (repeat 30 {:kind :volume :label "Orbit"
+                                                                       :selector {:volume-id :orbit}})}})]
+    (is (= (vec (repeat 8 {:kind :volume :label "Orbit"})) (get-in view [:target-picker :rows])))
+    (is (= 2 (get-in view [:target-picker :page])))))
