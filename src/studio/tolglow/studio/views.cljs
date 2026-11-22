@@ -12,6 +12,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
+            [tolglow.studio.fog-fields :as fog-fields]
             [tolglow.studio.rdm :as rdm]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.rig-editor :as rig-editor]
@@ -21,6 +22,7 @@
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
+            [tolglow.studio.lighting-scenes :as lighting-scenes]
             [tolglow.studio.workspace :as workspace]))
 
 (defn- send! [event] (rf/dispatch event))
@@ -380,7 +382,7 @@
                               :on-click #(set-ui! [:performance-section] id)} title])]]
      [:div.performance-layout {:class (when (get-in db [:ui :preview-expanded?]) "preview-expanded")}
       [:div.performance-launch [cue-grid db]]
-      [:div.performance-live [performance/board db parameter-control]]
+      [:div.performance-live [performance/board db parameter-control] [lighting-scenes/panel]]
       [:div.performance-room [preview-panel db]]
       [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]]]))
 
@@ -550,11 +552,13 @@
            ^{:key dimension} [:label title [number-input {:id (str "room-" (name dimension)) :type "number" :min 1 :max 1000 :step 0.1
                                                    :value (get-in rig [:room dimension] 1)
                                                    :on-change #(when-let [n (number-value %)] (input! [:studio/rig-set [:room dimension] n]))}]])]
-        [:fieldset.form-row.room-dimensions
-         [:legend "Room atmosphere"]
+        (when-let [measurement (get-in rig [:room :measured-fog])]
+          [fog-fields/measured-clearance measurement])
+        [:fieldset.form-row.room-dimensions {:disabled (some? (get-in rig [:room :measured-fog]))}
+         [:legend (if (get-in rig [:room :measured-fog]) "Configured fallback" "Room atmosphere")]
          (for [[field title default minimum maximum]
                [[:air-changes-per-hour "Ventilation (air changes/h)" 0 0 3600]
-                [:fog-half-life-s "Fog half-life (s)" 180 0 nil]]]
+                [:fog-half-life-s "Fog deposition half-life (s)" 180 0 nil]]]
            ^{:key field}
            [:label {:for (name field)} title
             [number-input {:id (name field) :type "number" :step "any"

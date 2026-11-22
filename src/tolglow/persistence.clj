@@ -16,6 +16,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.atmosphere.control :as fog-control]
+            [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.signals :as signals]
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
@@ -242,6 +243,7 @@
   (check! (map? (:extensions model {})) [:extensions] "Extensions must be an explicit map")
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
+  (lighting-scenes/validate-state! model)
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)
@@ -408,14 +410,15 @@
                                     (distinct (concat (map :owner-id (vals (:composition-runs saved)))
                                                       (keep #(get-in % [:source :native-layer :id]) ordered)
                                                       (when-let [owner (get-in saved [:auto :state :owner-id])] [owner])))))
-        model (assoc saved :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
+        model (assoc (lighting-scenes/restore saved ids) :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
         instances (into {} (for [instance ordered
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
                                        layer (get-in instance [:source :native-layer])
-                                       source (if-let [new-owner (owners owner)]
+                                       source (or (lighting-scenes/session-source saved instance)
+                                                  (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}
-                                                {:adapter :restore :epoch epoch})]]
+                                                {:adapter :restore :epoch epoch}))]]
                              [id (-> (reduce (fn [entry field]
                                                (if (get entry field)
                                                  (update entry field #(assoc % :instance-id id :epoch epoch)) entry))

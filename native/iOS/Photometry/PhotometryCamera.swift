@@ -25,14 +25,20 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private var values: [Double] = []
     private var runTransfer: SDRTransfer?
 
-    func start(shutter: Int32) async throws {
+    private var fogFeed: FogCameraFeed?
+
+    func start(shutter: Int32, fogFeed: FogCameraFeed? = nil) async throws {
         guard await AVCaptureDevice.requestAccess(for: .video) else {
             throw BrightnessCaptureFailure("Allow camera access in iPhone Settings to measure light.")
         }
         try Task.checkCancellation()
         try await withCheckedThrowingContinuation { (resume: CheckedContinuation<Void, Error>) in
             queue.async {
-                do { try self.configure(shutter: shutter); resume.resume() }
+                do {
+                    self.fogFeed = fogFeed
+                    try self.configure(shutter: shutter)
+                    resume.resume()
+                }
                 catch { self.cleanup(); resume.resume(throwing: error) }
             }
         }
@@ -59,6 +65,8 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         if let connection = output.connection(with: .video), connection.isVideoStabilizationSupported {
             connection.preferredVideoStabilizationMode = .off
         }
+        if fogFeed != nil, let connection = output.connection(with: .video),
+           connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
         session.commitConfiguration()
         device = camera
         for name in [AVCaptureSession.wasInterruptedNotification, AVCaptureSession.runtimeErrorNotification] {
@@ -120,7 +128,8 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard pending != nil, ProcessInfo.processInfo.systemUptime >= settleUntil,
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard pending != nil || fogFeed != nil, uptime >= settleUntil,
               let device, device.exposureMode == .custom, device.focusMode == .locked,
               device.whiteBalanceMode == .locked, abs(device.iso - iso) <= max(0.2, iso * 0.01),
               abs(CMTimeGetSeconds(device.exposureDuration) - exposureSeconds) < exposureSeconds * 0.025,
@@ -129,9 +138,16 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             let transfer = try Self.transfer(buffer, format)
             if let prior = runTransfer, prior != transfer { throw BrightnessCaptureFailure("Camera transfer function changed. Restart calibration.") }
             runTransfer = transfer
+            if let fogFeed {
+                fogFeed.capture(buffer, transfer: transfer, uptime: uptime)
+                return
+            }
             values.append(try Self.frameLuminance(buffer, transfer: transfer))
             if values.count == 15 { finish(.success(try PhotometryFrame.stableMedian(values))) }
-        } catch { finish(.failure(error)) }
+        } catch {
+            if fogFeed != nil { onInterruption?() }
+            else { finish(.failure(error)) }
+        }
     }
 
     private static func transfer(_ buffer: CVPixelBuffer, _ format: CMFormatDescription) throws -> SDRTransfer {
@@ -167,6 +183,8 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     func stop() { queue.async { self.cleanup() } }
     private func cleanup() {
         finish(.failure(CancellationError()))
+        fogFeed?.finish()
+        fogFeed = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
         if session.isRunning { session.stopRunning() }
