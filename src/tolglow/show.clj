@@ -148,6 +148,11 @@
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
 
+(defn variables
+  "All show variables from one committed frame, for headless callers and the REPL."
+  [runtime]
+  (get-in @(:state runtime) [:model :variables]))
+
 (declare send-output! heartbeat! submit!)
 
 (defn attach-observer!

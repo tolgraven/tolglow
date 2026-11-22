@@ -53,5 +53,19 @@
         (is (< (abs (- (/ front 255.0) 0.72)) 0.02))
         (is (< (abs (- level (:target (group :back)))) 0.025))
         (is (< (abs (- (/ back 255.0) level)) 0.06))
+        (is (== 3 (:fog/clearance-half-life-s (show/variables rt))))
         (is (<= fog 128)))
       (finally (show/stop! rt)))))
+
+(deftest disarmed-and-unmetered-rooms-expose-the-known-response
+  (let [jet {:id :jet :universe 1 :address 1 :channels {:fog 1} :fogger {:flow-m3-min 60}}
+        room {:width 8 :height 3 :depth 10 :measured-fog {:clearance-half-life-s 12}}]
+    (doseq [fixtures [[jet] []]]
+      (let [rig {:room room :fixtures fixtures}
+            rt (show/create-runtime {:model (assoc (control/new-show {}) :rig rig)})]
+        (try
+          (doseq [t [0 25 50]] (show/tick! rt t))
+          (let [vars (show/variables rt)]
+            (is (== 12 (:fog/clearance-half-life-s vars)))
+            (is (= (when (seq fixtures) 0.0) (:fog/level-change-per-s vars))))
+          (finally (show/stop! rt)))))))
