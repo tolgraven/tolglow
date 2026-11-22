@@ -25,6 +25,8 @@
             [tolglow.composition :as composition]
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
+            [tolglow.spatial :as spatial]
+            [tolglow.spatial.actions :as spatial-actions]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
             [tolglow.event-subscribers :as event-subscribers]
@@ -248,6 +250,7 @@
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
+  (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
   (when (contains? (:settings model) :lighting-capacity)
     (capacity/settings (get-in model [:settings :lighting-capacity])))
   (when (contains? (:settings model) :expressive)
@@ -414,12 +417,13 @@
                                     (distinct (concat (map :owner-id (vals (:composition-runs saved)))
                                                       (keep #(get-in % [:source :native-layer :id]) ordered)
                                                       (when-let [owner (get-in saved [:auto :state :owner-id])] [owner])))))
-        model (assoc (lighting-scenes/restore saved ids) :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
+        model (assoc (spatial/restore (lighting-scenes/restore saved ids) ids epoch) :epoch epoch :revision (inc (max (:revision current-model) (:revision saved))))
         instances (into {} (for [instance ordered
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
                                        layer (get-in instance [:source :native-layer])
-                                       source (or (conductor-actions/session-source (get-in saved [:extensions :tolglow.autopilot/run :actions]) instance)
+                                       source (or (spatial-actions/session-source saved instance)
+                                                  (conductor-actions/session-source (get-in saved [:extensions :tolglow.autopilot/run :actions]) instance)
                                                   (lighting-scenes/session-source saved instance)
                                                   (if-let [new-owner (owners owner)]
                                                 {:adapter (get-in instance [:source :adapter]) :session-id new-owner}

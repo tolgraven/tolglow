@@ -42,6 +42,8 @@ The energy autopilot can conduct the whole rig, a group, a cue page or an explic
 
 The first full conductor benchmark on a shared host exceeded the 25 ms frame budget on all 160 measured ticks with 2,048 RGBW pixels and 64 moving heads. Median wall time was 41.77 ms on ordinary ticks and 59.43 ms on decision ticks. Repeat the same workload to assess changes. Physical lamp measurements, sustained performance on the venue computer, iPad Safari and a live external authoring provider remain field checks. [Profiling the lighting controls](performance/lighting-controls.md)
 
+See [spatial cue actions](spatial-show.md) for moving fixture targets, HDR contact actions and demand-driven signal sampling.
+
 ## Active studio integration
 
 Musical authoring uses beat/bar/phrase units first, with explicit meter and

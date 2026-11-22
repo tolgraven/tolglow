@@ -5,6 +5,7 @@
   (:refer-clojure :exclude [sync])
   (:require [afterglow.control.clock :as clock]
             [afterglow.reactive :as graph]
+            [tolglow.spatial :as spatial]
             [tolglow.agents :as agent-manager]
             [tolglow.audio.capture :as capture]
             [tolglow.agents.credentials :as credentials]
@@ -158,7 +159,9 @@
             _ (vswap! resources assoc :reactive reactive)]
         ;; Resolve handlers before looking up credentials. Neither operation
         ;; publishes effects or starts remote chats/capture.
+        (spatial/register! reactive nil)
         (graph/restore! reactive (:reactive data) (:reactive-options options))
+        (spatial/register! reactive (:reactive data))
         (when-let [state (get-in data [:integrations :agents])]
           (agent-manager/restore! agents state))
         @resources)

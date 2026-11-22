@@ -63,8 +63,7 @@
                           [k {:before old :after new}]))]
         {:edits (into {} changed) :actions actions}))
     (catch Throwable error
-      (when (or (instance? ThreadDeath error) (instance? VirtualMachineError error)) (throw error))
-      {:error (or (.getMessage error) "Event callback failed")})))
+      {:error (or (.getMessage error) "Event callback failed") :diagnostic (subscribers/error-details error)})))
 
 (defn- start! [service model run]
   (let [task (FutureTask. ^Callable (reify Callable (call [_] (invoke service model run))))]

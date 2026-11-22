@@ -35,6 +35,10 @@
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
+            [afterglow.reactive :as graph]
+            [tolglow.spatial :as spatial]
+            [tolglow.spatial.targets :as targets]
+            [tolglow.authoring.output-patch :as output-patch]
             [tolglow.waveforms :as waveforms]
             [tolglow.automation.policy :as policy]
             [tolglow.demo :as demo]
@@ -107,6 +111,8 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :spatial (get-in model [:variables :spatial])
+            :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
             :audio/energy (get-in model [:variables :audio/energy])
             :lighting-scenes (lighting-scenes/snapshot model (scene-eligible-ids runtime fixtures))
@@ -206,6 +212,7 @@
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
          _ (venue-fog/validate-saved! model)
@@ -246,7 +253,7 @@
       :event-callbacks (event-callbacks/create
                         (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
                                (:event-callback-options options)))
-      :effect-logs (effect-faults/create {:log! (:effect-log! options)})
+      :effect-logs (effect-faults/create {:log! (:effect-log! options) :log-file (:fault-log-file options)})
       :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
@@ -298,6 +305,7 @@
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
     (cond-> (-> model
                 subscribers/restart
+                spatial/clear-session
                 (assoc :composition-runs {} :composition-tokens {} :modulation (modulation/new-state))
                 (autopilot/clear-session time-ms command)
                 (cond-> (get-in model [:extensions :tolglow.autopilot/hdr-clock])
@@ -322,11 +330,13 @@
                               (assoc p field s) p))) payload
                         [[:cue-id (get-in model [:registry :cues])]
                          [:page-id (:pages model)]])]
-    (let [result (control/apply-command model
+    (let [payload (targets/resolve-command model payload (spatial/selection-members model payload time-ms))
+          result (control/apply-command model
                           (merge {:command-id (str (UUID/randomUUID))
                                  :show-id (:show-id model) :epoch (:epoch model)
                                  :source {:adapter :studio :session-id "studio"}}
                                  payload {:time-ms time-ms}))
+          result (targets/remember result payload)
           result (if (and (= :accepted (get-in result [:ack :status]))
                           (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
                    (update result :model
@@ -415,6 +425,10 @@
           previous (get-in model [:registry kind (:id definition)])
           _ (when (and (contains? payload :expected-version) (not= (:expected-version payload) (:version previous)))
               (throw (ex-info "Definition changed since editing began" {:current-version (:version previous)})))
+          definition (if-let [edit (:output-patch payload)]
+                       (do (when-not (and (= kind :effects) previous (contains? payload :expected-version))
+                             (throw (ex-info "An output patch needs the current effect revision" {})))
+                           (output-patch/apply-patch previous edit)) definition)
           definition (cond-> definition
                        (or (contains? payload :expected-version) (nil? (:version definition)))
                        (assoc :version (inc (get previous :version 0))))
@@ -574,7 +588,8 @@
         (output-scheduler/validate-options (:presentation values)))
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
-            settings (lighting/edit-settings scope (get-in model [:settings scope]) values)
+            settings (if (= scope :spatial) (spatial/edit-settings (get-in model [:settings scope]) values)
+                       (lighting/edit-settings scope (get-in model [:settings scope]) values))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
             settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)]
@@ -926,7 +941,8 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/begin (source-clock-model runtime (:model before) time-ms)) time-ms))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin (source-clock-model runtime (:model before) time-ms))
+                                                       :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
                        (fog-scan/expire physical-now)) [] false nil] messages)
@@ -976,6 +992,9 @@
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
+                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path))
+                                   (spatial/advance model before time-ms (reactions runtime) command))
+                           model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
@@ -1003,7 +1022,7 @@
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
-                                                         :show-id (:show-id model) :hdr? (boolean hdr?) :fixtures (get-in model [:rig :fixtures])}
+                                                         :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
@@ -1044,7 +1063,8 @@
                                                                     (:links (reflections/plan-for (:optics-plan runtime) (:rig model))))
                                                    :previous-values (or (get-in before [:output :values]) {})
                                                    :previous-compact (get-in before [:output :compact])}
-                                            hdr? (assoc :hdr hdr-opts))
+                                            hdr? (assoc :hdr hdr-opts)
+                                            (:observe-hdr? space) (assoc :observe-hdr? true))
                            resolved (effect-faults/resolve-output result
                                       #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options))
                            result (:result resolved)
@@ -1074,7 +1094,7 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1094,10 +1114,13 @@
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
-             (reset! (:state runtime) (dissoc next-state :autopilot-author-request))
+             (reset! (:state runtime) (dissoc next-state :autopilot-author-request :pending-reactive-faults))
              (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
-             (vreset! committed-fault-events (:fault-events next-state []))
+             (vreset! committed-fault-events
+                      (into (vec (:fault-events next-state)) (keep (fn [event]
+                              (when (= :event/handler-failed (:type event))
+                                (assoc (:data event) :type :event/handler-failed)))) (:events committed)))
              (doseq [[reply ack] receipts] (deliver reply ack))
              (when-not restored?
                (try (observe-sync-commands! runtime (:model before) (:model next-state) receipts)
@@ -1110,9 +1133,13 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
-                   trace (try (:delivery-trace (connections/publish! (:connections runtime) (:model next-state)
-                                                                     (boolean (some (fn [observer] ((:tracing? observer))) observers))))
-                              (catch Exception error (vreset! reactive-error (error-data error)) nil))]
+                   publication (try (connections/publish! (:connections runtime) (:model next-state)
+                                            (boolean (some (fn [observer] ((:tracing? observer))) observers)))
+                                    (catch Exception error (vreset! reactive-error (error-data error)) nil))
+                   trace (:delivery-trace publication)]
+               (when (seq (:faults publication))
+                 (vswap! committed-fault-events into (:faults publication))
+                 (swap! (:state runtime) assoc :pending-reactive-faults (:faults publication)))
                (doseq [observer observers]
                  ((:events! observer) (show-events/clock-context (:model next-state))
                   (:events committed) (:deliveries committed) trace)))
@@ -1315,6 +1342,7 @@
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
+            options (cond-> options (#{:push-2 :push-3} kind) (assoc :target-search targets/search))
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
                                                       (when-not (= epoch (:epoch model))
                                                         (throw (ex-info "Device belongs to a previous show epoch" {})))

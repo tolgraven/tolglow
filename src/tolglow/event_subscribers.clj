@@ -4,6 +4,8 @@
             [afterglow.control.model :as control]
             [afterglow.reactive.registry :as reactive]
             [afterglow.time :as time]
+            [afterglow.runtime.events :as staging]
+            [afterglow.runtime.faults :as faults]
             [tolglow.automation.random :as random]
             [tolglow.registry :as registry]
             [tolglow.lighting-scenes :as lighting-scenes]
@@ -11,7 +13,9 @@
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity :callback])
 (def event-types
-  {:atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
+  {:spatial [:spatial/enter :spatial/exit :spatial/bounce]
+   :reactive [:reactive/fault :event/handler-failed]
+   :atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
    :lighting (into [:lighting/activity] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
    :audio [:audio/kick :audio/beat :audio/energy :audio/breakdown-start :audio/breakdown-end]
    :show [:show/restored]
@@ -86,9 +90,9 @@
 (defn validate-definition [{:keys [id enabled? match actions] :as registration}]
   (check (and (only-keys? registration #{:id :enabled? :match :actions})
               (keyword? id) (instance? Boolean (get registration :enabled? true))
-              (only-keys? (or match {}) #{:type :category :emitter-id})
+              (only-keys? (or match {}) #{:type :category :emitter-id :volume-id :fixture-id})
               (every? keyword? (vals (select-keys match [:type :category])))
-              (or (not (contains? match :emitter-id)) (identifier? (:emitter-id match)))
+              (every? identifier? (vals (select-keys match [:emitter-id :volume-id :fixture-id])))
               (vector? actions) (<= 1 (count actions) 32))
          "Invalid event subscriber definition" {:id id})
   (run! validate-action actions)
@@ -143,10 +147,13 @@
                                                 :runs (filterv #(not= id (:subscriber %)) (:runs s))))
         (update :revision inc))))
 
-(defn- matches? [{:keys [match] :as definition} {:keys [type category emitter]}]
+(defn- matches? [{:keys [match] :as definition} {:keys [type category emitter data]}]
   (and (:enabled? definition true)
+       (not (and (= :event/handler-failed type) (= (:id definition) (:subscriber-id data))))
        (or (nil? (:type match)) (= type (:type match)))
        (or (nil? (:category match)) (= category (:category match)))
+       (or (nil? (:volume-id match)) (= (:volume-id data) (:volume-id match)))
+       (or (nil? (:fixture-id match)) (= (:fixture-id data) (:fixture-id match)))
        (or (nil? (:emitter-id match)) (= (:id emitter) (:emitter-id match)))))
 
 (defn- triggered? [{:keys [emitter data]}]
@@ -225,9 +232,25 @@
     :instance/kill {:op :instance/remove :instance-id id}
     :instance/opacity {:op :instance/opacity-set :instance-id id :value (:value action)}))
 
-(defn- report [model run message]
-  (assoc-in model [:event-subscribers :last-error]
-            {:subscriber (:subscriber run) :run (:id run) :step (:index run) :message (subs message 0 (min 256 (count message)))}))
+(defn error-details [^Throwable error]
+  (when-not (faults/recoverable? error) (throw error))
+  {:class (.getName (class error))
+   :stacktrace (mapv str (take 24 (.getStackTrace error)))})
+
+(defn- report
+  ([model run message] (report model run message nil))
+  ([model run message diagnostic]
+   (let [message (str (or message "Event handler failed"))
+         fault (merge (select-keys (get-in run [:event :data]) [:instance-id :effect-id :cue-id])
+                      {:type :event/handler-failed :stage :handler :id (:subscriber run)
+                       :subscriber-id (:subscriber run) :epoch (:epoch model) :time-ms (:time-ms model)
+                       :run (:id run) :step (:index run) :message (subs message 0 (min 256 (count message)))}
+                      diagnostic)]
+     (cond-> (-> model
+                 (assoc-in [:event-subscribers :last-error] (assoc fault :subscriber (:subscriber run)))
+                 (update-in [:variables :runtime :handler-faults] #(vec (take-last 64 (conj (vec %) fault)))))
+       (not= :event/handler-failed (get-in run [:event :type]))
+       (staging/collect :reactive {:kind :subscriber :id (:subscriber run)} [fault])))))
 
 (defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
@@ -265,7 +288,7 @@
            (and armed? (>= value above)) (assoc-in (lighting-scenes/apply-request model request now) latch true)
            (<= value below) (assoc-in model latch false)
            :else model))
-       (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
+       (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error) (error-details error))))
      nil (dec budget)]
     (select-and-perform model run action now budget)))
 
@@ -281,7 +304,7 @@
         current (:variables model)
         conflict? (some (fn [[k {:keys [before]}]] (not= (find current k) before)) edits)]
     (if-let [message (or (:error result) (when conflict? "A show variable changed while the callback was running"))]
-      [(report model run message) run]
+      [(report model run message (:diagnostic result)) run]
       [(reduce-kv (fn [m k {:keys [after]}]
                     (if after (assoc-in m [:variables k] (val after)) (update m :variables dissoc k)))
                   model edits)
@@ -307,10 +330,13 @@
               (recur model (next pending) (conj keep-runs (assoc run :waiting? true)) budget)
               :else
               (let [[model next-run budget]
-                    (if callback?
+                    (try
+                      (if callback?
                       (let [[model updated] (callback-result model run result)] [model (following updated meter) (dec budget)])
                       (let [[model remainder budget] (perform model run action now budget)]
-                        [model (or remainder (following run meter)) budget]))]
+                        [model (or remainder (following run meter)) budget]))
+                      (catch Throwable error
+                        [(report model run (.getMessage error) (error-details error)) nil (dec budget)]))]
                 (recur model (if next-run (cons next-run (next pending)) (next pending)) keep-runs budget))))
           (assoc-in model [:event-subscribers :runs] keep-runs))))))
 

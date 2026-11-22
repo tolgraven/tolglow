@@ -16,6 +16,7 @@
             [tolglow.studio.rdm :as rdm]
             [tolglow.studio.interop :as interop]
             [tolglow.studio.rig-editor :as rig-editor]
+            [tolglow.studio.spatial :as spatial]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
@@ -246,7 +247,8 @@
        "color" [:input {:type "color" :aria-label title :value (hex-color (widgets/color-components value))
                          :on-change #(change! (cond-> (color-components (input-value %))
                                                (and (vector? value) (= 4 (count value))) (conj (nth value 3))))}]
-       ("vector" "range")
+       "vector" [widgets/vector-control title schema value component!]
+       "range"
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]
           ^{:key index} [number-input {:type "number" :step "any" :value (get value index 0)
@@ -556,6 +558,7 @@
      [heading "SET THE STAGE" "Everything has its place." "Position fixtures in metres and address their DMX channels."
       [button "save-rig" "Save rig" [:studio/rig-save] "button primary"]]
      [rig-editor/panel db]
+     (when (= :rig (get-in db [:ui :view])) [spatial/panel])
      [:details.rig-plan-alternative [:summary "Top-down placement alternative"] [rig-plan rig]]
      [:div.rig-layout
       [:section.panel [:div.panel-top [:span.section-label "ROOM & FIXTURES"] [button "add-fixture" "Add RGBW head +" [:studio/rig-add] "text-button"]]
@@ -703,6 +706,7 @@
            (for [item (get-in db [:show :cues])] ^{:key (:id item)} [:option {:value (:id item)} (display-name item)])]
           [:button#assign-cue-button.button.primary {:disabled (nil? assigned)
                                                      :on-click #(send! [:studio/cue-action :assign])} "Place cue"]])
+       (when cue [spatial/cue-target-picker (:id cue)])
        [:div.radial-actions
         (for [[action icon title] [[:launch "▷" "One-shot"] [:inspect "⌁" "Inspect"] [:copy "⧉" "Copy cue"]
                                    [:paste "↙" "Paste here"] [:compose "+" "Add to composition"] [:edit "⌘" "Edit definition"] [:remove "−" "Clear cell"]]]

@@ -167,3 +167,14 @@
           (is (= 1 (get-in (show/snapshot runtime) [:effect-events :event-sequence])))
           (is (= 2 (count (:instances (show/snapshot runtime))))))
         (finally (show/stop! runtime))))))
+
+(deftest diagnostics-reach-the-local-rotating-file
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory "tolglow-log-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+        owner (faults/create {:log-file (java.io.File. dir "faults-%g.log")})]
+    (try
+      (faults/offer! owner [{:type :reactive/fault :id :bad-reaction :message "invalid subscription result"}])
+      (faults/close! owner)
+      (is (re-find #"invalid subscription result" (slurp (java.io.File. dir "faults-0.log"))))
+      (finally
+        (doseq [file (.listFiles dir)] (.delete file))
+        (.delete dir)))))

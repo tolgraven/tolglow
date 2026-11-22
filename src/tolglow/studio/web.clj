@@ -184,7 +184,8 @@
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
-                    (= operation :definition) (assoc :definition (data/read-edn (:source json-params))))
+                    (and (= operation :definition) (contains? json-params :source))
+                    (assoc :definition (data/read-edn (:source json-params))))
           receipt (deref (submit! operation payload) 5000 {:status :pending :message "Command remains queued"})]
       (acknowledgement receipt))))
 
@@ -257,7 +258,7 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [submit! heartbeat! provider-put! chat! chat-select! app-agent!
+(defn- post-routes [{:keys [spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
@@ -280,7 +281,9 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/" sync! ok {"live" :live})
-   {"/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
+   {"/api/spatial/search" (available spatial-search! "Spatial search unavailable"
+                                      #(ok {:results (spatial-search! (:json-params %))}))
+    "/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
     "/api/expressive/preview" (available expressive! "Expressive mapping preview unavailable" #(ok (expressive! (:json-params %))))
     "/api/providers" (available provider-put! "Provider service unavailable" #(ok (provider-put! (:json-params %))))
     "/api/chat" (available chat! "Provider service unavailable" #(event-stream chat! (:json-params %)))

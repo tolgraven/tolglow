@@ -4,6 +4,7 @@
   (:require [clojure.data.json :as json]
             [ring.adapter.jetty :as jetty]
             [tolglow.show :as show]
+            [tolglow.spatial.targets :as targets]
             [tolglow.effects.faults :as faults]
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
@@ -23,7 +24,7 @@
   (show/attach-observer! runtime id
     (fn []
       (let [debug (debug-stream/create (:id runtime) #(deref (:state runtime)))
-            stream (state-stream/create #(show/project-snapshot runtime %) #(show/heartbeat! runtime %)
+            stream (state-stream/create #(dissoc (show/project-snapshot runtime %) :spatial) #(show/heartbeat! runtime %)
                      {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
                       :get-graph #(show/reactions runtime)
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
@@ -67,6 +68,7 @@
   ([runtime] (handler runtime (bind! runtime :studio)))
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+            :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
             :state-stream! #(state-stream/response (:state-stream bindings) %)
