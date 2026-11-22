@@ -214,3 +214,34 @@
       (is (= 4 @calls))
       (is (= [0.25 0.25 0.25] (sample (assoc-in ctx [:frame :transport :beat] 4.0))))
       (is (= 5 @calls)))))
+
+(deftest exact-coordinates-are-checked-on-the-targets-and-axes-each-output-reads
+  (let [rig (mapv #(assoc %1 :position %2) fixtures [[0.25 0 0] [0 0.5 0] [0 0 0]])
+        spatial (fn [axis] {:op :multiply :args [{:op :position :axis axis} 0.5]})
+        selected {:id :selected :version 1 :targets [:a :b]
+                  :outputs [{:attribute :focus :targets [:a :c] :value (spatial :x)}
+                            {:attribute :dimmer :targets [:b :c] :value (spatial :y)}
+                            {:attribute :focus :targets [:c] :value {:op :add :args [1/3 1/3]}}]}
+        context-for #(assoc-in (context %) [:frame :fixtures] rig)
+        step (batch/compile-effect selected rig)
+        expected (blocks ((compiler/compile-effect selected) (context-for selected)))
+        actual (blocks (step (context-for selected)))
+        render #(frame-bytes (render/resolve-contributions rig %))]
+    (is (= :batch (:backend (meta step))))
+    (is (= [[:a] [:b]] (mapv #(get-in % [:batch :target-ids]) actual)))
+    (is (= (render expected) (render actual)))
+    (let [all (dissoc selected :targets)]
+      (is (= :ordinary (:backend (meta (batch/compile-effect all rig))))))))
+
+(deftest selected-exact-positions-preserve-integer-cancellation-and-direct-fractions
+  (let [rig (assoc-in fixtures [0 :position] [9007199254740993 1/3 9007199254740992])]
+    (doseq [[expr expected] [[{:op :subtract :args [{:op :position :axis :x} {:op :position :axis :z}]} 1]
+                              [{:op :position :axis :y} 1/3]]]
+      (let [definition {:id :exact-position :version 1 :targets [:a] :outputs {:dimmer expr}}
+            input (assoc-in (context definition) [:frame :fixtures] rig)
+            step (batch/compile-effect definition rig)
+            result (step input)]
+        (is (= [:exact-position] (:fallback-reasons (meta step))))
+        (is (= expected (get-in result [:assignments 0 :value])))
+        (is (= (frame-bytes (render/resolve-contributions rig (blocks ((compiler/compile-effect definition) input))))
+               (frame-bytes (render/resolve-contributions rig (blocks result)))))))))
