@@ -13,6 +13,35 @@ export function planePoint(camera, bounds, x, y, plane = 'xz', value = 0, snap =
   const result = point.toArray().map((n, i) => i === axis ? value : snap > 0 ? Math.round(n / snap) * snap : n);
   return finitePoint(result) ? result : null;
 }
+// Pick the nearest bounded receiving plane facing the camera. The show supplies
+// the geometry to both the worker preview and its main-thread input controller.
+export function pickSurface(snapshot, camera, bounds, x, y) {
+  if (!(bounds.width > 0 && bounds.height > 0)) return null;
+  camera.updateMatrixWorld();
+  const picker = new THREE.Raycaster();
+  picker.setFromCamera(new THREE.Vector2((x - bounds.left) * 2 / bounds.width - 1,
+    1 - (y - bounds.top) * 2 / bounds.height), camera);
+  const {origin, direction} = picker.ray;
+  let nearest = Infinity, hit = null;
+  for (const surface of snapshot?.['receiver-surfaces'] || []) {
+    const center = new THREE.Vector3().fromArray(surface.point);
+    const normal = new THREE.Vector3().fromArray(surface.normal).normalize();
+    const incidence = normal.dot(direction);
+    if (incidence >= -1e-8) continue;
+    const distance = center.clone().sub(origin).dot(normal) / incidence;
+    if (distance <= 0 || distance >= nearest) continue;
+    const point = picker.ray.at(distance, new THREE.Vector3()), delta = point.clone().sub(center);
+    const u = new THREE.Vector3().fromArray(surface['u-axis']).projectOnPlane(normal).normalize();
+    const v = new THREE.Vector3().crossVectors(normal, u);
+    if (Math.abs(delta.dot(u)) <= surface.size[0] / 2 + 1e-8 &&
+        Math.abs(delta.dot(v)) <= surface.size[1] / 2 + 1e-8) {
+      nearest = distance;
+      hit = {point: point.toArray(), 'surface-id': surface.id};
+    }
+  }
+  return hit;
+}
+
 export function projectPoint(camera, bounds, point) {
   if (!finitePoint(point)) return null;
   const projected = new THREE.Vector3(...point).project(camera);
@@ -72,12 +101,18 @@ export class RigEditorInput {
       this.engine.setInteractionActive?.(true);
     } else if (!active && this.interacting) this.engine.setInteractionActive?.(this.previousInteraction);
     this.interacting = active;
-    this.canvas.style.cursor = !active ? '' : snapshot.editor.tool === 'draw' ? 'crosshair' : 'grab';
+    this.canvas.style.cursor = !active ? '' : ['draw', 'aim'].includes(snapshot.editor.tool) ? 'crosshair' : 'grab';
   }
   down(event) {
     const e = this.snapshot?.editor;
     if (!e || e.tool === 'navigate' || event.button !== 0 || this.gesture) return;
     event.preventDefault(); event.stopImmediatePropagation(); this.canvas.focus();
+    if (e.tool === 'aim') {
+      this.gesture = {tool: 'aim', token: ++this.sequence, pointer: event.pointerId,
+        x: event.clientX, y: event.clientY, dragged: false};
+      this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
     const bounds = this.canvas.getBoundingClientRect(), hit = pickEditor(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
     if (e.tool !== 'draw' && !hit) {this.emit('select', {selection: null}); return;}
     const value = hit ? hit.position[planeAxis(e.plane)] : e['plane-value'];
@@ -91,13 +126,24 @@ export class RigEditorInput {
   move(event) {
     const g = this.gesture; if (!g || event.pointerId !== g.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
+    if (g.tool === 'aim') {
+      if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 10) g.dragged = true;
+      return;
+    }
     const e = this.snapshot.editor, point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, e.plane, g.value, e.snap);
     if (point) this.emit('move', {point: g.hit && (g.tool === 'move' || g.tool === 'draw') ? point.map((n, i) => n + g.offset[i]) : point, angle: (event.clientX - g.x) * .5});
   }
   finish(event, cancelled) {
     if (!this.gesture || event.pointerId !== this.gesture.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    this.emit(cancelled ? 'cancel' : 'end'); const pointer = this.gesture.pointer; this.gesture = null;
+    const g = this.gesture;
+    if (g.tool === 'aim') {
+      if (!cancelled && !g.dragged && Math.hypot(event.clientX - g.x, event.clientY - g.y) <= 10) {
+        const hit = pickSurface(this.snapshot, this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY);
+        this.emit(hit ? 'surface' : 'missed-surface', hit || {});
+      }
+    } else this.emit(cancelled ? 'cancel' : 'end');
+    const pointer = g.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
   cancel() {

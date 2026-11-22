@@ -2,7 +2,8 @@
   "Pure validation shared by rig authoring, rendering admission and show files.
   Unknown portable scene metadata is preserved; validation never fills defaults."
   (:require [clojure.string :as str]
-            [afterglow.render.frame :as render]))
+            [afterglow.render.frame :as render]
+            [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
 (defn- finite? [value] (and (number? value) (Double/isFinite (double value))))
@@ -49,6 +50,10 @@
           [(error [:room] :invalid-room "Room must be a map with width, height and depth")]
           (for [axis [:width :height :depth] :when (not (positive? (get-in rig [:room axis])))]
             (error [:room axis] :invalid-room "Room dimensions must be positive finite metres"))))
+      (surfaces/surface-errors rig)
+      (when (and (empty? (surfaces/surface-errors rig))
+                 (or (nil? (:room rig)) (and (map? (:room rig)) (every? positive? (map (:room rig) [:width :height :depth])))))
+        (surfaces/tracking-errors rig))
       (when (contains? rig :trusses)
         (let [trusses (:trusses rig)]
           (if-not (vector? trusses)
