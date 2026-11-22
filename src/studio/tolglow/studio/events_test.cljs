@@ -552,3 +552,12 @@
     (is (= "/api/sync/learn-parameter" (get-in learn [:fx 0 1 :path])))
     (is (= "bass" (get-in learn [:fx 0 1 :body :id])))
     (is (= "/api/sync/forget-parameter" (get-in forget [:fx 0 1 :path])))))
+
+(deftest fixture-optical-fields-support-fractions-removal-and-explicit-reflection-choice
+  (let [s {:draft-source "{:id :spot :beam-angle 10 :pseudo-fixture true :max-watts 120}"
+           :field-edits {:max-watts "" :beam-angle "14.25" :pseudo-fixture "false"
+                         :measured-relative-brightness "2.2"}}
+        definition (fixtures/form-definition s)]
+    (is (= {:id :spot :beam-angle 14.25 :pseudo-fixture false :measured-relative-brightness 2.2} definition))
+    (is (not (contains? (fixtures/form-definition (assoc-in s [:field-edits :pseudo-fixture] "")) :pseudo-fixture)))
+    (is (thrown? js/Error (fixtures/form-definition (assoc-in s [:field-edits :beam-angle] "180"))))))

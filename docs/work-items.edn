@@ -1,7 +1,17 @@
 {:schema-version 1,
  :updated "2026-11-21",
  :items
- [{:id :build/leiningen-canonical-workflows
+ [{:id :fixtures/optical-properties
+   :title "Keep beam optics and relative brightness from fixture definitions through Studio projection"
+   :kind :implementation :status :in-progress :owner "fixture-definition-photometry"
+   :paths ["afterglow/src/afterglow/render/photometry.cljc" "tolglow/src/tolglow/fixtures/library.clj"
+           "tolglow/src/tolglow/fixtures/heads.clj" "tolglow/src/studio/tolglow/studio/fixture_library.cljs"]
+   :depends-on [:fixtures/patch-groups]
+   :acceptance ["Retain optional physical fields in portable rig data and validate them at publication and patch time"
+                "Resolve calibrated and wattage-based full-white levels once per changed preview rig"
+                "Edit optional optical data in the fixture library"]
+   :evidence []}
+  {:id :build/leiningen-canonical-workflows
    :title "Use one Leiningen project for backend, frontend, tests and profiling"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/project.clj" "tolglow/shadow-cljs.edn" "tolglow/deps.edn"

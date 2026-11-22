@@ -1,6 +1,7 @@
 (ns tolglow.studio.interop
   "Lifecycle-owned graphics/editor engines. Show state stays in re-frame."
-  (:require [reagent.core :as r]
+  (:require [afterglow.render.photometry :as photometry]
+            [reagent.core :as r]
             [re-frame.core :as rf]))
 
 (defonce engines (atom {}))
@@ -58,11 +59,21 @@
   ;; Maps of fixture IDs and the IDs in the rig must use the same full name.
   (clj->js data :keyword-fn #(subs (str %) 1)))
 
+(defn preview-rig [rig]
+  (preview-data
+   (update rig :fixtures
+           (fn [fixtures]
+             (mapv (fn [fixture]
+                     (if (or (:max-watts fixture) (:measured-relative-brightness fixture))
+                       (assoc fixture :relative-brightness (photometry/relative-brightness fixture))
+                       fixture))
+                   fixtures)))))
+
 (defn- update-preview! [this engine show]
   ;; Preserve the shared rig across frame updates, including worker transfers.
   (let [rig (:rig show)
         previous-rig (aget this "rig")
-        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (preview-data rig))
+        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (preview-rig rig))
         frame (preview-data (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
                                          :blackout? :master :editor]))
         intents (get-in show [:status :last-intents])]

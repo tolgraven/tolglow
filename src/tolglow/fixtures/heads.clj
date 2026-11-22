@@ -62,6 +62,7 @@
                         (fn [i head]
                           {:id (let [parent (:id options) id (str (name parent) "-head-" (inc i))]
                                  (if (keyword? parent) (keyword (namespace parent) id) id))
+                           :optics (select-keys head [:beam-angle :zoom-range-deg :lens-radius-m :pseudo-fixture])
                            :local (mapv #(get head % 0) [:x :y :z]) :channels (channel-map (:channels head))})
                         heads)
             parts (cond->> head-parts (seq channels) (cons {:id (:id options) :channels channels}))
@@ -71,22 +72,29 @@
                               (throw (ex-info "Fixture head needs positive channel offsets" {:id (:id part)})))
                             (assoc part :first (apply min offsets) :last (apply max offsets)))) parts)
             sorted (vec (sort-by :first parts))
+            emits? (fn [{:keys [local channels]}]
+                     (or (some #(contains? channels %) [:red :green :blue :white :amber :uv])
+                         (and local (contains? channels :dimmer))))
+            emitters (count (filter emits? sorted))
             occupied (apply max (map :last sorted))
             footprint (:footprint template occupied)
             _ (when-not (and (pos-int? footprint) (>= footprint occupied))
                 (throw (ex-info "Fixture footprint excludes a head channel" {:id (:id options)})))]
         {:footprint footprint
          :fixtures
-         (mapv (fn [i {:keys [id local channels first]}]
+         (mapv (fn [i {:keys [id local channels optics first] :as part}]
                  (let [start (if (zero? i) 1 first)
                        delta (dec start)
                        address (+ slot delta)
                        end (get-in sorted [(inc i) :first] (inc footprint))
                        authored (-> definition (dissoc :channel-definitions :heads)
-                                    (assoc :channels (rebase channels delta) :footprint (- end start)))
+                                    (assoc :channels (rebase channels delta) :footprint (- end start))
+                                    (merge optics))
                        where (assoc options :id id :address (inc (mod address 512)) :universe (inc (quot address 512)))
                        where (cond-> where local
                                (assoc :position (world-position (:position options [0 0 0])
                                                                 (:rotation-deg options [0 0 0]) local)))]
-                   (cond-> (instance authored where) local (assoc :fixture-id (:id options)))))
+                   (cond-> (instance authored where)
+                     (pos? emitters) (assoc :emission-share (if (emits? part) (/ 1.0 emitters) 0.0))
+                     local (assoc :fixture-id (:id options)))))
                (range) sorted)}))))

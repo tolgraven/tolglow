@@ -2,6 +2,8 @@
   (:require [clojure.test :refer [deftest is]]
             [afterglow.render.frame :as render]
             [tolglow.application :as application]
+            [tolglow.demo :as demo]
+            [tolglow.persistence :as files]
             [tolglow.fixtures.patch :as patch]
             [tolglow.show :as show]))
 
@@ -48,3 +50,22 @@
         (is (= :rejected (:status @(show/submit! runtime :rig {:fixtures {:led {:universe 3 :list [:absent]}}}))))
         (is (= fixtures (get-in (show/snapshot runtime) [:rig :fixtures]))))
       (finally (application/stop! runtime)))))
+
+(deftest fixture-optics-survive-ordered-groups-and-head-expansion
+  (let [props {:beam-angle 18.5 :measured-relative-brightness 2.0 :max-watts 160 :pseudo-fixture false
+               :lens-radius-m 0.04 :zoom-range-deg [30 12]}
+        single (assoc pixel :beam-angle 45 :max-watts 40 :pseudo-fixture true)
+        split (merge props {:id :strip :version 1 :channels {:dimmer 1}
+                            :heads [{:channels {:red 2} :beam-angle 22} {:channels {:red 3}}]})
+        fixtures (patch/expand {:one single :two split}
+                               {:spots {:universe 1 :list [[:one props] :two]}})
+        [lamp master h1 h2] fixtures]
+    (is (= props (select-keys lamp (keys props))))
+    (let [model (assoc-in (demo/model) [:rig :fixtures] fixtures)
+          restored (files/read-string (files/write-string model))]
+      (is (= fixtures (get-in restored [:model :rig :fixtures]))))
+    (is (= [18.5 22 18.5] (mapv :beam-angle [master h1 h2])))
+    (is (= [0.0 0.5 0.5] (mapv :emission-share [master h1 h2])))
+    (is (= [2.0 2.0 2.0] (mapv :measured-relative-brightness [master h1 h2])))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (patch/expand {:one single} {:spots {:universe 1 :list [[:one {:beam-angle -3}]]}})))))

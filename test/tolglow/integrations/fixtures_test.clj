@@ -79,3 +79,12 @@
   (is (thrown? Exception (fixtures/import-qxf "<!DOCTYPE x [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><FixtureDefinition>&x;</FixtureDefinition>")))
   (is (false? (:valid? (fixtures/import-qxf (clojure.string/replace qxf "Number='1'" "Number='0'")))))
   (is (false? (:valid? (fixtures/import-qxf (clojure.string/replace qxf "Number='3'>Reset" "Number='3'>Absent"))))))
+
+(deftest ofl-imports-declared-power-and-mode-specific-beam-optics
+  (let [raw (assoc ofl :physical {:power 150 :lens {:degreesMinMax [8 36]}})
+        read-fixture #(get (fixtures/import-ofl %) :definition)]
+    (is (= {:max-watts 150 :zoom-range-deg [8 36]}
+           (select-keys (read-fixture raw) [:max-watts :zoom-range-deg])))
+    (is (= {:max-watts 150 :beam-angle 12}
+           (select-keys (read-fixture (assoc-in raw [:modes 0 :physical] {:lens {:degreesMinMax [12 12]}}))
+                        [:max-watts :beam-angle :zoom-range-deg])))))
