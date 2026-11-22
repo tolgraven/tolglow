@@ -36,6 +36,7 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
+            [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
@@ -1234,8 +1235,8 @@
         ~runtime
         (update ~(dissoc registration :middleware :bindings) :actions (fnil conj [])
                 {:op :callback
-                 :implementation {:type :source :namespace ~(str *ns*)
-                                  :form ~(pr-str middleware) :bindings ~(:bindings registration {})}}))
+                 :implementation (assoc ~(reactive-registry/source-description *ns* middleware)
+                                        :bindings ~(:bindings registration {}))}))
       `(register-event-subscriber! ~runtime ~registration))))
 
 (defn stop! [runtime]

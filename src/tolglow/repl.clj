@@ -2,7 +2,8 @@
   "Explicit trusted-user JVM REPL boundary. Each opened session owns a serial
   bounded queue, namespace, debug namespace and live values. Saved data contains
   only source/history/scratch text; loading it never evaluates code."
-  (:require [clojure.string :as str])
+  (:require [afterglow.reactive.registry :as reactive-registry]
+            [clojure.string :as str])
   (:import [java.io PushbackReader StringReader Writer]
            [java.util UUID]
            [java.util.concurrent ArrayBlockingQueue CountDownLatch TimeUnit]))
@@ -193,6 +194,7 @@
                          (.countDown ^CountDownLatch (:stopped session)))))
                    (str "tolglow-repl-" session-id))]
       (binding [*ns* namespace] (clojure.core/refer 'clojure.core))
+      (doseq [n [namespace debug]] (alter-meta! n assoc ::reactive-registry/temporary true))
       (intern namespace 'runtime (:runtime options))
       (intern namespace 'debug-ns (ns-name debug))
       (doseq [[name value] bindings] (intern namespace name value))
