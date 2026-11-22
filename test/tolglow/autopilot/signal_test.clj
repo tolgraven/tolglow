@@ -17,6 +17,7 @@
         stack {:op :mix :args [{:signal :four} gain {:signal :bass}]}]
     (is (signal/valid? stack))
     (is (= 1.5 (signal/value model gain)))
+    (is (= 2.0 (signal/value model gain {:modulation-view {:overrides {"two" {:boost 2.0}}}})))
     (is (= 1.0 (signal/value (dissoc model :instances) gain)))
     (is (near? (+ (* 0.25 0.25) (* 0.75 1.5)) (signal/value model stack)))
     (is (= -3.0 (signal/value model {:variable [:missing] :default -3})))
@@ -51,3 +52,14 @@
     (is (identical? prepared (signal/prepare prepared (:waveforms rig))))
     (is (= 2.0 (signal/value rig {:waveform :pulse :period {:beats 4} :range [0 2]
                                   :params {:duty {:signal :bass}}})))))
+
+
+(deftest rhythmic-random-bindings-are-independent-of-frame-count
+  (let [binding {:random {:seed 97 :distribution :triangular}
+                 :period {:beats 1/2} :range [1.0 {:variable [:radius] :default 5.0}]}
+        read-at #(signal/value (assoc-in model [:transport :beat] %) binding)]
+    (is (signal/valid? binding))
+    (is (= (read-at 2) (read-at 2.25)))
+    (is (not= (read-at 2.5) (read-at 2.25)))
+    (is (every? #(<= 1.0 (read-at %) 5.0) (range 48)))
+    (is (= (map read-at [1 2 9]) (map #(nth (mapv read-at (range 10)) %) [1 2 9])))))

@@ -5,8 +5,10 @@
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
             [clojure.string :as str]
+            [tolglow.automation.random :as random]
             [tolglow.registry :as registry]
-            [tolglow.signals :as signals]))
+            [tolglow.signals :as signals]
+            [tolglow.waveforms :as waveforms]))
 
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (str/blank? x)))))
 (def ^:private builtin-registry (signals/new-registry))
@@ -25,6 +27,12 @@
 (defn- identifier-path? [path]
   (and (vector? path) (<= 1 (count path) 32) (every? id? path)))
 
+(defn- timed-source? [spec child?]
+  (and (#{:local :global} (:phase spec :global)) (positive-duration? (:period spec {:bars 1}))
+       (child? (:offset spec 0))
+       (let [range (:range spec [0 1])]
+         (and (vector? range) (= 2 (count range)) (every? child? range)))))
+
 (defn- source? [spec depth]
   (let [child? #(source? % (inc depth))]
     (cond
@@ -36,12 +44,14 @@
       (:waveform spec)
       (and (every? #{:waveform :version :phase :period :offset :range :params :default} (keys spec))
            (id? (:waveform spec)) (or (nil? (:version spec)) (pos-int? (:version spec)))
-           (#{:local :global} (:phase spec :global)) (positive-duration? (:period spec {:bars 1}))
-           (child? (:offset spec 0))
-           (let [range (:range spec [0 1])]
-             (and (vector? range) (= 2 (count range)) (every? child? range)))
+           (timed-source? spec child?)
            (let [params (:params spec {})]
              (and (map? params) (<= (count params) 32) (every? keyword? (keys params)) (every? child? (vals params)))))
+      (:random spec) (and (every? #{:random :phase :period :offset :range :default} (keys spec))
+                          (map? (:random spec)) (every? #{:seed :distribution} (keys (:random spec)))
+                          (integer? (get-in spec [:random :seed]))
+                          (#{:uniform :triangular} (get-in spec [:random :distribution] :uniform))
+                          (timed-source? spec child?))
       (:cue-id spec) (and (every? #{:cue-id :param :default} (keys spec)) (id? (:cue-id spec)) (id? (:param spec)))
       (:op spec) (and (every? #{:op :args :default} (keys spec)) (vector? (:args spec))
                       (= (get arities (:op spec)) (count (:args spec))) (every? child? (:args spec)))
@@ -73,13 +83,17 @@
                                  (get builtin-functions (:id definition))
                                  (ir/compile-expression (:expression definition)))]))})))
 
-(defn- cue-parameter [model {:keys [cue-id param]}]
+(defn- cue-parameter [model options {:keys [cue-id param]}]
   (when-let [instance (reduce (fn [found instance]
                                 (if (and (= cue-id (:cue-id instance)) (= :running (:phase instance))
                                          (or (nil? found) (> (:order instance 0) (:order found 0))))
                                   instance found))
                               nil (vals (:instances model)))]
-    (get (:params instance) param (get-in instance [:definition :params param :default]))))
+    (let [view (:modulation-view options)
+          params (if (seq (:responses model))
+                   (waveforms/effective-params {:model model :modulation-view view} instance)
+                   (merge (:params instance) (get-in view [:overrides (:id instance)])))]
+      (get params param (get-in instance [:definition :params param :default])))))
 
 (defn- numeric-or [n fallback] (double (if (time/finite-number? n) n fallback)))
 
@@ -96,6 +110,19 @@
         start (if local? (get origin key) 0)]
     (when (and (time/finite-number? now) (time/finite-number? start))
       (/ (- (double now) (double start)) (double value)))))
+
+(defn- scaled [spec sample fraction]
+  (let [[lo hi] (mapv sample (:range spec [0 1]))]
+    (+ lo (* fraction (- hi lo)))))
+
+(defn- held-random [model options spec sample]
+  (when-let [phase (phase-coordinate model options spec)]
+    (let [step (long (Math/floor (+ phase (sample (:offset spec 0)))))
+          seed (get-in spec [:random :seed])
+          [next-seed x] (random/next-random (hash [seed step]))
+          fraction (if (= :triangular (get-in spec [:random :distribution]))
+                     (/ (+ x (second (random/next-random next-seed))) 2.0) x)]
+      (scaled spec sample fraction))))
 
 (defn- waveform-value [model options spec sample]
   (let [bank (or (:waveforms model) builtin-registry)
@@ -116,9 +143,8 @@
                          (ir/compile-expression (:expression definition)))
             value (evaluate {:params (assoc params signals/phase-input (+ phase (sample (:offset spec 0))))})
             [a b] (:range definition)
-            fraction (if (= a b) 0.0 (max 0.0 (min 1.0 (/ (- value a) (- b a)))))
-            [lo hi] (mapv sample (:range spec [0 1]))]
-        (+ lo (* fraction (- hi lo)))))))
+            fraction (if (= a b) 0.0 (max 0.0 (min 1.0 (/ (- value a) (- b a)))))]
+        (scaled spec sample fraction)))))
 
 (defn value
   "Resolve a numeric binding using the committed show. A local waveform uses
@@ -137,7 +163,8 @@
                       (cond
                         (:variable spec) (get-in (:variables model) (:variable spec))
                         (:waveform spec) (waveform-value model options spec sample)
-                        (:cue-id spec) (cue-parameter model spec)
+                        (:random spec) (held-random model options spec sample)
+                        (:cue-id spec) (cue-parameter model options spec)
                         (:signal spec)
                         (let [id (:signal spec) source (get-in model [:settings :autopilot :signals id])]
                           (when (and source (not (seen id)))
