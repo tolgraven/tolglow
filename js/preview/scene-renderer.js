@@ -267,7 +267,7 @@ export class SceneRenderer {
     });
     const optedIn = (rig.fixtures || []).filter(f => f['pseudo-fixture']).length;
     const reflectedCap = this.quality === 'mobile' || this.quality === 'low' ? 1 : 2;
-    this.reflections = new SurfaceReflections(this.content, Math.min(reflectedCap, optedIn), Math.min(512,this.options.shadowSize));
+    this.reflections = new SurfaceReflections(this.content, Math.min(reflectedCap, optedIn), Math.min(512,this.options.shadowSize), this.fixtures);
     this.spotUniformOrder = [...this.spots.filter(l => l.castShadow), ...this.reflections.lights, ...this.spots.filter(l => !l.castShadow)];
     this.totalFixtureCount = (rig.fixtures || []).length;
     this.lightEntries = [];

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {apertureRadius} from './optics.js';
 
 // Sample the finite patch rather than giving the entire cone's power to an
 // axis hit. Samples obscured by truss, scenery or another head carry no flux.
@@ -42,9 +43,26 @@ function candidate(entry, light, footprint) {
 }
 
 export class SurfaceReflections {
-  constructor(content, count, shadowSize) {
-    this.objects = [];
-    if (count) content.traverse(o => {if (o.isMesh) this.objects.push(o);});
+  constructor(content, count, shadowSize, fixtures = []) {
+    this.chunks = []; this.targets = [];
+    if (count) {
+      content.updateMatrixWorld(true);
+      const entries = new Map(fixtures.map(entry => [entry.root, entry]));
+      for (const root of content.children) {
+        const meshes = [];
+        root.traverse(object => {if (object.isMesh) meshes.push(object);});
+        if (!meshes.length) continue;
+        if (entries.has(root)) {
+          this.chunks.push({meshes, root, fixture:entries.get(root), sphere:new THREE.Sphere()});
+        } else {
+          for (const mesh of meshes) {
+            const shape = mesh.isInstancedMesh ? mesh : mesh.geometry;
+            if (!shape.boundingSphere) shape.computeBoundingSphere();
+            this.chunks.push({meshes:[mesh], mesh, local:shape.boundingSphere, sphere:new THREE.Sphere()});
+          }
+        }
+      }
+    }
     this.ray = new THREE.Raycaster(); this.hits = [];
     this.lights = Array.from({length:count}, () => {
       // Approximate diffuse patch emission with a broad outward lobe. Its own
@@ -66,16 +84,29 @@ export class SurfaceReflections {
     const direction = point.clone().sub(patch.origin), distance = direction.length();
     this.ray.set(patch.origin, direction.normalize()); this.ray.near = .003; this.ray.far = distance + .04;
     this.hits.length = 0;
-    const hits = this.ray.intersectObjects(this.objects, false, this.hits);
-    const hit = hits.find(({object}) => {
-      for (let parent = object; parent; parent = parent.parent) if (parent === patch.fixture) return false;
-      return true;
-    });
+    this.targets.length = 0;
+    for (const {root, meshes, sphere} of this.chunks) {
+      if (root === patch.fixture || patch.origin.distanceToSquared(sphere.center) > (sphere.radius + this.ray.far) ** 2) continue;
+      if (this.ray.ray.intersectsSphere(sphere)) this.targets.push(...meshes);
+    }
+    const [hit] = this.ray.intersectObjects(this.targets, false, this.hits);
     if (hit?.object.userData.receiver !== patch.surface || Math.abs(hit.distance - distance) > .04) return;
     return hit.object.material;
   }
   resolve(candidates) {
     this.patches.length = 0;
+    if (!candidates.length) return;
+    // One conservative bound per articulated head rejects all its housing,
+    // yoke and lens meshes at once. Scenery and instanced trusses use their
+    // own bounds, transformed once for this lighting update.
+    for (const chunk of this.chunks) {
+      if (chunk.fixture) {
+        chunk.sphere.center.setFromMatrixPosition(chunk.root.matrixWorld);
+        chunk.sphere.radius = Math.max(1, 1.5 * apertureRadius(chunk.fixture.fixture) + .3);
+      } else {
+        chunk.sphere.copy(chunk.local).applyMatrix4(chunk.mesh.matrixWorld);
+      }
+    }
     candidates.sort((a,b) => peak(b.color) * b.power - peak(a.color) * a.power);
     for (const patch of candidates) {
       const position = new THREE.Vector3(), reflected = new THREE.Color(0,0,0);

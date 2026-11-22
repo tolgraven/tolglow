@@ -46,6 +46,7 @@ test('a close floor patch casts colored spill onto a nearby panel; a nearer bloc
           engine.camera.position.set(-1.8,1.4,2.1); engine.controls.target.set(0,.35,0); engine.controls.update();
           const panel = {id:'screen',point:[.42,.56,0],normal:[-2,0,0],'u-axis':[1,0,3],size:[1.6,1.1]};
           const blocker = {id:'intercept',point:[0,.45,0],normal:[0,1,0],'u-axis':[1,0,0],size:[1,1]};
+          const shield = {id:'shield',point:[.23,.1,.035],normal:[-1,0,0],'u-axis':[0,0,1],size:[.22,.20]};
           const fixture = {id:'mover',position:[0,1,0],'beam-angle':18,'lens-radius-m':.05,
             'pseudo-fixture':true,'relative-brightness':2};
           const radius = .05 + Math.tan(Math.PI / 20);
@@ -73,10 +74,12 @@ test('a close floor patch casts colored spill onto a nearby panel; a nearer bloc
           const fogPower = reflected.intensity;
           engine.setFog(0);
           render(2,[1,0,0],[panel],null); const darkPanel = panelRed();
+          render(2,[1,0,0],[panel,shield]); const shadowedPanel = panelRed();
+          const stillReflecting = engine.getTelemetry().reflectedPatches.length;
           render(2,[1,0,0],[panel,blocker]); const occluded = engine.getTelemetry().reflectedPatches;
           render(0,[1,0,0]); const disabled = engine.reflections.lights[0].intensity;
           render(2,[0,0,0]); const blackout = engine.getTelemetry().reflectedPatches;
-          return {patch,clearPower,fogPower,rgb,directIntensity,angle,litPanel,darkPanel,occluded,disabled,blackout,error:engine.error};
+          return {patch,clearPower,fogPower,rgb,directIntensity,angle,litPanel,darkPanel,shadowedPanel,stillReflecting,occluded,disabled,blackout,error:engine.error};
         } finally {engine.dispose();}
       });
       assert.equal(observations.error,undefined);
@@ -87,6 +90,8 @@ test('a close floor patch casts colored spill onto a nearby panel; a nearer bloc
       assert.ok(observations.clearPower > observations.fogPower && observations.fogPower > 0);
       assert.ok(observations.rgb[0] > 0 && observations.rgb[1] === 0 && observations.rgb[2] === 0);
       assert.ok(observations.litPanel[0] > observations.darkPanel[0],JSON.stringify(observations));
+      assert.equal(observations.stillReflecting,1);
+      assert.ok(observations.shadowedPanel[0] < observations.litPanel[0],JSON.stringify(observations));
       assert.deepEqual(observations.occluded,[]); assert.deepEqual(observations.blackout,[]); assert.equal(observations.disabled,0);
     } finally {await browser.close();}
   });

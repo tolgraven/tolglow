@@ -54,6 +54,8 @@ export function createMaterials() {
   // Mean linear albedo of the procedural sRGB concrete maps.
   materials.floor.userData.meanMapReflectance = .22;
   materials.wall.userData.meanMapReflectance = .34;
+  // Custom receiving panels have one visible face and block light on both sides.
+  materials.wall.shadowSide = THREE.DoubleSide;
   return materials;
 }
 export function disposeMaterials(materials) {
