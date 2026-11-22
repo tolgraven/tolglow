@@ -894,7 +894,8 @@
                                      (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
                                      bypass?))
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
-                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit bypass?
+                                 (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit
+                                                      (or bypass? (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                                                       (:reference-rms meter-opts (:reference-rms capacity/defaults))))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
                            resolved (effect-faults/resolve-output result

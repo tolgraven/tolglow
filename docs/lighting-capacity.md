@@ -64,7 +64,8 @@ and select patched fixtures with a named `:fog` channel. Headless options are
 `:fog? true` and `:fog-fixture-ids [:stage-fog]`. A crossing above 80% of
 reference RMS requests half drive for 0.4 seconds. The envelope must fall below
 55% and a six-second rest must elapse before another pulse. Losing fresh audio
-or disarming cancels this source’s demand on the next frame. Manual fog cues
+or disarming cancels this source’s demand on the next frame. An active stationary
+fog calibration scan also suppresses automatic fog requests. Manual fog cues
 combine by maximum. A pulse shown here is a requested show output. The atmosphere simulator
 uses fog DMX delivered by the output publisher at its delivery timestamps. The
 fogger’s own DMX curve, warm-up behavior and physical delivery determine what
