@@ -23,6 +23,7 @@ on:
     branches: [master]
     paths:
       - 'dev/tolglow/bench_*.clj'
+      - 'dev/tolglow/perf/venue_fog.clj'
       - 'bin/profile-*'
       - '.github/workflows/performance.yml'
   push:
@@ -33,6 +34,7 @@ on:
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
       - 'dev/tolglow/bench_movers_reference.clj'
+      - 'dev/tolglow/perf/venue_fog.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
@@ -128,6 +130,12 @@ jobs:
           set -euo pipefail
           ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
             --output ../performance-artifact/movers.edn 2>&1 | tee ../performance-artifact/movers.log
+      - name: Measure fogger tracking across 2,048 RGBW pixels
+        if: hashFiles('tolglow/dev/tolglow/perf/venue_fog.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.perf.venue-fog 2048 125 300 > ../performance-artifact/venue-fog.edn
       - name: Compare baseline and repeat candidate on the same runner
         if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
         working-directory: tolglow
