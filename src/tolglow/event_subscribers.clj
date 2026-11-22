@@ -1,7 +1,7 @@
 (ns tolglow.event-subscribers
   "Pure admission and playback of event-driven show actions."
   (:require [clojure.string :as str]
-            [afterglow.control.model :as control]
+            [tolglow.spatial :as spatial]
             [afterglow.reactive.registry :as reactive]
             [afterglow.time :as time]
             [afterglow.runtime.events :as staging]
@@ -263,7 +263,7 @@
                         (let [id (nth targets n)
                               cmd (merge base (command action id)
                                          {:command-id (str "sub/" (:epoch model) "/" (:id run) "/" (:index run) "/" n)})
-                              result (control/apply-command model cmd)]
+                              result (spatial/apply-command model cmd)]
                           (if (= :accepted (get-in result [:ack :status])) (:model result)
                               (report model run (get-in result [:ack :message] "Action rejected")))))
                       (assoc-in model [:event-subscribers :seed] seed) (range offset stop))]

@@ -109,3 +109,12 @@
     (is (some? (actions/session-source m (first (vals (:instances m))))))
     (let [id (get-in m (into actions/run-path [:leases :pulse :mover :id]))]
       (is (= "1:3" (get-in (actions/restore m {id "1:3"} 1) (into actions/run-path [:leases :pulse :mover :id])))))))
+
+(deftest geometry-and-native-color-presets-require-the-fixtures-complete-channel-set
+  (let [m (-> (model)
+              (assoc-in [:rig :fixtures 2 :channels] {:pan 1 :white 2})
+              (assoc-in [:registry :effects :color] {:id :color :version 1 :outputs {:color [1 0 0]}}))
+        result (update-area m #{:mover} {:target {:volume-id :ball :action {:preset :aim}}
+                                        :color {:volume-id :ball :action {:effect-id :color}}} 0)]
+    (is (empty? (:instances result)))
+    (is (empty? (get-in result (conj actions/run-path :errors))))))

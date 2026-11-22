@@ -3,7 +3,6 @@
   (:require [afterglow.control.targets :as selection]
             [clojure.set :as set]
             [clojure.string :as str]
-            [tolglow.lighting-scenes :as scenes]
             [tolglow.registry :as registry]))
 
 (def usage-path [:extensions ::usage])
@@ -18,16 +17,19 @@
       (let [matches (filter #(= (label %) (label id)) ids)]
         (when (= 1 (count matches)) (first matches)))))
 
+(defn volume-id [configured requested]
+  (identify (keys configured) requested))
+
 (defn- groups [model]
   (merge (reduce (fn [gs {:keys [id groups]}]
                    (reduce #(update %1 %2 (fnil conj []) id) gs groups))
                  {} (get-in model [:rig :fixtures]))
-         (update-vals (scenes/groups model) :fixture-ids)))
+         (update-vals (get-in model [:extensions :tolglow.lighting-scenes/control :groups] {}) :fixture-ids)))
 
 (defn resolve-ids
   "Resolve selection in patch order against the live membership snapshot. Empty
   volumes are valid selections; stale/unknown named selectors fail closed."
-  ([model selector] (resolve-ids model selector (get-in model [:variables :spatial/members])))
+  ([model selector] (resolve-ids model selector (get-in model [:variables :spatial :members])))
   ([model selector members]
    (when-not (selector? selector) (throw (ex-info "Invalid fixture selection" {:selector selector})))
    (let [all (mapv :id (get-in model [:rig :fixtures]))]
@@ -38,20 +40,21 @@
                           (:group-id selector)
                           (let [gs (groups model) k (identify (keys gs) (:group-id selector))]
                             (or (get gs k) (throw (ex-info "Unknown fixture group" {:selector selector}))))
-                          :else (let [known (concat (keys members) (keys (get-in model [:settings :spatial :volumes])))
-                                      k (identify known (:volume-id selector))]
+                          :else (let [volumes (get-in model [:settings :spatial :volumes] members)
+                                      k (volume-id volumes (:volume-id selector))]
                                   (if k (get members k #{}) (throw (ex-info "Unknown volume" {:selector selector})))))]
            (filterv (set selected) all))))))
 
 (defn resolve-command
-  ([model cmd] (resolve-command model cmd (get-in model [:variables :spatial/members])))
+  ([model cmd] (resolve-command model cmd (get-in model [:variables :spatial :members])))
   ([model cmd members]
    (if (#{:cue/launch :effect/launch} (:op cmd))
      (let [launch (:launch cmd)
+           cached (get-in model [:control :history (:command-id cmd) :command :launch])
            selector (or (:selector launch) (when-not (contains? launch :targets)
-                                              (get-in model [:registry :cues (:cue-id cmd) :selector])))]
+                                              (or (:selector cached) (get-in model [:registry :cues (:cue-id cmd) :selector]))))]
        (if (nil? selector) cmd
-           (let [cached (get-in model [:control :history (:command-id cmd) :command :launch])]
+           (do
              (when (and (contains? launch :targets) (:selector launch))
                (throw (ex-info "Supply either a selector or resolved targets at launch" {:launch launch})))
              (update cmd :launch assoc :selector selector :targets
@@ -119,7 +122,7 @@
 (defn- catalog [model]
   (let [rig (get-in model [:rig :fixtures]) by-id (into {} (map (juxt :id identity)) rig)
         registry (:registry model)
-        volumes (merge (get-in model [:settings :spatial :volumes]) (get-in model [:variables :spatial/members]))]
+        volumes (get-in model [:settings :spatial :volumes] (get-in model [:variables :spatial :members]))]
     (concat
      (for [{:keys [id name channels]} rig] {:kind :fixture :id id :label (or name (label id))
                                              :selector {:fixture-ids [id]} :attributes (set (keys channels))})

@@ -1,7 +1,8 @@
 (ns tolglow.spatial
   "Show-owned spatial bindings, event delivery and query inputs. Physics and
   emitted light contacts come from Afterglow; durable show state contains data only."
-  (:require [afterglow.reactive :as graph]
+  (:require [afterglow.control.model :as control]
+            [afterglow.reactive :as graph]
             [afterglow.runtime.events :as staging]
             [afterglow.spatial :as physics]
             [afterglow.time :as time]
@@ -85,6 +86,23 @@
                 body (get-in prior [:bodies id])
                 saved (when body {:bodies {id body}})]
             (:members (physics/advance (physics/rebase saved clock) config clock (get-in model [:rig :fixtures]) {}))))))))
+
+(defn apply-command
+  "Resolve a cue's selected fixture scope on every Tolglow control surface,
+  including subscriber callbacks, composition steps and simulated admissions."
+  [model command]
+  (if-not (#{:cue/launch :effect/launch} (:op command))
+    (control/apply-command model command)
+    (let [prepared (try
+                     (let [members (selection-members model command (:time-ms command (:time-ms model)))]
+                       {:command (targets/resolve-command model command members)})
+                     (catch clojure.lang.ExceptionInfo error
+                       {:ack (merge (select-keys model [:show-id :epoch :revision])
+                                    {:command-id (:command-id command) :status :rejected :code :invalid-target
+                                     :message (ex-message error) :details (ex-data error)})}))]
+      (if-let [scoped (:command prepared)]
+        (targets/remember (control/apply-command model scoped) scoped)
+        {:model model :events [] :ack (:ack prepared)}))))
 
 (defn- stage [model events]
   (reduce (fn [m e] (staging/collect m :spatial {:kind :volume :id (:volume-id e)} [e])) model events))

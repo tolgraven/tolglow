@@ -2,7 +2,7 @@
   "Pure bridge from reusable slot editors to owned control-model instances.
   The host supplies milliseconds and, for beat sequences, transport :beat/:bpm.
   No clock, transport or output is started by loading this namespace."
-  (:require [afterglow.control.model :as control]
+  (:require [tolglow.spatial :as spatial]
             [afterglow.render.layers :as layers]
             [afterglow.time :as time]
             [clojure.string :as str]
@@ -122,7 +122,7 @@
                   (not launch?) (assoc :instance-id id))]
     (if (and (not launch?) (not (get-in model [:instances id])))
       (update model :composition-tokens dissoc token)
-      (let [{:keys [model ack]} (control/apply-command model command)]
+      (let [{:keys [model ack]} (spatial/apply-command model command)]
         (when (= :rejected (:status ack)) (throw (ex-info "Composition command rejected" {:ack ack})))
         (if launch? (assoc-in model [:composition-tokens token] (:instance-id ack))
             (update model :composition-tokens dissoc token))))))

@@ -85,12 +85,12 @@
 (defn- preset [kind fixture]
   (let [unit {:type :number :bounds [0 1] :default 0.5}
         fields (case kind
-                 :aim (when (some (:channels fixture) [:pan :tilt])
+                 :aim (when (every? (:channels fixture) [:pan :tilt])
                         {:params {:point {:type :vector :size 3 :default [0 0 0]}}
                          :outputs {:aim {:op :param :key :point}}})
                  :strobe (when-let [[a drive] (strobe fixture)]
                            {:params {:drive unit} :outputs {a {:op :param :key :drive}} :initial {:drive drive}})
-                 :flicker (when (some (:channels fixture) [:dimmer :red :green :blue :white :amber])
+                 :flicker (when (or (get-in fixture [:channels :dimmer]) (some (:channels fixture) registry/emitter-attributes))
                             {:params {:rate {:type :number :bounds [0 64] :default 8.0}}
                              :outputs {:dimmer {:op :fract :args [{:op :multiply :args [43758.5453
                                         {:op :sin :args [{:op :add :args [1.181 {:op :floor :args [
@@ -106,9 +106,9 @@
          (some (fn [{:keys [targets attribute]}]
                  (and (or (nil? targets) (some #{id} targets))
                       (case attribute
-                        (:aim :direction) (some channels [:pan :tilt])
-                        :color (some channels [:red :green :blue :white])
-                        :dimmer (some channels [:dimmer :red :green :blue :white :amber :uv])
+                        (:aim :direction) (every? channels [:pan :tilt])
+                        :color (every? channels [:red :green :blue])
+                        :dimmer (or (:dimmer channels) (some channels registry/emitter-attributes))
                         (contains? channels attribute)))) writes))))
 
 (defn- lighting? [definition]
@@ -167,11 +167,14 @@
   "Reconcile contacts, updating mapped cue inputs while each head stays inside.
   Removed bindings release owned instances even if a timed launch was requested.
   A manually edited or ended instance is left alone until a new contact."
-  [model {:keys [members signals]} bindings now command]
+  [model {:keys [members signals events]} bindings now command]
   (let [prior (get-in model run-path)
         bindings (into {} (remove #(false? (:enabled? (val %)))) bindings)]
     (if (and (empty? bindings) (nil? prior)) model
         (let [fixtures (delay (into {} (map (juxt :id identity)) (get-in model [:rig :fixtures])))
+              swept (delay (reduce (fn [m {:keys [type volume-id fixture-id]}]
+                                     (if (= :spatial/enter type) (update m volume-id (fnil conj #{}) fixture-id) m))
+                                   {} events))
               state (or prior {:contacts {} :leases {} :seeds {} :errors {}})
               ids (sort-by pr-str (set/union (set (keys (:bindings state))) (set (keys bindings))))
               [model result]
@@ -180,13 +183,19 @@
                  (let [before (get-in state [:bindings id]) b (get bindings id)
                        old (get-in state [:contacts id] #{})
                        changed? (not= b before)
-                       members-now (get members (:volume-id b) #{})
-                       selection (try (if-let [selector (:selector b)]
-                                        {:contacts (set/intersection members-now (set (targets/resolve-ids m selector members)))}
-                                        {:contacts members-now})
-                                      (catch clojure.lang.ExceptionInfo ex {:contacts #{} :error (ex-message ex)}))
+                       volume-id (:volume-id b)
+                       members-now (get members volume-id #{})
+                       passages (when (map? (:duration b)) (get @swept volume-id))
+                       selection (try
+                                   (if-let [selector (:selector b)]
+                                     ;; A swept contact was inside its own source volume when the entry occurred.
+                                     (let [allowed (set (targets/resolve-ids m selector (update members volume-id into passages)))]
+                                       {:contacts (set/intersection members-now allowed)
+                                        :passages (filter allowed passages)})
+                                     {:contacts members-now :passages passages})
+                                   (catch clojure.lang.ExceptionInfo ex {:contacts #{} :error (ex-message ex)}))
                        contacts (:contacts selection)
-                       entries (if changed? contacts (set/difference contacts old))
+                       entries (into (if changed? contacts (set/difference contacts old)) (:passages selection))
                        leases (get-in state [:leases id] {})
                        signal (get signals (:volume-id b))
                        choices (delay (random-catalog m (get-in b [:action :random])))

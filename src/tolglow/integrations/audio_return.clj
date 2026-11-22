@@ -1,6 +1,6 @@
 (ns tolglow.integrations.audio-return
   "Isolated dry carriers, processed return features and owner-side wet cue control."
-  (:require [afterglow.control.model :as control]
+  (:require [tolglow.spatial :as spatial]
             [afterglow.time :as time]
             [clojure.set :as set]
             [tolglow.composition.tween :as tween]
@@ -149,7 +149,7 @@
               :features (select-keys features [:rms :pitch-hz :pitch-confidence :spectral-residual])}}))
 
 (defn- command [model command time-ms session]
-  (control/apply-command model (merge {:show-id (:show-id model) :epoch (:epoch model)
+  (spatial/apply-command model (merge {:show-id (:show-id model) :epoch (:epoch model)
                                        :source {:adapter :audio-return :session-id session}
                                        :command-id (pr-str [session (:epoch model) (:revision model) command])
                                        :time-ms time-ms} command)))
