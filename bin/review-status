@@ -40,6 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repo", help="owner/repository")
     parser.add_argument("number", type=int)
+    parser.add_argument("--security", action="store_true", help="also require a completed Codex security review on this commit")
     args = parser.parse_args()
     owner, repo = args.repo.split("/", 1)
     path = f"repos/{args.repo}"
@@ -52,10 +53,17 @@ def main():
     comments = pages(f"{path}/issues/{args.number}/comments")
     reviews = pages(pr+"/reviews")
     receipt = None
+    security_receipt = None
     for c in comments:
         match = re.search(r"<!-- codex-review-state:v1 (.*?) -->", c["body"])
         if match and c["user"]["login"] == "chatgpt-codex-connector[bot]":
-            review = json.loads(match[1]).get("code_review") or {}
+            receipts = json.loads(match[1])
+            security = receipts.get("security_review") or {}
+            if security.get("status"):
+                print("Security receipt:", security["status"], security.get("commit_sha"), c["html_url"])
+            if security.get("commit_sha") == head:
+                security_receipt = security
+            review = receipts.get("code_review") or {}
             print("Codex receipt:", review.get("status"), review.get("commit_sha"), c["html_url"])
             if review.get("commit_sha") == head:
                 receipt = review
@@ -63,6 +71,9 @@ def main():
             print("PR comment:", c["user"]["login"], c["html_url"])
     for review in reviews:
         print("Review:", review["user"]["login"], review["state"], review.get("commit_id"), review["html_url"])
+    decision = api("graphql", "-f", "query=query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewDecision}}}",
+                   "-f", "owner="+owner, "-f", "repo="+repo, "-F", "n="+str(args.number))["data"]["repository"]["pullRequest"]["reviewDecision"]
+    print("GitHub review decision:", decision or "no required decision")
     open_threads = []
     for thread in threads(owner, repo, args.number):
         if not thread["isResolved"]:
@@ -72,7 +83,11 @@ def main():
                   "(older diff)" if thread["isOutdated"] else "", c["url"])
     print("Unresolved discussions:", len(open_threads))
     # Human disposition of each linked discussion is still needed even when stale.
-    return 0 if receipt and receipt.get("status") == "completed" and not open_threads and not requested else 1
+    code_complete = receipt and receipt.get("status") == "completed"
+    security_complete = security_receipt and security_receipt.get("status") == "completed"
+    ready = (code_complete and (not args.security or security_complete) and not open_threads
+             and not requested and decision not in {"CHANGES_REQUESTED", "REVIEW_REQUIRED"})
+    return 0 if ready else 1
 
 if __name__ == "__main__":
     sys.exit(main())
