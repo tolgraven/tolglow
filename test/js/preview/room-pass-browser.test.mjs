@@ -14,6 +14,7 @@ test('private Room diagnostics keep real worker presentations through each pass 
   const assets = new Map(out.outputFiles.map(f => [f.path.split('/').at(-1), Buffer.from(f.contents)]));
   const server = createServer((req, res) => {
     if (req.url === '/studio/room.js') {res.setHeader('Content-Type','text/javascript'); res.end(assets.get('room.js'));}
+    else if (req.url === '/studio/preview-worker.js') {res.setHeader('Content-Type','application/javascript'); res.end(assets.get('probe.js'));}
     else if (req.url === '/') {res.setHeader('Content-Type','text/html');res.end('<canvas id="preview" width="220" height="128" style="width:220px;height:128px"></canvas>');}
     else {res.writeHead(404);res.end();}
   });
@@ -22,8 +23,6 @@ test('private Room diagnostics keep real worker presentations through each pass 
   try {
     const page = await browser.newPage();
     const origin = 'http://127.0.0.1:'+server.address().port;
-    await page.route(origin+'/studio/preview-worker.js', route =>
-      route.fulfill({contentType:'text/javascript',body:assets.get('probe.js')}));
     await page.goto(origin);
     await page.evaluate(async () => {
       const {RoomPreview} = await import('/studio/room.js'), canvas=document.querySelector('#preview');

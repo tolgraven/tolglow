@@ -46,7 +46,7 @@ ROOM_PASSES=full,cached-shadows,skip-fog-raymarch,present-cached-frame,full \
 node dev/preview/measure-room.mjs http://127.0.0.1:9223 target/room-pass-mobile
 ```
 
-Repeat with `ROOM_QUALITY=desktop` and a separate output directory to test a larger internal render target. Each sample runs for 20 seconds, after at least eight seconds and four ordinarily rendered frames, followed by a 2.5-second pass change warmup. The harness installs a diagnostic worker only in the new page. The worker uses the checked-out release scene, shader and display code. Its SHA-256 and the ordinary worker SHA-256 are recorded separately.
+Repeat with `ROOM_QUALITY=desktop` and a separate output directory to test a larger internal render target. Each sample runs for 20 seconds, after at least eight seconds and four ordinarily rendered frames, followed by a 2.5-second pass change warmup. The dedicated Ring JVM serves this worker from a temporary classpath overlay and verifies its HTTP response SHA before opening Chrome. The worker uses the checked-out release scene, shader and display code. Its SHA-256 and the ordinary worker SHA-256 are recorded separately.
 
 | Sample | Work performed |
 | --- | --- |

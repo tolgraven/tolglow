@@ -37,7 +37,23 @@ const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha2
   output: 'preview only', quality, warmup: {minimumSeconds: 8, minimumDrawnFrames: 4}, scenarios: []};
 const config = join(temp, 'room.edn');
 await writeFile(config, '{:init {:components [:show] :modules [:web-server]} :show {:workspace-options nil} :web-server {:host "127.0.0.1" :port 0}}');
-const server = spawn(process.env.LEIN || 'lein', ['run', '-m', 'tolglow.application',
+const leinPrefix = [];
+if (passes) {
+  const {build} = await import('esbuild');
+  const entry = new URL('./room-pass-worker.mjs', import.meta.url).pathname;
+  const result = await build({entryPoints:[entry], bundle:true, format:'esm',
+    platform:'browser', target:['es2022'], minify:true, write:false});
+  const overlay = join(temp, 'private-assets');
+  await mkdir(join(overlay, 'studio'), {recursive: true});
+  const bytes = result.outputFiles[0].contents;
+  await writeFile(join(overlay, 'studio/preview-worker.js'), bytes);
+  metadata.diagnosticWorkerSha256 = hash(bytes);
+  // Prepend one resource root in this demo JVM only. Chrome loads its worker
+  // from the same origin and route as an ordinary release, without interception.
+  leinPrefix.push('update-in', ':resource-paths', 'seq', '--',
+    'update-in', ':resource-paths', 'conj', JSON.stringify(overlay), '--');
+}
+const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 'tolglow.application',
   '--config', config, '--output', 'preview', '--port', '0', '--host', '127.0.0.1'],
 {cwd: source, env: {...process.env, AFTERGLOW_ROOT: fork}, detached: true, stdio: ['ignore', 'pipe', 'pipe']});
 const log = createWriteStream(join(outputDir, 'host.log'));
@@ -74,14 +90,18 @@ try {
   const browser = await chromium.connectOverCDP(endpoint.href);
   page = await browser.contexts()[0].newPage();
   if (passes) {
-    const {build} = await import('esbuild');
-    const result = await build({entryPoints:['dev/preview/room-pass-worker.mjs'], bundle:true, format:'esm',
-      platform:'browser', target:['es2022'], minify:true, write:false});
-    const probeBytes = result.outputFiles[0].contents;
-    metadata.diagnosticWorkerSha256 = hash(probeBytes);
-    await page.route(origin + '/studio/preview-worker.js', route =>
-      route.fulfill({contentType:'application/javascript', body:Buffer.from(probeBytes)}));
+    const response = await fetch(origin + '/studio/preview-worker.js');
+    const received = hash(new Uint8Array(await response.arrayBuffer()));
+    if (!response.ok || received !== metadata.diagnosticWorkerSha256)
+      throw new Error('Private Ring worker digest mismatch: '+received+' / '+metadata.diagnosticWorkerSha256);
+    metadata.servedDiagnosticWorkerSha256 = received;
   }
+  const startup = metadata.browserStartup = [];
+  const note = (kind, message) => {if (startup.length < 24) startup.push({kind, message: String(message).slice(0,480)});};
+  page.on('pageerror', e => note('page-error',e.message));
+  page.on('console', m => {if (m.type()==='error') note('console',m.text());});
+  page.on('requestfailed', req => note('asset',new URL(req.url()).pathname+' '+req.failure()?.errorText));
+  page.on('worker', w => {note('worker',new URL(w.url()).pathname); w.on('close', () => note('worker-closed',new URL(w.url()).pathname));});
   await page.bringToFront();
   await page.goto(origin);
   await page.locator('#preview').scrollIntoViewIfNeeded();
@@ -173,7 +193,17 @@ try {
   await writeFile(join(outputDir, 'room.json'), JSON.stringify(metadata, null, 2));
   if (!metadata.qualified) process.exitCode = 2;
 } catch (error) {
-  console.error(error); process.exitCode = 1;
+  metadata.error = String(error);
+  if (page && !page.isClosed()) {
+    try {
+      metadata.startupTelemetry = await page.evaluate(() => {
+        const t = document.querySelector('#preview')?.tolglowPreview?.getTelemetry();
+        return t ? {thread:t.thread, fallback:t.fallbackReason, failed:t.failed, ready:t.ready, quality:t.quality} : null;
+      });
+    } catch {}
+  }
+  await writeFile(join(outputDir, 'room-error.json'), JSON.stringify(metadata, null, 2));
+  console.error(error, metadata.startupTelemetry || '', metadata.browserStartup || ''); process.exitCode = 1;
 } finally {
   await shutdown();
   // Closing this process disconnects CDP. Never issue Browser.close or close
