@@ -233,6 +233,12 @@ try {
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
+    if(process.env.STUDIO_SHELL_ONLY==='1') {
+      await verifyShellActions(page,name,touch);
+      assert.deepEqual(errors,[]);
+      await page.close();
+      continue;
+    }
     try {
       await verifyControls(page,touch,name);
     } catch (error) {
