@@ -12,43 +12,48 @@
 (defn- fail! [path message & [data]]
   (throw (ex-info message (merge {:errors [{:path path :message message}]} data))))
 
+(defn- coordinates? [size point]
+  (and (vector? point) (= size (count point)) (every? registry/finite-number? point)))
+
+(defn- valid-fixture? [{:keys [id position surface-uv] :or {position [0 0 0]} :as fixture}]
+  (and (map? fixture) (some? id) (coordinates? 3 position)
+       (or (nil? surface-uv) (coordinates? 2 surface-uv))))
+
 (defn- validate-rig! [fixtures]
-  (when-not (and (vector? fixtures)
-                 (every? #(and (map? %) (some? (:id %))) fixtures)
-                 (= (count fixtures) (count (set (map :id fixtures))))
-                 (every? (fn [fixture]
-                           (let [position (:position fixture [0 0 0])]
-                             (and (vector? position) (= 3 (count position))
-                                  (every? registry/finite-number? position)))) fixtures))
-    (fail! [:fixtures] "Batch compiler needs distinct fixture IDs and finite xyz positions")))
+  (when-not (and (vector? fixtures) (every? valid-fixture? fixtures)
+                 (= (count fixtures) (count (set (map :id fixtures)))))
+    (fail! [:fixtures] "Batch compiler needs distinct fixture IDs, finite xyz positions and optional finite [u v] pairs")))
 
 (defn- select-targets [fixtures selected {:keys [targets] :as output}]
   (let [targets (when (some? targets) (set targets))
         fixtures (filterv #(and (or (nil? selected) (contains? selected (:id %)))
                                 (or (nil? targets) (contains? targets (:id %)))) fixtures)]
     (when (seq fixtures)
-      (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures)))))
+      (cond-> (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures))
+        (some :surface-uv fixtures) (assoc :surface-uvs (mapv :surface-uv fixtures))))))
 
 (defn- output-groups [outputs prepare-group bind-pure]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
-  (let [groups (reduce (fn [groups {:keys [target-ids positions] :as output}]
+  (let [groups (reduce (fn [groups {:keys [target-ids positions surface-uvs] :as output}]
                          (let [previous (peek groups)
                                compatible? (and previous (= (:blend previous) (:blend output))
                                                 (= (:target-ids previous) target-ids)
                                                 (not (contains? (:expressions previous) (:attribute output))))]
                            (if compatible?
                              (conj (pop groups) (assoc-in previous [:expressions (:attribute output)] (:expression output)))
-                             (conj groups {:target-ids target-ids :positions positions :blend (:blend output)
+                             (conj groups {:target-ids target-ids :positions positions :surface-uvs surface-uvs :blend (:blend output)
                                            :expressions {(:attribute output) (:expression output)}}))))
                        [] outputs)]
-    (mapv (fn [{:keys [expressions positions] :as group}]
+    (mapv (fn [{:keys [expressions positions surface-uvs] :as group}]
             (let [plan (ir/compile-batch expressions)
-                  evaluate (fn [env] (ir/evaluate-batch plan env positions))]
+                  uvs (when (:surface-uv? plan) surface-uvs)
+                  evaluate (fn [env] (ir/evaluate-batch plan env positions uvs))]
               (if prepare-group
-                (assoc group :prepared (prepare-group expressions positions plan))
+                (assoc group :prepared (if uvs (prepare-group expressions positions plan uvs)
+                                         (prepare-group expressions positions plan)))
                 (let [inputs (into [] (comp (mapcat ir/input-paths)
-                                            (remove #{[:position]}) (distinct)) (vals expressions))]
+                                            (remove #{[:position] [:surface-uv]}) (distinct)) (vals expressions))]
                   (assoc group :evaluate (if bind-pure
                                            (bind-pure {:pure? true :inputs inputs} evaluate)
                                            evaluate))))))
@@ -107,21 +112,25 @@
       (and (#{:add :subtract :multiply :divide} op) (= 2 (count args))
            (some #(and (= :const (:op %)) (number? (:value %)) (floating-value? (:value %))) args))))
 
-(defn- exact-position? [{:keys [nodes arithmetic? positions]}]
-  (let [axis-index {:x 0 :y 1 :z 2}
-        axes (into #{} (keep #(when (= :position (:op %)) (axis-index (:axis %)))) nodes)
+(defn- exact-coordinates? [op nodes arithmetic? points]
+  (let [axis-index {:x 0 :y 1 :z 2 :u 0 :v 1}
+        axis #(when (= op (:op %)) (axis-index (:axis %)))
+        axes (into #{} (keep axis) nodes)
         exact-axes (when arithmetic?
-                     (into #{} (comp (remove coerces-position?) (mapcat :args)
-                                     (keep #(when (= :position (:op %)) (axis-index (:axis %))))) nodes))]
+                     (into #{} (comp (remove coerces-position?) (mapcat :args) (keep axis)) nodes))]
     (and (seq axes)
-         (some (fn [position]
-                 (some #(needs-scalar? (nth position %) (contains? exact-axes %)) axes)) positions))))
+         (some (fn [p] (some #(needs-scalar? (nth p %) (contains? exact-axes %)) axes)) points))))
+
+(defn- exact-position? [{:keys [nodes arithmetic? positions surface-uvs]}]
+  (or (exact-coordinates? :position nodes arithmetic? positions)
+      (exact-coordinates? :surface-uv nodes arithmetic?
+                          (if surface-uvs (map #(or %1 %2) surface-uvs positions) positions))))
 
 (defn- numeric-contract [outputs]
   (let [expressions (mapv (fn [output]
                             (let [nodes (tree-seq #(and (map? %) (vector? (:args %))) :args (:expression output))]
-                              {:nodes nodes :positions (:positions output)
-                               :arithmetic? (some #(not (#{:const :param :position :time :beat :bar :phrase :vec2 :vec3 :vec4} (:op %))) nodes)})) outputs)
+                              {:nodes nodes :positions (:positions output) :surface-uvs (:surface-uvs output)
+                               :arithmetic? (some #(not (#{:const :param :position :surface-uv :time :beat :bar :phrase :vec2 :vec3 :vec4} (:op %))) nodes)})) outputs)
         nodes (mapcat :nodes expressions)
         arithmetic-nodes (mapcat :nodes (filter :arithmetic? expressions))
         params (fn [nodes] (set (keep #(when (= :param (:op %)) (:key %)) nodes)))]

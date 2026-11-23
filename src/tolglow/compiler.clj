@@ -201,7 +201,8 @@
                             (when (or (nil? targets) (some #{(:id fixture)} targets))
                               (let [value (try
                                             (if frame-only? sampled-value
-                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0]))))
+                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
+                                                                 :surface-uv (:surface-uv fixture))))
                                             (catch clojure.lang.ExceptionInfo cause
                                               (throw (ex-info "Effect evaluation failed"
                                                               {:definition-id (:id definition) :fixture-id (:id fixture)

@@ -36,7 +36,7 @@ Use `[:outputs 2]` to attach a stage to the third assignment when an ordered out
 
 ## Planes, mesh surfaces and volumes
 
-World coordinates are in venue metres. To project onto the floor, specify `:coordinates [{:op :position :axis :x} {:op :position :axis :z}]`. Two coordinates imply zero depth. Three expressions can rotate, stretch or animate the sampling space. On a mesh with its own UV layout, choose the `:surface-uv` fragment interface and supply the interpolated `v_uv` varying from the vertex shader. Fixture compute passes receive XYZ. To use baked fixture UVs, supply their two coordinate expressions.
+World coordinates are in venue metres. To project onto the floor, specify `:coordinates [{:op :position :axis :x} {:op :position :axis :z}]`. Two coordinates imply zero depth. Three expressions can rotate, stretch or animate the sampling space. On a folded LED surface, give each fixture or pixel a chart coordinate alongside its physical position, such as `{:position [3.4 1.2 -0.6] :surface-uv [0.75 0.25]}`. Select `:coordinates :surface-uv` on a water stage to follow that chart, then leave a gel stage at its default world coordinates to tint by physical height. UVs can tile beyond the unit square. Each fixture without a chart uses its world X and Y. The inspector displays the resolved UV pair and world position for the selected fixture. A saved Transit show retains the original chart.
 
 An effect can extend `:prefabs` with a data-only template. For example, this material makes a soft band that travels across the surface.
 
@@ -46,7 +46,7 @@ An effect can extend `:prefabs` with a data-only template. For example, this mat
              :glsl "0.7 + 0.3 * cos(6.283185307 * (uv.x * frequency - phase))"}}
 ```
 
-A prefab accepts a numeric GLSL expression or a typed IR `:expression`. Supported GLSL includes arithmetic, coordinate components, input names, scalar and vector functions, and vector constructors. For procedural 3D materials, read `position.x`, `position.y` and `position.z`. The compiler checks types and arity and emits actual fragment or transform-feedback shader programs. Texture samplers, loops and arbitrary shader entry points require a separate rendering backend.
+A prefab accepts a numeric GLSL expression or a typed IR `:expression`. Supported GLSL includes arithmetic, coordinate components, input names, scalar and vector functions, and vector constructors. Use `position.x/y/z` for stage-local coordinates, `world.x/y/z` for physical space and `uv.x/y` for the independent chart. The compiler checks types and arity and emits actual fragment or transform-feedback shader programs. Texture samplers, loops and arbitrary shader entry points require a separate rendering backend.
 
 Use `tolglow.signals/waveform-block` to capture a registered waveform as a local prefab. Its selected version and parameter defaults travel with the effect. Use `{:channel :slope}`, `:angular-velocity` or `:jagginess` to drive a second field from the waveform’s motion.
 
