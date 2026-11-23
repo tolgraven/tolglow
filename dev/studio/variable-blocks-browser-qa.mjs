@@ -50,6 +50,7 @@ try {
   const wet = panel.getByRole('spinbutton',{name:'Wet amount',exact:true});
   await wet.fill('0.55');
   await wet.blur();
+  if (evidence) await panel.evaluate(el => el.scrollIntoView({block:'center'}));
   await capture(page,'editor.png');
   await change(first, 'Save variable chain');
   await panel.getByText('Variable chain saved.').waitFor();
@@ -67,6 +68,7 @@ try {
   await plot.waitFor();
   await page.waitForFunction(() => document.querySelector('.block-trace-result polyline')?.getAttribute('points').split(' ').length>15);
   assert.ok(leases.includes(true),'Viewing the plot requests the server sampler');
+  await page.waitForFunction(() => document.querySelector('.block-trace-result polyline')?.getAttribute('points').split(' ').length>45);
   await capture(page,'trace.png');
   if (evidence) {
     for (let i=0; i<32; i++) {

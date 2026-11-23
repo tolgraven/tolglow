@@ -3,7 +3,8 @@
 .variable-blocks .panel-top h2 {font-size: 1.1rem; letter-spacing: -.025em}
 .variable-block-workspace {display: grid; grid-template-columns: minmax(13rem, .7fr) minmax(0, 1.6fr); align-items: start}
 .variable-block-workspace > fieldset {border: 0; margin: 0; padding: 0; min-width: 0}
-.variable-block-workspace > fieldset .form-row {grid-template-columns: 1fr; gap: .5rem}
+.variable-block-workspace > fieldset .form-row {display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem}
+.variable-block-workspace > fieldset label {margin: 0}
 .variable-block-workspace > fieldset button {justify-self: start}
 .variable-block-workspace .form-body {display: grid; gap: .85rem}
 .variable-block-workspace .form-row {margin: 0}
@@ -20,3 +21,7 @@
   .variable-block-workspace {grid-template-columns: minmax(0, 1fr)}
   .variable-block-workspace .variable-block-editor {border-inline-start: 0; border-top: 1px solid var(--line)}
 }
+.variable-block-workspace .secondary {border: 1px solid #48553f; border-radius: 7px; background: #283322; color: var(--text); padding: .55rem .9rem; font-size: .8rem}
+.variable-block-workspace .secondary:hover {background: #35452d}
+.variable-block-workspace .block-stage-blend, .variable-block-workspace .block-input, .variable-block-workspace .block-stage-add {gap: .5rem .8rem}
+.variable-block-workspace .block-stage label {display: inline-flex; align-items: center; gap: .45rem}
