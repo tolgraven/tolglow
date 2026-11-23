@@ -16,11 +16,11 @@ jobs:
         with: {name: compiled-mac-original-window, path: compiled-studio.png}
   ipad:
     runs-on: macos-15-intel
-    timeout-minutes: 28
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v4
-        with: {repository: tolgraven/tolglow, run-id: 45171272767, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: product}
+        with: {repository: tolgraven/tolglow, run-id: 45182869110, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: product}
       - name: Reuse the previously linked simulator framework
         run: |
           product="$(find product -name embedded-ipad-studio.zip -print -quit)"
@@ -33,6 +33,35 @@ jobs:
           cp native/EmbeddedHost/TolglowRuntime.h "$framework/Headers/"
           cp native/EmbeddedHost/module.modulemap "$framework/Modules/"
           codesign --force --sign - "$framework"
+      - name: Diagnose the linked iOS library entry points inside a real booted simulator
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;print(next(d["udid"] for k,v in json.load(sys.stdin)["devices"].items() if "iOS" in k for d in v if "iPad" in d["name"] and d["isAvailable"]))')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          cat > probe.swift <<'SWIFT'
+          import Foundation
+          import TolglowRuntime
+          let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+          try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+          var isolate: OpaquePointer?
+          var thread: OpaquePointer?
+          let created = graal_create_isolate(nil, &isolate, &thread)
+          print("Graal isolate return", created)
+          if created != 0 { exit(2) }
+          let port = tolglow_open_local(thread, home.path, "")
+          print("Ring open return", port)
+          if port > 0 { print("Ring close return", tolglow_close_local(thread)) }
+          print("Tear down return", graal_tear_down_isolate(thread))
+          exit(port > 0 ? 0 : 3)
+          SWIFT
+          framework="$PWD/native/build/embedded"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          xcrun --sdk iphonesimulator swiftc -sdk "$sdk" -target x86_64-apple-ios17.0-simulator -F "$framework" -framework TolglowRuntime             -Xlinker -rpath -Xlinker "$framework" probe.swift -o "$PWD/probe"
+          codesign --force --sign - "$PWD/probe"
+          mkdir -p result
+          xcrun simctl spawn "$udid" "$PWD/probe" 2>&1 | tee result/probe.log
+          xcrun simctl shutdown "$udid"
       - run: native/Tests/check-embedded-studio
       - run: |
           mkdir -p result
