@@ -1,5 +1,9 @@
 package org.tolglow.embedded;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
 import org.graalvm.nativeimage.c.type.CCharPointer;
@@ -29,10 +33,23 @@ public final class StudioRuntime {
 
     @CEntryPoint(name = "tolglow_open_local")
     public static int open(IsolateThread thread, CCharPointer home, CCharPointer folder) {
+        String applicationSupport = CTypeConversion.toJavaString(home);
         try {
-            return tolglow.fixed_host.open(CTypeConversion.toJavaString(home), CTypeConversion.toJavaString(folder));
+            return tolglow.fixed_host.open(applicationSupport, CTypeConversion.toJavaString(folder));
         } catch (Throwable error) {
+            try {
+                stopShow();
+            } catch (Throwable cleanup) {
+                error.addSuppressed(cleanup);
+            }
             error.printStackTrace();
+            try {
+                StringWriter details = new StringWriter();
+                error.printStackTrace(new PrintWriter(details));
+                Files.writeString(Path.of(applicationSupport, "last-start-error.log"), details.toString());
+            } catch (Exception diagnostic) {
+                diagnostic.printStackTrace();
+            }
             return -1;
         }
     }

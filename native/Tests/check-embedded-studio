@@ -21,11 +21,21 @@ xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "
 app="native/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app"
 test -s "$app/Frameworks/TolglowRuntime.framework/TolglowRuntime"
 ditto -c -k --keepParent "$app" embedded-ipad-studio.zip
+status=0
 xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
   -derivedDataPath native/DerivedData -resultBundlePath run-ui.xcresult \
-  -only-testing:LocalStudioUITests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
+  -only-testing:LocalStudioUITests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building || status=$?
 mkdir -p build/ipad-media/attachments
 xcrun xcresulttool export attachments --path run-ui.xcresult --output-path build/ipad-media/attachments
+if ((status != 0)); then
+  data="$(xcrun simctl get_app_container "$udid" org.tolglow.ios data)"
+  diagnostic="$data/Library/Application Support/Local Studio/last-start-error.log"
+  if [[ -f "$diagnostic" ]]; then
+    cp "$diagnostic" build/ipad-media/last-start-error.log
+    cat "$diagnostic" >&2
+  fi
+  exit "$status"
+fi
 python3 -m venv "$RUNNER_TEMP/tolglow-ipad-media"
 "$RUNNER_TEMP/tolglow-ipad-media/bin/pip" -q install pillow==12.0.0
 "$RUNNER_TEMP/tolglow-ipad-media/bin/python" native/Tests/record_embedded_studio.py build/ipad-media

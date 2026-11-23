@@ -18,6 +18,8 @@ private final class ShowThread {
                 ended("Could not initialize the local runtime.")
                 return
             }
+            let failureLog = home.appendingPathComponent("last-start-error.log")
+            try? FileManager.default.removeItem(at: failureLog)
             let port = tolglow_open_local(thread, home.path, folder?.path ?? "")
             if port > 0 {
                 ready(Int(port))
@@ -25,7 +27,11 @@ private final class ShowThread {
                 _ = tolglow_close_local(thread)
             }
             let closed = graal_tear_down_isolate(thread)
-            if port <= 0 { ended("Could not start this show. Check its configuration in tolglow.edn or show.clj.") }
+            if port <= 0 {
+                let trace = try? String(contentsOf: failureLog, encoding: .utf8)
+                let reason = trace?.split(whereSeparator: \.isNewline).first.map { String($0.prefix(240)) }
+                ended(reason.map { "Could not start this show. \($0)" } ?? "Could not start this show. Check its configuration in tolglow.edn or show.clj.")
+            }
             else if closed != 0 { ended("The local runtime could not finish shutting down.") }
             else { ended(nil) }
         }
