@@ -231,7 +231,8 @@
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
                                                     :register-reactive! #(-> % reactive-clock/register! effect-faults/register! (spatial/register! nil)))))
-         worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
+         worker-pool (try (executor/create {:workers workers :queue-size 64
+                                            :timeout-ms (:worker-timeout-ms options 500)})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create
                              (when-let [workspace-options (if (contains? options :workspace-options)
@@ -289,7 +290,8 @@
 
 (defn create-runtime
   "Create an unscheduled show. The CPU backend is the default. Explicit
-  :compute-backend :native-gpu acquires one session owned by this show."
+  :compute-backend :native-gpu acquires one session owned by this show.
+  :worker-timeout-ms sets the per-frame effect worker deadline (default 500)."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
