@@ -2,6 +2,7 @@
   "Author and operate an ordinary grid cue whose native output covers a moving volume."
   (:require [afterglow.control.system :as system]
             [afterglow.render.layers :as layers]
+            [afterglow.runtime.engine :as engine]
             [afterglow.spatial.field :as field]
             [afterglow.spatial :as physics]
             [afterglow.time :as time]
@@ -33,7 +34,7 @@
       (and ball? (= :sphere (:shape (:geometry volume)))) (assoc :shape-radius (number-param (:radius form) [0 10000]))
       (:radius volume) (assoc :radius (number-param (:radius volume) [(if ball? 0.000001 0) (if ball? max-radius 10000)]))
       morph? (assoc :shape {:type :enum :values [:sphere :rounded-box] :default shape}
-                    :size (assoc (vector-param (:size form (vec (repeat 3 (* 2 radius)))))
+                    :size (assoc (vector-param (or (:size form) (vec (repeat 3 (max 0.000001 (* 2 radius))))))
                                  :bounds [0.000001 10000])
                     :rounding (number-param (:rounding form 0) [0 1])
                     :radius (number-param radius [(if ball? 0.000001 0) (if ball? max-radius 10000)]))
@@ -137,9 +138,12 @@
 
 (defn controls? [instance] (boolean (get-in instance [:definition :spatial-volume])))
 (defn key-for [instance] (str "spatial-cue/" (:order instance)))
-(defn- running? [instance] (and (controls? instance) (= :running (:phase instance))))
+(defn- spatial-candidate? [model instance]
+  (or (controls? instance)
+      (get-in model [:registry :effects (:effect-id instance) :spatial-volume])))
+
 (defn needed? [model]
-  (or (get-in model run-path) (some running? (vals (:instances model)))))
+  (or (get-in model run-path) (some #(spatial-candidate? model %) (vals (:instances model)))))
 
 (defn- sample-source [model opts default spec]
   (let [scalar #(signal/value model % opts)]
@@ -183,11 +187,10 @@
         (cond-> ball? (assoc :radius (:radius values)))
         (update :falloff merge (select-keys values [:inner-m :outer-m])))))
 
-(defn- expired? [instance clock]
-  (let [timer (or (:duration-timer instance)
-                  (when-let [duration (:duration-ms instance)]
-                    {:duration {:unit :ms :value duration} :started-at (:started-at-ms instance)}))]
-    (and timer (not (get-in instance [:system :paused?])) (:done? (time/sample timer clock)))))
+(defn- live-instance [model clock instance]
+  (when (spatial-candidate? model instance)
+    (let [{:keys [instance expired?]} (engine/instance-lifecycle model clock instance)]
+      (when (and (not expired?) (controls? instance)) instance))))
 
 (defn- live-volume [model modulation previous settings key instance]
   (let [{:keys [members] :as spec} (get-in instance [:definition :spatial-volume])]
@@ -207,7 +210,7 @@
   (let [settings (get-in model [:settings :spatial])
         static (when (:enabled? settings) (:volumes settings))
         clock (time/frame-clock model)
-        running (sort-by :order (filter #(and (running? %) (not (expired? % clock))) (vals (:instances model))))
+        running (sort-by :order (keep #(live-instance model clock %) (vals (:instances model))))
         admit (fn [{:keys [entries volumes balls] :as state} instance]
                 (let [key (key-for instance)
                       entry (live-volume model modulation previous settings key instance)
@@ -282,7 +285,7 @@
 
 (defn- group-rows [model key active weights]
   (let [{:keys [instance members]} active
-        opacity (* (get-in instance [:system :opacity] 1.0) (system/gain instance (time/frame-clock model)))
+        opacity (* (get-in instance [:system :opacity] 1.0) (system/gain instance (system/private-clock instance model)))
         descriptor {:id key :target-weights weights :opacity opacity}
         leases (get-in model (into run-path [key :ids]))]
     (into {(:id instance) (assoc descriptor :member 0 :member-opacity 1.0)}

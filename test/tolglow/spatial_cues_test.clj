@@ -183,7 +183,7 @@
           model (assoc-in (state rt) [:rig :fixtures] rig)
           centre [2.0 1.0 3.0]
           command (assoc request :paint {:aim :volume}
-                         :volume {:shape :sphere :position centre :radius 0.25 :selection #{:aimable}})]
+                         :volume {:shape :sphere :position centre :radius 0.0 :selection #{:aimable}})]
       (try
         (host/submit rt 0 :import {:source (persistence/write-string model)})
         (let [id (:instance-id (host/submit rt 0 :spatial-cue command))
@@ -193,4 +193,21 @@
                            (some #(when (= :moving (:id %)) %) (frame/project-compact (:compact output))))]
           (is (= #{:moving} (get-in (state rt) [:variables :spatial :members key])))
           (is (= centre (:aim resolved))))
+        (finally (show/stop! rt))))))
+
+(deftest a-volume-and-its-children-retain-their-mask-through-the-release-envelope
+  (doseq [batch? [true false]]
+    (let [rt (host/runtime batch?)]
+      (try
+        (launch! rt 0 :blue)
+        (let [parent (:instance-id (host/submit rt 0 :spatial-cue
+                                               (assoc request :paint {:blue 0.0} :members [{:effect-id :red}]
+                                                      :launch {:system {:release {:beats 1}}})))]
+          (host/submit rt 25 :command {:op :instance/end :instance-id parent})
+          (host/tick rt 275)
+          (is (= [128 0 128 64 0 191 0 0 255] (host/output rt)))
+          (is (= 3 (count (:instances (state rt)))))
+          (host/tick rt 525)
+          (is (= [0 0 255 0 0 255 0 0 255] (host/output rt)))
+          (is (= 1 (count (:instances (state rt))))))
         (finally (show/stop! rt))))))

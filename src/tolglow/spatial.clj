@@ -124,7 +124,7 @@
   (cond-> (cues/restore (actions/restore model ids epoch) ids)
     (get-in model state-path) (assoc-in (conj state-path :epoch) epoch)))
 
-(def ^:private optical-fields [:emitted-color :pan :tilt :zoom :direction])
+(def ^:private optical-fields [:emitted-color :pan :tilt :zoom :direction :shutter :strobe])
 
 (defn- venue-optics [rig]
   (let [{:keys [width height depth]} (merge {:width 12 :height 5 :depth 10} (:room rig))]
