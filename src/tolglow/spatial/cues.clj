@@ -115,7 +115,7 @@
                aim-volume? (assoc :aim-at-volume? true))
         scene-opacity (get-in model [:compositions scene-id :opacity] 1.0)
         effect {:id id :version 1 :name (or name (str id)) :show-control? true
-                :spatial-volume spec :layer {:transforms []} :params params
+                :spatial-volume spec :ui/layout :volume :layer {:transforms []} :params params
                 :outputs (into {} (map (fn [attr] [attr {:op :param :key attr}])) (keys paint))}
         cue (cond-> {:id id :effect-id id :name (:name effect) :version 1 :show-control? true}
               (not= 1.0 (double scene-opacity)) (assoc :system {:opacity scene-opacity})

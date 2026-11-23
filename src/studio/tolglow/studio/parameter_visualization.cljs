@@ -263,6 +263,16 @@
   (r/with-let [observed (r/atom (when (= mode :history) []))]
     [observed-visual mode schema value @(rf/subscribe [::clock]) observed window]))
 
+(defn monitor
+  "A single visible scope per performance strip. Sampling starts only when the
+  scope intersects the viewport and stops when it leaves."
+  [schema value]
+  (let [mode (if (spatial-kind schema) :spatial :history)]
+    [watch-visibility
+     (fn [visible?]
+       (when visible?
+         ^{:key mode} [visible-visual mode schema value 4]))]))
+
 (defn history-toggle [schema preference]
   (if (= :history (selected-mode schema preference)) :controls :history))
 
