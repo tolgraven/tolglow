@@ -81,7 +81,7 @@
 
 (defn- offer! [hub socket client packet]
   (if (and (not @(:closed? client)) (.offer ^ArrayBlockingQueue (:out client) packet))
-    (schedule-send! hub socket client)
+    (when @(:id client) (schedule-send! hub socket client))
     (throw (ex-info "Compute peer unavailable" {}))))
 
 (defn- open! [hub socket]
@@ -100,9 +100,12 @@
 
 (defn- admit! [hub socket client hello]
   (let [caps (or (admission hub hello) (throw (ex-info "Compute admission denied" {})))]
-    (offer! hub socket client (cond-> {:op :welcome} (:verification caps) (assoc :verification (:verification caps))))
+    ;; Queue welcome before work, release the writer only after successful pool membership.
+    (.add ^ArrayBlockingQueue (:out client)
+          (cond-> {:op :welcome} (:verification caps) (assoc :verification (:verification caps))))
     (let [id (pool/connect! (:pool hub) caps (partial offer! hub socket client))]
       (reset! (:id client) id)
+      (schedule-send! hub socket client)
       (when-let [timer @(:timer client)] (.cancel ^java.util.concurrent.Future timer false)))))
 
 (defn- receive! [hub socket message]
