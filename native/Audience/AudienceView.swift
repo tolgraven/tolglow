@@ -41,6 +41,7 @@ struct AudienceView: View {
                         if session.input == .motion {
                             Toggle("Share phone acceleration and rotation", isOn: $session.shareMotionAxes)
                         }
+                        if let room, client.offersCompute { GuestComputeControl(client: client, room: room) }
                         Toggle("Keep sharing Watch input when iPhone locks", isOn: $session.allowLockedWatch)
                         #endif
                         Button("Leave stage", role: .destructive) { client.leave() }

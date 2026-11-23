@@ -10,6 +10,7 @@ ClojureScript, re-frame and Reagent; the JVM backend uses Ring.
 
 | To work on | Open |
 | --- | --- |
+| Linux Bluetooth dance-floor sensor gateway | [linux/audience](linux/audience/) |
 | JVM show logic, effects, fixture definitions and programmatic control | [src/tolglow](src/tolglow/) |
 | Studio and Push UI components written with re-frame and Reagent | [src/studio](src/studio/) |
 | Clojure and ClojureScript code shared across the wire | [src/shared](src/shared/) |

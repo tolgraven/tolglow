@@ -10,6 +10,8 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private let secret = P256.KeyAgreement.PrivateKey()
     private let name: String
     private var radio: CBPeripheralManager!
+    private var guests: AudienceComputeStage?
+    private var grants = [UUID: (Data, Double)]()
     private var floor = AudienceFloor()
     private var challenges: [UUID: (value: Data, time: Double)] = [:]
     private var peers: [UUID: (key: SymmetricKey, lastSeen: Double, serial: UInt32?)] = [:]
@@ -34,6 +36,15 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
 
     func start(origin: URL, imagePath: String) throws {
         let room = AudienceRadio.fingerprint(secret.publicKey.x963Representation)
+        let env = ProcessInfo.processInfo.environment
+        if let credential = env["TOLGLOW_AUDIENCE_COMPUTE_TOKEN"], (24...1024).contains(credential.utf8.count),
+           let port = UInt16(env["TOLGLOW_AUDIENCE_COMPUTE_PORT"] ?? "8500") {
+            guests = try AudienceComputeStage(room: room, poolPort: port, token: credential, operatorToken: env["TOLGLOW_STUDIO_TOKEN"])
+            guests?.measurement = { ms, bytes, floats in
+                print(String(format: "Guest compute probe · %.1f ms median · %.0f return bytes/s · %d floats", ms, bytes, floats))
+            }
+            guests?.start()
+        }
         let url = origin.appendingPathComponent("audience").appendingPathComponent(room)
         let qr = CIFilter.qrCodeGenerator()
         qr.message = Data(url.absoluteString.utf8)
@@ -55,7 +66,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         guard peripheral.state == .poweredOn else {
-            floor = AudienceFloor(); peers.removeAll()
+            floor = AudienceFloor()
+            peers.keys.forEach { guests?.revoke(participant: $0) }
+            peers.removeAll(); grants.removeAll()
             print("Stage Bluetooth unavailable (\(peripheral.state.rawValue))")
             return
         }
@@ -66,6 +79,10 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
             CBMutableCharacteristic(type: id, properties: [.write], value: nil, permissions: [.writeable])
         }
         service.characteristics = [identity, input(AudienceRadio.hello), input(AudienceRadio.samples)]
+        if guests != nil {
+            service.characteristics?.append(CBMutableCharacteristic(type: AudienceRadio.computeGrant, properties: [.read],
+                                                                    value: nil, permissions: [.readable]))
+        }
         peripheral.add(service)
     }
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
@@ -78,6 +95,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        if request.characteristic.uuid == AudienceRadio.computeGrant {
+            sendGrant(on: peripheral, request); return
+        }
         guard request.characteristic.uuid == AudienceRadio.identity else {
             peripheral.respond(to: request, withResult: .readNotPermitted); return
         }
@@ -100,6 +120,24 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         request.value = Data(data.dropFirst(request.offset))
         peripheral.respond(to: request, withResult: .success)
     }
+
+    private func sendGrant(on peripheral: CBPeripheralManager, _ request: CBATTRequest) {
+        let id = request.central.identifier, now = ProcessInfo.processInfo.systemUptime
+        guard let peer = peers[id], now - peer.lastSeen < 8 else {
+            peripheral.respond(to: request, withResult: .insufficientAuthentication); return
+        }
+        if request.offset == 0 {
+            guard grants[id] == nil, let grant = guests?.issueGrant(for: id),
+                  let sealed = try? AES.GCM.seal(grant, using: peer.key, authenticating: Data("guest-compute-v1".utf8)),
+                  let blob = sealed.combined else { peripheral.respond(to: request, withResult: .insufficientResources); return }
+            grants[id] = (blob, now)
+        }
+        guard let (blob, time) = grants[id], now - time < 5, (0...blob.count).contains(request.offset)
+        else { peripheral.respond(to: request, withResult: .invalidOffset); return }
+        request.value = Data(blob.dropFirst(request.offset))
+        peripheral.respond(to: request, withResult: .success)
+    }
+
     private func fragment(_ request: CBATTRequest) -> AudienceGATTWrite.Fragment {
         let field: AudienceGATTWrite.Field?
         switch request.characteristic.uuid {
@@ -134,6 +172,8 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         guard let challenge = challenges[id], time - challenge.time < 8 else { return .insufficientAuthentication }
         let key = try AudienceRadio.key(secret, write.value, challenge: challenge.value)
         challenges.removeValue(forKey: id)
+        guests?.revoke(participant: id)
+        grants.removeValue(forKey: id)
         peers[id] = (key, time, nil)
         floor.leave(id)
         return .success
@@ -176,7 +216,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private func publish() {
         let time = ProcessInfo.processInfo.systemUptime
         challenges = challenges.filter { time - $0.value.time < 8 }
+        for (id, peer) in peers where time - peer.lastSeen >= 8 { guests?.revoke(participant: id) }
         peers = peers.filter { time - $0.value.lastSeen < 8 }
+        grants = grants.filter { time - $0.value.1 < 5 }
         let levels = floor.drain(at: time)
         lastLevels = levels
         if lastCount != levels.count { print("Participants \(levels.count)") }

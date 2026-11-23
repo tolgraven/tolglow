@@ -34,6 +34,8 @@ To use each admitted step to launch a registered accent cue, add the following e
                        :launch {:mode :one-shot :duration {:beats 1/8}}}}]}
 ```
 
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
 ### Motion channels
 
 In the App Clip, **Use iPhone or Watch motion in Tolglow** opens the system offer for its parent app. After installation, scan the same stage QR to continue.
@@ -57,6 +59,8 @@ lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
 
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
 ## Dance-step timing
 
 Tap, camera, phone and wrist motion send their cumulative step count as soon as the input detects an onset. Periodic readings recover a missed counter change. The paired iPhone uses the wrist counter while it is fresh and carries one vote for the person. The Watch relay keeps one acknowledged message in flight and one replaceable sample with its original measurement time.
@@ -64,13 +68,12 @@ Tap, camera, phone and wrist motion send their cumulative step count as soon as 
 The bridge takes a fresh effort and pulse snapshot five times per second. It submits onsets on the next 40 Hz show frame. Each OSC observation carries up to eight gestures and one frame admits up to four observations, allowing additional simultaneous steps to spill into the following frames. The bounded backlog reports overflow to the operator. A heartbeat can carry a due onset, and subsequent heartbeats carry zero until another step arrives.
 
 Run `swift test --package-path native/Core --filter AudienceLatencyTests` to exercise detection, bounded host aggregation and the OSC encoder using a deterministic clock. Set `TOLGLOW_AUDIENCE_TIMING_DIR` to an existing directory to save the observed packet times. CI publishes them as `audience-onset-timing`. These measurements end at the encoded datagram. Qualifying physical latency also requires timing the guest’s sensor, WatchConnectivity, BLE, OSC delivery and the receiving show.
-The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
 
 ## Publish a scannable Clip
 
 Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
 
-The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work is a separate full-app opt-in with a higher-bandwidth transport. The Clip only participates in sensing.
+The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work has a separate full-app consent control and uses a measured peer connection for its GPU buffers. The Clip only participates in sensing. [Configure and qualify guest GPUs](../native/AudienceCompute/README.md)
 
 ## Bluetooth write size
 
@@ -81,3 +84,11 @@ Swift tests exercise all three lengths with one-byte through single-write fragme
 ## Qualification
 
 Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. A deterministic model test exercises 96 guests at five updates per second for three minutes with missed readings, duplicates, a guest rejoining, pulse opt-out and final expiry. It checks every tick’s individual step delta, participant count and mean effort. The Watch UI test exercises route selection on the actual simulator and captures the interaction. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Include a solo Watch with its phone switched off, phone return, stage disconnection and the Bluetooth permission prompt. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
+
+## Operate audience zones in Studio
+
+Open **Connections → Audience**. The list contains enrolled gateway sources whose mappings supply both `audience-count` and `dance-effort`. A source starts at **Waiting for gateway**. When its first observation reaches the show the status changes to **Joined**. **Arm** admits new observations from that gateway session. Use its checkbox to include the zone in the show’s audience mix. A gateway may continue collecting readings while excluded from this mix.
+
+**Dancers** counts the participants in the selected, armed zones. **Dance effort** weights each zone by its dancers. **Pulse sharing** shows how many of those dancers share a fresh pulse measurement. The BPM signal stays in the show model for mappings. On signal expiry the zone drops out of the readings and requires a fresh observation and explicit arming. The operator’s selection survives show save/load. Studio receives this view through the Connections Transit stream. It contains the logical zones and aggregate measurements.
+
+A REPL controller can use the same incremental command as the operator. Submit `:sensor-audience-zone` with `{:device-id "balcony" :included? true}` to the show. Other zones keep their selection. To reproduce the operator flow locally, build the Studio release then run `lein run -m tolglow.qa.audience-zones target/audience-zones`.
