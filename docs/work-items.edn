@@ -1483,6 +1483,7 @@
    :depends-on [:simulator/rig],
    :owner nil :notes "Validate plume shape, settling haze and light transport against a calibrated physical room and record sustained mobile frame times."}
   {:evidence ["Loopback Studio/Ring, Node for Max, Max JS and behavioral Live object graph record and replay edited clip data"
+               "docs/live-routing.md and resources/devices/ableton-live/examples/pickup-automation.mid exercise a Session pickup and repeat with the real recording worker and MIDI mappings"
                "resources/devices/ableton-live/README.md"],
    :paths
    ["tolglow/src/tolglow/integrations/ableton.clj"
@@ -1499,7 +1500,7 @@
    :id :integration/live,
    :kind :implementation,
    :notes
-   "Qualify note and parameter recording, manual clip edits, drum-rack colors, seek and Push mode handoff in licensed Ableton Live/Max with physical controller feedback.",
+   "Qualify note and parameter recording (including the pickup fixture), manual clip edits, drum-rack colors, seek and Push mode handoff in licensed Ableton Live/Max with physical controller feedback.",
    :depends-on [:control/adapters :authoring/registry],
    :owner nil}
   {:evidence ["Tolglow studio/audio_return_test covers actual host routing, returned audio continuing after source stop, confidence gates and cleanup. test/js/ableton-live/audio-patches.test.js exercises the per-channel and drum-pad network. integrations/audio_test covers carrier and residual analysis."],
