@@ -210,3 +210,5 @@ browser sessions expire on their normal schedule. OSC pairing for the phone
 and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).
 
 For the packaged iPhone and iPad simulator companion, stage association file and signed QR size check, see [Apple audience deployment](../docs/apple-audience-deployment.md).
+
+The [nearby Dance floor guide](../docs/nearby-audience.md) covers Bluetooth stage discovery, phone and Watch participation and the lightweight QR App Clip.
