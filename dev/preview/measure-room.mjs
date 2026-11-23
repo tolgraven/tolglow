@@ -10,6 +10,8 @@ import {chromium} from 'playwright-core';
 import {measureRoom} from './room-cadence.mjs';
 
 const [cdp = 'http://127.0.0.1:9223', output = 'target/room-device'] = process.argv.slice(2);
+const quality = process.env.ROOM_QUALITY || 'auto';
+if (!['auto', 'mobile', 'desktop'].includes(quality)) throw new Error('ROOM_QUALITY must be auto, mobile or desktop.');
 const endpoint = new URL(cdp);
 if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname)) {
   throw new Error('Pass the local Chrome CDP endpoint.');
@@ -24,7 +26,7 @@ const shader = await readFile(join(source, 'resources/studio/preview-worker.js')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha256: hash(ui),
   workerJsSha256: hash(shader), platform: process.platform, architecture: process.arch,
-  output: 'preview only', scenarios: []};
+  output: 'preview only', quality, warmup: {minimumSeconds: 8, minimumDrawnFrames: 4}, scenarios: []};
 const config = join(temp, 'room.edn');
 await writeFile(config, '{:init {:components [:show] :modules [:web-server]} :show {:workspace-options nil} :web-server {:host "127.0.0.1" :port 0}}');
 const server = spawn(process.env.LEIN || 'lein', ['run', '-m', 'tolglow.application',
@@ -67,10 +69,10 @@ try {
   await page.goto(origin);
   await page.locator('#preview').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready, null, {timeout: 90000});
-  // Use the ordinary toolbar. Keep DPR, drawing resolution and Auto quality at
-  // the hardware/browser defaults instead of setting a test-device viewport.
+  // Use ordinary controls and the actual device viewport and DPR.
   const expand = page.getByRole('button', {name: 'Expand', exact: true});
   if (await expand.count()) await expand.click();
+  await page.getByLabel('Preview quality', {exact: true}).selectOption(quality);
   await page.locator('#preview').scrollIntoViewIfNeeded();
   async function cue(id) {
     const snapshot = await (await fetch(origin + '/api/state')).json();
@@ -94,13 +96,26 @@ try {
       const t = document.querySelector('#preview').tolglowPreview.getTelemetry();
       return t.visible && t.activeLights > 0 && t.fogAmount === fog;
     }, fog, {timeout: 60000});
-    await delay(8000);
+    // Exclude the new tier's pipeline allocation and first lit/shadowed draws,
+    // including when Safari or a laptop is still compiling a cold program.
+    await page.waitForFunction(q => q === 'auto' || document.querySelector('#preview').tolglowPreview.getTelemetry().quality === q,
+      quality, {timeout: 90000});
+    const warmStarted = Date.now();
+    const initialFrames = await page.evaluate(() => document.querySelector('#preview').tolglowPreview.getTelemetry().frames);
+    await Promise.all([delay(8000), page.waitForFunction(n => document.querySelector('#preview').tolglowPreview.getTelemetry().frames >= n + 4,
+      initialFrames, {timeout: 150000})]);
     const state = async () => (await (await fetch(origin + '/api/state')).json()).output?.values?.['head-1'];
+    const warmupMs = Date.now() - warmStarted;
     const before = await state();
     const [measured, middle] = await Promise.all([page.evaluate(measureRoom, 20000), delay(7100).then(state)]);
     const after = await state();
     await page.screenshot({path: join(outputDir, name + '.png')});
     measured.name = name;
+    measured.requestedQuality = quality;
+    measured.warmupMs = warmupMs;
+    if (quality !== 'auto' && (measured.qualities.some(q => q !== quality) || measured.scales.some(k => k !== 1))) {
+      measured.invalid.push('manual tier or resolution scale changed during the sample');
+    }
     measured.head1 = {before, middle, after};
     if (measured.end.fixtureCount !== 8 || measured.end.activeLights < 1) measured.invalid.push('demo heads or emission missing');
     if (moving && new Set([before?.pan, middle?.pan, after?.pan]).size < 2) measured.invalid.push('no pan change observed at sample boundaries');

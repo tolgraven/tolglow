@@ -8,12 +8,16 @@ export async function measureRoom(durationMs) {
   const initial = engine.getTelemetry();
   const worker = initial.thread === 'worker' ? engine.worker : null;
   const renderer = engine.fallback || engine;
-  const frames = [], display = [], qualities = new Set(), sizes = new Set();
+  const frames = [], display = [], qualities = new Set(), sizes = new Set(), scales = new Set(), samples = [];
   let raf, qualityTimer;
   const inspect = () => {
     const t = engine.getTelemetry();
     qualities.add(t.quality);
-    sizes.add(JSON.stringify(t.pixels));
+    sizes.add(JSON.stringify(t.pixels)); scales.add(t.renderScale);
+    samples.push({atMs: performance.now() - boundary, tier: t.quality, scale: t.renderScale,
+      scene: t.pixels, targetHz: t.targetRefreshHz, intervalMs: t.frameIntervalMs,
+      workerFrameMs: t.workerFrameMs ?? null, cpuSubmitMs: t.frameCPUms ?? null,
+      gpuFenceWaitMs: t.gpuCompletionWaitMs ?? null, gpuTimerMs: t.gpuTimeMs ?? null});
   };
   const mark = () => frames.push(performance.now());
   const onBitmap = event => {
@@ -64,9 +68,17 @@ export async function measureRoom(durationMs) {
   const project = t => Object.fromEntries(fields.map(k => [k, t[k] ?? null]));
   if (end.failed || !end.visible || (worker && end.thread !== 'worker')) invalid.push('renderer interrupted');
   if (frames.length < 2) invalid.push('fewer than two completed renderer frames');
+  inspect();
+  const presented = describe(frames), windowRaf = describe(display);
+  const targets = [...new Set(samples.map(s => s.targetHz))];
+  const targetHz = targets.length === 1 ? targets[0] : null;
+  const cadence = {configuredHz: targets, roomHz: presented.hz, displayHz: windowRaf.hz,
+    roomOverConfigured: targetHz ? presented.hz / targetHz : null,
+    roomOverDisplay: windowRaf.hz ? presented.hz / windowRaf.hz : null,
+    withinFivePercentOfConfigured: targetHz ? presented.hz >= .95 * targetHz : null};
   return {durationMs: elapsedMs, invalid, rendererThread: worker ? 'worker' : 'main',
     frameMeasurement: worker ? 'accepted DOM bitmap' : 'completed main-thread film pass',
-    presented: describe(frames), windowRaf: describe(display), frameOffsetsMs: frames.map(t => t - boundary),
+    presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
     css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels,
     browser: navigator.userAgent, start: project(initial), end: project(end)};
