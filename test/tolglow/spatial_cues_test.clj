@@ -134,3 +134,20 @@
       (is (= (vec (repeat 9 0)) (host/output rt)))
       (is (empty? (:instances (state rt))))
       (finally (show/stop! rt)))))
+
+
+(deftest cache-only-optical-plans-across-committed-frames
+  (doseq [batch? [false true]]
+    (let [rt (host/runtime batch?)
+          select-beams (assoc-in request [:volume :selection] #{:beam :position})]
+      (try
+        (host/submit rt 0 :spatial-cue select-beams)
+        (show/tick! rt 25)
+        (let [first-plan (get-in @(:state rt) [:spatial-cache :optics])]
+          (is (some? (:options first-plan)))
+          (is (nil? (:values (:options first-plan))))
+          (show/tick! rt 50)
+          (let [second-plan (get-in @(:state rt) [:spatial-cache :optics])]
+            (is (identical? (:options first-plan) (:options second-plan)))
+            (when batch? (is (identical? (:index first-plan) (:index second-plan))))))
+        (finally (show/stop! rt))))))
