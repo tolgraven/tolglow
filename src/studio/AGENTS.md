@@ -31,8 +31,9 @@ gesture acknowledgements/cancellations. See `docs/studio-ui.md` and
 `resources/studio/AGENTS.md`. Build with `npm run studio:build`, then browser-test
 actual semantic operations against the local captured-output Ring application.
 
-The passive `/push-display` route must never open a show socket, WebGL,
-editors or physical resources. Keep its synchronous snapshot API and 960×160
+The passive `/push-display` route consumes supplied snapshots. Only its mounted
+simulator or rig view acquires WebGL, renders on capture and releases it on exit.
+Show sockets, editors and physical-device acquisition belong to their own routes or owners. Keep its synchronous snapshot API and 960×160
 layout bounded. REPL snapshots/history never trigger evaluation; capture the
 clicked source immediately and keep later typing intact. Stream callbacks belong
 to one request/session/runtime; closing a view must not masquerade as a hard
