@@ -38,6 +38,10 @@ async function measureCards(page) {
 }
 
 async function verifyControls(page,touch) {
+  const sweep=page.locator('article',{has:page.getByRole('heading',{name:'Slow sweep',exact:true})});
+  const fader=sweep.getByRole('slider',{name:'width',exact:true});
+  assert.equal(await fader.isVisible(),true,'Authored sweep width fader stays available in the strip');
+  assert.equal(await sweep.locator('.strip-fader-bounds').innerText(),'0\n0.45');
   const card = page.locator('article', {has:page.getByRole('heading',{name:'Orbital wash'})});
   const activate = async button => touch ? button.tap() : button.click();
   const strip = card.getByRole('group',{name:'Parameter strip'});

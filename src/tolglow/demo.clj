@@ -44,7 +44,7 @@
                                                                                                                    {:op :divide :args [{:op :beat} (param :period)]}]}]}]}]}]}}}
     {:id :sweep :version 1 :name "Slow sweep" :swatch "#85b6e0"
      :tags [:movement] :ui/layout {:template :movement :monitor :width} :duration {:bars 4} :release-duration {:beats 1/2}
-     :params {:width {:type :number :default 0.3 :bounds [0.0 0.45]}}
+     :params {:width {:type :number :ui/widget :fader :default 0.3 :bounds [0.0 0.45]}}
      :outputs {:pan {:op :add :args [(constant 0.5)
                                    {:op :multiply :args [(param :width)
                                                     {:op :sin :args [{:op :multiply :args [{:op :bar} (constant (/ Math/PI 2))]}]}]}]}

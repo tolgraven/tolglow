@@ -233,7 +233,8 @@
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         overlay (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter]))
-        bounds (:bounds schema) title (or (:name schema) (label parameter))]
+        bounds (:bounds schema) title (or (:name schema) (label parameter))
+        fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
      [:label [:span title] [:output (if (vector? value) (str/join ", " (map numeric-label value)) (widgets/value-label schema value))]]
      (case type
@@ -261,7 +262,7 @@
                                  :on-change #(when-let [n (number-value %)]
                                                (component! index n))}])]
        (if (widgets/numeric-range schema)
-         [:div.parameter-number-layout {:data-widget (when (:strip? options) (if (#{:fader "fader"} (:ui/widget schema)) "fader" "rotary"))}
+         [:div.parameter-number-layout {:data-widget (when (:strip? options) (if fader? "fader" "rotary"))}
           [widgets/rotary-control schema (or value 0) change!
            {:name (str title " rotary") :base-value value :effective-value overlay
             :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
@@ -270,6 +271,10 @@
                           :min (first bounds) :max (second bounds)
                           :step (if (= "integer" type) 1 (/ (- (second bounds) (first bounds)) 1000))
                           :on-change #(when-let [n (number-value %)] (change! n))}]
+           (when fader?
+             [:span.strip-fader-bounds
+              [:span (widgets/number-label (first bounds))]
+              [:span (widgets/number-label (second bounds))]])
            (when-not (:compact? options)
              [number-input {:class "numeric-exact" :type "number" :aria-label (str title " exact value") :value (or value 0)
                             :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")

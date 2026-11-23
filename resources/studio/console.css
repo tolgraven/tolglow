@@ -161,3 +161,7 @@
   white-space:nowrap; font-variant-numeric:tabular-nums;
 }
 .control-strip .axis-trigger b { font-size:9px; overflow:hidden; text-overflow:ellipsis; }
+
+.control-strip .param-row:has([data-widget=fader])>label>output { display:inline; font-variant-numeric:tabular-nums; }
+.strip-fader-bounds { display:flex; justify-content:space-between; color:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; }
+#view-perform .control-strip:has(.waveform-picker)>.param-row:only-child { flex:1; }
