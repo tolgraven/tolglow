@@ -39,7 +39,19 @@ final class AudienceSession: ObservableObject {
     private let motion = CMMotionManager()
     #endif
 
-    init() { client.onEnd = { [weak self] in self?.stopInputs() } }
+    init() {
+        client.onJoin = { [weak self] in self?.startInputs() }
+        client.onEnd = { [weak self] in self?.stopInputs() }
+        client.onSuspend = { [weak self] in self?.pauseInputs() }
+    }
+
+    private func pauseInputs() {
+        stopSampling()
+        watch = nil
+        lastWatchSteps = nil
+        lastPhoneSteps = nil
+        effort = 0
+    }
 
     func startInputs() {
         guard client.joined, timer == nil else { return }
@@ -99,6 +111,9 @@ final class AudienceSession: ObservableObject {
     }
 
     @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
+        // Acknowledge wrist receipt during a brief stage outage. Drop this
+        // observation; the first fresh wrist count after rejoining is a baseline.
+        if client.reconnecting { return true }
         guard client.joined else { return false }
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
@@ -112,6 +127,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func enterBackground() {
+        client.setForeground(false)
         guard !watchOnlyInBackground else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard client.joined, allowLockedWatch, let watch, now - watch.time <= 2 else { client.leave(); return }
@@ -120,6 +136,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func foreground() {
+        client.setForeground(true)
         guard watchOnlyInBackground else { return }
         watchOnlyInBackground = false
         startInputs()
