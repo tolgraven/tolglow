@@ -18,7 +18,7 @@ print(next(items)[1])' "$1"
 phone="$(device iPhone)"
 tablet="$(device iPad)"
 products="$RUNNER_TEMP/audience-derived/Build/Products/Debug-iphonesimulator"
-xcrun simctl list devices | rg "$phone|$tablet" > "$out/devices.txt"
+xcrun simctl list devices | grep -E "$phone|$tablet" > "$out/devices.txt"
 boot() { xcrun simctl boot "$1" || true; xcrun simctl bootstatus "$1" -b; xcrun simctl ui "$1" appearance dark; }
 clip="org.tolglow.ios.Clip"
 capture() {
@@ -39,16 +39,13 @@ capture() {
     wait "$recorder" || test -s "$out/iphone-entry.mp4"
   fi
 }
-boot "$phone"
 git show 790d028f3e25a42a02632fa0b274216d97e72e4e:native/Audience/AudienceView.swift > Audience/AudienceView.swift
 build TolglowAudienceClip
-capture "$phone" iphone before "$clip" "$products/TolglowAudienceClip.app"
-boot "$tablet"
-capture "$tablet" ipad before "$clip" "$products/TolglowAudienceClip.app"
+ditto "$products/TolglowAudienceClip.app" "$RUNNER_TEMP/Before.app"
 git restore --source=HEAD -- Audience/AudienceView.swift
 build TolglowAudienceClip
-capture "$tablet" ipad after "$clip" "$products/TolglowAudienceClip.app"
-capture "$phone" iphone after "$clip" "$products/TolglowAudienceClip.app"
+ditto "$products/TolglowAudienceClip.app" "$RUNNER_TEMP/After.app"
+du -sk "$RUNNER_TEMP/Before.app" "$RUNNER_TEMP/After.app" > "$out/unsigned-simulator-clip-kib.txt"
 python3 - <<'PY'
 from pathlib import Path
 p=Path('Audience/AudienceClient.swift')
@@ -75,5 +72,12 @@ s=p.read_text().replace('PhoneRoot(model: model)\n                .preferredColo
 p.write_text(s)
 PY
 build TolglowPhone
-capture "$phone" iphone joined-fixture org.tolglow.ios "$products/TolglowPhone.app" -joined-fixture
-capture "$tablet" ipad joined-fixture org.tolglow.ios "$products/TolglowPhone.app" -joined-fixture
+for platform in iphone ipad; do
+  device_id="$phone"
+  if [[ "$platform" == ipad ]]; then device_id="$tablet"; fi
+  boot "$device_id"
+  capture "$device_id" "$platform" before "$clip" "$RUNNER_TEMP/Before.app"
+  capture "$device_id" "$platform" after "$clip" "$RUNNER_TEMP/After.app"
+  capture "$device_id" "$platform" joined-fixture org.tolglow.ios "$products/TolglowPhone.app" -joined-fixture
+  xcrun simctl shutdown "$device_id"
+done
