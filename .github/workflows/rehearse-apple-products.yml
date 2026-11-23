@@ -10,6 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with: {ref: 9239ac6f2e1280a56a2b679b3bc080ab4f924929}
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: 07b88dfdada4413ed07d0320bba584a810e674f2
+          sparse-checkout: src/afterglow/render
+          path: paired-afterglow
       - uses: actions/download-artifact@v4
         with: {repository: tolgraven/tolglow, run-id: 45203669721, name: studio-runtime, github-token: '${{ github.token }}', path: build/release}
       - name: Exercise the phone's Gluon 17 metadata and show folder on Linux
@@ -29,7 +35,8 @@ jobs:
           runner=Path('native/EmbeddedHost/build-macos')
           runner.write_text(runner.read_text().replace('"$root/native/EmbeddedHost/prepare-jar" macos','"$root/native/EmbeddedHost/prepare-jar" ios-sim').replace('-o TolglowNativeHost','--trace-object-instantiation=java.security.SecureRandom -H:Name=TolglowNativeHost').replace('https://repo.maven.apache.org/maven2/io/github/willena', 'https://maven-central.storage-download.googleapis.com/maven2/io/github/willena'))
           prepare=Path('native/EmbeddedHost/prepare-jar')
-          prepare.write_text(prepare.read_text().replace('libnative-image-agent.dylib','libnative-image-agent.so'))
+          patch = 'mkdir -p override/afterglow/render\ncp "$root/paired-afterglow/src/afterglow/render/verified.clj" override/afterglow/render/verified.clj\n'
+          prepare.write_text(prepare.read_text().replace('libnative-image-agent.dylib','libnative-image-agent.so').replace('java -Dclojure.compile.path=override',patch+'java -Dclojure.compile.path=override').replace("'[thi.ng.math.core ring.adapter.jetty","'[afterglow.render.verified thi.ng.math.core ring.adapter.jetty"))
           PY
           native/EmbeddedHost/build-macos build/release/studio.jar build/gluon
           tmpapp="$RUNNER_TEMP/Linux native probe.app"
