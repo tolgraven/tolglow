@@ -165,3 +165,45 @@
 .control-strip .param-row:has([data-widget=fader])>label>output { display:inline; font-variant-numeric:tabular-nums; }
 .strip-fader-bounds { display:flex; justify-content:space-between; color:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; }
 #view-perform .control-strip:has(.waveform-picker)>.param-row:only-child { flex:1; }
+
+.param-source-trigger {
+  display:inline-flex; align-items:center; justify-content:center; gap:3px; min-height:28px;
+  padding:2px 5px; border:0; border-radius:5px; background:transparent; color:var(--muted);
+  font:inherit; font-size:10px; white-space:nowrap; cursor:pointer;
+}
+.param-source-trigger:hover,.param-source-trigger:focus-visible,.param-source-trigger[aria-expanded=true] { background:var(--raised); color:var(--text); }
+.param-source-trigger.bound { color:var(--cue-color,var(--text)); }
+.param-source-trigger>span { font-size:14px; line-height:1; }
+.live-effect-card[data-density=strip] .control-strip:not(:has(.waveform-picker)) { align-items:start; }
+.live-effect-card[data-density=strip] .live-effect-body:not(:has(.strip-monitor)) .control-strip { padding-bottom:0; }
+.axis-source-actions,.source-fields,.source-actions { display:flex; align-items:end; flex-wrap:wrap; gap:6px; }
+.live-source-editor { margin:0 6px 6px; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.live-source-editor>header { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+.live-source-editor h4 { margin:0; font-size:14px; }
+.live-source-form { display:grid; gap:8px; }
+.source-field { display:grid; gap:3px; flex:1 1 65px; min-width:0; font-size:11px; }
+.source-field :is(input,select) { box-sizing:border-box; width:100%; min-width:0; }
+.source-components { display:flex; flex:1 1 145px; gap:4px; min-width:0; border:1px solid var(--line); }
+.source-components>legend { font-size:11px; }
+.source-actions .button,.live-source-editor>header button { min-height:44px; }
+@media(pointer:coarse) { .param-source-trigger,.source-field :is(input,select) { min-height:44px; } }
+
+/* A short manual strip has room for the control beside its name and source. */
+#view-perform .live-effect-body:not(:has(.strip-monitor)) .control-strip:not(:has(>.param-row:nth-child(3)))>.param-row:has([data-widget=rotary]) {
+  display:grid; grid-template-columns:62px minmax(0,1fr); grid-template-rows:auto auto;
+  grid-template-areas:"control name" "control source"; align-items:center; align-content:center;
+  flex:1 1 120px; column-gap:4px; min-height:62px;
+}
+#view-perform .control-strip .param-row:has([data-widget=rotary])>label { grid-area:name; }
+#view-perform .control-strip .param-row>[data-widget=rotary] { grid-area:control; }
+#view-perform .control-strip .param-row:has([data-widget=rotary])>.param-source-trigger { grid-area:source; justify-self:start; }
+#view-perform .control-strip>.param-row:only-child:has([data-widget=fader]) {
+  display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:8px;
+}
+#view-perform .control-strip .param-row:only-child:has([data-widget=fader])>label { grid-column:1; }
+#view-perform .control-strip .param-row:only-child>[data-widget=fader] { grid-column:1/-1; grid-row:2; }
+#view-perform .control-strip .param-row:only-child:has([data-widget=fader])>.param-source-trigger { grid-column:2; grid-row:1; }
+.source-connections { display:flex; flex-wrap:wrap; gap:5px; margin-block:4px 8px; color:var(--instrument); font-size:12px; }
+@media(pointer:coarse) { .param-source-trigger { min-width:44px; } }
+
+.effective-discrete { display:block; color:var(--instrument); font-size:11px; overflow-wrap:anywhere; }

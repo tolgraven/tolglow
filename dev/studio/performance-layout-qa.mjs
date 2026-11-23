@@ -45,46 +45,115 @@ async function measureCards(page) {
   });
 }
 
-async function verifyControls(page,touch) {
+function sourceChecks(page,touch) {
+  const card = page.locator('article', {has:page.getByRole('heading',{name:'Orbital wash'})});
+  const activate = button => touch ? button.tap() : button.click();
+  const source = title => card.getByRole('region', {name:title+' source'});
+  async function open(title, bound) {
+    await activate(card.getByRole('button',{name:(bound?'Edit':'Attach')+' source for '+title,exact:true}));
+    return source(title);
+  }
+  async function close(panel) { await activate(panel.getByRole('button',{name:'Close source editor'})); }
+  async function attach(title, configure) {
+    const panel = await open(title,false);
+    await configure(panel);
+    await activate(panel.getByRole('button',{name:'Attach LFO',exact:true}));
+    await panel.getByRole('button',{name:'Detach LFO',exact:true}).waitFor();
+    return panel;
+  }
+  async function detach(title) {
+    const panel=await open(title,true);
+    await activate(panel.getByRole('button',{name:'Detach LFO',exact:true}));
+    await panel.getByRole('button',{name:'Attach LFO',exact:true}).waitFor();
+    await close(panel);
+  }
+  return {card,activate,open,close,attach,detach};
+}
+
+async function verifyControls(page,touch,profile) {
   const sweep=page.locator('article',{has:page.getByRole('heading',{name:'Slow sweep',exact:true})});
   const fader=sweep.getByRole('slider',{name:'width',exact:true});
-  assert.equal(await fader.isVisible(),true,'Authored sweep width fader stays available in the strip');
+  assert.equal(await fader.isVisible(),true);
   assert.deepEqual(await sweep.locator('.strip-fader-bounds>span').allTextContents(),['0','0.45']);
-  const card = page.locator('article', {has:page.getByRole('heading',{name:'Orbital wash'})});
-  const activate = async button => touch ? button.tap() : button.click();
-  const strip = card.getByRole('group',{name:'Parameter strip'});
+  const {card,activate,open,close,attach,detach}=sourceChecks(page,touch);
+  const strip=card.getByRole('group',{name:'Parameter strip'});
   assert.equal(await strip.locator('.param-row').count(),8);
-  const ids = await strip.locator('[data-param]').evaluateAll(nodes=>nodes.map(node=>node.dataset.param));
-  assert.equal(new Set(ids).size,8);
-  const picker=card.getByLabel('Monitored parameter');
-  await picker.scrollIntoViewIfNeeded();
+  assert.equal(await strip.locator('.param-source-trigger').count(),8);
+  const original = await strip.getByRole('slider',{name:'Intensity rotary'}).getAttribute('aria-valuenow');
+  const intensity=await attach('Intensity', async panel => {
+    await panel.getByLabel('Waveform source').selectOption({label:'Studio test sine'});
+    await panel.getByLabel('Source period',{exact:true}).fill('3/2');
+    await panel.getByLabel('From',{exact:true}).fill('0.15');
+    await panel.getByLabel('To',{exact:true}).fill('0.9');
+    if(profile==='ipad') await page.screenshot({path:join(directory,'ipad-attach.png')});
+  });
+  await close(intensity);
+  const scope=card.locator('.strip-monitor');
+  await scope.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => {
+    const path=document.querySelector('.strip-monitor .parameter-history path')?.getAttribute('d') || '';
+    const span=Array.from(path.matchAll(/[ML]([\d.-]+),([\d.-]+)/g), m=>m.slice(1).map(Number));
+    return span.length>=6 && span.at(-1)[0]-span[0][0]>45 && new Set(span.map(point=>point[1].toFixed(1))).size>=4;
+  });
+  assert.equal(await page.locator('.strip-monitor').count(),1);
+  assert.equal(await scope.locator('strong').textContent(),'Intensity');
+  if(profile==='phone') await card.evaluate(node=>scrollBy(0,node.getBoundingClientRect().top-170));
+  else await positionBoard(page);
+  await page.screenshot({path:join(directory,profile+'-bound.png')});
+  if(profile==='ipad') {
+    for(let i=0;i<8;i++) {
+      const previous=await scope.locator('svg path').first().getAttribute('d');
+      await page.waitForFunction(d=>document.querySelector('.strip-monitor svg path')?.getAttribute('d')!==d,previous);
+      await page.screenshot({path:join(directory,'ipad-lfo-'+i+'.png')});
+    }
+  }
+  const edit=await open('Intensity',true);
+  const period=edit.getByLabel('Source period',{exact:true});
+  await period.fill('1/4');
+  const current=await scope.locator('svg path').first().getAttribute('d');
+  await page.waitForFunction(previous=>document.querySelector('.strip-monitor svg path')?.getAttribute('d')!==previous,current);
+  assert.equal(await period.inputValue(),'1/4','A real pushed sample preserves the edited draft');
+  await activate(edit.getByRole('button',{name:'Update LFO',exact:true}));
+  await page.waitForFunction(()=>document.querySelector('input[aria-label="Source period"]').value==='0.25');
+  await activate(edit.getByRole('button',{name:'Use base value',exact:true}));
+  await edit.getByRole('button',{name:'Resume LFO',exact:true}).waitFor();
+  assert.equal(await scope.count(),1);
+  await activate(edit.getByRole('button',{name:'Resume LFO',exact:true}));
+  await edit.getByRole('button',{name:'Use base value',exact:true}).waitFor();
+  await close(edit);
+  const vector=await attach('Orbit aim', async panel => {
+    await panel.getByLabel('From 1',{exact:true}).fill('-0.85');
+    await panel.getByLabel('To 1',{exact:true}).fill('0.42');
+  });
+  await close(vector);
+  const picker=scope.getByLabel('Monitored parameter');
+  assert.deepEqual((await picker.locator('option').allTextContents()).sort(),['Intensity','Orbit aim']);
   await picker.selectOption({label:'Orbit aim'});
-  await card.locator('.strip-monitor .parameter-space').waitFor();
-  const input=strip.getByRole('slider',{name:'Intensity rotary'});
-  await input.focus();
-  const previous=Number(await input.getAttribute('aria-valuenow'));
-  await input.press(previous>=0.95?'ArrowLeft':'ArrowRight');
-  await page.waitForFunction(([id,old])=>Number(document.querySelector(
-    '[data-live-instance="'+id+'"] [aria-label="Intensity rotary"]').getAttribute('aria-valuenow'))!==old,
-    [await card.getAttribute('data-live-instance'),previous]);
-  await picker.selectOption({label:'Intensity'});
-  await card.locator('.strip-monitor .parameter-history svg path').first().waitFor({state:'attached'});
-  await activate(card.getByRole('button',{name:'Pause',exact:true}));
-  await card.getByRole('button',{name:'Resume',exact:true}).waitFor();
-  await activate(card.getByRole('button',{name:'Resume',exact:true}));
+  await scope.scrollIntoViewIfNeeded();
+  await scope.locator('.parameter-space').waitFor();
   await activate(card.getByRole('button',{name:'Expand Orbital wash controls'}));
   const aim=card.locator('[data-param=aim]');
   await activate(aim.getByRole('button',{name:'Edit Orbit aim components'}));
   const dialog=aim.getByRole('dialog');
   await dialog.getByRole('spinbutton',{name:'Orbit aim X value'}).fill('0.42');
   await activate(dialog.getByRole('button',{name:'Done'}));
-  await aim.locator('.parameter-space figcaption').filter({hasText:'0.42'}).waitFor();
   await activate(aim.getByRole('button',{name:'History'}));
   await aim.getByLabel('Parameter history beat window').selectOption('8');
   await aim.getByRole('img',{name:'Last 8 beats'}).waitFor();
   await activate(aim.getByRole('button',{name:'3D'}));
+  assert.equal(await card.locator('[data-param=glow] .parameter-visualizer').count(),0);
   await activate(card.getByRole('button',{name:'Collapse Orbital wash controls'}));
-  await picker.selectOption({label:'Orbit aim'});
+  await detach('Orbit aim');
+  await detach('Intensity');
+  assert.equal(await card.locator('.strip-monitor').count(),0);
+  assert.equal(await strip.getByRole('slider',{name:'Intensity rotary'}).getAttribute('aria-valuenow'), original);
+  const base=strip.getByRole('slider',{name:'Intensity rotary'});
+  await base.focus();
+  await base.press(Number(original)>=0.95?'ArrowLeft':'ArrowRight');
+  await page.waitForFunction(([id,old])=>document.querySelector('[data-live-instance="'+id+'"] [aria-label="Intensity rotary"]').getAttribute('aria-valuenow')!==old,
+    [await card.getAttribute('data-live-instance'),original]);
+  await activate(card.getByRole('button',{name:'Pause',exact:true}));
+  await activate(card.getByRole('button',{name:'Resume',exact:true}));
 }
 
 async function verifyCueActions(page, name) {
@@ -126,12 +195,22 @@ try {
     const live=page.getByRole('button',{name:/^Live ·/});
     if(await live.isVisible()) await (touch ? live.tap() : live.click());
     await positionBoard(page);
-    await page.locator('.strip-monitor:visible .parameter-history svg').first().waitFor();
-    await page.waitForFunction(()=>document.querySelector('.strip-monitor:has(.parameter-history) path')?.getAttribute('d')?.includes('L'));
+    assert.equal(await page.locator('.strip-monitor,.parameter-visualizer').count(),0,'Static inputs have no scopes');
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
-    await verifyControls(page,touch);
+    await verifyControls(page,touch,name);
+    if(name==='desktop') {
+      const cue=page.locator('#cue-grid [data-cue-id="selector"]').first();
+      await cue.click();
+      const selector=page.locator('article',{has:page.getByRole('heading',{name:'Wave selector',exact:true})});
+      const curve=selector.getByLabel('Live waveform shape').locator('svg polyline');
+      await curve.scrollIntoViewIfNeeded();
+      await curve.waitFor();
+      assert.ok((await curve.getAttribute('points')).split(' ').length>16,'Authored waveform shape remains visible');
+      assert.equal(await selector.locator('.strip-monitor').count(),0);
+      await page.screenshot({path:join(directory,'desktop-wave-selector.png')});
+    }
     if (webkitRun && touch) await verifyCueActions(page,name);
     assert.deepEqual(errors,[]);
     await page.close();

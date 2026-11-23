@@ -7,14 +7,24 @@
             [tolglow.application :as app]
             [tolglow.demo :as demo]
             [tolglow.qa.push-parameters :as parameters]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.signals :as signals]))
 
 (defn -main [& [directory scenario]]
   (let [script (case scenario
                  nil "dev/studio/performance-layout-qa.mjs"
                  "authoring" "dev/studio/compose-rig-layout-qa.mjs"
                  (throw (ex-info "Unknown Studio browser scenario" {:scenario scenario})))
+        waves (let [registry (signals/new-registry)
+                    sine (get-in registry [:waveforms :sine])]
+                (signals/publish registry (assoc sine :id "custom/sine" :name "Studio test sine")))
         model (-> (demo/model)
+                  (assoc :waveforms waves)
+                  (assoc-in [:registry :effects :selector] {:id :selector :name "Wave selector" :version 1
+                                                            :params {:wave (signals/selector-schema waves [:sine :triangle])}
+                                                            :outputs {:dimmer {:op :param :key :wave}}})
+                  (assoc-in [:registry :cues :selector] {:id :selector :name "Wave selector" :effect-id :selector :version 1})
+                  (assoc-in [:pages :main :cells [1 2]] :selector)
                   (assoc-in [:registry :effects :orbital] parameters/orbital-effect)
                   (assoc-in [:registry :cues :orbital] {:id :orbital :version 1 :name "Orbital wash"
                                                         :effect-id :orbital :swatch "#b6df91"})
