@@ -10,8 +10,8 @@ lives in `src/studio/tolglow/studio/push_display.cljs` as re-frame/Reagent code.
   dispatch, then allow React to commit before capture.
 - Bound view/PNG sizes, startup/capture deadlines and process lifetime. Only one
   screenshot may be in flight. The JVM owns the latest pending-view mailbox.
-- Do not poll show APIs, start WebGL simulation or add handwritten HTML controls
-  here. JavaScript is limited to the browser/process integration boundary.
+- Mount the shared venue renderer only for an explicitly selected scene view,
+  await its submitted frame, and release it when leaving. JavaScript is limited to the browser/process integration boundary.
 - Synthetic browser tests establish boundary behavior. Measure the actual built
   re-frame page separately and record browser/CPU/environment limitations.
 - Native Wayang output keeps the shared exclusive lease. Captures and native
