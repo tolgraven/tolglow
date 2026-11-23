@@ -49,9 +49,16 @@ jobs:
         run: |
           npx --no-install playwright-core install --with-deps webkit
           lein run -m tolglow.qa.performance-layout target/webkit-perform
+      - name: Recheck the default Chromium runner
+        working-directory: tolglow
+        run: |
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          lein run -m tolglow.qa.performance-layout target/chromium-perform
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: webkit-perform
-          path: tolglow/target/webkit-perform/
+          path: |
+            tolglow/target/webkit-perform/
+            tolglow/target/chromium-perform/
           if-no-files-found: warn
