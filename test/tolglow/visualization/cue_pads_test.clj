@@ -4,6 +4,7 @@
             [afterglow.control.devices.push-2 :as push-2]
             [afterglow.control.codecs.push-2 :as codec]
             [tolglow.demo :as demo]
+            [tolglow.bench-show :as bench]
             [tolglow.lighting-match :as matching]
             [tolglow.show :as show]
             [afterglow.control.devices.session :as session]
@@ -139,3 +140,23 @@
                   (assoc-in [:rig :fixtures] [dimmer (assoc dimmer :id :bright :address 2 :measured-relative-brightness 1.0)]))
         colors (pads/present! (pads/manager) :page (at model 50) main)]
     (is (= [1.0 1.0 1.0] (:ember colors)))))
+
+(deftest running-previews-use-the-same-resolved-hdr-options-as-emission
+  (let [hdr {:enabled? true :gain 0.5 :source-gains {:head-1 0.25}}
+        model (-> (rig)
+                  (assoc-in [:registry :effects :ember :outputs :dimmer] 1.0)
+                  (assoc-in [:settings :hdr] hdr)
+                  (bench/command :launch {:op :cue/launch :cue-id :ember}))
+        runtime (show/create-runtime {:model model :workspace-options nil :batch? false})]
+    (try
+      (show/tick! runtime 0)
+      (let [snapshot @(:state runtime)
+            service (:cue-pad-previews runtime)
+            color (:ember (pads/present! service :grid snapshot main))
+            emitted (get-in snapshot [:output :values :head-1 :emitted-color])
+            initial-window (get-in @(:cache service) [:ember :window])]
+        (is (= [0.125 0.0 0.0] emitted color))
+        (pads/present! service :grid (assoc-in snapshot [:preview-hdr :gain] 0.75) main)
+        (is (identical? initial-window (get-in @(:cache service) [:ember :window]))
+            "Continuous modulation keeps the current visualization keyframe window"))
+      (finally (show/stop! runtime)))))

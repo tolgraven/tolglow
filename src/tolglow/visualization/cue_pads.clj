@@ -190,7 +190,7 @@
             previous (:window cached)
             signature [(:epoch model) (:id instance) (:phase instance) (get-in instance [:system :paused?])
                        (:started-at-ms instance) (:release-at-ms instance) bpm playing?
-                       (get-in model [:transport :meter]) (:preview-hdr snapshot)]]
+                       (get-in model [:transport :meter]) (boolean (:preview-hdr snapshot))]]
         (if (window-valid? previous signature t beat rate) cached
           (let [interval (* (bit-shift-left 1 level) (max 60.0 (min 250.0 (/ 15000.0 bpm))))]
             (assoc cached :window (next-window snapshot (:plan cached) cue instance previous

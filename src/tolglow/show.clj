@@ -1161,7 +1161,7 @@
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :variable-observation variables
-                        :preview-hdr (when (:hdr? frame-input) (select-keys hdr-opts [:white-mix :max-excess :cue-gains :instance-gains]))
+                        :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :resolved-param-overrides input-overrides
