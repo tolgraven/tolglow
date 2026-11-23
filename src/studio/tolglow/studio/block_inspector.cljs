@@ -31,7 +31,9 @@
     (for [[i option] (map-indexed vector options)]
       ^{:key i} [:option {:value i} (label option)])]])
 
-(defn- history-plot [query]
+(defn history-plot
+  "Subscribe only while mounted. The caller owns visibility."
+  [query]
   [trace/plot @(rf/subscribe [::history query]) false {:binding-path (nth query 2)}])
 
 (defn- observe [instance-id path]

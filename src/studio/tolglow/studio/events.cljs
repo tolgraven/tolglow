@@ -634,11 +634,13 @@
 (rf/reg-event-fx :studio/definition-new
   (fn [{:keys [db]} _] {:db (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1 :auto? false :status "New definition" :result ""})
                         :studio/nvim-source initial-source}))
+(defn- edit-definition-source [db source]
+  (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
+    {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision})
+     :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
+
 (rf/reg-event-fx :studio/definition-source
-  (fn [{:keys [db]} [_ source]]
-    (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
-      {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision})
-       :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])})))
+  (fn [{:keys [db]} [_ source]] (edit-definition-source db source)))
 (rf/reg-event-fx :studio/auto-publish
   (fn [{:keys [db]} [_ revision]]
     (when (and (get-in db [:ui :definition :auto?]) (= revision (get-in db [:ui :definition :edit-revision])))
@@ -665,7 +667,7 @@
   (when-not (and (number? value) (js/Number.isFinite value) (<= 0 value) (contains? #{"beats" "bars" "phrases" "ms"} unit))
     (throw (js/Error. "Choose a finite musical duration and a supported unit.")))
   {(keyword unit) value})
-(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes]} version]
+(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes blocks]} version]
   (when-not (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id) (throw (js/Error. "Use an identifier beginning with a letter.")))
   (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
     (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
@@ -674,7 +676,15 @@
    :params {:level {:type :number :default level :bounds [0.0 1.0]}}
    :outputs {:color {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
              :dimmer {:op :param :key :level}}}
-    keyframes (assoc :keyframes keyframes)))
+    keyframes (assoc :keyframes keyframes)
+    (seq blocks) (assoc :blocks blocks)))
+
+(rf/reg-event-fx :studio/apply-block-source
+  (fn [{:keys [db]} [_ baseline updated]]
+    (if (= baseline (get-in db [:ui :definition :source]))
+      (assoc (edit-definition-source db updated) :studio/nvim-source updated)
+      {:dispatch [:studio/editor-error "The source changed. Reopen the block editor."]})))
+
 (rf/reg-event-fx :studio/builder-generate
   (fn [{:keys [db]} _]
     (try
