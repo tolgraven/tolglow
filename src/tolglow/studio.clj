@@ -44,9 +44,10 @@
                       :scoped-queries {observations/demand-query observations/scope-query}
                       :release-query! (partial observations/drop-provider! (:browser-observations runtime))
                       :observation! (fn [producer message]
-                                      (observations/accept! (:browser-observations runtime) (:model @(:state runtime)) producer message))
+                                      (observations/accept! (:browser-observations runtime) (:model @(:state runtime))
+                                                            producer message))
                       :surfaces {observations/demand-query
-                                 (partial observations/provider-lease (:browser-observations runtime) #(get @(:state runtime) :model))
+                                 (partial observations/provider-lease (:browser-observations runtime) #(:model @(:state runtime)))
                                  :development/workspace
                                  (fn [[_ id & extra]]
                                    (workspace/status-source (get-in runtime [:development :workspaces])

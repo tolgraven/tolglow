@@ -233,6 +233,13 @@
         (swap! (:client-faults hub) #(vec (take-last 64 (conj % event))))
         (when-let [report! (:report-fault! hub)] (report! event))))))
 
+(defn- receive-observation! [hub socket message]
+  (when-let [accept! (:observation! hub)]
+    (locking (:clients hub)
+      (when-let [client (get @(:clients hub) socket)]
+        (when-let [producer (get (:queries @client) (:query message))]
+          (accept! producer message))))))
+
 (defn- receive! [hub socket session lease-clock text]
   (when-let [client (get @(:clients hub) socket)]
     (try
@@ -247,10 +254,7 @@
                  (when (and (:pending old) (= token (get-in old [:pending :token])))
                    (grant-lease! hub session lease-clock)
                    (wake! hub)))
-          :observation (locking (:clients hub)
-                         (when-let [live (get @(:clients hub) socket)]
-                           (when-let [producer (get (:queries @live) (:query message))]
-                             (when-let [accept! (:observation! hub)] (accept! producer message)))))
+          :observation (receive-observation! hub socket message)
           :resync (do (swap! client dissoc :base :pending) (wake! hub))
           :client-fault (client-fault! hub client session fault)
           :queries (set-queries! hub socket (queries/validate queries))

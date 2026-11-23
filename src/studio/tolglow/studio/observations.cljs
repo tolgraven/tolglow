@@ -9,8 +9,8 @@
 (defn grant [owner]
   (when-let [stream @(rf/subscribe [::connection])]
     (let [query [:studio/observation-demand owner]
-            sources @(rf/subscribe [:studio/remote query])]
-        (when (seq sources) {:stream stream :query query :sources sources}))))
+          sources @(rf/subscribe [:studio/remote query])]
+      (when (seq sources) {:stream stream :query query :sources sources}))))
 
 (defn- bitmap-rgb [bitmap]
   (try

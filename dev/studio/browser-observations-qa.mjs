@@ -1,7 +1,7 @@
 // Real Studio scene, Ring/Transit stream and show graph. An independent
 // test-only pixel read checks what the host received against the presented frame.
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {execFileSync, spawn} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -9,7 +9,8 @@ import {chromium} from 'playwright-core';
 
 const target = process.argv[2] || '/tmp/tolglow-browser-observations';
 await mkdir(target, {recursive: true});
-const host = spawn('lein', ['trampoline', 'run', '-m', 'tolglow.qa.browser-observations'], {stdio:['pipe','pipe','inherit']});
+const classpath = execFileSync('lein', ['classpath'], {encoding:'utf8'}).trim();
+const host = spawn('java', ['-cp',classpath,'clojure.main','-m','tolglow.qa.browser-observations'], {stdio:['pipe','pipe','inherit']});
 const output = createInterface({input: host.stdout})[Symbol.asyncIterator]();
 async function response(command) {
   if (command) host.stdin.write(command + '\n');
