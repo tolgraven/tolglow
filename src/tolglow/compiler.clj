@@ -243,14 +243,14 @@
                :random {:enabled? true :max-change 0.2}}
         color {:type :color :default [1.0 0.03 0.01] :random {:enabled? false}}
         wave {:op :add :args [0.5 {:op :multiply :args [0.5 {:op :sin :args [{:op :multiply :args [{:op :bar} (* 2 Math/PI)]}]}]}]}]
-    [{:id :solid-red :version 1 :name "Solid red" :capabilities [:emission]
+    [{:id :solid-red :version 1 :name "Solid red" :ui/layout {:template :wash :monitor :color} :capabilities [:emission]
       :params {:level level :color color}
       :outputs {:color {:op :param :key :color} :dimmer {:op :param :key :level}}}
-     {:id :breath :version 1 :name "Breathing color" :capabilities [:emission]
+     {:id :breath :version 1 :name "Breathing color" :ui/layout :pulse :capabilities [:emission]
       :params {:level level :color (assoc color :default [0.3 0.02 0.6])}
       :envelope {:attack {:beats 1/2} :release {:beats 1}}
       :outputs {:color {:op :param :key :color}
                 :dimmer {:op :multiply :args [{:op :param :key :level} wave]}}}
-     {:id :motion :version 1 :name "Moving head sweep" :capabilities [:movement]
+     {:id :motion :version 1 :name "Moving head sweep" :ui/layout {:template :movement :monitor :level} :capabilities [:movement]
       :requires [:emission] :params {:level level}
       :outputs {:pan wave :tilt 0.5}}]))

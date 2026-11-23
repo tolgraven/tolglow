@@ -91,8 +91,8 @@
         (watch-bundle! (:bundle @owner) nil)))))
 
 (defn status-at-commit
-  "Capture public connection data once after invalidation. The returned pure
-  projection ages the selected clock and counts admitted events at show time."
+  "Capture sync and audio after invalidation. At each observed commit, project
+  timing and audience levels against the gateway sessions admitted by this host."
   [connections]
   (let [{:keys [bundle model]} (live-state connections)
         epoch (:epoch model)
@@ -110,6 +110,7 @@
                         (= source (get-in sync-status [:config :link :source-id]))
                         (assoc :follow-transport? (get-in sync-status [:config :link :follow-transport?])))]
             {:sync (assoc sync-status :clock clock)
+             :audience (sensor-manager/audience-status (:sensors bundle) model)
              :audio (assoc audio-status :received-event-count (get-in model [:variables :audio :event-count] 0))}))))))
 
 (defn- close-bundle! [bundle]
@@ -194,7 +195,10 @@
                    (credentials/file-store
                     (or (:credential-path options)
                         (str (System/getProperty "user.home") "/.config/tolglow/credentials.edn"))))
-         options (-> options (assoc-in [:agent-options :credential-store] store)
+         options (-> options
+                     ;; A show import creates the next REPL manager on the importing thread.
+                     (assoc-in [:repl-options :session-options :class-loader] (clojure.lang.RT/baseLoader))
+                     (assoc-in [:agent-options :credential-store] store)
                      (assoc-in [:sensor-options :credential-store] store)
                      (update :fixture-options #(merge {:limits {:max-cache-bytes 4194304}} %)))
          bundle (prepare model data options)]

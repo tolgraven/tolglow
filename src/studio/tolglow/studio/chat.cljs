@@ -57,7 +57,7 @@
 
 (rf/reg-event-fx :chat/load [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} _]
-    {:db (assoc-in db [:chat :provider-request] unique)
+    {:db (-> db (assoc-in [:chat :provider-request] unique) (update :chat dissoc :provider-error))
      :fx [[:studio/http {:path "/api/providers" :on-success [:chat/providers-loaded unique] :on-failure [:chat/provider-error unique]}]
           [:dispatch [:chat/history-load]]]}))
 (rf/reg-event-fx :chat/history-load [(rf/inject-cofx :studio/unique)]
@@ -103,7 +103,7 @@
     (when (= token (get-in db [:chat :history-request])) {:dispatch [:chat/history-load]})))
 (rf/reg-event-fx :chat/runtime-change
   (fn [{:keys [db]} _]
-    {:db (-> db (update :chat #(-> % (assoc :running? false :saving? false) (dissoc :current-id :conversation-id :conversation-status :entries :history-request :provider-request :provider :error)))
+    {:db (-> db (update :chat #(-> % (assoc :running? false :saving? false) (dissoc :current-id :conversation-id :conversation-status :entries :history-request :provider-request :provider :provider-error :error)))
                 (update :ui dissoc :provider-form))
      :studio/chat-abort true :dispatch [:chat/load]}))
 (rf/reg-event-db :chat/providers-loaded
@@ -120,20 +120,20 @@
                     (seq (:credential form)) (assoc :credential (:credential form))
                     (:clear-credential? form) (assoc :clear-credential? true))]
       {:db (-> db (assoc-in [:ui :provider-form :credential] "") (assoc-in [:chat :saving?] true)
-               (assoc-in [:chat :provider-request] unique))
+               (update :chat dissoc :provider-error) (assoc-in [:chat :provider-request] unique))
        :studio/http {:path "/api/providers" :body payload :on-success [:chat/provider-saved unique] :on-failure [:chat/provider-error unique]}})))
 (rf/reg-event-fx :chat/provider-saved
   (fn [{:keys [db]} [_ token config]]
     (when (= token (get-in db [:chat :provider-request]))
-    {:db (-> db (assoc-in [:chat :provider] config) (assoc-in [:chat :saving?] false)
-             (assoc-in [:ui :provider-form :clear-credential?] false))
-     :dispatch [:studio/toast (if (:credential-persisted? config)
-                               "Provider settings saved. The key is stored separately from show files."
-                               "Provider settings saved. The key is available for this server session.")]})))
+      {:db (-> db (assoc-in [:chat :provider] config) (assoc-in [:chat :saving?] false)
+               (assoc-in [:ui :provider-form :clear-credential?] false))
+       :dispatch [:studio/toast (if (:ready? config)
+                                 "Model connection saved."
+                                 "Model settings saved. Add an API key to send messages.")]})))
 (rf/reg-event-db :chat/provider-error
   (fn [db [_ token error]]
     (if (= token (get-in db [:chat :provider-request]))
-      (-> db (assoc-in [:chat :saving?] false) (assoc-in [:chat :error] (str error))) db)))
+      (-> db (assoc-in [:chat :saving?] false) (assoc-in [:chat :provider-error] (str error))) db)))
 (rf/reg-event-db :chat/select-provider
   (fn [db [_ provider]] (update-in db [:ui :provider-form] merge {:provider provider :endpoint "" :credential "" :clear-credential? false})))
 (rf/reg-event-fx :chat/send [(rf/inject-cofx :studio/unique)]
@@ -188,35 +188,62 @@
 (rf/reg-event-db :chat/clear
   (fn [db _] (if (get-in db [:chat :running?]) db (update db :chat dissoc :entries :history :history-request :conversation-id :conversation-status :error :current-id))))
 
-(defn- provider-form [db]
-  (let [form (get-in db [:ui :provider-form]) config (get-in db [:chat :provider])]
-    [:details.panel.provider-panel {:open (not (:ready? config))}
-     [:summary [:span.section-label "MODEL CONNECTION"]
-      [:span.small.muted (if (:ready? config) (str (:provider config) " · " (:model config)) "Set up a provider")]]
-     [:div.form-body
-      (when (:credential-error config)
-        [:p.chat-error {:role "status"} "The saved key is unavailable. Enter a key again or reconnect the server's credential store."])
-      [:div.form-row
-       [:label "Provider"
-        [:select#provider-kind {:value (:provider form "openai") :on-change #(rf/dispatch-sync [:chat/select-provider (text %)])}
-         [:option {:value "openai"} "OpenAI"] [:option {:value "anthropic"} "Anthropic"]
-         [:option {:value "openrouter"} "OpenRouter"] [:option {:value "self-hosted"} "Self-hosted / compatible"]]]
-       [:label "Model" [:input#provider-model {:value (:model form "") :placeholder "Your model identifier"
-                                               :on-change #(input! [:provider-form :model] (text %))}]]]
-      [:label "Endpoint · optional for hosted providers"
-       [:input#provider-endpoint {:type "url" :value (:endpoint form "") :placeholder "http://localhost:11434/v1/chat/completions"
-                                 :on-change #(input! [:provider-form :endpoint] (text %))}]]
-      [:label (str "API key " (when (:credential-configured? config)
-                               (if (:credential-persisted? config) "· saved in the local credential store" "· available for this session")))
-       [:input#provider-credential {:type "password" :auto-complete "off" :value (:credential form "")
-                                   :placeholder (if (:credential-configured? config) "Leave blank to keep the current key" "Optional for self-hosted models")
+(defn- provider-endpoint [form self-hosted?]
+  [:label (if self-hosted? "Server endpoint" "Endpoint override")
+   [:input#provider-endpoint {:type "url" :value (:endpoint form "")
+                              :placeholder (if self-hosted? "http://localhost:11434/v1/chat/completions" "Use the provider’s default endpoint")
+                              :on-change #(input! [:provider-form :endpoint] (text %))}]])
+
+(defn- provider-fields [db]
+  (let [form (get-in db [:ui :provider-form])
+        config (get-in db [:chat :provider])
+        provider (:provider form "openai")
+        local? (= "self-hosted" provider)
+        saved-key? (and (= provider (:provider config))
+                        (or (:credential-configured? config) (:credential-persisted? config)))]
+    [:form.form-body.provider-fields
+     {:on-submit (fn [event] (.preventDefault event) (rf/dispatch [:chat/save-provider]))}
+     (when (:credential-error config)
+       [:p.chat-error {:role "status"} "The saved key is unavailable. Enter a key again or reconnect the server’s credential store."])
+     [:div.provider-row
+      [:label "Provider"
+       [:select#provider-kind {:value provider :on-change #(rf/dispatch-sync [:chat/select-provider (text %)])}
+        [:option {:value "openai"} "OpenAI"] [:option {:value "anthropic"} "Anthropic"]
+        [:option {:value "openrouter"} "OpenRouter"] [:option {:value "self-hosted"} "Self-hosted / compatible"]]]
+      [:label "Model" [:input#provider-model {:value (:model form "") :placeholder "Model identifier" :required true
+                                              :on-change #(input! [:provider-form :model] (text %))}]]]
+     (when local? [provider-endpoint form true])
+     [:label (if local? "API key · optional" "API key")
+      [:input#provider-credential {:type "password" :auto-complete "off" :value (:credential form "")
+                                   :placeholder (cond saved-key? "Leave blank to keep the saved key"
+                                                      local? "If your server requires a key"
+                                                      :else "Provider API key")
                                    :on-change #(input! [:provider-form :credential] (text %))}]]
-      [:div.button-row
-       [:button#save-provider.button.primary {:disabled (get-in db [:chat :saving?]) :on-click #(rf/dispatch [:chat/save-provider])} "Save connection"]
-       [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (:clear-credential? form))
-                                        :on-change #(input! [:provider-form :clear-credential?] (.. % -target -checked))}]
-        "Clear saved key"]]
-      [:p.small.muted "Keys are excluded from show exports. The server uses its separate credential store when configured; otherwise keys last for this session. Saving settings does not contact the provider."]]]))
+     (when-not local?
+       [:details.provider-advanced
+        [:summary "Custom endpoint"] [provider-endpoint form false]])
+     (when saved-key?
+       [:label.checkbox-label.provider-clear
+        [:input {:type "checkbox" :checked (boolean (:clear-credential? form))
+                 :on-change #(input! [:provider-form :clear-credential?] (.. % -target -checked))}]
+        "Clear saved key"])
+     (when-let [error (get-in db [:chat :provider-error])]
+       [:p.chat-error {:role "alert"} error])
+     [:div.provider-save
+      [:button#save-provider.button.primary {:type "submit" :disabled (get-in db [:chat :saving?])}
+       (if (get-in db [:chat :saving?]) "Saving…" "Save connection")]
+      [:p.small.muted "Keys stay out of show exports. Your server stores them locally or for this session."]]]))
+
+(defn- provider-form [db ready?]
+  (let [config (get-in db [:chat :provider])]
+    (if ready?
+      [:details.panel.provider-panel
+       [:summary [:span.section-label "Model connection"]
+        [:span (str (:provider config) " · " (:model config))]]
+       [provider-fields db]]
+      [:section.panel.provider-panel.provider-setup {:aria-labelledby "provider-setup-title"}
+       [:div.provider-intro [:h2#provider-setup-title "Connect a model"]]
+       [provider-fields db]])))
 
 (defn- tool-entry [tool]
   [:details.chat-tool
@@ -224,17 +251,17 @@
     [:span.small.muted (if (= :running (:status tool)) "running" "completed")]]
    [:pre (js/JSON.stringify (clj->js (or (:result tool) (:arguments tool))) nil 2)]])
 
-(defn panel [db]
-  (let [chat (:chat db) running? (:running? chat) ready? (get-in chat [:provider :ready?])]
-    [:section#view-assistant.view {:hidden (not= :assistant (get-in db [:ui :view]))}
-     [:div.view-heading
-      [:div [:div.eyebrow "A CREATIVE PARTNER"] [:h1 "Describe a feeling. Shape a show."]
-       [:p "Your assistant can see this rig, create effects, and play the show alongside you."]]]
-     [:div.chat-layout
-      [:section.panel.chat-panel
-       [:div.panel-top [:span.section-label "IN CONVERSATION"]
-        [:button.text-button {:disabled running? :on-click #(rf/dispatch [:chat/clear])} "New conversation +"]]
-       [:div#chat-log.chat-log {:role "log" :aria-live "polite" :aria-relevant "additions text"
+(defn- conversation [db]
+  (let [chat (:chat db)
+        ready? (get-in chat [:provider :ready?])
+        running? (:running? chat)
+        has-history? (seq (:entries chat))]
+    [:section.panel.chat-panel
+       [:div.panel-top [:span.section-label (if (or ready? has-history?) "Conversation" "Draft a message")]
+        (when (or has-history? (:conversation-id chat))
+          [:button.text-button {:disabled running? :on-click #(rf/dispatch [:chat/clear])} "New conversation +"])]
+       (when (or ready? has-history? running?)
+         [:div#chat-log.chat-log {:role "log" :aria-live "polite" :aria-relevant "additions text"
                                 :on-scroll #(let [log (.-currentTarget %)]
                                               (input! [:chat-autoscroll?] (< (- (.-scrollHeight log) (.-clientHeight log) (.-scrollTop log)) 80)))}
         (if (seq (:entries chat))
@@ -248,33 +275,57 @@
                [:div.chat-thinking [:span "◌"] " Listening to the room…"])])
           [:div.chat-welcome [:span "✧"] [:h2 "Start with a mood."]
            [:p "Try “Build a mostly red, slowly evolving scene. Keep half the room dark and let one beam wander.”"]
-           [:p.small.muted "The assistant uses validated show commands. Tool activity appears here, and you can keep performing from the cue grid."]])]
+           [:p.small.muted "The assistant uses validated show commands. Tool activity appears here, and you can keep performing from the cue grid."]])])
        (when-let [error (:error chat)] [:div.chat-error {:role "status"} error])
        (when (and (not running?) (contains? #{"interrupted" "cancelled" "failed" "error"} (:conversation-status chat)))
          [:div.chat-error {:role "status"} "The previous generation stopped. Send a message when you want to continue this conversation."])
        [:form.chat-compose {:on-submit (fn [event] (.preventDefault event) (rf/dispatch [:chat/send]))}
         [:label.sr-only {:html-for "chat-prompt"} "Tell the lighting assistant what to do"]
         [:textarea#chat-prompt {:value (get-in db [:ui :chat-draft] "") :rows 3
-                               :placeholder (if ready? "What should the room feel like?" "Connect a model to start creating together…")
+                               :placeholder (if ready? "What should the room feel like?" "Draft a message while you set up your model…")
                                :max-length 32768 :on-change #(input! [:chat-draft] (text %))
                                :on-key-down (fn [event]
                                               (when (and (= "Enter" (.-key event)) (or (.-ctrlKey event) (.-metaKey event)))
                                                 (.preventDefault event) (rf/dispatch [:chat/send])))}]
-        [:div.chat-compose-actions [:span.small.muted "Ctrl / ⌘ + Enter to send"]
+        [:div.chat-compose-actions [:span.small.muted (if ready? "Ctrl / ⌘ + Enter to send" "Connect a model to send")]
          (if running?
            [:button.button {:type "button" :on-click #(rf/dispatch [:chat/cancel])} "Stop generation"]
-           [:button#chat-send.button.primary {:type "submit" :disabled (or (not ready?) (str/blank? (get-in db [:ui :chat-draft] "")))} "Send ↗"])]]]
-      [:aside.chat-settings [provider-form db]
-       [:section.panel.conversation-library
+           [:button#chat-send.button.primary {:type "submit" :disabled (or (not ready?) (str/blank? (get-in db [:ui :chat-draft] "")))} "Send"])]]]))
+
+(defn- conversation-library [chat]
+  (let [running? (:running? chat)]
+    [:section.panel.conversation-library
         [:div.panel-top [:span.section-label "SAVED CONVERSATIONS"]]
         [:div.form-body
          [:label.sr-only {:html-for "chat-conversation"} "Choose a saved conversation"]
-         [:select#chat-conversation {:value (get-in db [:chat :conversation-id] "") :disabled running?
+         [:select#chat-conversation {:value (:conversation-id chat "") :disabled running?
                                      :on-change #(rf/dispatch [:chat/select (text %)])}
           [:option {:value ""} "New conversation"]
           (for [conversation (:conversations chat)]
             ^{:key (:id conversation)} [:option {:value (:id conversation)} (or (:title conversation) "Untitled conversation")])]
-         [:p.small.muted "Conversations are restored from the local server. Each new request receives the current show context."]]]
-       [:div.chat-context.panel [:span.section-label "SHARED CONTEXT"]
-        [:p (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues")]
-        [:p.small.muted "The server supplies the current rig, definitions, active effects and output mode on every new request. No context copy/paste is needed."]]]]]))
+         [:p.small.muted "Conversations are restored from the local server. Each new request receives the current show context."]]]))
+
+(defn- show-context [db]
+  [:div.chat-context.panel [:span.section-label "Shared context"]
+   [:p (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues")]
+   [:p.small.muted "The current rig, definitions, active effects and output mode accompany each message."]])
+
+(defn panel [db]
+  (let [chat (:chat db)
+        ready? (get-in chat [:provider :ready?])]
+    [:section#view-assistant.view {:hidden (not= :assistant (get-in db [:ui :view]))}
+     [:div.view-heading [:h1 "Show assistant"]]
+     [:div.chat-layout {:class (when-not ready? "assistant-setup")}
+      (when-not ready?
+        (if (:provider chat)
+          [provider-form db false]
+          [:section.panel.provider-setup.connection-status
+           (if-let [error (:provider-error chat)]
+             [:<> [:p {:role "alert"} error]
+              [:button.button {:on-click #(rf/dispatch [:chat/load])} "Retry connection settings"]]
+             [:p {:role "status"} "Loading model connection…"])]))
+      [conversation db]
+      [:aside.chat-settings
+       (when ready? [provider-form db true])
+       (when (or ready? (seq (:conversations chat))) [conversation-library chat])
+       [show-context db]]]]))

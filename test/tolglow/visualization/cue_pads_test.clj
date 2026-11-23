@@ -87,6 +87,28 @@
     (is (nil? (::views/pad-colors (render! (assoc local :ready? false)))))
     ((:close! push) handle)))
 
+(deftest push-grid-is-projected-once-per-snapshot-and-viewport
+  (let [service (pads/manager) source (atom (at (rig) 75))
+        feedback (pads/push-feedback service #(deref source))
+        lease ((:open! feedback)) local {:ready? true :page-id :main :origin [0 0]}
+        render! #((:project! feedback) lease % (:model @source))
+        sampled (atom 0) present! pads/present!]
+    (with-redefs [pads/present! (fn [& args] (swap! sampled inc) (apply present! args))]
+      (let [first-pass (render! local)]
+        (is (identical? first-pass (render! local)))
+        (is (= 1 @sampled))
+        (is (empty? (::views/pad-colors (render! (assoc local :origin [8 0])))))
+        (is (contains? (::views/pad-colors (render! (assoc local :page-id :other))) :orchid))
+        (reset! source (at (rig) 100))
+        (is (= [0.2 0.0 0.0] (:ember (::views/pad-colors (render! local)))))
+        (is (= 4 @sampled))
+        (is (nil? (::views/pad-colors (render! (assoc local :target-picker {:rows []})))))
+        (is (= 0 (:clients (pads/status service))))
+        (is (map? (::views/pad-colors (render! local))))
+        (is (= 5 @sampled)))
+      ((:close! feedback) lease)
+      (is (zero? (:clients (pads/status service)))))))
+
 (deftest push-entry-point-previews-without-starting-a-cue-or-lighting-a-fixture
   (let [runtime (show/create-runtime {:model (rig) :workspace-options nil})
         input (atom nil) sent (atom [])
@@ -106,6 +128,10 @@
         (is (identical? (:output snapshot) (:output @(:state runtime))))
         (is (pos? (:clients (pads/status service))))
         (is (empty? (get-in snapshot [:model :instances])))
+        (let [calls (atom 0) project! pads/present!]
+          (with-redefs [pads/present! (fn [& args] (swap! calls inc) (apply project! args))]
+            (@input (codec/sysex 0 [0x09]))
+            (is (zero? @calls) "Draining the palette ACK reuses this committed grid")))
         (session/suspend! device)
         (is (zero? (:clients (pads/status service)))))
       (finally (show/stop! runtime)))))

@@ -1,5 +1,8 @@
 # Native iPhone and Apple Watch foundation
 
+[Package and run standalone Mac Studio](Packaging/README.md).
+
+
 This is an iOS 18 / watchOS 11 SwiftUI client and a shared pure Swift package.
 [macOS CI](https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227)
 verified **seven Swift tests and unsigned iOS/watchOS simulator builds** with
@@ -205,3 +208,5 @@ The server challenge must identify the Tolglow Studio realm. **Forget saved
 password** removes the local credential for the selected origin. Existing
 browser sessions expire on their normal schedule. OSC pairing for the phone
 and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).
+
+The [nearby Dance floor guide](../docs/nearby-audience.md) covers Bluetooth stage discovery, phone and Watch participation and the lightweight QR App Clip.

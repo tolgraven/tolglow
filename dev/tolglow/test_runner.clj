@@ -21,8 +21,8 @@
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
-    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test
-    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.render.workers-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test
+    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test
+    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.render.workers-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
     tolglow.persistence-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
@@ -34,7 +34,7 @@
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
-    tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test
+    tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test])
