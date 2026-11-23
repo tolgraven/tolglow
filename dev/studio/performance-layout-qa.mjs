@@ -118,7 +118,7 @@ async function verifyControls(page,touch,profile) {
   await activate(edit.getByRole('button',{name:'Use base value',exact:true}));
   await edit.getByRole('button',{name:'Resume LFO',exact:true}).waitFor();
   await scope.waitFor({state:'detached'});
-  assert.equal(await card.getByRole('button',{name:'Edit source for Intensity'}).count(),1);
+  await card.getByRole('button',{name:'Edit source for Intensity'}).locator('.transport-symbol.pause').waitFor();
   await activate(edit.getByRole('button',{name:'Resume LFO',exact:true}));
   await edit.getByRole('button',{name:'Use base value',exact:true}).waitFor();
   await scope.waitFor({state:'attached'});
@@ -165,6 +165,32 @@ async function verifyControls(page,touch,profile) {
   await card.getByRole('button',{name:'Pause',exact:true}).waitFor();
 }
 
+async function verifyShellActions(page,profile,touch) {
+  const activate=button=>touch ? button.tap() : button.click();
+  const pause=page.getByRole('button',{name:'Pause transport',exact:true});
+  await pause.scrollIntoViewIfNeeded();
+  await pause.locator('.transport-symbol.pause').waitFor();
+  await activate(pause);
+  const play=page.getByRole('button',{name:'Play transport',exact:true});
+  await play.locator('.transport-symbol.play').waitFor();
+  await page.screenshot({path:join(directory,profile+'-transport-paused.png')});
+  await play.focus();
+  await play.press('Enter');
+  await pause.locator('.transport-symbol.pause').waitFor();
+  const files=page.locator(profile==='phone'?'.mobile-file-actions':'.sidebar-bottom');
+  const upload=files.getByLabel('Import show',{exact:true});
+  const download=files.getByRole('button',{name:'Export show',exact:true});
+  await upload.scrollIntoViewIfNeeded();
+  await upload.focus();
+  const selected=page.waitForEvent('filechooser');
+  if(touch) await upload.tap(); else await upload.press('Enter');
+  await (await selected).setFiles([]);
+  await page.screenshot({path:join(directory,profile+'-file-actions.png')});
+  const saving=page.waitForEvent('download');
+  await activate(download);
+  assert.equal((await saving).suggestedFilename(),'tolglow-show.transit');
+}
+
 async function verifyCueActions(page, name) {
   const cues = page.getByRole('group', {name:'Performance sections'}).getByRole('button',{name:'Cues',exact:true});
   if (await cues.isVisible()) await cues.tap();
@@ -209,6 +235,12 @@ try {
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
+    if(process.env.STUDIO_SHELL_ONLY==='1') {
+      await verifyShellActions(page,name,touch);
+      assert.deepEqual(errors,[]);
+      await page.close();
+      continue;
+    }
     try {
       await verifyControls(page,touch,name);
     } catch (error) {
@@ -240,6 +272,7 @@ try {
       await page.screenshot({path:join(directory,'desktop-wave-selector.png')});
     }
     if (webkitRun && touch) await verifyCueActions(page,name);
+    await verifyShellActions(page,name,touch);
     assert.deepEqual(errors,[]);
     await page.close();
   }
