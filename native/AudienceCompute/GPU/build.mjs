@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repo = resolve(here, '../../../..');
+const repo = resolve(here, '../../..');
 const require = createRequire(resolve(repo, 'package.json'));
 const { build } = require('esbuild');
 await build({

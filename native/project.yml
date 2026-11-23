@@ -25,6 +25,8 @@ targets:
       - Audience
       - AudienceCompute/Shared
       - AudienceCompute/Phone
+      - path: AudienceCompute/GPU/TRANSIT-LICENSE
+        buildPhase: resources
     entitlements:
       path: iOS/TolglowPhone.entitlements
       properties:
