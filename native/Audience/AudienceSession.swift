@@ -120,8 +120,10 @@ final class AudienceSession: ObservableObject {
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = sample.steps }
         watch = (sample, time, motionTime)
+        let withdrewPulse = lastPulse != nil && sample.pulse == nil
+        if withdrewPulse { lastPulse = nil }
         let refresh = watchOnlyInBackground && time - lastLevelTime >= 0.2
-        if refresh || sample.steps != lastWatchSteps { publish(refreshLevels: refresh) }
+        if refresh || withdrewPulse || sample.steps != lastWatchSteps { publish(refreshLevels: refresh) }
         return true
     }
     func endWatch() {

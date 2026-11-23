@@ -1,6 +1,23 @@
 import XCTest
 
 final class WatchAudienceUITests: XCTestCase {
+    func testHeartSharingConsentExplainsSavedShowAverages() {
+        let app = XCUIApplication()
+        app.launch()
+        let floor = app.buttons["dance-floor"]
+        XCTAssertTrue(floor.waitForExistence(timeout: 12))
+        floor.tap()
+        let pulse = app.switches["Share heart rate"]
+        for _ in 0..<4 where !pulse.isHittable { app.swipeUp() }
+        XCTAssertTrue(pulse.isHittable)
+        pulse.tap()
+        let consent = app.staticTexts["pulse-consent"]
+        XCTAssertTrue(consent.waitForExistence(timeout: 5))
+        XCTAssertTrue(consent.label.contains("saved show")); XCTAssertTrue(consent.label.contains("only you"))
+        for _ in 0..<3 where !consent.isHittable { app.swipeUp() }
+        capture("04-pulse-consent", app)
+    }
+
     func testChooseSoloStageAndReturnToPairedMode() {
         let app = XCUIApplication()
         app.launch()

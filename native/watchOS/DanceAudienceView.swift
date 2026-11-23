@@ -63,14 +63,21 @@ struct DanceAudienceView: View {
                     Text("\(workout.steps) motion steps").monospacedDigit()
                     if let bpm = workout.bpm {
                         Label("\(bpm) BPM", systemImage: "heart.fill").monospacedDigit()
-                    } else if sharePulse {
+                    } else if workout.runningWorkout {
                         Text("No recent heart rate").font(.caption)
+                    }
+                    if workout.runningWorkout {
+                        Button("Stop sharing heart rate") {
+                            sharePulse = false
+                            workout.withdrawPulse()
+                        }.accessibilityIdentifier("withdraw-pulse")
                     }
                 } else {
                     Toggle("Share heart rate", isOn: $sharePulse).disabled(workout.requesting)
                     if sharePulse {
-                        Text("Start a dance workout to share your latest BPM with the floor. Tolglow discards the workout when you leave.")
+                        Text("The stage receives your BPM. A saved show can retain the last average. If only you share, that’s your BPM. You can stop sharing heart rate and keep dancing. The Watch discards the workout.")
                             .font(.caption)
+                            .accessibilityIdentifier("pulse-consent")
                     }
                 }
                 Toggle("Share wrist axes", isOn: $workout.shareMotionAxes)
