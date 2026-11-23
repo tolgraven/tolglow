@@ -60,8 +60,7 @@ jobs:
           import json
           from pathlib import Path
           directory=Path('tracing/META-INF/native-image/tolglow/studio')
-          prefixes=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.',
-                    'javax.net.', 'org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
+          prefixes=('org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
           def retained(entry):
               name=entry.get('type',entry.get('name',''))
               return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
