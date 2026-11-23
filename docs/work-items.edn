@@ -1,7 +1,11 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
+ [{:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
+   :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
+   :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
+  {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
    :depends-on [:foundation/tests] :acceptance ["Round unfocused readouts, preserve exact typed edits, distinguish 256 and 65,536 normalized values and verify Shift encoder output to both channel widths."] :evidence []}

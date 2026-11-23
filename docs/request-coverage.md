@@ -1,6 +1,6 @@
 # Conversation request register
 
-Recorded through request **82**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
+Recorded through request **83**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
 
 **Open** is a to-do for the exact behavior or verification in that row. A linked milestone can already have shipped one part. **Verified** includes a source or merge receipt for the whole row. **Standing** is a recurring working agreement. The [work ledger](work-items.edn) owns implementation status, dependencies, ownership and evidence. For working branches and hardware gaps see the [handoff](request-handoff.md).
 
@@ -166,3 +166,5 @@ Recorded through request **82**. Each number follows the original user messages 
 | R80 | Format numeric readouts in Studio and Push. Preserve full values for editing, control logic, persistence and output. Cover vectors, ranges, endpoints, tiny values and negative numbers. | `:control/parameter-readouts` | Open |
 | R81 | Use sensible display and fine-encoder granularity for normalized controls driving an 8-bit DMX destination, including indirect bindings. Verify actual Push Shift behavior. | `:control/parameter-readouts` | Open |
 | R82 | Preserve the additional precision of actual coarse/fine pan and tilt or other 16-bit destinations, including mixed-resolution rigs. | `:control/parameter-readouts` | Open |
+| R83a | Preserve Studio’s visual theme and use a dedicated product-design owner to improve its density, polish and touch usability across phone, iPad and desktop. Prioritize several simultaneous running cues/effects, with more space for real parameter visualizations. Verify each size with actual captures. | `:web/responsive-performance-layouts` | Open |
+| R83b | Provide a semi-minimized horizontal playable parameter layout like Push. Support authored effect/cue combinations, individualized library layouts and templated generated cues with a smart fallback for new combinations. | `:web/responsive-performance-layouts` | Open |
