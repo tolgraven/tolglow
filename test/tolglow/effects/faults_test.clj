@@ -178,3 +178,19 @@
       (finally
         (doseq [file (.listFiles dir)] (.delete file))
         (.delete dir)))))
+
+
+(deftest slow-first-file-open-drains-before-closing
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory "tolglow-slow-log" (make-array java.nio.file.attribute.FileAttribute 0)))
+        handler (ns-resolve 'tolglow.effects.faults 'file-handler)
+        open-file @handler
+        delayed-open (fn [path] (Thread/sleep 350) (open-file path))]
+    (try
+      (with-redefs-fn {handler delayed-open}
+        (fn []
+          (let [owner (faults/create {:log-file (java.io.File. dir "faults-%g.log")})]
+            (faults/offer! owner [{:type :reactive/fault :message "first subscription failure"}])
+            (faults/close! owner)
+            (is (re-find #"first subscription failure" (slurp (java.io.File. dir "faults-0.log"))))
+            (is (not-any? #(.endsWith (.getName %) ".lck") (.listFiles dir))))))
+      (finally (doseq [file (.listFiles dir)] (.delete file)) (.delete dir)))))
