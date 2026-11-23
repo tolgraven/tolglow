@@ -11,6 +11,17 @@ const MOVEMENT = {
   KeyQ: 'down', KeyE: 'up'
 };
 const DIRECTIONS = new Set(Object.values(MOVEMENT));
+const NO_FIXTURES = [];
+
+// Exact displacement and terminal velocity for an exponentially approached
+// target, so a 120 Hz display follows the same path as a 60 Hz display.
+export function integrateWalk(velocity, target, dt) {
+  const rate = target.lengthSq() ? 13 : 19;
+  const blend = -Math.expm1(-rate * dt);
+  const displacement = velocity.clone().sub(target).multiplyScalar(blend / rate).addScaledVector(target, dt);
+  velocity.lerp(target, blend);
+  return displacement;
+}
 const vector = value => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
 const roomSize = room => [room?.[0] || 12, room?.[1] || 5, room?.[2] || 10].map(value => clamp(value, 1, 100));
 const typing = target => target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || '');
@@ -156,7 +167,10 @@ export class CameraNavigator {
     // as Ctrl+wheel. A line-mode wheel retains OrbitControls' dolly in Orbit.
     if (!event.ctrlKey && event.deltaMode !== 0 && this.mode === 'orbit') return;
     event.preventDefault(); event.stopImmediatePropagation();
-    if (event.ctrlKey) {this.zoom -= clamp(event.deltaY * .01, -1, 1); return;}
+    if (event.ctrlKey) {
+      if (this.mode === 'tour') this.setMode('orbit');
+      this.zoom -= clamp(event.deltaY * .01, -1, 1); return;
+    }
     if (this.mode !== 'walk') this.setMode('walk');
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.canvas.clientHeight : 1;
     this.queueSwipe(event.deltaX * unit, event.deltaY * unit);
@@ -230,11 +244,7 @@ export class CameraNavigator {
     const target = new THREE.Vector3(Number(held.has('right')) - Number(held.has('left')),
       Number(held.has('up')) - Number(held.has('down')), Number(held.has('forward')) - Number(held.has('backward')));
     target.normalize().multiplyScalar(this.speed * (this.boost ? 2 : 1));
-    const rate = target.lengthSq() ? 13 : 19;
-    const blend = -Math.expm1(-rate * dt), difference = this.velocity.clone().sub(target);
-    // Integrate the velocity curve over the display interval, including braking.
-    const travel = target.clone().multiplyScalar(dt).addScaledVector(difference, blend / rate);
-    this.velocity.lerp(target, blend);
+    const travel = integrateWalk(this.velocity, target, dt);
     const panBlend = this.reducedMotion() ? 1 : -Math.expm1(-24 * dt);
     travel.x += this.swipe.x * panBlend; travel.z += this.swipe.y * panBlend;
     this.swipe.multiplyScalar(1 - panBlend);
@@ -253,9 +263,11 @@ export class CameraNavigator {
     if (!active) return;
     this.sampleGesture();
     if (!dt) return;
-    const snapshot = this.snapshot(), fixtures = snapshot?.rig?.fixtures || [];
+    if (this.mode === 'orbit') {
+      this.updateView(dt, NO_FIXTURES); this.controls.update(dt); return;
+    }
+    const snapshot = this.snapshot(), fixtures = snapshot?.rig?.fixtures || NO_FIXTURES;
     this.updateView(dt, fixtures);
-    if (this.mode === 'orbit') {this.controls.update(dt); return;}
     if (this.mode === 'walk') {this.walk(dt, fixtures); return;}
     if (this.reducedMotion()) return;
     this.clock += dt;
