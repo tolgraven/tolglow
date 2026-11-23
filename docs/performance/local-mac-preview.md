@@ -181,7 +181,47 @@ this also fixes the separate zoom-dependent CSS screenshot clipping artifact.
 Reproduce with `SHADOW_MEDIA_DIR=target/shadow-cache-visual` and the CDP shadow
 browser test below; the fixture owns and closes its page, renderer and server.
 
+The first integrated timing after these corrections, at `2142480`, is valid but
+fails the 60 Hz target. With controls and camera unchanged, the actual worker
+presented 36.647 Hz fixed, 43.300 Hz moving, and 37.097 Hz with repeated active
+plumes. Their p95 presentation intervals were 37.000, 36.155 and 36.735 ms; browser
+callbacks remained approximately 60 Hz. All used the same 914 × 410 scene,
+301 × 135 fog and 2806 × 1260 display. The plume sample accepted five bursts
+during measurement, separately from six during warmup, and observed maximum
+density between 3.039 and 5.318. The ordinary moving sample had dispersed below
+the procedural-detail threshold, so extra dense-plume samples alone cannot
+explain that case's cost. There were no active CI guests or concurrent native
+GPU tests. Further shader/presentation isolation is required; the report's
+`qualified: true` means valid measurement conditions, not target-rate acceptance.
+
+## Native Metal translation
+
+The existing Mac window embeds `WKWebView`, which uses ANGLE's GLSL-to-MSL
+translation. An actual native qualification through the same webview setup
+observed 29 linked production programs and 58 compiled Metal shader stages on
+Apple GPU, with the worker route retained, 94 completed frames, no fallback and
+no context loss. An uninstrumented run in the same window succeeded first.
+WebKit was `22625.2.8.11.9` on macOS 27.2.1. The native helper and all Mac app Swift
+sources compiled; four observer regressions passed. This verifies the native
+WebKit path and its established translator, not a signed distribution build or
+performance improvement. [Opt-in qualification and scope](../../native/macOS/SHADER-TRANSLATION.md)
+describe the bounded local GLSL/MSL receipt and distinguish Afterglow's separate
+JOGL show-computation backend.
+
 ## Validation
+
+The corrected integration includes current master camera navigation at `2cf1ec3`
+and the GitHub Issues migration. Its Node preview lane passes 87 tests with 13
+explicit browser/GPU skips. Actual M4 checks separately pass both fog tests,
+the unchanged orbit oracle, shadow/native-capture checks, and the crossing
+convergence test. These include a rounding-boundary control that reproduced an
+incomplete Desktop ray (47 of 48 base intervals); the guarded allocation completes
+48 of 48 within 72 evaluations. Studio passes 294 tests / 1,588 assertions and
+the integrated production release builds with zero warnings. Before the camera
+integration, the unchanged backend passed 885 tests / 7,647 assertions against
+paired Afterglow `2b89cfa`. The migrated `lein check-requests` check passes 95
+requests / 151 historical entries. The earlier checkpoints below are retained
+for provenance and must not be added together.
 
 - `npm run preview:test`: 84 passed, 11 browser/GPU tests explicitly skipped,
   zero failures. Physical GPU checks were run separately through the shared CDP
