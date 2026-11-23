@@ -1,0 +1,1793 @@
+{
+  "browser": "156.0.8078.79",
+  "bundleSha256": "fedfdf80a447951b96e7cd0f2652d4186c009300ced0a68b7d5024e30fd9f0fa",
+  "inputSha256": "2c30fe8d27fc14f54f67c8bfa5c7bc073f28742c619d8ae6bcbe4c0c11496d6c",
+  "viewport": {
+    "width": 960,
+    "height": 540
+  },
+  "samples": [
+    {
+      "frame": 0,
+      "camera": [
+        -0.6329438615408904,
+        1.7599999999999998,
+        4.258326407862684
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 1770.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "185400165f5d8d79815cf0fad93753394cbd239d71e0f70dba0bd2ad115a04e4"
+    },
+    {
+      "frame": 1,
+      "camera": [
+        -0.3338822548024582,
+        1.7581928697262705,
+        4.281202306033825
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 17.89999999999418,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "b68b941ff50cf4c2d1705373384b13c86e49d70085aa875cdead0b9692be9263"
+    },
+    {
+      "frame": 2,
+      "camera": [
+        -0.04491463207631628,
+        1.7528367933016067,
+        4.2898409030373506
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 10.899999999965075,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "65f09cfb89a9e193ecb05d9c445081308e32b02cc974ad22154ddbedbac9928a"
+    },
+    {
+      "frame": 3,
+      "camera": [
+        0.22286976895718125,
+        1.7441253532831182,
+        4.286081522998656
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 24.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "9536019798844479e85ba30f45ae23480fd5ff7ea24c0ef2ad1665064a2da02e"
+    },
+    {
+      "frame": 4,
+      "camera": [
+        0.4593723373872375,
+        1.7323734038105068,
+        4.273335911972682
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 4.400000000023283,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "c978c6484314a00efdb26ca5e98fedafe5d08a3b6180ab510a1bf160721a7b63"
+    },
+    {
+      "frame": 5,
+      "camera": [
+        0.6559270741619738,
+        1.7180056909571204,
+        4.255978090144409
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 5.599999999976717,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "1a6612470038151dbc0869b33b8ebde10750c755ab1c9d221d15fe5d6a95deaf"
+    },
+    {
+      "frame": 6,
+      "camera": [
+        0.8055831000288929,
+        1.7015415013001889,
+        4.238611601056933
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 8.700000000011642,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "ae89df894ab7464b4e0635a8e5363cf84c51f7229bbc76723053883d74c28206"
+    },
+    {
+      "frame": 7,
+      "camera": [
+        0.9032376289618674,
+        1.6835758935509426,
+        4.225329615695685
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 7.600000000034925,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "0f62f595c5aada273647c0537ea82ebf78df721fde0115f570058d48ad5321e5"
+    },
+    {
+      "frame": 8,
+      "camera": [
+        0.9456626134450907,
+        1.6647581915823748,
+        4.219076664193236
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 30.900000000023283,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "97db778f5cfb34c9c476f7442ce7f0ea98d671a16a09c0a9face21a594b1233c"
+    },
+    {
+      "frame": 9,
+      "camera": [
+        0.9314828514246636,
+        1.6457685161726716,
+        4.221199223234882
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 8.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "ffdb472211cfce3947c48c41155dde3cfe3e7729cf7be97fe5ed87df1b285390"
+    },
+    {
+      "frame": 10,
+      "camera": [
+        0.8611560817852201,
+        1.6272932036682581,
+        4.231242727582204
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 12.800000000046566,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "3b017c8bb859e9996474f5b2ed9cfc9bb6b05c0b014dd240ab162ef4ff0e048c"
+    },
+    {
+      "frame": 11,
+      "camera": [
+        0.7369803588904268,
+        1.61,
+        4.2470199261722
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 11.899999999965075,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "3641e37d58a2b53af6fb82623c6008e6faa8c15dc0fe18cb8ac5c479d9d1c927"
+    },
+    {
+      "frame": 12,
+      "camera": [
+        0.5631200229555776,
+        1.5945139266054713,
+        4.264942267332816
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 6.7000000000116415,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "1473c368ca9cdc79e0617df24de5523ffc0fed9c0b9668cdca332235ba3eaa84"
+    },
+    {
+      "frame": 13,
+      "camera": [
+        0.34561059239252123,
+        1.5813946905257215,
+        4.280572906019333
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 12.29999999993015,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "b10f44e3767da74b7a0ac644358b83da69cf169cc92fc81cee8fe6eb937547ea"
+    },
+    {
+      "frame": 14,
+      "camera": [
+        0.09228577770070001,
+        1.5711164551345074,
+        4.289328303159111
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 10.300000000046566,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "3fe8297b0cce1cba6579cc7fe1f0b3cce344fb4b5c9b1915d872c99b9e9c91da"
+    },
+    {
+      "frame": 15,
+      "camera": [
+        -0.18742658659047784,
+        1.5640507026385504,
+        4.28722899023217
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 5.299999999930151,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "981f958702b1c1ca8415930a051e3ed61e8bb5a51b88e330921c84877298db00"
+    },
+    {
+      "frame": 16,
+      "camera": [
+        -0.4828681217165732,
+        1.5604528077426918,
+        4.271585115857406
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 5.700000000069849,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "a944d6d852302d96bb7cdfa5e5713628edd9bcd170b6b820b965c522ef941a6b"
+    },
+    {
+      "frame": 17,
+      "camera": [
+        -0.78266217693202,
+        1.5604528077426918,
+        4.241505377634197
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 9.900000000023283,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "cb83bc4de127a793eb5f9b53304e1ecdd46686e12cc6a26de36bf2708900bc85"
+    },
+    {
+      "frame": 18,
+      "camera": [
+        -1.075322509268291,
+        1.5640507026385504,
+        4.198142243984283
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 5.900000000023283,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "a6af7967af878244943054f6c3ff2f31d50d36cbcb2c7c43615f5e40ad876d64"
+    },
+    {
+      "frame": 19,
+      "camera": [
+        -1.3498763180133546,
+        1.5711164551345074,
+        4.144629442191575
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 6.100000000093132,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "7cf1cd4053bda17da351c4ac6a0385278f5c388544d4851752de6cdd72731717"
+    },
+    {
+      "frame": 20,
+      "camera": [
+        -1.5964120733400295,
+        1.5813946905257215,
+        4.085720698670547
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 4,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "1eafc21df86b918e13fce8fc9cd4f40e8f3f36b173f5ebd10f72ff593fb3c095"
+    },
+    {
+      "frame": 21,
+      "camera": [
+        -1.806480468072411,
+        1.5945139266054713,
+        4.027189179091999
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 13.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "bc845e030160e64356b8cc74793e2759c3a098caddd9121fbf4f01dbe1f6a745"
+    },
+    {
+      "frame": 22,
+      "camera": [
+        -1.9733145530097465,
+        1.61,
+        3.97508337493183
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "fd3d572d5a0708f3c04627864f939b60ac51cf87c566bd2125889654065a4cc5"
+    },
+    {
+      "frame": 23,
+      "camera": [
+        -2.0918805833125145,
+        1.6272932036682581,
+        3.934950762133311
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 4,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "67553d2f39db8b2a1c448151a887fa2fc2fcaba1638725fa91a85cc41d17c3f8"
+    },
+    {
+      "frame": 24,
+      "camera": [
+        -2.158810163476153,
+        1.6457685161726716,
+        3.9111356869368494
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 6.400000000023283,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "bb403556c8c50f3d5aadd4a8f54f86198659adcaf59396f9be43cb8f5b322d9d"
+    },
+    {
+      "frame": 25,
+      "camera": [
+        -2.172285586929741,
+        1.6647581915823748,
+        3.9062383539292087
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 6.299999999930151,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "4489177111b125e443b9765a092a43b46b74e53fb3f68c95a82690835e77f8c4"
+    },
+    {
+      "frame": 26,
+      "camera": [
+        -2.1319485472627853,
+        1.6835758935509426,
+        3.9207952059858915
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 4.599999999976717,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "b9a1af3e9d50aa1c8709c8b2fb4d7fa47c7404da03f4012e11cd2838ca1baa37"
+    },
+    {
+      "frame": 27,
+      "camera": [
+        -2.0388793304240953,
+        1.7015415013001889,
+        3.9532133958380484
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 12.300000000046566,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "5ffb621736191861ea36a468141011b4ffcef9128b264b2928042cc3e8e6fb4c"
+    },
+    {
+      "frame": 28,
+      "camera": [
+        -1.8956566500646523,
+        1.7180056909571204,
+        3.999965773875558
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 14.29999999993015,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "589907f817b8ec68076c839fcdc3f53d669ebcfc13b0d5b6a10edafa361a9d41"
+    },
+    {
+      "frame": 29,
+      "camera": [
+        -1.7064683886820333,
+        1.7323734038105068,
+        4.056026992933209
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 3.599999999976717,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "6d2ba5bf59768049eadb1a566e5624d8b1a0f14b3af324f67fe696c0a01bd1cf"
+    },
+    {
+      "frame": 30,
+      "camera": [
+        -1.477212287803229,
+        1.7441253532831182,
+        4.115504347315243
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 3.599999999976717,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "f323e7cdff61f5e3718873bb91507ad0cfef07ea9222e3b8e1a3fbb43a0b61f3"
+    },
+    {
+      "frame": 31,
+      "camera": [
+        -1.215512619799553,
+        1.7528367933016067,
+        4.172389337795251
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 9.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "b4be4500a18e78663e251f5c019d180404f87cc3e7dbe958d4343625cb939e3f"
+    },
+    {
+      "frame": 32,
+      "camera": [
+        -0.9305888864017268,
+        1.7581928697262705,
+        4.221331941821099
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "workLight": 0,
+      "completedDrawMs": 3.799999999930151,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "7dfd1c57a454f262d06d82c5d7e4f874672dc59ef5dcd5f267c32faae3ca7827"
+    }
+  ]
+}
