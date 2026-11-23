@@ -10,6 +10,7 @@
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
+            [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -135,7 +136,7 @@
   [:div.view-heading [:h1 title] action])
 
 (defn- duration-control [id title value unit on-change & [allow-zero?]]
-  [:label title
+  [:label [:span.duration-name title]
    [:span.duration-control {:style {:display "flex" :gap "0.5rem"}}
     [number-input {:id id :type "number" :min (if allow-zero? 0 0.001) :step "any"
              :value value :aria-label (str title " value")
@@ -305,6 +306,7 @@
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
+     (when (= :perform (get-in db [:ui :view])) [playback/control "preview"])
      [:button.text-button.preview-fullscreen-tools
       {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
        :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
@@ -436,7 +438,7 @@
         definition (find-id (get-in db [:show :effects]) (:effect-id cue))
         instance {:id (str "slot-" index) :params (events/slot-parameters db index)}]
     [:details.slot-parameter-editor
-     [:summary (str "Parameters · " (count (:params slot)) " overrides")]
+     [:summary (str "Parameters" (when (seq (:params slot)) (str " · " (count (:params slot)))))]
      (if (seq (:params definition))
        [:<>
         (for [[parameter schema] (:params definition)]
@@ -448,58 +450,72 @@
         [button nil "Reset to cue defaults" [:studio/slot-params-reset index] "text-button"]]
        [:p.small.muted "This cue has no adjustable parameters."])]))
 
+(defn- composition-catalog [items]
+  (when (seq items)
+    [:div#composition-library.compose-catalog {:role "group" :aria-label "Saved compositions"}
+     (for [item items]
+       ^{:key (:id item)}
+       [:div.list-card {:data-composition-id (:id item)}
+        [:div [:strong (display-name item)]
+         [:p (str (label (:mode item)) " · " (count (:slots item)) " slots" (when (:running? item) " · playing"))]]
+        [button nil "Open" [:studio/composition-open item]]])]))
+
+(defn- composition-settings [composition macro?]
+  [:div.compose-settings
+   [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80
+                                            :on-change #(set-ui! [:composition :name] (input-value %))}]]
+   [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]
+   [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
+                       [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
+   (when-not macro?
+     [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :on-change #(set-ui! [:composition :loop] (input-value %))}
+                         [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]])
+   [layers/opacity-control (:opacity composition)]])
+
+(defn- slot-actions [index last?]
+  [:div.slot-actions
+   (for [[caption title offset] [["↑" "Move earlier" -1] ["↓" "Move later" 1] ["×" "Remove slot" 0]]]
+     ^{:key offset} [:button.icon-button {:aria-label (str title ": step " (inc index)) :title title
+                                          :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) last?))
+                                          :on-click #(send! (if (zero? offset) [:studio/composition-remove index]
+                                                             [:studio/composition-move index offset]))} caption])])
+
+(defn- composition-slot [db index slot macro? last?]
+  (let [[duration-value duration-unit] (slot-duration slot)]
+    [:li.composition-slot {:class (when macro? "macro-slot")}
+     [:span.slot-number (inc index)]
+     [:strong.slot-title (display-name (find-id (get-in db [:show :cues]) (:cue-id slot)))]
+     (when-not macro?
+       [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
+        (fn [value unit] (input! [:studio/slot-duration index value unit]))])
+     [slot-actions index last?]
+     [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]]]))
+
 (defn- composition-view [db]
   (let [show (:show db) composition (get-in db [:ui :composition]) slots (:slots composition [])
-        selected-cue (or (get-in db [:ui :slot-cue]) (:id (first (:cues show))))]
+        selected-cue (or (get-in db [:ui :slot-cue]) (:id (first (:cues show))))
+        macro? (= "macro" (:mode composition))]
     [:section#view-compose.view {:hidden (not= :compose (get-in db [:ui :view]))}
      [heading "Macros & sequences"]
      [:div.compose-layout
       [:section.panel.composition-editor
-       [:div.panel-top [:span.section-label "COMPOSITION"] [button "new-composition" "New +" [:studio/composition-new] "text-button"]]
+       [:div.panel-top [:span.section-label "Composition"] [button "new-composition" "New +" [:studio/composition-new] "text-button"]]
+       [composition-catalog (:compositions show)]
        [:div.form-body
-        [:div.form-row
-         [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80 :on-change #(set-ui! [:composition :name] (input-value %))}]]
-         [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]]
-        [:div.form-row
-         [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
-                             [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
-         [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :disabled (= "macro" (:mode composition))
-                                                       :on-change #(set-ui! [:composition :loop] (input-value %))}
-                             [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]]]
-        [layers/opacity-control (:opacity composition)]
-        [:div.slots-heading [:span.section-label "YOUR SLOTS"] [:span.muted.small "Use the cue picker or “Add to composition” on the grid."]]
+        [composition-settings composition macro?]
+        [:div.slots-heading
+         [:h2 (if macro? "Cue slots" "Steps")] [:span.count (count slots)]
+         [:div.form-row.add-slot
+          [:select#slot-cue {:aria-label "Cue to add" :value (or selected-cue "") :on-change #(set-ui! [:slot-cue] (input-value %))}
+           (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (:id cue)} (display-name cue)])]
+          [button "add-slot" "Add cue +" [:studio/composition-add]]]]
         [:ol#composition-slots.composition-slots
          (if (seq slots)
-           (for [[index slot] (map-indexed vector slots)
-                 :let [[duration-value duration-unit] (slot-duration slot)]]
-             ^{:key (str index "/" (:cue-id slot))}
-             [:li.composition-slot
-              [:span.slot-number (.padStart (str (inc index)) 2 "0")]
-              [:div.slot-title (display-name (find-id (:cues show) (:cue-id slot))) [:small "DURATION"]]
-              [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
-               (fn [value unit] (input! [:studio/slot-duration index value unit]))]
-              [:div.slot-actions
-               (for [[caption title offset] [["↑" "Move earlier" -1] ["↓" "Move later" 1] ["×" "Remove slot" 0]]]
-                 ^{:key offset} [:button.icon-button {:aria-label (str title ": step " (inc index)) :title title
-                                                      :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) (= index (dec (count slots)))))
-                                                      :on-click #(send! (if (zero? offset) [:studio/composition-remove index] [:studio/composition-move index offset]))} caption])]
-              [slot-parameter-editor db index slot]
-              [layers/slot-controls index slot]])
-           [:li.empty-state "An open canvas. Add your first cue below."])]
-        [:div.form-row.add-slot
-         [:select#slot-cue {:aria-label "Cue to add" :value (or selected-cue "") :on-change #(set-ui! [:slot-cue] (input-value %))}
-          (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (:id cue)} (display-name cue)])]
-         [button "add-slot" "Add cue +" [:studio/composition-add]]]
+           (for [[index slot] (map-indexed vector slots)]
+             ^{:key (str index "/" (:cue-id slot))} [composition-slot db index slot macro? (= index (dec (count slots)))])
+           [:li.empty-state "Choose a cue to add the first slot."])]
         [:div.button-row [button "save-composition" "Save composition" [:studio/composition-save false] "button primary"]
-         [button "run-composition" "Save & play ▷" [:studio/composition-save true]] [button "stop-composition" "Stop" [:studio/composition-stop]]]
-        [:p.small.muted "A macro launches its slots together. A sequence releases each step before the next, using the cue’s release envelope."]]]
-      [:section.panel [:div.panel-top [:span.section-label "SAVED COMPOSITIONS"]]
-       [:div#composition-library.list-body
-        (if (seq (:compositions show))
-          (for [item (:compositions show)] ^{:key (:id item)}
-            [:div.list-card [:div [:strong (display-name item)] [:p (str (label (:mode item)) " · " (count (:slots item)) " slots · " (label (:loop item)) (when (:running? item) " · playing"))]]
-             [button nil "Open" [:studio/composition-open item]]])
-          [:p.muted.small "Your saved macros and sequences will appear here."])]]
+         [button "run-composition" "Save & play ▷" [:studio/composition-save true]] [button "stop-composition" "Stop" [:studio/composition-stop]]]]]
       (when (= :compose (get-in db [:ui :view])) [variable-blocks/panel])]]))
 
 (defn- plan-point [svg event width depth]

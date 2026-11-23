@@ -10,6 +10,7 @@
 (defonce ^:private owner (atom nil))
 (defonce ^:private demand (atom {}))
 (defonce ^:private connections-open? (atom false))
+(defonce ^:private external-preview? (atom false))
 (defn- current? [id] (and id (= id (:id @owner))))
 
 (defn- close-socket! [reason]
@@ -50,18 +51,27 @@
   (fn [fault]
     (when-let [id (:id @owner)] (reply! [id {:op :client-fault :fault fault}]))))
 
+(defn visible-queries [requested visible? external?]
+  (cond visible? requested
+        external? (into #{} (filter #{[:spatial/scene]}) requested)
+        :else #{}))
+
 (defn- update-interest! []
   (let [{:keys [id socket subscribed? queries]} @owner]
     (when (and id socket (= 1 (.-readyState socket)))
       (let [visible? (not (.-hidden js/document))
             enabled? (and @connections-open? visible?)
-            wanted (if visible? (set (keys @demand)) #{})]
+            wanted (visible-queries (set (keys @demand)) visible? @external-preview?)]
         (when (not= (boolean subscribed?) enabled?)
           (reply! [id {:op :connections :enabled? enabled?}])
           (swap! owner assoc :subscribed? enabled?))
         (when (not= wanted (or queries #{}))
           (reply! [id {:op :queries :queries (vec wanted)}])
           (swap! owner assoc :queries wanted))))))
+
+(defn present-preview! [enabled?]
+  (reset! external-preview? enabled?)
+  (update-interest!))
 
 (defn- release! [query]
   (swap! demand (fn [refs]
