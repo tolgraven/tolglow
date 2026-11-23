@@ -105,3 +105,19 @@ A 20,000-head RGB/focus field expands to 80,000 doubles. The general result cach
 On Mesa llvmpipe, holding parameters for eight submissions reduced 48 actual draws to six and median session time from 24.17 to 5.41 ms. Changing a uniform on every submission or including positions kept all 48 draws. The changing-uniform control's p95 rose from 32.72 to 36.18 ms. All widened doubles matched in all three isolated comparisons.
 
 With the complete 20k/64-mover rig and a 16-program cache, each lane submitted 464 jobs including the untimed traffic probe. Actual draws fell from 408 to 184. Both lanes performed CPU movement calibration to eliminate the previously observed CPU/native solver precision difference. The 28 matched frame pairs had no field fallbacks. Median full frame time was 1,025 → 844 ms, p95 3,274 → 2,495 ms and median sampled coordinator and worker CPU 258 → 288 ms. A 60-second native diagnostic budget and five-second worker limit isolated field execution; the physical 25 ms deadline remains open. [Implementation, per-submission data and full-show replay](https://github.com/tolgraven/afterglow/pull/79)
+
+### Read fixed fixture emission from the previous compact frame
+
+When several cues select fixtures by beam intersection, Tolglow now gives Afterglow the previous committed frame’s native columns and fixture index. Fixed heads can read emitted RGB directly. A moving, zoomed, shuttered or dynamically directed head still uses its full optical row. The rig cache holds the target index and venue settings. The emission reader belongs only to the frame that supplied its arrays. [Afterglow implementation and review](https://github.com/tolgraven/afterglow/pull/95)
+
+Two CPU show hosts alternated the existing row reader and this change on the four moving spheres, eight RGBW washes, beat-driven mixed UV material and 64 moving heads. Each pixel count ran 18 warmup frames per host followed by 36 timed pairs. Every ArtDMX byte, fixture transition, show model and effect intent matched. Selected preview values passed the existing tolerance.
+
+| Median difference between matching frames, compact minus full rows | 10,000 pixels | 20,000 pixels |
+| --- | ---: | ---: |
+| Allocated per complete frame | −3.12 MB | −6.24 MB |
+| Coordinator CPU in four sphere calculations | −6.26 ms | −18.20 ms |
+| Coordinator and show-worker CPU per complete frame | −9.56 ms | −20.65 ms |
+| Frame pairs with less total allocation | 36 / 36 | 36 / 36 |
+| Complete whole frames within 25 ms, full rows / compact | 0 / 0 of 36 each | 0 / 0 of 36 each |
+
+Wall time varied under shared Linux load. The independently ranked whole-frame p95 fell from 1,392 to 1,066 ms at 10k and from 1,685 to 1,372 ms at 20k. The 10k sphere-stage p95 rose from 472 to 808 ms despite lower median CPU. These are uncapped full-calculation timings. The 40 Hz publisher and physical Mac require separate runs for delivery and platform comparisons. [Measured allocation at both sizes](https://raw.githubusercontent.com/tolgraven/afterglow/2eab6c53ec86dfc8d9f844d31d30773e34e399da/pr-95/compact-emission.gif)
