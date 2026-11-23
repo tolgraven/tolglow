@@ -21,7 +21,10 @@ try {
     const page=await browser.newPage({viewport:{width,height},hasTouch:touch});
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin+'/compose');
+    await page.locator('#connection-dot.connected').waitFor({state:'attached'});
+    await page.locator('#slot-cue option[value=orbital]').waitFor({state:'attached'});
     await page.locator('#new-composition').click();
+    await page.waitForFunction(()=>document.querySelector('#composition-name').value==='New composition');
     const name='Evening drift · '+label;
     await page.locator('#composition-name').fill(name);
     await page.locator('#composition-id').fill('layout-'+label);
