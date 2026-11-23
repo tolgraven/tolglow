@@ -51,3 +51,21 @@
   .rig-editor .rig-editor-tools { display:flex; flex-wrap:nowrap; max-width:100%; overflow:auto; scrollbar-width:thin; }
   .rig-editor .rig-editor-tools .button { white-space:nowrap; }
 }
+.composition-editor { container-type:inline-size; }
+.composition-slot .duration-name { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+@container (min-width:700px) {
+  #view-compose .composition-slot { grid-template-columns:20px minmax(80px,.9fr) minmax(170px,1.2fr) minmax(134px,.85fr) auto; }
+  #view-compose .composition-slot.macro-slot { grid-template-columns:20px minmax(80px,1fr) minmax(170px,1.2fr) auto; }
+  #view-compose .slot-title { grid-column:2; grid-row:1; }
+  #view-compose .composition-slot>label { grid-column:4; grid-row:1; }
+  #view-compose .slot-actions { grid-column:-2; grid-row:1; }
+  #view-compose .slot-editors { grid-column:3; grid-row:1; gap:8px; }
+  #view-compose .slot-editors:has(details[open]) { grid-row:2; grid-column:2/-1; }
+}
+@media(max-width:600px) {
+  #view-compose .composition-slot>label { grid-column:2; }
+  #view-compose .slot-editors { grid-column:3; grid-row:2; gap:2px; justify-content:end; }
+  #view-compose .slot-editors summary { font-size:10px; }
+  #view-compose .slot-editors:has(details[open]) { grid-row:3; grid-column:2/-1; justify-content:start; }
+  #view-compose .macro-slot .slot-editors { grid-column:2/-1; justify-content:start; }
+}

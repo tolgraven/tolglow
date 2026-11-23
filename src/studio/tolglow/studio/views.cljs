@@ -135,7 +135,7 @@
   [:div.view-heading [:h1 title] action])
 
 (defn- duration-control [id title value unit on-change & [allow-zero?]]
-  [:label title
+  [:label [:span.duration-name title]
    [:span.duration-control {:style {:display "flex" :gap "0.5rem"}}
     [number-input {:id id :type "number" :min (if allow-zero? 0 0.001) :step "any"
              :value value :aria-label (str title " value")
@@ -436,7 +436,7 @@
         definition (find-id (get-in db [:show :effects]) (:effect-id cue))
         instance {:id (str "slot-" index) :params (events/slot-parameters db index)}]
     [:details.slot-parameter-editor
-     [:summary (str "Parameters · " (count (:params slot)) " overrides")]
+     [:summary (str "Parameters" (when (seq (:params slot)) (str " · " (count (:params slot)))))]
      (if (seq (:params definition))
        [:<>
         (for [[parameter schema] (:params definition)]

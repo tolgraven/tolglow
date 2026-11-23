@@ -72,7 +72,7 @@
 
 (defn slot-controls [i {:keys [transforms targets]}]
   [:details.slot-parameter-editor.layer-transforms
-   [:summary (str "Layer transforms · " (count transforms))]
+   [:summary (str "Layer transforms" (when (seq transforms) (str " · " (count transforms))))]
    [:label.layer-targets [:input {:type "checkbox" :checked (= :previous (some-> targets keyword))
                     :on-change #(rf/dispatch-sync [:composition-layer/include-previous i (.. % -target -checked)])}]
     "Include earlier members’ heads"]
