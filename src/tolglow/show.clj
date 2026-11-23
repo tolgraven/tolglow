@@ -24,6 +24,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -119,8 +120,10 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
-(defn project-snapshot [runtime {:keys [model output status modulation-view]}]
-  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+(defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
+  (let [sources (parameter-sources/source-index model (:sources parameter-samples))
+        resolve-inputs (waveforms/resolved-inputs snapshot)
+        optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
         gains (if (identical? fixtures (:fixtures patch))
@@ -138,6 +141,7 @@
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
+            :parameter-waveforms (parameter-sources/waveform-options model)
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
@@ -145,7 +149,8 @@
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
-            :instances (mapv #(-> % (dissoc :state)
+            :instances (mapv #(-> % (dissoc :state :parameter-bindings)
+                                  (assoc :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs))
                                   (assoc :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
@@ -384,10 +389,11 @@
                                                         (:events result))))))
                    result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (seq (get-in model [:modulation :controllers]))
+               (or (seq (get-in model [:modulation :controllers]))
+                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
                (not= :patch (get-in payload [:source :type]))
                (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation modulation/hold
+        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
                 {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
         result))))
 
@@ -569,6 +575,10 @@
       {:model (-> model (assoc :registry (:registry result)) (assoc-in [:pages id] (:page result))
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
+    (:modulation-bind :modulation-unbind)
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
+      {:model (update (edit model payload) :revision inc)
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -1039,7 +1049,9 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:keyframes (effect-keyframes/restored model)
+                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})]
+                     {:parameter-samples params :resolved-param-overrides (:overrides params)
+                      :keyframes (effect-keyframes/restored model)
                     :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
                              (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
                     :output (if restored-output
@@ -1049,7 +1061,7 @@
                                          (get-in model fog-deadline/saved-ids-path)
                                          (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
                               (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
-                    :status {:restored? true :frame-ms 0}}
+                      :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
@@ -1084,7 +1096,10 @@
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
+                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                                      (get-in before [:parameter-samples :plans]))
+                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                                                       (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
@@ -1178,7 +1193,7 @@
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
-                        :resolved-param-overrides input-overrides
+                        :parameter-samples parameter-samples :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
                      (catch Exception error

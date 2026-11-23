@@ -249,3 +249,23 @@ constraint solving across parameters, audio-reactive modulation, or learned
 movement policies. It does not guarantee that every mathematically valid range
 looks good on a particular rig. Numeric domains and category metadata are
 authoring data that the UI can expose for deliberate control.
+
+## Waveforms on a running instance
+
+Use the instance ID from a launch receipt to attach a waveform to one parameter. Two launches of the same cue can use different waveforms and ranges. The base parameter stays editable. Removing the waveform reveals the underlying input again, including another random or patch source if one is active.
+
+```clojure
+(show/submit! runtime :modulation-bind
+  {:instance-id instance-id :param :level
+   :binding {:type :lfo :waveform :pulse :period {:beats 1/2}
+             :phase 0.25 :inputs {:duty 0.35} :from 0.15 :to 0.9}})
+(show/submit! runtime :modulation-hold {:instance-id instance-id :params [:level]})
+(show/submit! runtime :modulation-resume {:instance-id instance-id :params [:level]})
+(show/submit! runtime :modulation-unbind {:instance-id instance-id :param :level})
+```
+
+Studio uses the same operations through typed Transit POSTs to `/api/modulation/bind`, `/hold`, `/resume` and `/unbind` under the modulation route. Binding again edits the current source. Musical periods accept beats, bars or phrases. Phase runs in cycles on the activation's private beat clock and captured meter. Holding the parameter exposes its base while the phase continues. Pausing the effect freezes its private clock. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
+
+Registered waveform values are normalized from their declared range, clamped to 0–1, and interpolated between the two typed endpoints. Colors, coordinates and ranges interpolate component-wise. Integers round to the nearest value and boolean or enum inputs select the second endpoint at halfway. Live waveform revisions recompile the affected plan. An incompatible destination or waveform input is reported on that source while the underlying parameter remains usable. Show files retain bindings, original schema, waveform registry and manual holds across instance-ID changes.
+
+Committed Studio snapshots include the registered waveform choices in `:parameter-waveforms`. Each bound entry under `[:instances n :parameter-sources param]` exposes its base value, effective input and sources, including held and constant-valued sources. The input pipeline applies the random controller, instance waveform, spatial overrides and response middleware in order. Parameter blocks inside an effect can yield a different result per fixture. Their source contains the authored path for `:runtime/block-trace`, which returns the committed result for the requested fixture.

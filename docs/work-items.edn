@@ -2166,7 +2166,8 @@
    :depends-on [:web/reframe-state-v1 :web/reframe-views-v1],
    :owner nil}
   {:evidence
-   ["16 tests / 122 assertions passed including real published modulator cue and root category selection"
+   ["tolglow.parameter-sources-test follows a typed Ring waveform through two independent cue launches, captured DMX, manual holds and restored Transit state."
+    "16 tests / 122 assertions passed including real published modulator cue and root category selection"
     "docs/modulation.md"],
    :paths
    ["tolglow/src/tolglow/modulation.clj"

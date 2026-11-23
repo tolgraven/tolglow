@@ -191,7 +191,7 @@
   (when-let [hold (get-in holds [id param])]
     (or (nil? (:until-beat hold)) (< beat (:until-beat hold)))))
 
-(defn- owner-definition [model instance]
+(defn owner-definition [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
     (if (and (not= :pinned (:reload-policy instance :pinned)) current
              (not= (:version current) (get-in instance [:reload-fault :effect-version]))
@@ -296,6 +296,20 @@
                  (vector? value) (mapv clamp value)
                  :else (clamp value))]
     (if (= :range (:type schema)) (vec (sort result)) result)))
+
+(defn interpolate-value [schema from to fraction]
+  (if (numeric-types (:type schema))
+    (constrain schema (tween/interpolate from to fraction))
+    (if (< fraction 0.5) from to)))
+
+(defn source-index [model]
+  (reduce (fn [result controller]
+            (reduce (fn [out {:keys [instance-id param]}]
+                      (update-in out [instance-id param] (fnil conj [])
+                                 {:type :random :controller-id (:id controller)
+                                  :held? (boolean (get-in model [:modulation :holds instance-id param]))}))
+                    result (targets model controller)))
+          {} (sort-by (juxt #(get-in % [:config :priority]) :order) (get-in model [:modulation :controllers]))))
 
 (defn- sample-cell [schema cell beat]
   (if (and (= :glide (:mode cell)) (numeric-types (:type schema)))
