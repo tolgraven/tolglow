@@ -68,10 +68,17 @@
       (.abort abort))))
 
 (defn configure! [{:keys [slots]} request]
+  (alter-meta! slots assoc ::request request)
   (remove-watch samplers slots)
-  (reconcile! slots request @samplers)
   (when (seq (:sources request))
-    (add-watch samplers slots (fn [_ _ _ readers] (reconcile! slots request readers)))))
+    (add-watch samplers slots
+               (fn [_ _ _ _]
+                 ;; Another canvas's abort listener can supersede this registry
+                 ;; notification or release this canvas before its watch runs.
+                 (reconcile! slots (::request (meta slots)) @samplers))))
+  ;; AbortSignal handlers can immediately publish a new sampler or withdraw.
+  ;; The most recent configure! owns the watch when that callback returns.
+  (reconcile! slots request @samplers))
 
 (defn- finish! [{:keys [slots now send! visible?]} id ticket sampled frame value]
   (let [{:keys [binding sequence pending?] :as current} (get @slots id)
@@ -88,10 +95,11 @@
         abort (when abortable? (js/AbortController.))
         complete #(finish! control id (:ticket slot) sampled frame %)]
     (swap! slots update id assoc :sequence (inc (:sequence slot)) :pending? true :last-at sampled :abort abort)
-    (try
-      (let [result (if abort (read! canvas (.-signal abort)) (read! canvas))]
-        (-> (js/Promise.resolve result) (.then complete) (.catch #(complete nil))))
-      (catch :default _ (complete nil)))))
+    (when (identical? (:ticket slot) (get-in @slots [id :ticket]))
+      (try
+        (let [result (if abort (read! canvas (.-signal abort)) (read! canvas))]
+          (-> (js/Promise.resolve result) (.then complete) (.catch #(complete nil))))
+        (catch :default _ (complete nil))))))
 
 (defn- presented-show? [show-id epoch grant]
   (let [expected (get-in grant [:show :show-id])
@@ -101,9 +109,11 @@
 (defn present! [{:keys [slots now visible?] :as control} canvas show-id epoch frame]
   (when (and (seq @slots) (visible?))
     (let [sampled (now)]
-      (doseq [[id {:keys [binding reader last-at pending?] :as slot}] @slots
-              :let [spec (last binding)]
-              :when (and reader (presented-show? show-id epoch spec) (not pending?)
+      (doseq [[id original] @slots
+              :let [{:keys [binding reader last-at pending?] :as slot} (get @slots id)
+                    spec (last binding)]
+              :when (and (identical? (:ticket original) (:ticket slot)) reader (not pending?)
+                         (visible?) (presented-show? show-id epoch spec)
                          (>= (- sampled last-at) (:interval-ms spec)))]
         (sample! control id slot canvas sampled frame)))))
 
@@ -114,6 +124,6 @@
                        (and (not (.-hidden js/document)) (aget renderer "visible")
                             (not (or (aget renderer "disposed") (aget renderer "lost") (aget renderer "paused")))))
             control (or current (assoc (controller) :visible? active?))]
-        (configure! control request)
         (aset component "observationControl" (when request control))
-        (aset engine "observedFrame" (when (seq (:sources request)) #(present! control %1 %2 %3 %4)))))))
+        (aset engine "observedFrame" (when (seq (:sources request)) #(present! control %1 %2 %3 %4)))
+        (configure! control request)))))
