@@ -52,6 +52,6 @@
                  (:levels configured)
                  (audience/levels sources current))]
     {:gateways ids
-     :levels (select-keys levels [:audience-count :dance-effort :pulse-count :pulse-bpm])
+     :levels (select-keys levels [:audience-count :dance-effort :pulse-count])
      :zones (into (vec (vals zones))
                   (keep #(when-not (contains? zones %) {:id % :label % :status :unavailable})) ids)}))

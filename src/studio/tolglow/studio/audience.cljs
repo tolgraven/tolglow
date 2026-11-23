@@ -15,7 +15,7 @@
 (rf/reg-event-fx ::change
   (fn [{:keys [db]} [_ id path body]]
     (let [token (session db)]
-      {:db (assoc-in db [:connections :audience-operations token id] :pending)
+      {:db (assoc-in db [:connections :audience-operations token id] body)
        :studio/http {:path path :body (assoc body :device-id id) :typed? true
                      :on-success [::complete token id] :on-failure [::failed token id]}})))
 
@@ -37,31 +37,31 @@
 (defn- arm! [id session-id armed?]
   (rf/dispatch [::change id "/api/sensors/arm" {:session-id session-id :armed? armed?}]))
 
-(defn- level [title value caption]
-  [:div.audience-level [:dt title] [:dd [:strong value] (when caption [:small caption])]])
+(defn- level [title value]
+  [:div.audience-level [:dt title] [:dd [:strong value]]])
 
-(defn- crowd-levels [{:keys [audience-count dance-effort pulse-count pulse-bpm]}]
+(defn- crowd-levels [{:keys [audience-count dance-effort pulse-count]}]
   (let [people (or audience-count 0)
         wearers (or pulse-count 0)
         effort (js/Math.round (* 100 (or dance-effort 0)))]
     [:dl.audience-levels
-     [level "Dancers" people nil]
+     [level "Dancers" people]
      [:div.audience-level [:dt "Dance effort"]
       [:dd [:strong (str effort "%")]
        [:meter {:aria-label "Crowd dance effort" :value effort :min 0 :max 100}]]]
-     [level "Pulse sharing" (str wearers " / " people)
-      (when (and (pos? wearers) (number? pulse-bpm)) (str (js/Math.round pulse-bpm) " BPM"))]]))
+     [level "Pulse sharing" (str wearers " / " people)]]))
 
 (def status-label {:waiting "Waiting for gateway" :ready "Joined" :armed "Armed"
                    :expired "Signal expired" :unavailable "Unavailable"})
 
 (defn- zone-row [{:keys [id label status session-id]} selected? operation]
-  (let [pending? (= :pending operation)]
+  (let [pending? (map? operation)
+        checked? (if (and pending? (contains? operation :included?)) (:included? operation) selected?)]
     [:li.audience-zone {:data-zone id :data-status (name status)}
      [:label.audience-inclusion
-      [:input {:type "checkbox" :checked selected? :disabled (or pending? (and (= :unavailable status) (not selected?)))
+      [:input {:type "checkbox" :checked checked? :disabled (or pending? (and (= :unavailable status) (not selected?)))
                :aria-label (str "Include " label " in audience mix")
-               :on-change #(select! id (not selected?))}]
+               :on-change #(select! id (not checked?))}]
       [:span [:strong label] [:small (get status-label status)]]]
      (when (#{:armed :ready} status)
        [:button.button {:type "button" :disabled pending? :on-click #(arm! id session-id (= :ready status))
