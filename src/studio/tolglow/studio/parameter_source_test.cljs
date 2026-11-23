@@ -29,6 +29,8 @@
       (is (= held (:selected (performance/resolve-monitor (performance/driven-controls steady controls) (performance/control-id manual) :level)))))))
 
 (deftest source-bindings-round-trip-typed-endpoints-and-musical-fractions
+  (is (= "user/wave" (:waveform (source/editor-draft {} 0 nil [{:id "user/wave"}]))))
+  (is (= :sine (:waveform (source/editor-draft {} 0 nil [{:id :triangle} {:id :sine}]))))
   (doseq [id [:house/saw "house/saw"]]
     (let [binding {:type :lfo :waveform id :period {:phrases 0.5} :phase 0.25 :inputs {:slope 0.8}
                    :from :lamp/red :to "lamp/red"}

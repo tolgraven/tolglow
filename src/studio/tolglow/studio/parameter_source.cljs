@@ -187,21 +187,28 @@
          ^{:key index} [number-field (str label " " (get names index (inc index))) v #(change! (assoc (vec value) index %)) schema])])
     :else [number-field label value change! schema]))
 
+(defn editor-draft [schema base binding catalog]
+  (let [form (draft schema base binding)]
+    (if (or binding (some #(= :sine (:id %)) catalog)) form
+      (assoc form :waveform (:id (first catalog))))))
+
 (defn- lfo-editor [id param schema base source catalog]
   (let [lfo (source-of source :lfo)]
-    (r/with-let [form (r/atom (draft schema base (:binding lfo))) error (r/atom nil)]
+    (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog)) error (r/atom nil)]
       (let [{:keys [waveform period unit phase from to inputs]} @form
             in-flight @(rf/subscribe [::request id param])
-            wave (some #(when (= waveform (:id %)) %) catalog)
+            wave (if (some? waveform)
+                   (some #(when (= waveform (:id %)) %) catalog)
+                   (first catalog))
             update! (fn [key value] (swap! form assoc key value))
             apply! (fn [e]
                      (.preventDefault e)
-                     (try (let [config (binding-config @form)] (reset! error nil) (rf/dispatch [::bind id param config]))
+                     (try (let [config (binding-config (assoc @form :waveform (:id wave)))] (reset! error nil) (rf/dispatch [::bind id param config]))
                           (catch :default problem (reset! error (events/error-message problem)))))]
         [:form.live-source-form {:on-submit apply!}
          [:div.source-fields
           [:label.source-field [:span "Waveform"]
-           [:select {:aria-label "Waveform source" :value (pr-str waveform)
+           [:select {:aria-label "Waveform source" :value (pr-str (:id wave))
                      :on-change #(let [selected (.. % -target -value)
                                        id (:id (some (fn [item] (when (= selected (pr-str (:id item))) item)) catalog))]
                                    (swap! form assoc :waveform id :inputs {}))}
