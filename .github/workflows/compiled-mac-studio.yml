@@ -1,23 +1,7 @@
-name: Compiled macOS Studio
+name: 'Qualify #182 compiled Stage capture'
 on:
-  workflow_dispatch:
   push:
-    branches: [codex/apple-native-mac-runtime]
-  pull_request:
-    paths:
-      - 'native/EmbeddedHost/build-macos'
-      - 'native/EmbeddedHost/prepare-jar'
-      - 'native/EmbeddedHost/register-callbacks.clj'
-      - 'native/EmbeddedHost/src/**'
-      - 'src/tolglow/fixed_host.clj'
-      - 'src/tolglow/native_resources.clj'
-      - 'native/macOS/**'
-      - 'native/Packaging/bundle-macos'
-      - 'native/Tests/capture-compiled-mac'
-      - 'native/Tests/check_compiled_studio.py'
-      - 'native/Tests/check-state-stream.mjs'
-      - '.github/workflows/apple-resources.yml'
-      - '.github/workflows/compiled-mac-studio.yml'
+    branches: [qa/studio-182-compiled-stage-qualified]
 permissions: {contents: read}
 concurrency:
   group: compiled-mac-studio-${{ github.head_ref || github.ref_name }}
@@ -25,15 +9,20 @@ concurrency:
 jobs:
   resources:
     uses: ./.github/workflows/apple-resources.yml
-    with: {embedded-host: true}
+    with: {embedded-host: true, source-ref: 7c19c1150dd56d69c2ac7f20d1b118e83b8f1b21}
   package:
     needs: resources
     runs-on: macos-15
     timeout-minutes: 95
     steps:
       - uses: actions/checkout@v7.0.1
+        with: {ref: 7c19c1150dd56d69c2ac7f20d1b118e83b8f1b21, persist-credentials: false}
       - uses: actions/download-artifact@v4
         with: {name: studio-runtime, path: build/release}
+      - name: Verify source provenance
+        run: |
+          test "$(git rev-parse HEAD)" = "7c19c1150dd56d69c2ac7f20d1b118e83b8f1b21"
+          test "$(cat build/release/source-version.txt)" = "7c19c1150dd56d69c2ac7f20d1b118e83b8f1b21-a6102b03c688dd301f0d67f04911e78dfb48bb36"
       - uses: graalvm/setup-graalvm@v1.6.10
         with: {java-version: '25', distribution: 'graalvm-community'}
       - name: Link the compiled Clojure show host
@@ -57,13 +46,12 @@ jobs:
           name: Tolglow-compiled-Studio-arm64
           path: |
             build/Tolglow-compiled-Studio-arm64.zip
-            build/native-host/*.log
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: compiled-studio-window
           path: |
-            build/media/window.log
             build/media/compiled-studio.png
             build/media/compiled-studio.gif
-            build/media/stage-invitation.png
+            build/media/stage-ready.png
+            build/media/stage-closed.png
