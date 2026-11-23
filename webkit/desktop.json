@@ -1,0 +1,269 @@
+{
+  "overflow": 0,
+  "links": [
+    {
+      "url": "/perform",
+      "name": "Perform",
+      "label": "Perform",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 85,
+        "bottom": 129,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 99.796875,
+        "bottom": 114.1875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/layout-grid.svg\")",
+      "shortcut": "1"
+    },
+    {
+      "url": "/compose",
+      "name": "Compose",
+      "label": "Compose",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 131,
+        "bottom": 175,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 145.796875,
+        "bottom": 160.1875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/list-music.svg\")",
+      "shortcut": "2"
+    },
+    {
+      "url": "/rig",
+      "name": "Rig & space",
+      "label": "Rig & space",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 177,
+        "bottom": 221.78125,
+        "width": 123,
+        "height": 44.78125
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 185,
+        "bottom": 213.78125,
+        "width": 67.265625,
+        "height": 28.78125
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/lamp-ceiling.svg\")",
+      "shortcut": "3"
+    },
+    {
+      "url": "/library",
+      "name": "Definitions",
+      "label": "Definitions",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 223.78125,
+        "bottom": 267.78125,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 238.578125,
+        "bottom": 252.96875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/library-big.svg\")",
+      "shortcut": "4"
+    },
+    {
+      "url": "/assistant",
+      "name": "Assistant",
+      "label": "Assistant",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 269.78125,
+        "bottom": 313.78125,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 284.578125,
+        "bottom": 298.96875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/sparkles.svg\")",
+      "shortcut": "5"
+    },
+    {
+      "url": "/connections",
+      "name": "Connections",
+      "label": "Connections",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 315.78125,
+        "bottom": 359.78125,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 330.578125,
+        "bottom": 344.96875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/cable.svg\")",
+      "shortcut": "6"
+    },
+    {
+      "url": "/develop",
+      "name": "Develop",
+      "label": "Develop",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 361.78125,
+        "bottom": 405.78125,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 376.578125,
+        "bottom": 390.96875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/square-terminal.svg\")",
+      "shortcut": "7"
+    },
+    {
+      "url": "/debug",
+      "name": "Debug",
+      "label": "Debug",
+      "size": 12,
+      "box": {
+        "left": 12,
+        "right": 135,
+        "top": 407.78125,
+        "bottom": 451.78125,
+        "width": 123,
+        "height": 44
+      },
+      "text": {
+        "left": 46,
+        "right": 113.265625,
+        "top": 422.578125,
+        "bottom": 436.96875,
+        "width": 67.265625,
+        "height": 14.390625
+      },
+      "mask": "url(\"http://127.0.0.1:34331/studio/icons/lucide/activity.svg\")",
+      "shortcut": "8"
+    }
+  ],
+  "gutter": [
+    175,
+    175,
+    175,
+    175
+  ],
+  "firstRow": [
+    {
+      "left": 175,
+      "right": 224.703125,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.703125,
+      "height": 58
+    },
+    {
+      "left": 225.703125,
+      "right": 275.421875,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 276.421875,
+      "right": 326.140625,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 327.140625,
+      "right": 376.859375,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 377.859375,
+      "right": 427.578125,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 428.578125,
+      "right": 478.296875,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 479.296875,
+      "right": 529.015625,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    },
+    {
+      "left": 530.015625,
+      "right": 579.734375,
+      "top": 237,
+      "bottom": 295,
+      "width": 49.71875,
+      "height": 58
+    }
+  ]
+}
