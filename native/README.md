@@ -9,7 +9,8 @@ re-frame studio remains ongoing work.
 
 The **Scan rig** tab captures tap-assisted ARKit/LiDAR observations, identifies
 settled calibration patterns through actual output receipts and submits reviewed
-fixture-placement proposals. See [rig calibration](../docs/rig-calibration.md)
+fixture-placement proposals. Its **Room surface** picker can also measure a wall
+or platform and save a named aim receiver on a preview-only host. See [rig calibration](../docs/rig-calibration.md)
 for alignment, explicit output arming, numerical constraints and hardware gates.
 
 The iPhone has a cue grid using the real Ring `/api/state` and `/api/command`

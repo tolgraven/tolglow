@@ -10,6 +10,7 @@
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.venue-scan :as venue-scan]
             [tolglow.rig.photometry :as photometry]
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.studio.debug-stream :as debug-stream]
@@ -95,6 +96,7 @@
             :calibration! #(let [model (:model @(:state runtime))]
                              {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)
                               :physical-now-ms ((:now-ms (:publisher runtime)))
+                              :saved-surfaces (venue-scan/saved (:rig model))
                               :output-capable? (boolean (and (:independent-output? runtime) (get-in runtime [:sink :send!])))
                               :fixtures (mapv (fn [f] (select-keys f [:id :name :calibration :position :rotation-deg])) (get-in model [:rig :fixtures]))
                               :session (when-let [scan (calibration/current model)]

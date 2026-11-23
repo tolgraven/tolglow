@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
+ [{:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
+   :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
+   :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
+   :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
+   :acceptance ["Tap a tracked room surface, review its metric extent and add or remeasure the named receiver without arming fixture output."]
+   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Physical wall survey comparison is pending."]}
+  {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
    :evidence ["Afterglow #55. The spatial suite passed 7 tests and 43 assertions, including a wall impact where a fixture is crossed four times in one physical substep."]}

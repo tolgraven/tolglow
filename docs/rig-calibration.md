@@ -162,6 +162,17 @@ REPL clients use `studio/submit! runtime :calibration payload`; pure offline too
 may use `tolglow.calibration.session` and `tolglow.calibration.geometry` directly
 with captured/synthetic observations. No alternate OSC listener is introduced.
 
+## Measure a wall, floor or platform
+
+1. Connect the iPhone to Studio, start the LiDAR camera and mark the floor origin and positive Z direction. This workflow works on a preview-only host.
+2. Walk along the surface so ARKit can track its extent. Choose **Room surface** and tap inside the tracked patch. The yellow outline freezes the smallest enclosing rectangle of the detected boundary. Review its width, height and center in rig metres. A rectangle can span a doorway or an irregular gap. Move and tap again if the estimate is poor.
+3. Enter a short name such as `booth-wall` and tap **Add receiver to rig**. To update it in a later scan, choose the same name under **Remeasure a saved surface** and tap **Replace saved measurement**. Studio can use `scan-booth-wall` as an aim or footprint receiver. A running cue that targets this surface can follow its new position.
+4. Save the show normally. Its Transit document includes the plane geometry and the AR world and anchor IDs. Camera frames stay on the phone. Existing room walls and other receiving surfaces remain in the preview, so check for coincident or obstructing surfaces.
+
+`GET /api/calibration` includes names and revisions of measured receivers. `POST /api/venue-surface` accepts the reviewed geometry, `:surface-name`, `:world-id`, `:anchor-id`, `:runtime-id` and `:expected-epoch`. Supply the listed `:expected-surface-revision` to update an existing measurement. An edit to its geometry invalidates the revision. Other rig edits survive. Clojure callers can submit the same map with `(show/submit! runtime :venue-surface measurement)`.
+
+Reality tracking supplies an oriented rectangular extent. Surface reflectance, textures, mesh topology and individually resolved LED emitters require separate measurements. Compare scans of a measured wall and platform from several viewpoints on a physical LiDAR device to quantify placement, orientation and size errors.
+
 ## Validation and remaining work
 
 Evidence recorded for this initial implementation:

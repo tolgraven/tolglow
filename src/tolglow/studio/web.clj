@@ -151,7 +151,7 @@
 
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/photometry" :photometry "/api/calibration" :calibration
-   "/api/fog-calibration" :fog-calibration
+   "/api/fog-calibration" :fog-calibration "/api/venue-surface" :venue-surface
    "/api/command" :command "/api/definition" :definition "/api/rig" :rig
    "/api/aim-path" :aim-path "/api/surface-aim" :surface-aim
    "/api/lighting-scene" :lighting-scene "/api/audio/returns/configure" :audio-return-configure
