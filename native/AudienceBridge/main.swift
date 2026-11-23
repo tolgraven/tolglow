@@ -12,7 +12,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var radio: CBPeripheralManager!
     private var floor = AudienceFloor()
     private var challenges: [UUID: (value: Data, time: Double)] = [:]
-    private var peers: [UUID: (key: SymmetricKey, lastSeen: Double)] = [:]
+    private var peers: [UUID: (key: SymmetricKey, lastSeen: Double, serial: UInt32?)] = [:]
     private let session = UUID().uuidString
     private let connection: NWConnection?
     private let token: String?
@@ -114,17 +114,21 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
                     peripheral.respond(to: first, withResult: .insufficientAuthentication); return
                 }
                 let key = try AudienceRadio.key(secret, packet, challenge: challenge.value)
-                peers[id] = (key, time)
+                peers[id] = (key, time, nil)
                 floor.leave(id)
             case AudienceRadio.samples:
                 guard packet.count == 39, let peer = peers[id] else {
                     peripheral.respond(to: first, withResult: .insufficientAuthentication); return
                 }
                 let data = try AES.GCM.open(AES.GCM.SealedBox(combined: packet), using: peer.key)
-                guard let sample = AudienceSample(bytes: data), floor.receive(sample, from: id, at: time) else {
+                guard let sample = AudienceSample(bytes: data),
+                      peer.serial.map({ previous in
+                          let delta = sample.serial &- previous
+                          return delta > 0 && delta < (1 << 31)
+                      }) ?? true, floor.receive(sample, from: id, at: time) else {
                     peripheral.respond(to: first, withResult: .unlikelyError); return
                 }
-                peers[id] = (peer.key, time)
+                peers[id] = (peer.key, time, sample.serial)
             default: peripheral.respond(to: first, withResult: .writeNotPermitted); return
             }
             peripheral.respond(to: first, withResult: .success)

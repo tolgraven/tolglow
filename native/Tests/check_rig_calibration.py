@@ -23,6 +23,9 @@ class RigCalibrationContract(unittest.TestCase):
         self.assertIn('"armed?": true', client)
         self.assertIn('requestGeneration == generation', client)
         self.assertNotIn('NWConnection', client)
-        self.assertNotIn('UIBackgroundModes', (ROOT / 'project.yml').read_text())
+        modes = [line.strip() for line in (ROOT / 'project.yml').read_text().splitlines()
+                 if 'UIBackgroundModes:' in line]
+        self.assertEqual(modes, ['UIBackgroundModes: [bluetooth-central]'])
+        self.assertNotIn('isMultitaskingCameraAccessEnabled', (ROOT / 'iOS/RigCalibration/RigScanner.swift').read_text())
 if __name__ == '__main__':
     unittest.main(verbosity=2)
