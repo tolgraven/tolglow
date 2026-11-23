@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [afterglow.render.frame :as render]
             [afterglow.render.atmosphere :as atmosphere]
+            [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
@@ -37,6 +38,10 @@
     (vec
      (concat
       (portable-errors rig [] 0)
+      (when (contains? rig :pixel-layouts)
+        (try (pixel-layout/validate-materialized! rig) nil
+             (catch clojure.lang.ExceptionInfo e
+               [(error (into [:pixel-layouts] (:path (ex-data e))) :invalid-pixel-layout (.getMessage e))])))
       (let [fixtures (:fixtures rig)]
         (cond
           (not (vector? fixtures)) [(error [:fixtures] :invalid-fixtures "Rig fixtures must be a vector")]
@@ -90,3 +95,26 @@
   (let [problems (errors rig)]
     (when (seq problems) (throw (ex-info "Invalid rig" {:rig/error :invalid-rig :errors problems})))
     rig))
+
+(defn- resolve-entry-ids [entries originals]
+  (if-not (and (vector? entries) (every? map? entries))
+    entries
+    (let [ids (into #{} (map :id) originals)]
+      (mapv (fn [{:keys [id] :as entry}]
+              (let [other (cond (keyword? id) (subs (str id) 1) (string? id) (keyword id))]
+                (cond-> entry (and (not (contains? ids id)) (contains? ids other))
+                        (assoc :id other))))
+            entries))))
+
+(defn prepare-edit
+  "Resolve authoring IDs, generate pixel heads and validate the complete DMX
+  patch before the frame owner receives it."
+  [current proposed]
+  (let [proposed (cond-> proposed
+                   (contains? proposed :fixtures)
+                   (update :fixtures resolve-entry-ids (:fixtures current))
+                   (contains? proposed :trusses)
+                   (update :trusses resolve-entry-ids (:trusses current)))]
+    (validate-rig
+     (cond-> (pixel-layout/materialize current proposed)
+       (:edge-tracking proposed) surfaces/resolve-link-ids))))

@@ -49,3 +49,12 @@
     (is (= [5.0 0.0 1.0] (:position (peek (:fixtures moved)))))
     (is (= [manual] (:fixtures (layout/materialize (assoc rig :pixel-layouts [])))))
     (is (thrown? clojure.lang.ExceptionInfo (layout/materialize (assoc rig :pixel-layouts [ribbon ribbon]))))))
+
+(deftest compact-edit-retains-typed-identifiers-and-previous-head-calibration
+  (let [layout (assoc ribbon :group :rig/ceiling)
+        full (layout/materialize {:fixtures [] :pixel-layouts [layout]})
+        measured (assoc-in full [:fixtures 2 :calibration] {:observed-gain 0.95})
+        edit {:fixtures [] :pixel-layouts [(assoc layout :id "ceiling/strip" :group "rig/ceiling")]}]
+    (is (= measured (layout/materialize measured edit)))
+    (is (= {:fixtures [] :pixel-layouts []}
+           (layout/materialize measured {:fixtures [] :pixel-layouts []})))))

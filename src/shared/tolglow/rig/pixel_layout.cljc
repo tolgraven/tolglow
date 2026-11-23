@@ -112,7 +112,8 @@
           indices)))
 
 (defn- override-index [v n]
-  (let [v' (if (and (string? v) (re-matches #"(?:0|[1-9][0-9]*)" v)) (parse-long v) v)]
+  (let [v (if (and (keyword? v) (nil? (namespace v))) (name v) v)
+        v' (if (and (string? v) (re-matches #"(?:0|[1-9][0-9]*)" v)) (parse-long v) v)]
     (bounded-int v' 0 (dec n) :position-overrides)))
 
 (defn- overrides-for [spec n]
@@ -165,11 +166,14 @@
   (let [suffix (str (name id) "-head-" (inc index))]
     (if (keyword? id) (keyword (namespace id) suffix) suffix)))
 
+(defn- check-identity! [{:keys [id group]}]
+  (when-not (identifier? id) (invalid! :id "Layout needs a stable string or keyword id"))
+  (when (and (some? group) (not (identifier? group))) (invalid! :group "Expected a fixture group id")))
+
 (defn fixtures
   "Expand one layout into ordinary Afterglow patch targets in wire order."
   [{:keys [id group] :as spec}]
-  (when-not (identifier? id) (invalid! :id "Layout needs a stable string or keyword id"))
-  (when (and (some? group) (not (identifier? group))) (invalid! :group "Expected a fixture group id"))
+  (check-identity! spec)
   (let [{:keys [order start]} (patch-plan spec)
         width (count order)
         channels (zipmap order (range 1 (inc width)))
@@ -181,18 +185,75 @@
                :universe universe :address address :footprint width}))
           (range (count points)) points)))
 
+(defn- spelling [id]
+  (if (keyword? id) (subs (str id) 1) id))
+
+(defn- align-layout [original {:keys [group] :as spec}]
+  (cond-> spec
+    (contains? spec :position-overrides) (assoc :position-overrides (overrides-for spec (pixel-count spec)))
+    original (assoc :id (:id original))
+    (and original group (= (spelling group) (spelling (:group original))))
+    (assoc :group (:group original))))
+
+(defn- restore-layout-ids [saved specs]
+  (let [originals (into {} (map (juxt (comp spelling :id) identity)) saved)]
+    (mapv #(align-layout (get originals (spelling (:id %))) %) specs)))
+
+(defn- head-key [f] [(spelling (:pixel-layout-id f)) (:pixel-index f)])
+
+(defn- owned-heads [fixtures]
+  (into {} (comp (filter :pixel-layout-id) (map (juxt head-key identity))) fixtures))
+
+(defn- validate-collection! [specs]
+  (when-not (vector? specs) (invalid! :pixel-layouts "Expected an ordered vector of pixel layouts"))
+  (when-not (= (count specs) (count (distinct (map (comp spelling :id) specs))))
+    (invalid! :id "Duplicate pixel layout id"))
+  (when (> (reduce + 0 (map pixel-count specs)) max-pixels)
+    (invalid! :pixels "Combined pixel layout exceeds the rig budget")))
+
+(defn- count-head [counts seen {:keys [id pixel-layout-id pixel-index]}]
+  (when (and pixel-layout-id
+             (not (and (contains? counts pixel-layout-id) (integer? pixel-index)
+                       (<= 0 pixel-index) (< pixel-index (get counts pixel-layout-id))
+                       (= id (head-id pixel-layout-id pixel-index)) (not (contains? seen id)))))
+    (invalid! :fixtures "Unrecognized generated pixel head"))
+  (cond-> seen pixel-layout-id (conj id)))
+
+(defn validate-materialized!
+  "Check the retained layout definitions and their wire identities in a complete
+  rig. Positions and patch values may have independent measured corrections."
+  [{:keys [pixel-layouts fixtures] :as rig}]
+  (when (contains? rig :pixel-layouts)
+    (validate-collection! pixel-layouts)
+    (let [counts (into {} (map (juxt :id pixel-count)) pixel-layouts)
+          expected (reduce + 0 (vals counts))]
+      (doseq [spec pixel-layouts]
+        (check-identity! spec)
+        (patch-range spec)
+        (positions spec [0 (dec (get counts (:id spec)))]))
+      (when-not (= expected (count (reduce (partial count-head counts) #{} fixtures)))
+        (invalid! :fixtures "Generated pixel heads are missing from the patch"))))
+  rig)
+
 (defn materialize
-  "Regenerate owned heads without changing unrelated fixtures or per-head calibration."
-  [rig]
-  (if-not (contains? rig :pixel-layouts)
-    rig
-    (let [specs (:pixel-layouts rig)
-          previous (:fixtures rig [])]
-      (when-not (vector? specs) (invalid! :pixel-layouts "Expected an ordered vector of pixel layouts"))
-      (when-not (vector? previous) (invalid! :fixtures "Expected a fixture vector"))
-      (when-not (= (count specs) (count (distinct (map :id specs)))) (invalid! :id "Duplicate pixel layout id"))
-      (when (> (reduce + 0 (map pixel-count specs)) max-pixels) (invalid! :pixels "Combined pixel layout exceeds the rig budget"))
-      (let [owned (into {} (keep (fn [f] (when (:pixel-layout-id f) [[(:pixel-layout-id f) (:id f)] f]))) previous)
-            preserve (fn [f] (merge (get owned [(:pixel-layout-id f) (:id f)]) f))
-            manual (filterv #(not (contains? % :pixel-layout-id)) previous)]
-        (assoc rig :fixtures (into manual (comp (mapcat fixtures) (map preserve)) specs))))))
+  "Regenerate owned heads from the authored layouts. A compact edit can omit
+  generated heads. Their calibration is inherited from the last committed rig."
+  ([rig] (materialize nil rig))
+  ([current rig]
+   (if-not (contains? rig :pixel-layouts)
+     rig
+     (let [specs (:pixel-layouts rig)
+           previous (:fixtures rig [])]
+       (validate-collection! specs)
+       (when-not (vector? previous) (invalid! :fixtures "Expected a fixture vector"))
+       (let [specs (restore-layout-ids (:pixel-layouts current) specs)
+             owned (merge (owned-heads (:fixtures current)) (owned-heads previous))
+             preserve (fn [f] (merge (get owned (head-key f)) f))
+             manual (filterv #(not (contains? % :pixel-layout-id)) previous)]
+         (assoc rig :pixel-layouts specs
+                    :fixtures (into manual (comp (mapcat fixtures) (map preserve)) specs)))))))
+
+(defn prepare-startup [rig]
+  (if (and (seq (:pixel-layouts rig)) (not-any? :pixel-layout-id (:fixtures rig)))
+    (materialize rig)
+    rig))
