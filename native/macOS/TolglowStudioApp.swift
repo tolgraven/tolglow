@@ -51,17 +51,19 @@ struct TolglowStudioApp: App {
 
 private struct StudioWindow: NSViewRepresentable {
     let url: URL
-    func makeCoordinator() -> StudioNavigation { StudioNavigation(origin: url) }
+    @MainActor final class Coordinator {
+        let navigation: StudioNavigation
+        let qualification = ShaderQualification.fromArguments()
+        init(url: URL) { navigation = StudioNavigation(origin: url) }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.allowsAirPlayForMediaPlayback = true
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        view.navigationDelegate = context.coordinator
-        view.load(URLRequest(url: url))
-        return view
+        studioWebView(origin: url, navigation: context.coordinator.navigation,
+                      qualification: context.coordinator.qualification)
     }
     func updateNSView(_ view: WKWebView, context: Context) {}
-    static func dismantleNSView(_ view: WKWebView, coordinator: StudioNavigation) {
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.qualification?.stop(view)
         view.stopLoading()
         view.navigationDelegate = nil
     }

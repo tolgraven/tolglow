@@ -4,6 +4,7 @@ set -euo pipefail
 app="${1:?path to app}"
 out="${2:?media directory}"
 mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 show="$(mktemp -d)/Apple Studio Session"
 mkdir "$show"
 cat > "$show/show.clj" <<'SHOW'
@@ -16,7 +17,8 @@ cat > "$show/show.clj" <<'SHOW'
                     :search-in-namespaces ['show]}})
 SHOW
 xcrun swiftc native/Tests/window-id.swift -o "$out/window-id"
-"$app/Contents/MacOS/TolglowStudio" --open-show "$show" > "$out/launch.log" 2>&1 &
+"$app/Contents/MacOS/TolglowStudio" --open-show "$show" \
+  --qualify-metal "$out/metal-qualification.json" > "$out/launch.log" 2>&1 &
 app_pid=$!
 trap 'kill "$app_pid" 2>/dev/null || true' EXIT
 for ((i=0; i<120; i++)); do
@@ -67,4 +69,17 @@ from PIL import Image
 root = Path(sys.argv[1])
 frames = [Image.open(root / f"stage-{stage}.png").convert("RGB") for stage in ("ready", "invitation", "closed")]
 frames[0].save(root / "stage.gif", save_all=True, append_images=frames[1:], duration=[1300, 2300, 1200], loop=0)
+PY
+for ((i=0; i<65; i++)); do
+  if [[ -s "$out/metal-qualification.json" ]]; then break; fi
+  kill -0 "$app_pid"
+  sleep 1
+done
+python3 - "$out/metal-qualification.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+receipt = json.loads(Path(sys.argv[1]).read_text())
+# Platform debug-extension policy is separate from visible Studio correctness.
+print("Packaged Studio shader qualification:", receipt["status"], receipt["backendEvidence"])
 PY

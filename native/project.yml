@@ -19,7 +19,11 @@ targets:
   TolglowStudio:
     type: application
     platform: macOS
-    sources: [macOS]
+    sources:
+      - path: macOS
+        excludes: ["ShaderQualification.js"]
+      - path: macOS/ShaderQualification.js
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
