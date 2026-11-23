@@ -33,14 +33,16 @@
            :channels {:red 1 :green 2 :blue 3 :dimmer 4 :focus 5}})
         [:near :far] [0.8 1.92] [1 6]))
 
-(defn- launch []
+(defn- launch
+  ([] (launch through-water))
+  ([definition]
   (let [show (control/new-show {:show-id "pool" :transport {:beat 1.0 :bpm 120.0 :playing? true}})
-        published (command show :pub :registry/publish :kind :effects :definition through-water)
+        published (command show :pub :registry/publish :kind :effects :definition definition)
         cued (command (:model published) :put :cue/put :cue {:id :swim :effect-id :pool})
         launched (command (:model cued) :launch :cue/launch :cue-id :swim :time-ms 0)]
     [(-> (:model launched) (assoc-in [:variables :weather :density] 0.2)
          (assoc-in [:transport :beat] 1.25))
-     (get-in launched [:ack :instance-id])]))
+     (get-in launched [:ack :instance-id])])))
 
 (deftest cue-variables-private-inputs-and-light-use-one-chain
   (let [[model id] (launch)
@@ -122,6 +124,36 @@
         sample (variable-blocks/sample plan {:transport {:beat 1.0}} 25.0)]
     (is (= {:healthy 0.7} (:variables (variable-blocks/resolved {} sample))))
     (is (string? (:error (variable-blocks/inspect sample [:variables :invalid]))))))
+
+(deftest scalar-packed-and-target-traces-read-the-same-fixture-chart
+  (let [effect {:id :pool :version 1 :params {} :outputs {:focus 0.0}
+                :prefabs {:rig/chart {:mode :replace :glsl "0.1 * world.z + 0.5 * uv.x + 0.1 * uv.y"}}
+                :blocks {[:outputs :focus] {:stages [{:block :rig/chart}]}}}
+        fixtures (mapv (fn [i chart]
+                         (cond-> (assoc (first rig) :id (keyword (str "head-" i)) :position [0.5 0.5 1.0] :address (+ 1 (* i 5)))
+                           chart (assoc :surface-uv chart)))
+                       (range 3) [[0.1 0.2] [0.7 0.6] nil])
+        [live id] (launch effect)
+        model (-> live (assoc-in [:rig :fixtures] fixtures) files/write-string files/read-string :model)]
+    (is (= fixtures (get-in model [:rig :fixtures])))
+    (let [inputs (atom [])
+          prepare (fn [& args] (swap! inputs conj args) :fixture-group)]
+      (batch/compile-effect effect fixtures {:prepare-group prepare})
+      (is (= [[0.1 0.2] [0.7 0.6] nil] (nth (first @inputs) 3)))
+      (reset! inputs [])
+      (batch/compile-effect effect (mapv #(dissoc % :surface-uv) fixtures) {:prepare-group prepare})
+      (is (= 3 (count (first @inputs)))))
+    (doseq [build [compiler/compile-effect (batch/compiler-for-rig fixtures)]]
+      (let [frame (engine/advance model {:time-ms 125.0 :fixtures fixtures} build)
+            values (:values (frame/resolve-contributions fixtures (:contributions frame)))
+            instance (get-in frame [:model :instances id])]
+        (is (empty? (:fault-events frame)))
+        (doseq [[fixture uv expected] (map vector fixtures [[0.1 0.2] [0.7 0.6] [0.5 0.5]] [0.17 0.51 0.4])]
+          (let [sample (runtime/observe instance [[:outputs :focus] (:id fixture)])]
+            (is (= uv (:surface-uv sample)))
+            (is (= [0.5 0.5 1.0] (:position sample)))
+            (is (< (abs (- expected (:result sample))) 1e-10))
+            (is (< (abs (- expected (get-in values [(:id fixture) :focus]))) 1e-10))))))))
 
 (deftest a-beat-tween-can-be-the-dry-signal
   (let [effect {:id :fade :version 1
