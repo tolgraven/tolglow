@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
@@ -25,6 +26,7 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
@@ -150,10 +152,11 @@
       (when-let [ms (:duration-ms slot)] [ms "ms"])
       [4 "beats"]))
 
-(defn- cue-cell [db page x y]
+(defn- cue-cell [db page x y colors]
   (let [show (:show db) ui (:ui db)
         cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))
         cue (find-id (:cues show) cue-id)
+        preview (or (get colors cue-id) (when (string? cue-id) (get colors (keyword cue-id))))
         active (filter #(= cue-id (:cue-id %)) (:instances show))
         cell {:cue-id cue-id :x x :y y :page-id (:id page)}
         down (fn [event]
@@ -165,7 +168,8 @@
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
                   (when (some #(= "releasing" (:phase %)) active) "releasing ")
                   (when (:edit? ui) "editing"))
-      :style (when cue (color-style cue)) :data-x x :data-y y :data-cue-id (or cue-id "")
+      :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
+      :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
       :aria-label (str (if cue (display-name cue) "Empty cell") ", column " (inc x) ", row " (inc y))
       :aria-pressed (boolean (seq active)) :on-pointer-down down
@@ -184,7 +188,7 @@
                              selector (str "[data-x=\"" (max 0 (min 7 (+ x dx)))
                                            "\"][data-y=\"" (max 0 (min 7 (+ y dy))) "\"]")]
                          (.preventDefault event)
-                         (when-let [target (.querySelector (.-parentElement (.-currentTarget event)) selector)]
+                         (when-let [target (.querySelector (.closest (.-currentTarget event) "#cue-grid") selector)]
                            (.focus target)))
                        (or (= "ContextMenu" (.-key event)) (and (= "F10" (.-key event)) (.-shiftKey event)))
                        (do (.preventDefault event) (send! [:studio/open-actions cell]))
@@ -217,8 +221,7 @@
                                 :on-click #(send! [:studio/set-launch mode])} title])]
       [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"]]
      [:div.cue-grid-scroll
-      [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight-column cue grid"}
-      (for [y (range rows) x (range 8)] ^{:key (str x "/" y)} [cue-cell db page x y])]]
+      [pad-preview/grid (:id page) rows (and (= :perform (:view ui)) (get-in db [:connection :connected?])) cue-cell db page]]
      [:div.grid-footer [:span#gesture-hint (cond (:edit? ui) "Choose a cell to edit its actions."
                                                (= "held" (:launch-mode ui)) "Hold a cue to play it. Release to fade it out."
                                                :else "Tap to play. Long-press for cue actions.")]
@@ -277,14 +280,32 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
+     (when (and (nil? handlers) (#{"number" "integer" "vector" "color" "range"} type)
+                (or (not (:compact? options)) (visualization/spatial-kind schema)))
+       [visualization/studio schema (if (some? overlay) overlay value)])
      (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
+
+(defn- preview-film-controls [settings]
+  [:details.preview-film
+   [:summary "Image"]
+   (for [[key label high step default] [[:exposure "Exposure" 3 0.01 0.85]
+                                         [:bloom "Bloom" 2 0.01 0.28]
+                                         [:grain "Grain" 0.08 0.001 0.0015]]]
+     ^{:key key}
+     [:label label
+      [:input {:type "range" :min 0 :max high :step step :value (get settings key default)
+               :aria-label (str "Preview " label)
+               :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
-     [:button.text-button {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
+     [:button.text-button.preview-fullscreen-tools
+      {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
+       :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
+     [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
@@ -307,7 +328,8 @@
         [:option {:value "interpolate"} "Smooth · one frame delay"]]]
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
-       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])
+       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]
+      [preview-film-controls (get-in db [:ui :preview-settings])]])
    [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere "
                         [:span.muted
                          (if-let [air (get-in db [:show :output :atmosphere])]

@@ -337,6 +337,16 @@
        :fx [(req db :push-display "/api/settings"
                  {:scope "controllers" :values {:push-display (assoc (get-in db [:show :settings :controllers :push-display] {}) :mode mode)}}
                  :connections/settings-saved)]})))
+(rf/reg-event-fx :connections/parameter-view
+  (fn [{:keys [db]} [_ field value]]
+    (when (case field
+            :parameter-view (#{"auto" "spatial" "history" "controls"} value)
+            :history-beats (#{0.5 1 2 4 8 16} value)
+            false)
+      (let [settings (assoc (get-in db [:show :settings :controllers :push-display] {}) field value)]
+        {:db (update-in db [:connections :pending] (fnil conj #{}) :push-display)
+         :fx [(req db :push-display "/api/settings" {:scope "controllers" :values {:push-display settings}}
+                   :connections/settings-saved)]}))))
 (rf/reg-event-fx :connections/settings-saved
   (fn [{:keys [db]} [_ request-token key _ack]]
     (when (current? db request-token)
@@ -403,7 +413,18 @@
        [:select#push-display-mode {:value (get-in db [:show :settings :controllers :push-display :mode] "parameters")
                                    :disabled (contains? (:pending s) :push-display)
                                    :on-change #(rf/dispatch [:connections/push-mode (text %)])}
-        [:option {:value "parameters"} "Effect parameters"] [:option {:value "audio"} "Captured audio + encoder values"]]]]]))
+        [:option {:value "parameters"} "Effect parameters"] [:option {:value "audio"} "Captured audio + encoder values"]]]
+      [:label "Parameter visualization"
+       [:select {:value (get-in db [:show :settings :controllers :push-display :parameter-view] "auto")
+                 :disabled (contains? (:pending s) :push-display)
+                 :on-change #(rf/dispatch [:connections/parameter-view :parameter-view (text %)])}
+        [:option {:value "auto"} "Automatic by type"] [:option {:value "spatial"} "3D space"]
+        [:option {:value "history"} "Time graph"] [:option {:value "controls"} "Control values"]]]
+      [:label "History window"
+       [:select {:value (get-in db [:show :settings :controllers :push-display :history-beats] 4)
+                 :disabled (contains? (:pending s) :push-display)
+                 :on-change #(rf/dispatch [:connections/parameter-view :history-beats (js/Number (text %))])}
+        (for [n [0.5 1 2 4 8 16]] ^{:key n} [:option {:value n} (str n " beats")])]]]]))
 (defn- field [s path title & [attrs]]
   [:label title [:input (merge {:type "text" :value (get-in s path "") :on-change #(edit! path (text %))} attrs)]])
 (defn- checkbox [s path title disabled?]

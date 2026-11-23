@@ -100,6 +100,12 @@
                        :ipc-stack (when thread (mapv str (take 6 (.getStackTrace thread))))
                        :stderr :inherited}) error))))
 
+(defn frame-request
+  "Encode a passive capture request without collapsing :type and :semantic/type."
+  [id view]
+  (json/write-str {:id id :view view}
+                  :key-fn #(if (keyword? %) (subs (str %) 1) (str %))))
+
 (defn process-capture
   "Construct an inert Node/Chromium capture backend. :browser-executable is
   required. :url defaults to the studio's loopback /push-display page. The bundled
@@ -109,16 +115,19 @@
   For authenticated Studio, :auth-token-env names its operator token variable.
   No resource lookup, extraction, browser download or process occurs before :open!."
   [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox? auth-token-env
-           startup-timeout-ms capture-timeout-ms shutdown-timeout-ms]
+           startup-timeout-ms capture-timeout-ms scene-startup-timeout-ms scene-capture-timeout-ms shutdown-timeout-ms]
     :or {url "http://127.0.0.1:8500/push-display" node-executable "node"
-         startup-timeout-ms 10000 capture-timeout-ms 2000 shutdown-timeout-ms 1000}}]
+         startup-timeout-ms 10000 capture-timeout-ms 2000 scene-startup-timeout-ms 45000
+         scene-capture-timeout-ms 10000 shutdown-timeout-ms 1000}}]
   (doseq [[field value] [[:startup-timeout-ms startup-timeout-ms] [:capture-timeout-ms capture-timeout-ms]
+                         [:scene-startup-timeout-ms scene-startup-timeout-ms] [:scene-capture-timeout-ms scene-capture-timeout-ms]
                          [:shutdown-timeout-ms shutdown-timeout-ms]]]
     (positive-ms! value field))
   (when-not (and (string? browser-executable) (seq browser-executable))
     (throw (ex-info "Configure an installed Chromium executable explicitly" {})))
   (let [config (cond-> {:url url :executablePath browser-executable
                         :startupTimeoutMs startup-timeout-ms :captureTimeoutMs capture-timeout-ms
+                        :sceneStartupTimeoutMs scene-startup-timeout-ms :sceneCaptureTimeoutMs scene-capture-timeout-ms
                         :noSandbox (boolean no-sandbox?)}
                  playwright-module (assoc :playwrightModule playwright-module)
                  auth-token-env (assoc :authTokenEnv auth-token-env))]
@@ -126,7 +135,7 @@
      (fn []
        (let [owned (atom (merge (worker-file! worker-script)
                                {:lock (Object.) :request-lock (Object.) :closed? (atom false)
-                                :ipc-thread (atom nil) :opened-at (System/nanoTime)
+                                :ipc-thread (atom nil) :scene-mode? (volatile! false) :opened-at (System/nanoTime)
                                 :shutdown-timeout-ms shutdown-timeout-ms}))]
          (try
            (let [process (.start (doto (ProcessBuilder. ^java.util.List
@@ -147,17 +156,22 @@
                (close-process! @owned)
                (throw diagnostic))))))
      :capture!
-     (fn [{:keys [request-lock closed? reader writer executor counter] :as handle} view]
+     (fn [{:keys [request-lock closed? reader writer executor counter scene-mode?] :as handle} view]
        (locking request-lock
          (when @closed? (throw (ex-info "Display capture is closed" {})))
-         (let [id (inc @counter) request (json/write-str {:id id :view view})]
+         (let [id (inc @counter) request (frame-request id view)
+               scene? (boolean (and (:scene view) (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view))))
+               budget (cond (not scene?) capture-timeout-ms
+                            @scene-mode? scene-capture-timeout-ms
+                            :else (max scene-startup-timeout-ms scene-capture-timeout-ms))]
            (when (> (alength (.getBytes ^String request StandardCharsets/UTF_8)) 70000)
              (throw (ex-info "Display request exceeds its bound" {})))
            (reset! counter id)
            (try
              (let [response (await! executor #(do (.write ^BufferedWriter writer request)
                                                   (.newLine ^BufferedWriter writer) (.flush ^BufferedWriter writer)
-                                                  (read-response! reader)) capture-timeout-ms)]
+                                                  (read-response! reader)) budget)]
+               (vreset! scene-mode? scene?)
                (when-not (and (= id (:id response)) (= "captured" (:status response))
                               (= width (:width response)) (= height (:height response)) (string? (:png response)))
                  (throw (ex-info "Invalid offscreen display response" {:response (dissoc response :png)})))

@@ -1,6 +1,9 @@
 (ns tolglow.studio.display-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
+            [thi.ng.color.core :as colors]
+            [tolglow.controllers.page-overview :as pages]
             [tolglow.studio.display :as display]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
@@ -260,3 +263,33 @@
           (is (thrown? clojure.lang.ExceptionInfo ((:capture! capture) handle {:title "After close"})))
           (finally ((:close! capture) handle))))
       (finally (io/delete-file script true) (io/delete-file startup true)))))
+
+(deftest overview-thumbnails-respect-pinned-effects-and-retain-only-the-visible-bank
+  (let [cache (volatile! nil)
+        ids (mapv #(keyword (str "page" %)) (range 9))
+        show {:pages (into {} (map (fn [id] [id {:id id :name (name id) :cells {[0 0] :lamp [32 17] :lamp}}]) ids))
+              :registry {:effects {:lamp {:id :lamp :version 2 :outputs {:pan 0.5}}}
+                         :versions {[:effects :lamp 1] {:id :lamp :version 1 :outputs {:color [1 0 0]}}}
+                         :cues {:lamp {:id :lamp :effect-id :lamp :effect-version 1 :swatch "#f48438"}}}}
+        view {:page :page8 :display-mode :pages}
+        sample #(get (pages/project-display cache %1 %2) :page-overview)
+        atlas (sample show view)
+        tile (first (:pages atlas))]
+    (is (= [1 2 :both] ((juxt :bank :banks :scheme) atlas)))
+    (is (= :page8 (:id tile)))
+    (is (= [[0 0] [7 7]] (mapv :xy (:cells tile))))
+    (is (= "#f48438" (:cue-color (first (:cells tile)))))
+    (is (= ["#c18be8"] (:type-colors (first (:cells tile)))))
+    (is (identical? atlas (sample (assoc show :frame-number 2) view)))
+    (is (= "#ff0080" (get-in (sample (assoc-in show [:registry :cues :lamp :swatch]
+                                                 (colors/rgba 1 0 0.5)) view)
+                              [:pages 0 :cells 0 :cue-color])))
+    (is (= 8 (count (:pages (sample show (assoc view :page-bank 0 :page-colors :type))))))
+    (is (nil? (sample show (assoc view :display-mode :audio))))
+    (is (nil? @cache))))
+
+(deftest frame-requests-retain-qualified-parameter-schema-keys
+  (let [view {:parameters [{:schema {:type :vector :semantic/type :orientation :control/axis :tilt}}]}
+        request (json/read-str (display/frame-request 1 view))]
+    (is (= {"type" "vector" "semantic/type" "orientation" "control/axis" "tilt"}
+           (get-in request ["view" "parameters" 0 "schema"])))))

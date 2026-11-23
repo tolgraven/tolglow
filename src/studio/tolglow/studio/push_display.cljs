@@ -1,15 +1,18 @@
 (ns tolglow.studio.push-display
   "Passive device display: the transport supplies snapshots; this route performs
-  no HTTP, timers, show commands, WebGL or device acquisition."
+  no show requests or device acquisition. The selected scene renders capture frames."
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.push-scene :as scene]
+            [tolglow.studio.page-overview :as pages]
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]))
 
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
-                          :cue :effect :swatch :category-colors :display-mode :audio-waveform :instance-id
+                          :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
         (assoc :target-picker (when-let [picker (:target-picker view)]
                                  (assoc (select-keys picker [:open? :page :pages :armed])
@@ -22,7 +25,7 @@
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
 (defn observe-view [previous view]
-  (let [next (normalize-view view)
+  (let [next (visualization/update-push previous (normalize-view view) view)
         {:keys [binding-path target-id sample]} (:block-trace view)
         identity [(:runtime-id view) (:epoch view) (:instance-id view) (:definition-version view) binding-path target-id]]
     (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
@@ -39,6 +42,7 @@
 (defn install-api! []
   (let [api (js-obj)]
     (aset api "ready" false)
+    (aset api "frameReady" scene/rendered!)
     (aset api "update" (fn [view]
                          (rf/dispatch-sync [:push-display/update (js->clj view :keywordize-keys true)])
                          ;; Flush Reagent's pending render; the capture worker waits
@@ -121,7 +125,7 @@
   [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
    (for [index (range 8) :let [parameter (get (:parameters view) index)
                              touched? (= index (get-in view [:touched-parameter :encoder]))
-                             component (:component-label parameter)]]
+                             component (visualization/component-label parameter)]]
      ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
                    [:div.push-parameter-name [:span.push-encoder (inc index)]
                     [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
@@ -130,7 +134,7 @@
                    (cond
                      (nil? parameter) (when-not compact? [:div.push-empty "·"])
                      compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
-                     :else [widgets/typed-display parameter])])])
+                     :else [visualization/push view parameter])])])
 
 (defn- target-choices [{:keys [rows page pages]}]
   [:section.push-targets {:aria-label "Cue launch targets"}
@@ -165,6 +169,8 @@
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
+       (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]
+       (contains? #{:pages "pages"} (:display-mode view)) [pages/view view]
        (contains? #{:block-trace "block-trace"} (:display-mode view)) [trace/plot (:trace-samples view) true (:trace-options view)]
        audio? [:<> [:section.push-audio {:aria-label "Captured audio display"} [widgets/audio-waveform (:audio-waveform view)]]
         [parameters view true]]
