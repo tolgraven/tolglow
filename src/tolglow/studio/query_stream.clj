@@ -9,8 +9,20 @@
   #{:clock/beat :clock/beat-in-bar :clock/bar :clock/phrase :clock/phase
     :runtime/keyframe :runtime/block-trace :runtime/block-library :spatial/scene :spatial/body :spatial/members :rdm/status})
 
-(defn create [get-graph wake!]
-  {:get-graph get-graph :wake! wake! :state (atom {})})
+(defn create
+  ([get-graph wake!] (create get-graph wake! {}))
+  ([get-graph wake! surfaces]
+   {:get-graph get-graph :wake! wake! :state (atom {}) :surfaces surfaces}))
+
+(defn read-result [lease source]
+  (if-let [sample! (:sample! lease)]
+    (let [last @(:last lease)]
+      (if (identical? source (:source last)) (:value last)
+        (let [value (try {:value (sample! source)}
+                         (catch Exception _ {:error :unavailable}))]
+          (vreset! (:last lease) {:source source :value value})
+          value)))
+    @(:result lease)))
 
 (defn validate [queries]
   (when-not (and (vector? queries) (<= (count queries) 32)
@@ -26,7 +38,7 @@
     (let [[before _] (reset-vals! (:state store) {:closed? true})]
       (doseq [lease (vals (:leases before))] (close-lease! lease)))))
 
-(defn- open-lease [system query allowed? wake!]
+(defn- open-graph-lease [system query allowed? wake!]
   (if-not allowed?
     {:result (atom {:error :not-exposed})}
     (let [absent (Object.) result (atom absent)]
@@ -39,6 +51,11 @@
         (catch Exception e
           {:await-registration? (= :afterglow.reactive/unknown-subscription (:type (ex-data e)))
            :result (atom {:error :unavailable :message (or (.getMessage e) "Subscription unavailable")})})))))
+
+(defn- open-lease [store system query public]
+  (if-let [open! (get (:surfaces store) (first query))]
+    (assoc (open! query) :last (volatile! nil))
+    (open-graph-lease system query (contains? public (first query)) (:wake! store))))
 
 (defn reconcile!
   "Share leases across sockets. Changing show identity, graph or public-query
@@ -66,7 +83,7 @@
             (do
               (doseq [[query lease] prior :when (not (keep? query))] (close-lease! lease))
               (let [leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
-                                                       (open-lease system q (contains? public (first q)) (:wake! store)))])
+                                                       (open-lease store system q public))])
                                          wanted))]
                 (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
                                :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})

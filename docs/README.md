@@ -86,6 +86,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Shared variable chains](global-variable-blocks.md) | Authoring and tracing global material chains in Studio, the REPL and Ring |
 | [Effect building blocks](effect-blocks.md) | Shader materials, parameter and variable bindings, stage inspection |
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
+| [Push page overview](push-page-overview.md) | Browse cue layouts, authored swatches and type colors |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |
