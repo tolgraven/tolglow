@@ -117,6 +117,7 @@ export class WorkerRoomPreview {
           if (this.canvas.width !== bitmap.width || this.canvas.height !== bitmap.height) {
             this.canvas.width = bitmap.width; this.canvas.height = bitmap.height;
           }
+          this.canvas.tolglowCaptureVideo?.(bitmap);
           if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(bitmap);
           else this.presenter.drawImage(bitmap, 0, 0);
           this.presented = true;

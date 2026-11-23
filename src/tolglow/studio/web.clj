@@ -329,6 +329,18 @@
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
                                    ["/api/debug/events" {:name :api/debug-events
                                                          :get (available (:debug-stream! services) "Debug stream unavailable" (:debug-stream! services))}]
+                                   ["/api/preview/airplay/interfaces"
+                                    {:get (available (:airplay-interfaces services) "Preview receiver unavailable"
+                                                     (fn [_] (ok ((:airplay-interfaces services)))))}]
+                                   ["/api/preview/airplay/start"
+                                    {:post (wrap-api-body (available (:airplay-start! services) "Preview receiver unavailable"
+                                                                    #(ok ((:airplay-start! services) (:json-params %)))))}]
+                                   ["/api/preview/airplay/stop"
+                                    {:post (wrap-api-body (available (:airplay-stop! services) "Preview receiver unavailable"
+                                                                    #(ok ((:airplay-stop! services) (:json-params %)))))}]
+                                   ["/api/preview/airplay/:writer/:file"
+                                    {:put (available (:airplay-publish! services) "Preview receiver unavailable"
+                                                     (:airplay-publish! services))}]
                                    ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
                                   (merge-with merge gets posts)))]
     (ring/ring-handler
