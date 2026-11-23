@@ -31,7 +31,7 @@
   (cond
     (or (nil? x) (string? x) (keyword? x) (boolean? x)) true
     (number? x) (finite-number? x)
-    (vector? x) (every? data? x)
+    (or (vector? x) (set? x)) (every? data? x)
     (map? x) (every? (fn [[k v]] (and (or (keyword? k) (string? k) (integer? k))
                                     (data? v))) x)
     :else false))

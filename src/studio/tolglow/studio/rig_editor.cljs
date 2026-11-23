@@ -5,7 +5,8 @@
             [tolglow.studio.pixel-editor :as pixels]
             [tolglow.studio.rig-fields :as fields]
             [tolglow.studio.camera-controls :as camera]
-            [tolglow.studio.spatial-preview :as spatial-preview]))
+            [tolglow.studio.spatial-preview :as spatial-preview]
+            [tolglow.studio.volume-sculpt :as sculpt]))
 
 (defn identity-key [db]
   (js/JSON.stringify (clj->js (mapv #(get-in db [:show %]) [:runtime-id :show-id :epoch]))))
@@ -119,6 +120,7 @@
   (fn [{:keys [db]} [_ {:keys [type point surface-id identity] :as detail}]]
     (cond
       (not= identity (identity-key db)) {}
+      (#{"sculpt-begin" "sculpt-move" "sculpt-end" "sculpt-cancel"} type) {:dispatch [::sculpt/gesture detail]}
       (= type "throw") {:dispatch [:tolglow.studio.spatial/throw identity point (:velocity detail)]}
       (= type "select-volume") {:dispatch [:tolglow.studio.spatial/select-preview (:volume-id detail)]}
       (= type "surface") (if (= "aim" (:tool (editor db))) (surface-command db (:aim-mode (editor db)) point surface-id) {})
@@ -350,7 +352,7 @@
      [:div.panel-top [:span.section-label "PLACE & CHOREOGRAPH"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
-       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"]]]
+       (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"]]]
          ^{:key tool} [:button.button {:aria-pressed (= tool (:tool state)) :on-click #(dispatch! [:rig-editor/set [:tool] tool])} label])]
       [:div.rig-editor-actions
        [:button.button {:disabled (empty? (:undo state)) :on-click #(dispatch! [:rig-editor/undo])} "Undo"]
@@ -375,6 +377,7 @@
       (case (:tool state) "aim" [aim-fields db state]
         "pixels" [pixels/panel rig state spec geometry]
         "throw" [:p.small "Drag from the launch point in the selected plane. Release to throw; Escape cancels."]
+        "sculpt-volume" [sculpt/panel]
         "volume-select" [:p.small "Tap the centre of a volume to edit it below."]
         [path-fields db state])]])))
 
