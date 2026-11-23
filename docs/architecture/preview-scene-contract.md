@@ -88,6 +88,30 @@ scattering and light visibility. Geometry occludes beams. At zero density there
 is no illuminated volume in free space, while lit surfaces still receive light.
 No solid transparent cone is an acceptable substitute for the density field.
 
+### Live spatial volumes
+
+Launching a spatial cue draws its active volume in the Rig and Perform previews.
+Saved bouncing bodies also follow the positions reported by the spatial runtime.
+The visible canvas leases the `[:spatial/scene]` stream. Scrolling it out of view,
+switching tabs or leaving the window releases that lease and the cached field data.
+The show continues to run the cue while both previews are closed.
+
+The glass pass reads the fogged, linear HDR room and opaque scene depth before
+bloom and tone mapping. Transmitted light bends with the surface normal. A depth
+test preserves fixtures and trusses crossing in front of the volume. The surface
+reflects the room and the four brightest allocated spotlights. The preview work
+light affects those room reflections. A small ripple follows the local rendering
+clock, and a bounced body uses the host's contact deformation and position.
+
+Each canvas shows up to twelve bounded live surfaces. Primitives use analytic mesh
+dimensions. Constructive solids sample the shared Afterglow signed-distance field
+on a 30³ grid, once per distinct local shape. Moving, stretching the whole shape,
+or changing its paint reuses that mesh. Very thin details may fall between samples.
+Refraction samples the room already visible on screen. Off-screen objects and
+recursive transmission through another glass volume need additional rendering.
+The material is a visualization of a cue's region of influence and uses no DMX
+channels. Physical iPad and MacBook GPU timings remain to be measured.
+
 ## Interaction and quality tiers
 
 First frame: an understandable view from within or just outside a cutaway venue,

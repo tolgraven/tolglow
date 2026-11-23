@@ -3,11 +3,15 @@
   emitted light contacts come from Afterglow; durable show state contains data only."
   (:require [afterglow.control.model :as control]
             [afterglow.reactive :as graph]
+            [afterglow.render.frame :as render]
             [afterglow.runtime.events :as staging]
             [afterglow.spatial :as physics]
+            [afterglow.spatial.field :as field]
             [afterglow.time :as time]
             [tolglow.autopilot.signal :as signal]
+            [tolglow.rig.surfaces :as surfaces]
             [tolglow.spatial.actions :as actions]
+            [tolglow.spatial.cues :as cues]
             [tolglow.spatial.targets :as targets]))
 
 (def state-path [:extensions ::world])
@@ -72,6 +76,8 @@
         settings (get-in model [:settings :spatial])]
     (cond
       (not (and (:volume-id selector) (#{:cue/launch :effect/launch} (:op payload)))) members
+      (some? (get-in model [:variables :spatial :signals (:volume-id selector) :cue-id]))
+      (select-keys members [(:volume-id selector)])
       (not (:enabled? settings)) {}
       :else
       (let [id (targets/volume-id (:volumes settings) (:volume-id selector))
@@ -109,18 +115,64 @@
 
 (defn clear-session [model]
   (cond-> model
+    (get-in model cues/run-path) (update :extensions dissoc (last cues/run-path))
     (get-in model state-path) (update :extensions dissoc ::world)
     (get-in model actions/run-path) (update :extensions dissoc (last actions/run-path))
     (get-in model [:variables :spatial]) (update :variables dissoc :spatial)))
 
 (defn restore [model ids epoch]
-  (cond-> (actions/restore model ids epoch)
+  (cond-> (cues/restore (actions/restore model ids epoch) ids)
     (get-in model state-path) (assoc-in (conj state-path :epoch) epoch)))
 
+(def ^:private optical-fields [:emitted-color :pan :tilt :zoom :direction :shutter :strobe])
+
+(defn- venue-optics [rig]
+  (let [{:keys [width height depth]} (merge {:width 12 :height 5 :depth 10} (:room rig))]
+    {:range-m (Math/hypot (Math/hypot width depth) height)
+     :surfaces (surfaces/receivers rig)}))
+
+(defn- optical-observations [before model]
+  (let [rig (:rig model)
+        prior (get-in before [:spatial-cache :optics])
+        cached (when (identical? rig (:rig prior)) prior)
+        previous (when (and (= (get-in before [:model :epoch]) (:epoch model))
+                            (identical? (get-in before [:model :rig]) rig))
+                   (:output before))
+        extinction (get-in previous [:atmosphere :extinction-per-m] 0.0)
+        venue (or (:venue cached) (venue-optics rig))
+        options (if (and cached (= extinction (:extinction cached))) (:options cached)
+                    (field/prepare-observations (assoc venue :extinction-per-m extinction)))
+        compact (:compact previous)
+        order (:target-order compact)
+        index (when compact
+                (if (identical? order (get-in cached [:index :order])) (:index cached)
+                    (render/compact-index order)))
+        values (or (:values previous) (when compact (render/compact-reader index compact optical-fields)))]
+    {:cache {:rig rig :venue venue :extinction extinction :options options :index index}
+     :frame (assoc options :values values)}))
+
+(defn- live-settings [original active previous]
+  (if (empty? active)
+    original
+    (let [overlays (into {} (keep (fn [[id {:keys [volume]}]] (when volume [id volume]))) active)
+          settings (-> (if (:enabled? original) original (select-keys original [:bounds :gravity]))
+                       (assoc :enabled? true :run-when :enabled)
+                       (update :volumes merge overlays))]
+      (if (= settings previous) previous settings))))
+
+(defn- volume-errors [model fields now]
+  (for [[key {:keys [instance-id error]}] (:views fields)
+        :when (and error (not= error (get-in model [:variables :spatial :signals key :error])))]
+    {:type :spatial/invalid-volume :volume-id key :instance-id instance-id :time-ms now :message error}))
+
 (defn advance [model before now graph command]
-  (let [s (get-in model [:settings :spatial]) prior (get-in model state-path)
-        clock (assoc (time/frame-clock model) :time-ms now :epoch (:epoch model))
-        old-cache (:spatial-cache before)]
+  (let [original (get-in model [:settings :spatial])
+        old-cache (:spatial-cache before)
+        active (cues/volumes (assoc model :time-ms now) (:modulation-view before) (:settings old-cache))
+        model (cues/reconcile model active now command)
+        s (live-settings original active (:settings old-cache))
+        prior (get-in model state-path)
+        clock (assoc (time/frame-clock model) :time-ms now :epoch (:epoch model))]
     (cond
       (not (:enabled? s))
       (if (or prior (get-in model actions/run-path))
@@ -149,11 +201,22 @@
                        (get-in before [:output :hdr-contacts]))
             prior (if (and prior (:suspended? old-cache)) (physics/rebase prior clock) prior)
             result (physics/advance prior scene clock rig contacts)
-            view (select-keys result [:members :signals :events :dropped-ms])
+            observations (delay (optical-observations before model))
+            sample (fn [volume]
+                     (if (some #{:aimable :beam} (:selection volume))
+                       (field/sample volume rig (:frame @observations))
+                       (field/positions volume rig)))
+            fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
+            events (into (:events result) (volume-errors model fields now))
+            view (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
+                   fields (update :signals #(merge-with merge % (:views fields)))
+                   fields (update :members merge (:members fields)))
             model (-> model (assoc-in state-path (assoc (:state result) :start-clock start))
-                      (assoc-in [:variables :spatial] view) (stage (:events result)))]
+                      (assoc-in [:variables :spatial] view) (stage events))]
         {:model (actions/apply-frame model result (:bindings s {}) now command)
-         :cache {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
+         :fields fields
+         :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}
+                  (realized? observations) (assoc :optics (:cache @observations)))
          :observe-hdr? (boolean (some #(= :hdr (:shape %)) (vals (:volumes s))))}))))
 
 (defn on-contact
