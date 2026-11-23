@@ -28,5 +28,5 @@ application state, subscriptions, events and views belong in ClojureScript.
   injected transports. No physical lighting, audio input, provider request or
   MIDI activation is required to test the application.
 
-Track ownership and evidence in `docs/work-items.edn`. Run `bin/test pure` and
+Track ownership and evidence in [GitHub Issues](https://github.com/tolgraven/tolglow/issues). Run `bin/test pure` and
 `bin/test parity`; frontend and browser checks are separate documented gates.

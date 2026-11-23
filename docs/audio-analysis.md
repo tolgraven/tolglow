@@ -21,7 +21,7 @@ new general beat/downbeat neural model or label RMS as “mood.”
    energy statistics, breakdown hysteresis, clock alignment and normalized
    events. This is small application-specific logic, not a replacement for an
    established music-information-retrieval library. The current implementation
-   lane is `tolglow.integrations.analysis`; verify its tests/status in the ledger.
+   namespace is `tolglow.integrations.analysis`. Check current qualification in [GitHub Issues](https://github.com/tolgraven/tolglow/issues).
 3. **Reuse Meyda's MIT feature extractors when browser-side analysis is needed.**
    Its `extract` API works independently of capture, and the tested package
    produces correct elementary RMS/energy/centroid values. Use it in an owned

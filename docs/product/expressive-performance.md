@@ -222,7 +222,7 @@ a deliberate selection/export flow rather than a weakened backup format.
 
 Keep independent lanes for typed modulation, signal registry, expressive
 protocols, verified X-Touch work, musical integration and sharing. Claim exact
-paths in [the work ledger](../work-items.edn), coordinate shared command/schema
+scope in the corresponding [GitHub issue](https://github.com/tolgraven/tolglow/issues), coordinate shared command/schema
 changes and add behavioral tests before marking a narrow milestone done. The
 initial implementation should demonstrate real end-to-end slices with injected
 transports; later physical or external-service checks are separately selected.

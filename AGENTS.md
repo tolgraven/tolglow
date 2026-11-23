@@ -29,7 +29,7 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 ## Development contract
 
 - Run `./bin/test pure` and applicable `./bin/test parity` against the paired
-  fork. Run `clojure -M:check-roadmap` after tracking changes. Frontend changes
+  fork. Frontend changes
   require the configured production build plus fresh browser interaction
   checks; desktop viewport emulation does not prove real iPad Safari behavior.
   See [testing](docs/testing.md) for exact scope and observed results.
@@ -68,8 +68,7 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 ## Parallel work and completion
 
-- Claim exact disjoint paths in `docs/work-items.edn` with owner and prerequisites
-  before editing. Coordinate public contract changes across consumers first.
+- Use [GitHub Issues](https://github.com/tolgraven/tolglow/issues) for scope, ownership, prerequisites and evidence. Coordinate overlapping edits and shared public contracts with the other owners.
 - Record actual commands, outcomes and limits before marking a milestone done.
   Completed v1 modules do not complete broader roadmap items. Keep source audit,
   focused test, integrated test, browser and physical device evidence distinct.

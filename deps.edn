@@ -11,8 +11,6 @@
                   :extra-deps {thheller/shadow-cljs {:mvn/version "3.5.14"}
                                re-frame/re-frame {:mvn/version "1.4.7"}
                                reagent/reagent {:mvn/version "2.0.1"}}}
-           :check-roadmap {:extra-paths ["dev"]
-                          :main-opts ["-m" "tolglow.check-roadmap"]}
            :test {:extra-paths ["test" "dev"]
                   :jvm-opts ["-Djava.awt.headless=true"]
                   :main-opts ["-m" "tolglow.test-runner"]}}}

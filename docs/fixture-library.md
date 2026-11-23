@@ -8,7 +8,7 @@ physical instance with an address, position and calibration.
 The implementation covers ordinary OFL, QLC+ QXF and a bounded subset of GDTF
 1.1/1.2. It does not claim complete support for these specifications or for all
 proprietary console formats. The broader fixture roadmap remains in
-[work-items.edn](work-items.edn), with product requirements in
+[GitHub Issues](https://github.com/tolgraven/tolglow/issues), with product requirements in
 [product/integrations.md](product/integrations.md).
 
 ## Operator workflow

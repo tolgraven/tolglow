@@ -61,8 +61,7 @@ Processing sketches or open devices. Capture output and inject transport shells.
 
 Run focused behavioral tests, then applicable integration lanes. Record exact
 scope and counts; distinguish a pure module from a complete UI/workflow and a
-source-derived protocol from physical hardware evidence. Use the work ledger
-for exclusive ownership rather than conflicting implementations of shared APIs.
+source-derived protocol from physical hardware evidence. Coordinate ownership of shared APIs in [GitHub Issues](https://github.com/tolgraven/tolglow/issues).
 
 ## Expanded performance work
 

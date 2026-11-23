@@ -27,10 +27,6 @@ jobs:
       - name: Run explicit test lane
         working-directory: tolglow
         run: ./bin/test "${{ matrix.suite }}"
-      - name: Validate work tracking
-        if: matrix.suite == 'pure'
-        working-directory: tolglow
-        run: clojure -M:check-roadmap
   studio:
     runs-on: ubuntu-latest
     steps:
