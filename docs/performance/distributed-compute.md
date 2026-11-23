@@ -88,7 +88,7 @@ The Linux bundle harness covers application shaders, admission, independent veri
 
 ### Captured audience results
 
-Two independent Chromium 156 processes on the shared four-vCPU Linux machine ran the full-app WebGL2 bundle through ANGLE/SwiftShader. Each process received and rendered genuine fused programs for 64 moving heads. The UDP receiver matched every captured byte to its separate CPU show, with zero partial frames in all three runs. The host recorded no rejected fields. Output frame counts include presentations while the renderer reused its last complete result. These counts and the number of computed batches therefore measure different work.
+Two independent Chromium 156 processes on the shared four-vCPU Linux machine ran the full-app WebGL2 bundle through ANGLE/SwiftShader. The test stage forwards each request and reply through Playwright’s local browser debugging connection. That extra transfer, JVM scheduling and software rendering all contribute to the measured time. Each process received and rendered genuine fused programs for 64 moving heads. The UDP receiver matched every captured byte to its separate CPU show, with zero partial frames in all three runs. The host recorded no rejected fields. Output frame counts include presentations while the renderer reused its last complete result. These counts and the number of computed batches therefore measure different work.
 
 | Host policy | Target Hz / budget ms | Two-universe frames | UDP packets | Completed remote batches | Deadline misses | Local fallbacks | Successful median ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -99,3 +99,5 @@ Two independent Chromium 156 processes on the shared four-vCPU Linux machine ran
 At 40 Hz the two guests sent 997 and 1,087 result messages. The host verified one paired slice, four independently chosen sentinel rows and 15 full slices, some after the deadline. The host accepted 12 complete batches in time. The intentional departure forced an in-flight fallback and the surviving guest prepared the revised 17-layer shader. This shared CPU-rendered run depended heavily on local rendering. The successful median excludes deadline misses.
 
 [Raw host and guest receipts, screenshot and animation](https://github.com/tolgraven/tolglow/tree/1fce380357a282725c337ebe7c04335373069508)
+
+The production Apple Network.framework framing and encryption also ran on a macOS 15 ARM64 GitHub runner using Xcode 16.4. Twelve 16,384-byte loopback round trips measured 0.407 ms median and 40,280,270 returned bytes/s. The native probe checked replay and direction binding. The same job built the unsigned iPhone, Watch, App Clip and stage bridge and confirmed the GPU bundle ships only in the full app. It measured the Mac's local networking stack. The two-phone procedure above adds the actual radios and participant devices. [macOS build and loopback receipt](https://github.com/tolgraven/tolglow/actions/runs/45161685236/job/137649507346)
