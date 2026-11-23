@@ -72,7 +72,7 @@
 
 (def ^:private paint [[1.0 0.1 0.2] [0.2 1.0 0.5] [0.12 0.4 1.0] [1.0 0.8 0.1]])
 
-(defn- field-id [i] (str "venue-field-" i))
+(defn field-id [i] (str "venue-field-" i))
 
 (defn- new-show [model scalar?]
   (let [sink (bench/capture-sink)
@@ -89,7 +89,9 @@
     (when-not (= :accepted (:status @r))
       (throw (ex-info "Show rejected benchmark command" {:ack @r})))))
 
-(defn- seed-model [model shapes]
+(defn seed-model
+  "Launch the weighted volumes in their four grid cells and return the prepared show."
+  [model shapes]
   (let [{:keys [runtime]} (new-show model false)]
     (try
       (let [spawn (fn [i shape]
@@ -186,7 +188,9 @@
 (defn- emitter [fixture]
   (cond-> fixture (get-in fixture [:channels :pan]) (assoc :beam-angle 24.0 :lens-radius-m 0.05)))
 
-(defn- venue [pixels]
+(defn venue
+  "Build the sculpture, its 64 moving-head patches and the room bounds."
+  [pixels]
   (-> (bench/corpus pixels 64 :sculpture)
       (update-in [:model :rig :fixtures] #(mapv emitter %))
       (assoc-in [:model :rig :room] {:width 24.0 :height 9.0 :depth 24.0})

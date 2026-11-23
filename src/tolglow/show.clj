@@ -296,6 +296,7 @@
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
+      :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0)
@@ -1792,11 +1793,13 @@
   (tick! runtime nil slot))
 
 (defn start!
-  "Start the scheduled show in preview, or explicitly select :ola or :artnet output."
+  "Start the scheduled show in preview or with :ola or :artnet. An embedded
+  host may supply its own sink opener. The show takes ownership of that sink."
   ([] (start! {}))
-  ([{:keys [frame-rate] :or {frame-rate 40} :as options}]
+  ([options] (start! options output/open-sink!))
+  ([{:keys [frame-rate] :or {frame-rate 40} :as options} open-sink!]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (output/open-sink! options)
+   (let [sink (open-sink! options)
          runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
                                               {:sink sink :independent-output? true}))
                       (catch Throwable error

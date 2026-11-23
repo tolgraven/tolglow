@@ -12,6 +12,14 @@
    :evidence ["Afterglow PR 89 and the paired host use a phase-locked producer and publisher, a measured render and wake-up reserve, and strict direct or delayed buffered completion windows. The host regression captures two effect workers, audio input, a Link seek, pause, resume and restart. The paired performance job records full release-clock timing and actual sink calls for 1,024 pixels and 128 movers. Tolglow PR 181 replays independent and conflicting effect groups against serial packets, states and events."
               "A two-worker one-shot emits its final full-bright DMX frame, retires, and retains its actual step count in the physical replay. Persistent wash, aim and pulse observations distinguish direct samples, future endpoint sampling, and interpolation."
               "The browser observation rehearsal compares the actual worker and main-thread presented pixels with a consumer's show graph value. It covers zero-demand reads, producer epochs, presented show frame IDs, distinct-value transport and final disposal. Physical GPU timing remains open."]}
+  {:id :performance/live-weighted-publication
+   :title "Measure independent 40 Hz ArtDMX publication under weighted volume motion"
+   :kind :research :status :in-progress :owner "Adaptive and perceptual scheduling"
+   :paths ["tolglow/dev/tolglow/perf/weighted_live.clj" "tolglow/dev/tolglow/perf/weighted_live" "tolglow/docs/performance/live-weighted-publication.md"]
+   :depends-on [:runtime/publication-clock]
+   :acceptance ["Run 20,000 RGBW pixels, 64 moving heads, four position-and-beam volumes, the mixed chart and eight washes using the production show scheduler."
+                "Report complete, timely, fresh, held and missing slots, show real moving-head and RGBW bytes, bound control backlog, and retain the source-paired raw observations."]
+   :evidence ["The live probe observes physical ArtDMX handoff, four independently acknowledged positions, actual effect sampling and process allocation over the measured time window."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"
    :kind :research :status :in-progress :owner "Mixed venue profiling"
