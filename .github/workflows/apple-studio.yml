@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with: {path: tolglow}
+      - name: Verify the deployment tools
+        working-directory: tolglow
+        run: python3 native/Tests/test_apple_distribution.py
       - name: Read the paired revision exercised by the architecture suite
         id: fork
         run: |
@@ -64,6 +67,14 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v4
         with: {name: studio-runtime, path: build}
+      - name: Prepare the Apple project generator
+        run: command -v xcodegen || brew install xcodegen
+      - name: Build the iPhone and iPad simulator app with its Watch app and App Clip
+        run: native/Packaging/archive-companion build/companion
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Tolglow-Companion-simulator
+          path: build/companion
       - name: Install verified Apple Silicon GraalVM Community build
         run: |
           base=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.5.5.0.3
@@ -75,7 +86,6 @@ jobs:
           echo "JAVA_HOME=$RUNNER_TEMP/graal/Contents/Home" >> "$GITHUB_ENV"
       - name: Build standalone app and run a real show with bundled Java
         run: |
-          command -v xcodegen || brew install xcodegen
           native/Packaging/bundle-macos build/studio.jar "$PWD/build/deliverables" build
           native/Tests/check_source_archive "build/deliverables/Tolglow Studio.app/Contents/Resources"
           python3 native/Tests/check_packaged_studio.py "build/deliverables/Tolglow Studio.app"
@@ -91,4 +101,6 @@ jobs:
           path: |
             build/media/studio.png
             build/media/studio.gif
+            build/media/stage-invitation.png
+            build/media/stage.gif
             build/media/launch.log

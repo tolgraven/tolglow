@@ -11,7 +11,8 @@ cat > "$show/show.clj" <<'SHOW'
 (defn ready [context _]
   (spit "window-port" (get-in context [:modules :web-server :port]))
   {})
-(def config {:init {:components [:show] :modules [:web-server :ready]
+(def config {:show {:credential-path (str (System/getProperty "user.dir") "/credentials.edn")}
+             :init {:components [:show] :modules [:web-server :ready]
                     :search-in-namespaces ['show]}})
 SHOW
 xcrun swiftc native/Tests/window-id.swift -o "$out/window-id"
@@ -56,4 +57,14 @@ for i in range(12):
     frames.append(image)
 assert len({frame.tobytes() for frame in frames}) >= 3, "Expected visible cue launches in the captured window"
 frames[0].save(root / "studio.gif", save_all=True, append_images=frames[1:], duration=250, loop=0)
+PY
+xcrun swiftc native/macOS/StudioNavigation.swift native/Tests/capture-stage.swift -o "$out/capture-stage"
+"$out/capture-stage" "http://127.0.0.1:$port" "$out"
+"$out/tools/bin/python" - "$out" <<'PY'
+import sys
+from pathlib import Path
+from PIL import Image
+root = Path(sys.argv[1])
+frames = [Image.open(root / f"stage-{stage}.png").convert("RGB") for stage in ("ready", "invitation", "closed")]
+frames[0].save(root / "stage.gif", save_all=True, append_images=frames[1:], duration=[1300, 2300, 1200], loop=0)
 PY

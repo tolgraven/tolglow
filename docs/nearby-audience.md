@@ -1,5 +1,7 @@
 # Dance floor participation
 
+The packaged Mac app lets an operator start a stage, save its QR image, and close the invitation under **Connections → Stage invitation**. The QR is specific to that running stage. [Operator setup and Apple deployment](apple-audience-deployment.md)
+
 The full iPhone app and the lightweight Dance floor App Clip have a common **Find nearby stages** action. The Mac bridge advertises a Bluetooth LE service, so the venue and phone can have different Wi-Fi connections or no Wi-Fi association. Installing the app or fetching a Clip for the first time still requires access to Apple’s distribution service. A guest chooses the stage and input. Leaving or losing the stage ends capture. Backgrounding the phone stops its camera and motion capture. In the full app a guest may keep an already joined Watch sharing while the phone locks. Incoming Watch samples drive BLE writes in that mode. The Clip uses foreground participation.
 
 | Input | Available in | What the stage receives |

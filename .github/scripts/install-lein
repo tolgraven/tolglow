@@ -4,7 +4,7 @@ set -euo pipefail
 version=2.13.1
 lein_dir="$RUNNER_TEMP/tolglow-lein"
 mkdir -p "$lein_dir"
-curl --fail --location --retry 3 \
+curl --fail --location --retry 3 --retry-all-errors \
   "https://github.com/technomancy/leiningen/releases/download/$version/leiningen-$version-standalone.jar" \
   --output "$lein_dir/lein.jar"
 printf '2e4c36cbaef717d0fa589a1f95e4c526a1cb6c35b48dc92e6dbb30d6f8595b5c  %s\n' "$lein_dir/lein.jar" | sha256sum --check -
