@@ -9,7 +9,7 @@ struct RigCalibrationView: View {
     @State private var verifiedAxes = false
     var body: some View {
         NavigationStack {
-            ScrollView {
+            ScrollViewReader { proxy in ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     NavigationLink {
                         FogCalibrationView()
@@ -37,7 +37,7 @@ struct RigCalibrationView: View {
                         }
                     }.buttonStyle(.bordered).controlSize(.large)
                     if scanner.running {
-                        RigCameraView(scanner: scanner).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18))
+                        RigCameraView(scanner: scanner).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18)).id("camera")
                         Picker("Tap identifies", selection: $scanner.selectedKind) {
                             Text("Floor origin").tag("origin"); Text("Floor +Z").tag("heading")
                             Text("Lens").tag("lens"); Text("Beam spot").tag("beam")
@@ -82,10 +82,26 @@ struct RigCalibrationView: View {
                             candidate(candidates[index])
                         }
                     }
-                    Text(client.status).font(.callout).textSelection(.enabled)
+                    Text(client.status).font(.callout).textSelection(.enabled).id("result")
                     Text("Tap-assisted capture is available here. Automatic lens/blob detection, mesh export and validated hardware calibration accuracy remain development work.")
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding()
+            }
+            .onReceive(SimulatorEvidence.timer) { _ in
+                guard SimulatorEvidence.scene == "plane" else { return }
+                if let cmd = SimulatorEvidence.next() {
+                    switch cmd {
+                    case "connect": origin = "http://localhost:8396"; client.connect(origin)
+                    case "camera": scanner.start()
+                    case "measure": scanner.replayPlane(); surfaceName = "booth-wall"
+                    case "save": client.saveSurface(named: surfaceName)
+                    default: break
+                    }
+                    let target = cmd == "save" ? "result" : "camera"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { withAnimation { proxy.scrollTo(target, anchor: .top) } }
+                }
+                SimulatorEvidence.note("connected=\(client.connected) measured=\(scanner.surface != nil) " + client.status)
+            }
             }.navigationTitle("Rig scan").navigationBarTitleDisplayMode(.inline)
         }
     }

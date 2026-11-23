@@ -9,7 +9,17 @@ final class MeterPreviewView: UIView {
         super.layoutSubviews()
         guard samplingArea.superlayer != nil else { return }
         let area = preview.layerRectConverted(fromMetadataOutputRect: CGRect(x: 0.375, y: 0.375, width: 0.25, height: 0.25))
-        samplingArea.path = UIBezierPath(rect: area).cgPath
+        if SimulatorEvidence.scene == "meter" {
+            let bounds = self.bounds
+            let drawing = UIGraphicsImageRenderer(size: bounds.size).image { context in
+                let c = context.cgContext
+                c.setFillColor(UIColor(white: 0.22, alpha: 1).cgColor); c.fill(bounds)
+                let tile = bounds.insetBy(dx: bounds.width * 0.25, dy: bounds.height * 0.20)
+                c.setFillColor(UIColor(white: 0.46, alpha: 1).cgColor); c.fill(tile)
+            }
+            preview.contents = drawing.cgImage
+            samplingArea.path = UIBezierPath(rect: bounds.insetBy(dx: bounds.width * 0.375,dy: bounds.height * 0.375)).cgPath
+        } else { samplingArea.path = UIBezierPath(rect: area).cgPath }
     }
 }
 

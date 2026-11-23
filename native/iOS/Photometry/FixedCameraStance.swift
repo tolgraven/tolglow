@@ -11,6 +11,7 @@ import TolglowSensorCore
     private var generation = UUID()
     private var latest: CMDeviceMotion?
     func start() throws {
+        if SimulatorEvidence.scene == "meter" { return }
         guard manager.isDeviceMotionAvailable else { throw BrightnessCaptureFailure("Device motion is unavailable.") }
         let token = generation
         manager.deviceMotionUpdateInterval = 0.1
@@ -25,6 +26,7 @@ import TolglowSensorCore
         }
     }
     func verify(lock: Bool = false) throws {
+        if SimulatorEvidence.scene == "meter" { return }
         guard let m = latest, abs(ProcessInfo.processInfo.systemUptime - m.timestamp) < 0.5 else {
             throw BrightnessCaptureFailure("Wait for a steady camera mount and fresh motion data.")
         }

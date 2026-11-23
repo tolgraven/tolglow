@@ -31,7 +31,17 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
         super.init()
         session.delegate = self; session.delegateQueue = .main
     }
+    func replayPlane() {
+        surface = VenueSurface(boundary: [SIMD3(-2,0,-1),SIMD3(2,0,-1),SIMD3(2,0,1),SIMD3(-2,0,1)],
+                               transform: SimulatorEvidence.transform, identifier: UUID(), worldID: worldID, alignment: SimulatorEvidence.axes)
+        status = "Review the outlined rectangle and its dimensions before saving."
+    }
     func start() {
+        if SimulatorEvidence.scene == "plane" {
+            worldToRig = SimulatorEvidence.axes; selectedKind = "surface"; running = true
+            status = "Tap inside the tracked plane to freeze its measurement."
+            return
+        }
         let token = permissionGeneration
         guard ARWorldTrackingConfiguration.isSupported,
               ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else {
@@ -191,7 +201,8 @@ struct RigCameraView: UIViewRepresentable {
     let scanner: RigScanner
     func makeCoordinator() -> Coordinator { Coordinator(scanner: scanner) }
     func makeUIView(context: Context) -> ARSCNView {
-        let view = ARSCNView(); view.session = scanner.session
+        let view = ARSCNView()
+        if SimulatorEvidence.scene == "plane" { SimulatorEvidence.room(view) } else { view.session = scanner.session }
         view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:))))
         return view
     }

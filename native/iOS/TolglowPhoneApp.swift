@@ -69,7 +69,15 @@ import TolglowSensorCore
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            PhoneRoot(model: model)
+            Group {
+                if SimulatorEvidence.scene == "plane" {
+                    RigCalibrationView(client: model.rigCalibration, scanner: model.rigCalibration.scanner)
+                        .safeAreaInset(edge: .top) { SimulatorEvidence.badge("iOS Simulator · synthetic AR plane and Studio receipts") }
+                } else if SimulatorEvidence.scene == "meter" {
+                    NavigationStack { SurfaceReflectanceView() }
+                        .safeAreaInset(edge: .top) { SimulatorEvidence.badge("iOS Simulator · synthetic camera and output receipts") }
+                } else { PhoneRoot(model: model) }
+            }
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in if phase == .background { model.suspend() } }
         }

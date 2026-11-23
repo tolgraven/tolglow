@@ -27,7 +27,9 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 
     private var fogFeed: FogCameraFeed?
 
+    var syntheticIndex = 0
     func start(shutter: Int32, fogFeed: FogCameraFeed? = nil) async throws {
+        if SimulatorEvidence.scene == "meter" { return }
         guard await AVCaptureDevice.requestAccess(for: .video) else {
             throw BrightnessCaptureFailure("Allow camera access in iPhone Settings to measure light.")
         }
@@ -108,7 +110,12 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     }
 
     func measureFrames() async throws -> [Double] {
-        try await withCheckedThrowingContinuation { resume in
+        if SimulatorEvidence.scene == "meter" {
+            let levels = [0.04,0.34,0.06,0.21,0.04,0.34]
+            let value = levels[syntheticIndex % levels.count]; syntheticIndex += 1
+            try await Task.sleep(for: .milliseconds(420)); return Array(repeating: value, count: 15)
+        }
+        return try await withCheckedThrowingContinuation { resume in
             queue.async {
                 guard self.pending == nil, self.session.isRunning else {
                     resume.resume(throwing: BrightnessCaptureFailure("Camera is unavailable.")); return

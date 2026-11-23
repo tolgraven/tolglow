@@ -17,7 +17,7 @@ struct SurfaceReflectanceView: View {
     }
 
     var body: some View {
-        Form {
+        ScrollViewReader { proxy in Form {
             Section("Room and fixture") {
                 TextField("Studio origin", text: $origin).textInputAutocapitalization(.never)
                     .autocorrectionDisabled().keyboardType(.URL)
@@ -33,7 +33,7 @@ struct SurfaceReflectanceView: View {
                     Text("Choose fixture").tag("")
                     ForEach(client.fixtures.filter { $0.reflectanceCapable == true }) { f in Text(f.name ?? f.id).tag(f.id) }
                 }
-            }.disabled(locked)
+            }.id("setup").disabled(locked)
 
             Section("Reference card") {
                 Text("Aim the fixed light at the receiver center. Mount the phone facing that point. Place a matte neutral card flush against the surface. Keep both free of glare, shadows and fog.")
@@ -64,7 +64,7 @@ struct SurfaceReflectanceView: View {
                             client.captureSurface()
                         }.disabled(client.busy)
                     }
-                }
+                }.id("camera")
                 if let fit = client.surfaceFit, fit.range.count == 2 {
                     Section("Relative diffuse return") {
                         LabeledContent("Compared with card", value: String(format: "%.2f×", fit.ratio))
@@ -72,13 +72,34 @@ struct SurfaceReflectanceView: View {
                         Text(String(format: "Observed range %.1f–%.1f%% including card tolerance and frame variation",
                                     fit.range[0] * 100, fit.range[1] * 100))
                         Button("Save to receiver") { client.applySurface() }.disabled(client.busy)
-                    }
+                    }.id("fit")
                 }
             }
             if locked { Button("Stop and release lights", role: .destructive) { client.stop() } }
-            Text(client.status).font(.callout).textSelection(.enabled)
+            Text(client.status).font(.callout).textSelection(.enabled).id("result")
         }
-        .navigationTitle("Surface reflectance").onDisappear { client.stop() }
+        .onReceive(SimulatorEvidence.timer) { _ in
+            guard SimulatorEvidence.scene == "meter" else { return }
+            if let cmd = SimulatorEvidence.next() {
+                switch cmd {
+                case "connect":
+                    origin = "http://localhost:8396"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { client.connect(origin) }
+                case "select": lamp = "ref"; surfaceID = "scan-booth-wall"; tolerance = 0.01
+                case "arm":
+                    if let r = receiver { client.start(ids: [lamp], shutter: shutter, surface: .init(receiver:r,fraction:0.18,tolerance:0.01)) }
+                case "sample": client.captureSurface()
+                case "save": client.applySurface()
+                default: break
+                }
+                let target = ["arm","sample"].contains(cmd) ? "camera" : cmd
+                if ["camera","fit","result","setup"].contains(target) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { withAnimation { proxy.scrollTo(target, anchor: target == "camera" ? .top : .bottom) } }
+                }
+            }
+            SimulatorEvidence.note("receivers=\(client.receivers.count) running=\(client.running) pairs=\(client.pairCount) busy=\(client.busy) " + client.status)
+        }
+        }.navigationTitle("Surface reflectance").onDisappear { client.stop() }
         .onChange(of: origin) { _, _ in surfaceID = ""; lamp = ""; client.originChanged() }
         .onChange(of: phase) { _, new in if new == .background { client.stop() } }
     }
