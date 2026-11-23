@@ -32,6 +32,7 @@
    :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
+           "tolglow/docs/performance/keyframe-admission.md" "tolglow/docs/performance/captures/admission-cost.edn"
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
