@@ -194,7 +194,10 @@
                    (credentials/file-store
                     (or (:credential-path options)
                         (str (System/getProperty "user.home") "/.config/tolglow/credentials.edn"))))
-         options (-> options (assoc-in [:agent-options :credential-store] store)
+         options (-> options
+                     ;; A show import creates the next REPL manager on the importing thread.
+                     (assoc-in [:repl-options :session-options :class-loader] (clojure.lang.RT/baseLoader))
+                     (assoc-in [:agent-options :credential-store] store)
                      (assoc-in [:sensor-options :credential-store] store)
                      (update :fixture-options #(merge {:limits {:max-cache-bytes 4194304}} %)))
          bundle (prepare model data options)]
