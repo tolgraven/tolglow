@@ -2,19 +2,18 @@
   "Pure presentation shared by the web inspector and device displays."
   (:require [clojure.string :as str]
             [reagent.core :as r]
+            [tolglow.studio.numeric-display :as numeric]
             [thi.ng.color.core :as color]))
 
 (defn label [value]
   (str/replace (cond (keyword? value) (name value) (nil? value) "—" :else (str value)) #"[-_]" " "))
-(defn finite? [value] (and (number? value) (js/Number.isFinite value)))
-(defn number-label [value]
-  (if (finite? value)
-    (str (js/Number (.toPrecision value 5))) "—"))
+(def finite? numeric/finite?)
+(def number-label numeric/number-label)
 (defn value-label [schema value]
   (or (some #(when (= value (:value %)) (or (:label %) (label (:id %)))) (:choices schema))
       (cond (boolean? value) (if value "On" "Off")
-            (number? value) (number-label value)
-            (sequential? value) (str/join " · " (map #(if (number? %) (number-label %) (label %)) value))
+            (number? value) (number-label schema value)
+            (sequential? value) (str/join " · " (map #(if (number? %) (number-label schema %) (label %)) value))
             :else (label value))))
 (defn color-components [value]
   (if (satisfies? color/IRGBConvert value)
@@ -127,12 +126,12 @@
         (when (and base (not= base (:amount model)))
           (let [[x y] (dial-point base 27) [a b] (dial-point base 37)]
             [:line.dial-baseline {:x1 x :y1 y :x2 a :y2 b}
-             [:title (str "Base " (number-label base-value))]]))
+             [:title (str "Base " (number-label schema base-value))]]))
         (let [[x y] (dial-point (:amount model) 32)]
           [:circle.dial-position {:cx x :cy y :r 3}])
         [:text.dial-bound {:x 5 :y 90 :text-anchor "start"} (number-label (first (:bounds model)))]
         [:text.dial-bound {:x 95 :y 90 :text-anchor "end"} (number-label (second (:bounds model)))]])
-     [:text.dial-number {:x 50 :y 48 :text-anchor "middle"} (number-label shown)]
+     [:text.dial-number {:x 50 :y 48 :text-anchor "middle"} (number-label schema shown)]
      [:text.dial-unit {:x 50 :y 63 :text-anchor "middle"} (or unit (if (= :integer (parameter-kind schema)) "steps" "value"))]]))
 
 (defn rotary-control [schema value change! options]
@@ -145,7 +144,7 @@
     [:div.parameter-rotary-control
      {:role "slider" :tab-index 0 :aria-label (or (:name options) (:name schema) "Parameter")
       :aria-valuemin low :aria-valuemax high :aria-valuenow value
-      :aria-valuetext (str (number-label value) (when-let [unit (unit-label schema)] (str " " unit)))
+      :aria-valuetext (str (number-label schema value) (when-let [unit (unit-label schema)] (str " " unit)))
       :on-key-down (fn [event] (when-let [next (keyboard-value schema value (.-key event))]
                                 (.preventDefault event)
                                 (if-let [key-change! (:key-change options)] (key-change! (.-key event)) (change! next))))
@@ -168,7 +167,7 @@
      [:button.axis-trigger {:type "button" :popoverTarget popover-id :aria-haspopup "dialog"
                             :aria-label (str "Edit " title " components")}
       (for [[i schema] (map-indexed vector schemas)]
-        ^{:key i} [:span [:b (:axis-label schema)] (number-label (get values i))])]
+        ^{:key i} [:span [:b (:axis-label schema)] (number-label schema (get values i))])]
      [:div.axis-popover {:id popover-id :popover "auto" :role "dialog" :aria-label (str title " components")}
       [:header [:strong title]
        [:button.text-button {:type "button" :popoverTarget popover-id :popoverTargetAction "hide"} "Done"]]
@@ -180,7 +179,7 @@
           [:label axis]
           (when (numeric-range schema)
             [rotary-control schema v #(change! i %) {:name (str text " rotary")}])
-          [:input {:type "number" :aria-label (str text " value") :value (or v "") :step "any"
+          [numeric/number-input {:display-schema schema :type "number" :aria-label (str text " value") :value (or v "") :step "any"
                    :min (first (:bounds schema)) :max (second (:bounds schema))
                    :on-change (fn [e] (let [n (.. e -target -valueAsNumber)]
                                         (when (and (finite? n) (.. e -target -validity -valid))
@@ -197,7 +196,7 @@
    [:span.typed-component-name title]
    [:div.typed-track
     [:i {:style {:width (str (* 100 (or (proportion schema value) 0)) "%")}}]]
-   [:output (number-label value)]])
+   [:output (number-label schema value)]])
 (defn- choice-view [schema value]
   (let [choices (vec (or (:choices schema) (map #(hash-map :value % :label (label %)) (or (:values schema) (:options schema)))))
         selected (first (keep-indexed #(when (= value (:value %2)) %1) choices))

@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
@@ -117,6 +118,7 @@
   (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
+        definitions (precision/model-definitions (:parameter-precision runtime) model)
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))]
@@ -133,11 +135,12 @@
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
-            :effects (mapv #(assoc % :categories (registry/definition-categories %))
+            :effects (mapv #(assoc (get definitions [% nil]) :categories (registry/definition-categories %))
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :instances (mapv #(-> % (dissoc :state)
+                                  (assoc :definition (get definitions [(:definition %) (:targets %)]))
                                   (assoc :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
@@ -300,6 +303,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
@@ -1395,12 +1399,14 @@
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)]
+  (let [cache (waveforms/create-cache)
+        precision-cache (atom nil)]
     (display/browser-display
      (assoc options :project! (fn [view]
                                 (let [snapshot @(:state runtime)
                                       audio (audio/waveform (connections/audio (:connections runtime)))]
                                   (->> (waveforms/project-display cache (assoc snapshot :runtime-id (:id runtime)) view audio)
+                                       (precision/push-view precision-cache (:model snapshot))
                                        (block-trace/project-display (:id runtime) (:model snapshot)))))))))
 
 (defn connect-device!
