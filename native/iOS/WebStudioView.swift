@@ -36,7 +36,7 @@ struct WebStudioView: View {
             }
         }.padding(.top, 8)
         #if TOLGLOW_EMBEDDED_HOST
-        .sheet(isPresented: $localStudio) { OnDeviceStudio() }
+        .fullScreenCover(isPresented: $localStudio) { OnDeviceStudio() }
         #endif
     }
 }

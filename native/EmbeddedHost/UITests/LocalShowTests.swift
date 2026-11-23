@@ -22,6 +22,9 @@ final class LocalShowTests: XCTestCase {
             open.tap()
             let page = app.webViews.firstMatch
             XCTAssertTrue(page.waitForExistence(timeout: 80))
+            let window = app.windows.firstMatch.frame
+            XCTAssertGreaterThan(page.frame.width, window.width * 0.9)
+            XCTAssertGreaterThan(page.frame.height, window.height * 0.75)
             XCTAssertTrue(page.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Ember"))
                 .firstMatch.waitForExistence(timeout: 60))
             record("running-\(cycle)")
