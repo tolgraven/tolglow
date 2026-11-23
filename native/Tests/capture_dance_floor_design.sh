@@ -67,7 +67,9 @@ p.write_text(s)
 p=Path('iOS/TolglowPhoneApp.swift')
 s=p.read_text().replace('PhoneRoot(model: model)\n                .preferredColorScheme(.dark)', '''Group {
                 if CommandLine.arguments.contains("-joined-fixture") { AudienceView(session: model.audience) }
-                else { PhoneRoot(model: model) }
+                else if CommandLine.arguments.contains("-invitation-fixture") {
+                    AudienceView(session: model.audience, room: String(repeating: "a", count: 64))
+                } else { PhoneRoot(model: model) }
             }.preferredColorScheme(.dark)''')
 p.write_text(s)
 PY
@@ -78,6 +80,10 @@ for platform in iphone ipad; do
   boot "$device_id"
   capture "$device_id" "$platform" before "$clip" "$RUNNER_TEMP/Before.app"
   capture "$device_id" "$platform" after "$clip" "$RUNNER_TEMP/After.app"
+  xcrun simctl uninstall "$device_id" "$clip"
   capture "$device_id" "$platform" joined-fixture org.tolglow.ios "$products/TolglowPhone.app" -joined-fixture
+  if [[ "$platform" == iphone ]]; then
+    capture "$device_id" "$platform" invitation-fixture org.tolglow.ios "$products/TolglowPhone.app" -invitation-fixture
+  fi
   xcrun simctl shutdown "$device_id"
 done
