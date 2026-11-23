@@ -123,7 +123,7 @@
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
         responses? (some #(not= false (:enabled? %)) (:responses model))
-        resolve-inputs (waveforms/resolved-inputs snapshot)
+        resolve-inputs (waveforms/resolved-inputs snapshot response/monitor-middleware)
         optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
@@ -1050,8 +1050,10 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})]
-                     {:parameter-samples params :resolved-param-overrides (:overrides params)
+                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})
+                         random (modulation/captured-overrides model)]
+                     {:parameter-samples params :modulation-view {:overrides random}
+                      :resolved-param-overrides (merge-with merge random (:overrides params))
                       :keyframes (effect-keyframes/restored model)
                       :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
                                (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))

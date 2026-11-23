@@ -153,3 +153,41 @@
     (is (true? (:held? (source {:state held} :level))))
     (is (true? (:pending? (source between :level))))
     (is (nil? (:pending? (source (modulation/advance (:state between) model (fixture/frame 1)) :level))))))
+
+(deftest restored-random-source-matches-the-captured-dmx-before-another-tick
+  (let [packet (atom nil)
+        rt (show/create-runtime {:model (live-model) :sink {:send! (fn [bytes _] (reset! packet (bit-and 255 (first (get bytes 1)))))}})
+        submit! (fn [op body time] (let [ack (show/submit! rt op body)] (show/tick! rt time) @ack))]
+    (try
+      (let [id (:instance-id (submit! :command {:op :cue/launch :cue-id :wash :launch {:targets [:left]}} 0))]
+        (submit! :modulation-start {:id :dice :seed 13 :every {:beats 1} :select {:instance-ids [id]}
+                                    :params [:level] :ranges {:level [0.8 0.8]}} 10)
+        (is (= 204 @packet))
+        (let [source (show/export-show-source rt)
+              schedule #(select-keys (first (get-in @(:state rt) [:model :modulation :controllers])) [:seed :ticks :next-beat])
+              saved (schedule)]
+          (is (= :accepted (:status (submit! :import {:source source} 20))))
+          (let [restored (first (:instances (show/snapshot rt)))]
+            (is (not= id (:id restored)))
+            (is (= 204 @packet))
+            (is (= saved (schedule)))
+            (is (= 0.25 (get-in restored [:parameter-sources :level :base-value])))
+            (is (= 0.8 (get-in restored [:parameter-sources :level :effective-value])))
+            (is (= :random (get-in restored [:parameter-sources :level :sources 0 :type]))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-failed-response-remains-visible-only-on-the-affected-input
+  (let [model (assoc (fixture/model fixture/all-types) :responses
+                     [{:id :gate-envelope :params [:gate :level] :operation :replace :range [0.7 0.7]
+                       :state {:started-at-ms 0}}])
+        rt (show/create-runtime {:model model})]
+    (try
+      (let [params (:parameter-sources (first (:instances (show/snapshot rt))))]
+        (is (string? (get-in params [:gate :error])))
+        (is (= :gate-envelope (get-in params [:gate :sources 0 :id])))
+        (is (string? (get-in params [:gate :sources 0 :error])))
+        (is (nil? (get-in params [:gate :effective-value])))
+        (is (nil? (get-in params [:level :error])))
+        (is (= 0.7 (get-in params [:level :effective-value])))
+        (is (= [{:type :response :id :gate-envelope}] (get-in params [:level :sources]))))
+      (finally (show/stop! rt)))))
