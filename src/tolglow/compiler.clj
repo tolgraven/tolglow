@@ -160,7 +160,7 @@
   ([definition bind-pure match-plan rig]
   (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
-        positions (when block-plan (blocks/positions rig))
+        fixture-index (when block-plan (blocks/fixture-index rig))
         select-fixtures (fixture-selector rig selected)]
     ((if (predictable-outputs? definition) keyframes/predictable identity)
      (fn [{:keys [frame instance state] :as context}]
@@ -227,7 +227,7 @@
                              rows))))
                     fixtures))]
         (-> context
-            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
+            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))))))

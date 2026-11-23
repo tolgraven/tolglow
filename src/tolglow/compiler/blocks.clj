@@ -140,7 +140,7 @@
   (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
           env (:tweens plan)))
 
-(defn positions
+(defn fixture-index
   "Index this rig on first inspection. Effects that nobody views never build the index."
   [rig]
   (when rig (delay (into {} (map (juxt :id identity)) rig))))
