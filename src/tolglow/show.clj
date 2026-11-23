@@ -100,7 +100,7 @@
             [afterglow.control.devices.repl :as devices]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
-  (:import [java.util UUID]
+  (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
 (defn- clock-time [clock]
@@ -190,7 +190,7 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
-(declare prepare-output present-output! heartbeat! submit!)
+(declare prepare-output prepare-safety-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
@@ -279,6 +279,7 @@
                         (:send! sink)
                         (assoc :receipt-capacity 256
                                :prepare-output (fn [buffers id] (prepare-output @runtime-ref buffers id))
+                               :prepare-safety-output (fn [buffers id] (prepare-safety-output @runtime-ref buffers id))
                                :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
@@ -765,6 +766,14 @@
     (if-let [memory @(:fog-deadlines runtime)]
       (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms])))
       packet)))
+
+(defn- prepare-safety-output [runtime universes frame-number]
+  (let [corrected (prepare-output runtime universes frame-number)]
+    (when (and (not (identical? universes corrected))
+               (some (fn [[universe ^bytes bytes]]
+                       (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                     corrected))
+      corrected)))
 
 (defn- present-output! [runtime packet frame-number]
   ((get-in runtime [:sink :send!]) packet frame-number)

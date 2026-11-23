@@ -2,11 +2,55 @@
   (:require [clojure.test :refer [deftest is]]
             [tolglow.show :as show]
             [tolglow.demo :as demo]
+            [tolglow.atmosphere.deadline :as fog-deadline]
             [afterglow.sync.session :as sync-session]
             [afterglow.output.scheduler :as scheduler]))
 
 (defn- bytes-copy [universes]
   (into {} (map (fn [[u data]] [u (mapv #(bit-and (int %) 255) data)])) universes))
+
+(deftest expired-packet-keeps-its-new-look-off-the-wire-and-still-stops-fog
+  (let [clock (atom 0) sent (atom [])
+        runtime (show/create-runtime {:model (demo/model) :workspace-options nil :independent-output? true
+                                      :physical-now-ms #(deref clock)
+                                      :sink {:send! (fn [universes id] (swap! sent conj [id (bytes-copy universes)]))}})
+        publisher (:publisher runtime)
+        owner (update publisher :prepare-output
+                      (fn [prepare]
+                        (fn [buffers id]
+                          (let [prepared (prepare buffers id)]
+                            (when (> id 1) (swap! clock + 26))
+                            prepared))))
+        patch (:compiled @(:patch runtime))
+        universe (first (:universes patch))
+        offer! (fn [slot red]
+                 (let [token (scheduler/begin-frame! owner 0 patch {} false
+                                                     {:slot slot :started-at-ms @clock :deadline-ms (* 25 slot)})
+                       universes (into {} (map (fn [u] [u (byte-array 512)])) (:universes patch))
+                       ^bytes buffer (get universes universe)]
+                   (aset-byte buffer 0 (byte red))
+                   (aset-byte buffer 1 (byte 100))
+                   (swap! (:fog-deadlines runtime) fog-deadline/remember (:frame-id token)
+                          [{:until-ms 50 :off-bytes {[universe 1] 0}}])
+                   (scheduler/complete! owner token {:universes universes})))
+        delivered (fn [] (mapv (fn [[id bytes]] [id (subvec (get bytes universe) 0 2)]) @sent))]
+    (try
+      (offer! 1 10)
+      (reset! clock 25)
+      (scheduler/publish! owner 25)
+      (offer! 2 20)
+      (reset! clock 50)
+      (let [late (scheduler/publish! owner 50)]
+        (is (= [[1 [10 100]] [1 [10 0]]] (delivered)))
+        (is (= {:expired-before-send? true :safety-output? true :sent-at-ms 76}
+               (select-keys late [:expired-before-send? :safety-output? :sent-at-ms]))))
+      (offer! 4 30)
+      (reset! clock 100)
+      (scheduler/publish! owner 100)
+      (is (= 2 (count @sent)) "A cutoff already on the wire does not repeat on another expired packet")
+      (is (= 1 (:safety-publications (scheduler/status owner))))
+      (finally (show/stop! runtime)))))
+
 (deftest real-effect-worker-can-block-while-output-keeps-advancing
   (let [physical (atom 0) sent (atom []) blocked? (atom false)
         entered (promise) release (promise)

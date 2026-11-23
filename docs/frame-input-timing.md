@@ -28,6 +28,11 @@ Inspect timing from the REPL with `(afterglow.output.scheduler/status
 nominal slot, actual render entry, input capture start, show time, beat,
 handoff, actual send call, return and lower source input age at the sink.
 
+When final preparation misses a slot, the publisher can still apply retired
+fixture off values and fog cutoffs to the last physically sent bytes. This
+send is marked `:safety-output?`. The regular frame expires, and the held frame's
+other channels retain their last physical values.
+
 ```sh
 AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run -m \
   tolglow.perf.output-deadlines /tmp/output-deadlines.edn 120 240
