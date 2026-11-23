@@ -5,69 +5,18 @@
       {
         "camera": "audience",
         "sample": {
-          "received-ns": 176316339619696,
-          "producer": "0dcfca22-9a67-4296-93ed-969546cb012b",
+          "received-ns": 180662476526205,
+          "producer": "e7a596d1-9432-4b56-910e-ae2bf7ace7c1",
           "value": [
-            129,
-            101,
-            107
+            91,
+            68,
+            74
           ],
           "source": "center-rgb",
-          "frame-number": 2430,
-          "sequence": 2,
-          "completed-ms": 63036.30000001192,
-          "sampled-ms": 62857.56999999285,
-          "show": {
-            "show-id": "main",
-            "epoch": 0
-          }
-        },
-        "reads": 3
-      },
-      {
-        "camera": "overview",
-        "sample": {
-          "received-ns": 176330652362623,
-          "producer": "0dcfca22-9a67-4296-93ed-969546cb012b",
-          "value": [
-            113,
-            100,
-            112
-          ],
-          "source": "center-rgb",
-          "frame-number": 3153,
-          "sequence": 5,
-          "completed-ms": 77350.8599999845,
-          "sampled-ms": 77161.68999999762,
-          "show": {
-            "show-id": "main",
-            "epoch": 0
-          }
-        },
-        "reads": 6
-      }
-    ],
-    "readsBeforeDemand": 0,
-    "readsAfterRelease": 0
-  },
-  {
-    "renderer": "main",
-    "measurements": [
-      {
-        "camera": "audience",
-        "sample": {
-          "received-ns": 176477572138840,
-          "producer": "2f675847-5856-40c1-93f7-4871f607143d",
-          "value": [
-            123,
-            102,
-            109
-          ],
-          "source": "center-rgb",
-          "frame-number": 8847,
+          "frame-number": 761,
           "sequence": 3,
-          "completed-ms": 73271.96000000834,
-          "sampled-ms": 66491.90500000119,
+          "completed-ms": 18746.580000013113,
+          "sampled-ms": 18738.680000007153,
           "show": {
             "show-id": "main",
             "epoch": 0
@@ -78,18 +27,18 @@
       {
         "camera": "overview",
         "sample": {
-          "received-ns": 176498229714954,
-          "producer": "2f675847-5856-40c1-93f7-4871f607143d",
+          "received-ns": 180663564104088,
+          "producer": "e7a596d1-9432-4b56-910e-ae2bf7ace7c1",
           "value": [
-            112,
-            100,
-            110
+            82,
+            70,
+            79
           ],
           "source": "center-rgb",
-          "frame-number": 9861,
-          "sequence": 5,
-          "completed-ms": 93936.77500000596,
-          "sampled-ms": 92581.90500000119,
+          "frame-number": 859,
+          "sequence": 4,
+          "completed-ms": 19820.659999996424,
+          "sampled-ms": 19807.37999999523,
           "show": {
             "show-id": "main",
             "epoch": 0
@@ -99,6 +48,61 @@
       }
     ],
     "readsBeforeDemand": 0,
-    "readsAfterRelease": 0
+    "readsAfterRelease": 0,
+    "abandonedBitmapClosed": true,
+    "expiredPixelReadbacks": 0
+  },
+  {
+    "renderer": "main",
+    "measurements": [
+      {
+        "camera": "audience",
+        "sample": {
+          "received-ns": 180704813390601,
+          "producer": "40d1a2a4-bd20-49e3-b76f-598b48a3e3dc",
+          "value": [
+            139,
+            104,
+            105
+          ],
+          "source": "center-rgb",
+          "frame-number": 2488,
+          "sequence": 2,
+          "completed-ms": 27926.864999979734,
+          "sampled-ms": 26732.819999992847,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 3
+      },
+      {
+        "camera": "overview",
+        "sample": {
+          "received-ns": 180737022723235,
+          "producer": "40d1a2a4-bd20-49e3-b76f-598b48a3e3dc",
+          "value": [
+            113,
+            102,
+            114
+          ],
+          "source": "center-rgb",
+          "frame-number": 3796,
+          "sequence": 5,
+          "completed-ms": 60136.44499999285,
+          "sampled-ms": 59847.50999999046,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 5
+      }
+    ],
+    "readsBeforeDemand": 0,
+    "readsAfterRelease": 0,
+    "abandonedBitmapClosed": true,
+    "expiredPixelReadbacks": 0
   }
 ]
