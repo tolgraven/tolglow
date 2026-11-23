@@ -114,9 +114,9 @@
              (when clock-bound? (signal-environment model instance)) (dissoc request :input-key)]]
     (or (get-in @cache [:entries key])
         (let [result (preview snapshot request)]
-          (swap! cache (fn [{:keys [entries order]}]
+          (swap! cache (fn [{:keys [entries order] :as state}]
                          (let [order (vec (take-last 64 (conj (filterv #(not= key %) order) key)))]
-                           {:order order :entries (assoc (select-keys entries order) key result)})))
+                           (assoc state :order order :entries (assoc (select-keys entries order) key result)))))
           result))))
 
 (defn display-audio
@@ -157,7 +157,7 @@
                     (get-in @inputs [:instance :params])
                     (merge (:params instance) (get overrides (:id instance))))
         reading (when (and visible? (seq (:parameters view)))
-                  (parameter-display/readings snapshot instance view (fn [_] @inputs)))]
+                  (parameter-display/readings cache snapshot instance view (fn [_] @inputs)))]
     (cond-> (update (assoc view :visualization-clock clock :runtime-id (or (:runtime-id view) (:runtime-id snapshot) (:show-id model))) :parameters
                     (fn [parameters]
                       (mapv (fn [parameter]

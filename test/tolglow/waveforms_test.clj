@@ -289,3 +289,27 @@
       (let [row (first (:parameters (waveforms/project-display (waveforms/create-cache) (fixture) config nil)))]
         (is (= 0.25 (:base-value row) (:effective-value row)))
         (is (nil? (:source-state row)))))))
+
+(deftest an-unchanged-target-bank-scans-the-rig-once
+  (let [scans (atom 0)
+        counted (fn [rear-name]
+                  (let [fixtures [{:id :front} {:id :rear :name rear-name}]]
+                    (reify clojure.lang.IReduceInit
+                      (reduce [_ f init] (swap! scans inc) (reduce f init fixtures)))))
+        state (-> (fixture)
+                  (assoc-in [:model :rig :fixtures] (counted "Rear"))
+                  (assoc-in [:model :instances "0:1" :targets] [:rear :front])
+                  (assoc-in [:model :instances "0:1" :definition :blocks [:params :width]] [:optics/water])
+                  (update-in [:model :instances "0:1"] vary-meta assoc ::runtime/observe (constantly {:result 0.5})))
+        view {:instance-id "0:1" :epoch 0 :definition-version 1 :parameters [{:param :width}]}
+        cache (waveforms/create-cache)
+        target (fn [state view] (get-in (waveforms/project-display cache state view nil) [:parameters 0 :sample-fixture]))]
+    (is (= {:id :rear :name "Rear"} (target state view) (target state view)))
+    (waveforms/cached-preview cache state {:instance-id "0:1" :parameter :waveform})
+    (is (= :rear (:id (target state view))))
+    (is (= 1 @scans))
+    (is (= :front (:id (target state (assoc view :target-id :front)))))
+    (is (= :front (:id (target (assoc-in state [:model :instances "0:1" :targets] [:front]) view))))
+    (let [renamed (assoc-in state [:model :rig :fixtures] (counted "South rear"))]
+      (is (= {:id :rear :name "South rear"} (target renamed view) (target renamed view))))
+    (is (= 4 @scans))))
