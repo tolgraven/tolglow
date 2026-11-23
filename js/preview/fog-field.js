@@ -1,3 +1,5 @@
+import {fogTransmission, fogAbsorptance} from './fog-optics.generated.js';
+
 // Local visual fluid approximation; never authoritative fixture/effect state.
 // Fixed steps, semi-Lagrangian transport and stable explicit diffusion. This is
 // deliberately bounded rather than a pressure-projected CFD solver.
@@ -26,8 +28,8 @@ export function intersectRoom(origin, direction, room) {
 }
 
 export function integrateHomogeneous(density, distance, incident = 0, albedo = 0.92) {
-  const transmittance = Math.exp(-Math.max(0, density) * Math.max(0, distance));
-  return { transmittance, inscatter: incident * albedo * (1 - transmittance) };
+  const transmittance = fogTransmission(1, density, distance);
+  return { transmittance, inscatter: incident * albedo * fogAbsorptance(1, density, distance) };
 }
 
 // Convex positive cone, clipped to the requested view-ray interval. Range is
