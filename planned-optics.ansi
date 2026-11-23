@@ -1,0 +1,25 @@
+[2mGH_REPO=tolgraven/tolglow[0m
+
+[1;36m$ [0mgh issue view 227 --json state,title,url,body --jq '.state, .title, .url, .body' | sed '/^## Original requests/,$d'
+OPEN
+Realistic optics, shaped fog injection and evolving room haze
+https://github.com/tolgraven/tolglow/issues/227
+## Acceptance
+
+- [ ] Persistent density with emission/advection/diffusion/dissipation
+- [ ] Dense shaped plumes evolve into haze
+- [ ] No volumetric beam in clear air while lit surfaces remain
+- [ ] Mobile quality/performance budgets and visual references
+
+## Evidence
+
+- Tolglow venue_fog_test and test/js/preview/fog-gpu.test.mjs cover elapsed DMX emission, clearing tails and depth. dev/preview/fog-visual-qa.mjs and docs/media/venue-fog retain dry, plume and room-haze captures.
+
+## Notes
+
+Validate plume shape, settling haze and light transport against a calibrated physical room and record sustained mobile frame times.
+
+## Dependencies
+
+#226
+

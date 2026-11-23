@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/tolgraven/tolglow/issues",
+  "captured_utc": "2026-11-23T17:25:54Z",
+  "method": "Actual GH CLI stdout with a public-only issue field selection, rendered in xterm.js under Chromium",
+  "issues": [
+    199,
+    200,
+    227
+  ],
+  "viewport": [
+    1310,
+    670
+  ],
+  "sha256": {
+    "completed-baseline.ansi": "77daab71cab95cd2e8c7f29d6ffda8326c77b3102af00cb026590d7a3e94f7db",
+    "completed-baseline.png": "2b2cc262eea2a115e83c056a1fe5e53118d4ae48c63e4782cd39c1d79508afb4",
+    "issue-tracker.gif": "1d23a353d5840798f06104a284f7033c3b15359ac1e04a3020dde7608f9f5dd9",
+    "planned-optics.ansi": "4688acedf057834ebf2ab5501d014a85bb9f152bb26af0b586b03dc7f519a1f0",
+    "planned-optics.png": "1994b52b6af3d957227b0c3a5e1864248fd9377b1531f56aaec7a0ecb1c50cff",
+    "project-filters.ansi": "17792389132c938f74396adcd4e1b5b1f941a3bb93ad70718df83b04f51250a3",
+    "project-filters.png": "500c211e188cd23c7f2f88148a1eebb0cf8993f88c7c4e9ab0c0523acd683c17",
+    "reproduce.sh": "463afb6d20f1ba8de539fd47e8253e3a5345c6f183cf053b89cb8c4d8a868d67"
+  }
+}

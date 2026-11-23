@@ -1,0 +1,21 @@
+[2mGH_REPO=tolgraven/tolglow[0m
+
+[1;36m$ [0mgh issue list --state open --label 'project: afterglow' --limit 4
+
+Showing 4 of 19 issues in tolgraven/tolglow that match your search
+
+ID    TITLE                                              LABELS                                            UPDATED
+#307  Measure visual loss and tune adaptive multi-ra...  project: afterglow, project: tolglow, in prog...  about 3 minutes ago
+#305  Compile ordered active contributions into a si...  project: afterglow, in progress                   about 3 minutes ago
+#304  Use remote client GPU compute for real fixture...  project: afterglow, project: tolglow, in prog...  about 3 minutes ago
+#303  Format live values and fine-control steps at t...  project: afterglow, project: tolglow, in prog...  about 3 minutes ago
+
+[1;36m$ [0mgh issue list --state closed --label 'project: tolglow' --search 'sort:created-asc' --limit 3
+
+Showing 3 of 97 issues in tolgraven/tolglow that match your search
+
+ID    TITLE                                              LABELS                                            UPDATED
+#199  Map actual repositories, behavior and compatib...  documentation, project: tolglow                   about 8 minutes ago
+#200  Establish genuine pure and legacy characteriza...  project: afterglow, project: tolglow              about 7 minutes ago
+#201  Specify all requested capabilities and agent b...  documentation, project: afterglow, project: t...  about 7 minutes ago
+

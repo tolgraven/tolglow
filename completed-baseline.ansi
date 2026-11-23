@@ -1,0 +1,27 @@
+[2mGH_REPO=tolgraven/tolglow[0m
+
+[1;36m$ [0mgh issue view 200 --json state,title,url,body --jq '.state, .title, .url, .body' | sed '/^## Original requests/,$d'
+CLOSED
+Establish genuine pure and legacy characterization lanes
+https://github.com/tolgraven/tolglow/issues/200
+## Acceptance
+
+- [x] Existing source runs without hardware
+- [x] Tests fail on errors and preserve legacy contracts
+- [x] Document test-only dependency override
+
+## Evidence
+
+- docs/testing.md
+- Afterglow legacy: 47 tests / 379 assertions passed
+- Tolglow legacy: 20 tests / 103 assertions passed
+
+## Dependencies
+
+#199
+
+[1;36m$ [0mgh issue view 199 --json state,title,url --jq '.state, .title, .url'
+CLOSED
+Map actual repositories, behavior and compatibility gaps
+https://github.com/tolgraven/tolglow/issues/199
+
