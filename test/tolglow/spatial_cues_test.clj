@@ -278,3 +278,68 @@
       (is (covered? 3))
       (is (not (covered? 6)))
       (finally (show/stop! rt)))))
+
+(deftest instance-waveform-aims-the-spatial-field-on-the-same-commit
+  (let [rt (host/runtime true)]
+    (try
+      (launch! rt 0 :blue)
+      (let [id (:instance-id (host/submit rt 0 :spatial-cue request))
+            binding {:type :lfo :waveform :sine :from [3 1 0] :to [3 1 0]}
+            addr {:instance-id id :param :position}]
+        (is (= [255 0 0 128 0 128 0 0 255] (host/output rt)))
+        (is (= :accepted (:status (host/submit rt 25 :modulation-bind (assoc addr :binding binding)))))
+        (is (= [0 0 255 0 0 255 255 0 0] (host/output rt)))
+        (is (= :accepted (:status (host/submit rt 50 :modulation-unbind addr))))
+        (is (= [255 0 0 128 0 128 0 0 255] (host/output rt))))
+      (finally (show/stop! rt)))))
+
+(deftest spatial-cue-links-read-the-driving-activation-at-this-frame
+  (let [rt (host/runtime true)
+        definition {:id :driver :version 1 :targets [:left] :outputs {:red 0.0}
+                    :params {:position {:type :vector :size 3 :default [0 0 0]}
+                             :color {:type :color :default [1 0 0]}}}
+        region (assoc request :volume (host/sphere 0) :paint {:color [0 0 0]}
+                              :sources {:position {:cue-id :driver :param :position}
+                                        :color {:cue-id :driver :param :color}})
+        dark (vec (repeat 9 0))]
+    (try
+      (host/submit rt 0 :command {:op :registry/publish :kind :effects :definition definition})
+      (host/submit rt 0 :command {:op :cue/put :cue {:id :driver :effect-id :driver :version 1}})
+      (let [driver (:instance-id (launch! rt 0 :driver))
+            bind! (fn [param value]
+                    (host/submit rt 25 :modulation-bind
+                                 {:instance-id driver :param param
+                                  :binding {:type :lfo :waveform :sine :from value :to value}}))
+            hold {:instance-id driver :params [:position :color]}]
+        (host/submit rt 0 :spatial-cue region)
+        (is (= dark (host/output rt)))
+        (bind! :position [3 1 0])
+        (is (= [0 0 0 0 0 0 255 0 0] (host/output rt)))
+        (bind! :color [0 1 0])
+        (is (= [0 0 0 0 0 0 0 255 0] (host/output rt)))
+        (host/submit rt 50 :modulation-hold hold)
+        (is (= dark (host/output rt)))
+        (host/submit rt 75 :modulation-resume hold)
+        (is (= [0 0 0 0 0 0 0 255 0] (host/output rt)))
+        (let [latest (:instance-id (launch! rt 100 :driver))]
+          (is (= dark (host/output rt)))
+          (host/submit rt 125 :command {:op :instance/remove :instance-id latest})
+          (is (= [0 0 0 0 0 0 0 255 0] (host/output rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest linked-volumes-use-one-committed-frame-for-mutual-feedback
+  (let [rt (host/runtime true)
+        region (fn [id cell x link paint]
+                 (assoc request :id id :cell cell :volume (host/sphere x) :paint paint
+                                :sources {:position {:cue-id link :param :position}}))]
+    (try
+      (let [one (show/submit! rt :spatial-cue (region :one [0 0] 0 :two {:red 1.0}))
+            two (show/submit! rt :spatial-cue (region :two [1 0] 3 :one {:green 1.0}))]
+        (host/tick rt 0)
+        (is (= [:accepted :accepted] (mapv (comp :status deref) [one two])))
+        (is (= [0 255 0 0 0 0 255 0 0] (host/output rt)))
+        (host/tick rt 25)
+        (is (= [255 0 0 0 0 0 0 255 0] (host/output rt)))
+        (host/tick rt 50)
+        (is (= [0 255 0 0 0 0 255 0 0] (host/output rt))))
+      (finally (show/stop! rt)))))
