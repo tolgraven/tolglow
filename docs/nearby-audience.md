@@ -5,12 +5,12 @@ The full iPhone app and the lightweight Dance floor App Clip have a common **Fin
 | Input | Available in | What the stage receives |
 | --- | --- | --- |
 | Tap | App Clip and iPhone | Tap onset and a decaying intensity |
-| Camera | App Clip and iPhone | Effort and estimated steps from visible leg movement. Prop up the phone facing one dancer. Vision processes joint positions locally. |
+| Camera | App Clip and iPhone | Effort and estimated steps from visible leg movement. Prop up the phone facing the dancer. Vision measures local knee and ankle movement relative to the hips. |
 | Phone motion | Full iPhone app | Acceleration peaks and smoothed intensity |
 | Wrist motion | Watch with its paired iPhone joined | Wrist effort and steps, counted once for the person |
 | Exercise pulse | Optional Watch dance workout | A fresh heart rate when the wearer expressly shares it. The stage exposes the mean of available readings and a presence flag. |
 
-Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses foreground Bluetooth, Vision and AVFoundation. Camera movement is an estimate and requires visible joints. Phone and Watch accelerometers detect movement peaks. Distinguishing individual styles of dance needs recorded validation with people. [Apple’s App Clip capabilities](https://developer.apple.com/documentation/appclip/choosing-the-right-functionality-for-your-app-clip)
+Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses foreground Bluetooth, Vision and AVFoundation. Camera mode follows the person initially closest to the center. Both hips and at least two lower-body joints must be visible. When two bodies cross too closely or joints disappear, step detection waits for a fresh baseline. The meter measures leg movement relative to the hips so sliding the whole image sideways does not produce a step. Phone and Watch accelerometers detect movement peaks. Distinguishing individual styles of dance needs recorded validation with people. [Apple’s App Clip capabilities](https://developer.apple.com/documentation/appclip/choosing-the-right-functionality-for-your-app-clip)
 
 ## Host a stage
 
@@ -53,7 +53,7 @@ lein with-profile +test run -m clojure.main -e \
 
 Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
 
-The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work is a separate full-app opt-in with a higher-bandwidth transport. The Clip only participates in sensing.
+The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work has a separate full-app consent control and uses a measured peer connection for its GPU buffers. The Clip only participates in sensing. [Configure and qualify guest GPUs](../native/AudienceCompute/README.md)
 
 ## Qualification
 

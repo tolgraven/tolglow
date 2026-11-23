@@ -65,8 +65,14 @@ running effect. Macros launch together; sequences use once,
 loop, ping-pong or random traversal. Save, save-and-play, stop and reopening saved
 compositions all invoke the corresponding local API.
 
-Definitions lists effect/cue registry entries and their versions. EDN source is
-loaded from the server, validated, compiled and published. The visual builder
+In **Definitions**, search the registry by effect or cue name or ID. The selected
+entry shows its version. **New** opens an unpublished draft. The same toolbar
+switches between EDN and the visual builder and validates and publishes the
+current editor. Publication feedback appears beside the editor settings.
+On a phone the registry scrolls horizontally and leaves the code below it
+available for editing. The text editor and the Bruvbox Neovim editor share the
+same publication action. EDN source is loaded from the server, validated,
+compiled and published. The visual builder
 creates RGB constant color effects with an adjustable intensity parameter,
 duration and attack/release envelope, optionally with a matching cue. This is a
 small working code-free subset; it is not yet a general visual expression graph.
@@ -265,9 +271,16 @@ one another when space permits. There are no remote fonts or UI/CDN assets.
 
 ## Assistant and provider connection
 
-Assistant offers a streaming conversation and an inline provider form for OpenAI,
-Anthropic, OpenRouter and self-hosted compatible endpoints. Model IDs/endpoints
-are explicit configuration. Credentials are cleared from the form when submitted.
+On the first visit, **Connect a model** puts the provider, model ID and API key
+together. Open **Custom endpoint** to override a hosted provider’s URL. Choosing
+**Self-hosted / compatible** shows the server endpoint immediately and makes the
+API key optional. You can draft a message before saving the connection.
+
+Run `lein run -m tolglow.qa.studio-browser assistant-layout` after building the Studio bundle to exercise first use, connection editing, a loopback model response and restored history in an isolated preview show.
+
+Once the provider is ready, the conversation is the primary workspace. Open
+**Model connection** to edit settings. **Clear saved key** appears when the
+selected provider has a key. Credentials are cleared from the form on submit.
 The server uses its separately configured local credential store when available,
 or session memory otherwise. Only opaque references enter portable show data;
 the actual keys are excluded from public configuration and exports. Saving
