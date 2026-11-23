@@ -209,3 +209,5 @@
 .effective-discrete { display:block; color:var(--instrument); font-size:11px; overflow-wrap:anywhere; }
 
 .source-color-swatch { display:inline-block; width:0.85em; height:0.85em; margin-right:4px; border:1px solid var(--line); border-radius:2px; vertical-align:middle; }
+
+.source-sample-target { display:block; color:var(--muted); line-height:1.25; font-size:10px; overflow-wrap:anywhere; }

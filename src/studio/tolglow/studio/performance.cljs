@@ -136,7 +136,7 @@
 (rf/reg-sub :performance/parameter-overlay
   (fn [db [_ id parameter]] (parameter-overlay (:show db) id parameter)))
 (rf/reg-event-db :performance/runtime-change
-  (fn [db _] (store (update db :ui dissoc :parameter-source :source-requests)
+  (fn [db _] (store (update db :ui dissoc :parameter-source :source-requests :block-fixtures)
                     (assoc defaults :generation (inc (:generation (state db))) :group (:group (state db))))))
 (rf/reg-event-fx :performance/action
   (fn [{:keys [db]} [_ target operation fields]]

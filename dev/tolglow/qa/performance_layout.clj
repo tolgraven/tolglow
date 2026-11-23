@@ -21,8 +21,12 @@
         model (-> (demo/model)
                   (assoc :waveforms waves)
                   (assoc-in [:registry :effects :selector] {:id :selector :name "Wave selector" :version 1
-                                                            :params {:wave (signals/selector-schema waves [:sine :triangle])}
-                                                            :outputs {:dimmer {:op :param :key :wave}}})
+                                                            :targets [:head-6 :head-8]
+                                                            :params {:wave (signals/selector-schema waves [:sine :triangle])
+                                                                     :sample {:name "Lamp sample" :type :number :default 0.5 :bounds [0 1]}}
+                                                            :prefabs {:rig/level {:mode :replace :glsl "0.5 + 0.1 * world.x"}}
+                                                            :blocks {[:params :sample] {:stages [{:block :rig/level}]}}
+                                                            :outputs {:dimmer {:op :param :key :sample}}})
                   (assoc-in [:registry :cues :selector] {:id :selector :name "Wave selector" :effect-id :selector :version 1})
                   (assoc-in [:pages :main :cells [1 2]] :selector)
                   (assoc-in [:registry :effects :orbital] parameters/orbital-effect)

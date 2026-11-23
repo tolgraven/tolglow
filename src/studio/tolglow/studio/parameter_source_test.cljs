@@ -39,3 +39,11 @@
     (is (empty? (source/request (:db result) "unbind" "2:1" :level nil)))
     (is (seq (source/request (:db result) "unbind" "2:2" :level nil)))
     (is (seq (source/request (assoc-in (:db result) [:show :epoch] 3) "unbind" "2:1" :level nil)))))
+
+(deftest fixture-blocks-observe-real-members-of-a-restricted-rig
+  (let [rig (mapv #(hash-map :id % :position [1 2 3]) [:a :b :c])]
+    (is (= [{:id :b}] (source/fixture-options rig {:targets [:a :b] :outputs {:dimmer {:targets [:b :c]}}})))
+    (is (empty? (source/fixture-options rig {:targets []})))
+    (is (empty? (source/fixture-options rig {:launch-targets []})))
+    (is (= [:b :a] (mapv :id (source/fixture-options rig {:launch-targets [:b :c :a] :targets [:a :b]}))))
+    (is (= [:a :b :c] (mapv :id (source/fixture-options rig {:outputs {:dimmer 1}}))))))

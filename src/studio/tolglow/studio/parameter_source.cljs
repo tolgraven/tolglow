@@ -4,6 +4,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.events :as events]
+            [tolglow.studio.fixture-picker :as fixtures]
             [tolglow.studio.modulation :as motion]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -48,25 +49,71 @@
     (if (= owner (context db))
       (assoc-in db [:ui :source-requests key] {:error (events/error-message error)}) db)))
 
+(rf/reg-sub ::fixture-limits
+  (fn [[_ id] _] (rf/subscribe [::raw-instance id]))
+  (fn [instance _]
+    (cond-> (select-keys (:definition instance) [:targets :outputs])
+      (contains? instance :targets) (assoc :launch-targets (:targets instance)))))
+
+(defn fixture-options [rig {:keys [targets launch-targets outputs]}]
+  (let [groups (map :targets (if (map? outputs) (vals outputs) outputs))
+        output-targets (when (and (seq groups) (every? some? groups)) (into #{} cat groups))
+        defined (when (some? targets) (set targets))
+        ordered (if (some? launch-targets) (keep (into {} (map (juxt :id identity)) rig) launch-targets) rig)]
+    (into [] (comp (filter (fn [{:keys [id]}]
+                             (and (or (nil? defined) (contains? defined id))
+                                  (or (nil? output-targets) (contains? output-targets id)))))
+                   (map #(select-keys % [:id :name]))) ordered)))
+
+(rf/reg-sub ::fixtures
+  (fn [[_ id] _] [(rf/subscribe [::fixtures/fixtures]) (rf/subscribe [::fixture-limits id])])
+  (fn [[rig limits] _] (fixture-options rig limits)))
+
+(rf/reg-sub ::fixture-choice (fn [db [_ id]] (get-in db [:ui :block-fixtures id])))
+(rf/reg-event-db ::fixture-select (fn [db [_ id target]] (assoc-in db [:ui :block-fixtures id] target)))
+(rf/reg-sub ::fixture
+  (fn [[_ id] _] [(rf/subscribe [::fixtures id]) (rf/subscribe [::fixture-choice id])])
+  (fn [[rows chosen] _] (or (some #(when (= (:id %) chosen) %) rows) (first rows))))
+
+(defn- fixture-selector [id]
+  (r/with-let [search (r/atom "")]
+    (let [rows @(rf/subscribe [::fixtures id]) target (:id @(rf/subscribe [::fixture id]))
+          options (fixtures/fixture-options rows @search target)]
+      (if (empty? options) [:span.block-trace-empty "No target fixtures"]
+        [:div.source-fields
+         (when (> (count rows) fixtures/page-size)
+           [:label.source-field "Find fixture" [:input {:type "search" :value @search :on-change #(reset! search (.. % -target -value))}]])
+         [:label.source-field "Sample fixture"
+          [:select {:aria-label "Sample fixture" :value "0"
+                    :on-change #(rf/dispatch [::fixture-select id (get options (parse-long (.. % -target -value)))])}
+           (for [[i fixture] (map-indexed vector options)] ^{:key i} [:option {:value i} (events/wire-id fixture)])]]]))))
+
 (defn- native-value [instance param]
   (let [source (reading instance param)]
     (if-let [block (source-of source :blocks)]
-      (:result @(rf/subscribe [:studio/remote [:runtime/block-trace (:id instance) (mapv keyword (:path block))]]))
+      (when-let [target (:id @(rf/subscribe [::fixture (:id instance)]))]
+        (:result @(rf/subscribe [:studio/remote [:runtime/block-trace (:id instance) (mapv keyword (:path block)) target]])))
       (:effective-value source))))
+
+(defn- result-view [view instance schema sample block?]
+  (if-not block? [view schema sample]
+    (if-let [{:keys [id name]} @(rf/subscribe [::fixture (:id instance)])]
+      [:<> [:span.source-sample-target (str "Fixture · " (or name (events/wire-id id)))]
+       ^{:key (pr-str id)} [view schema sample]]
+      [:span.block-trace-empty "No target fixtures"])))
 
 (defn result-visual [view instance param schema]
   (when (bound? instance param)
-    [view schema #(native-value instance param)]))
+    [result-view view instance schema #(native-value instance param) (source-of (reading instance param) :blocks)]))
 
 (defn axes-visual [view instance components schema]
-  (let [sample (fn []
-                 (let [axis (fn [[param spec]]
-                              (if (bound? instance param)
-                                (native-value instance param)
-                                (get-in instance [:params param] (:default spec))))
-                       values (mapv axis components)]
-                   (when (every? some? values) values)))]
-    [view schema sample]))
+  (let [axis (fn [[param spec]]
+               (if (bound? instance param)
+                 (native-value instance param)
+                 (get-in instance [:params param] (:default spec))))
+        sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
+        block? (some (fn [[k _]] (source-of (reading instance k) :blocks)) components)]
+    [result-view view instance schema sample block?]))
 
 (defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))
 
@@ -196,6 +243,7 @@
                                  :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id param components))}
      [:header [:h4 (str title " source")]
       [:button.text-button {:type "button" :aria-label "Close source editor" :on-click #(close! id param components)} "Close"]]
+     (when (source-of source :blocks) [fixture-selector id])
      (when (seq components)
        [:label.source-field "Axis" [:select {:aria-label "Source axis" :value (events/wire-id param)
                                           :on-change #(rf/dispatch [::select id (keyword (.. % -target -value))])}
