@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
@@ -152,10 +153,11 @@
       (when-let [ms (:duration-ms slot)] [ms "ms"])
       [4 "beats"]))
 
-(defn- cue-cell [db page x y]
+(defn- cue-cell [db page x y colors]
   (let [show (:show db) ui (:ui db)
         cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))
         cue (find-id (:cues show) cue-id)
+        preview (or (get colors cue-id) (when (string? cue-id) (get colors (keyword cue-id))))
         active (filter #(= cue-id (:cue-id %)) (:instances show))
         cell {:cue-id cue-id :x x :y y :page-id (:id page)}
         down (fn [event]
@@ -167,7 +169,8 @@
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
                   (when (some #(= "releasing" (:phase %)) active) "releasing ")
                   (when (:edit? ui) "editing"))
-      :style (when cue (color-style cue)) :data-x x :data-y y :data-cue-id (or cue-id "")
+      :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
+      :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
       :aria-label (str (if cue (display-name cue) "Empty cell") ", column " (inc x) ", row " (inc y))
       :aria-pressed (boolean (seq active)) :on-pointer-down down
@@ -186,7 +189,7 @@
                              selector (str "[data-x=\"" (max 0 (min 7 (+ x dx)))
                                            "\"][data-y=\"" (max 0 (min 7 (+ y dy))) "\"]")]
                          (.preventDefault event)
-                         (when-let [target (.querySelector (.-parentElement (.-currentTarget event)) selector)]
+                         (when-let [target (.querySelector (.closest (.-currentTarget event) "#cue-grid") selector)]
                            (.focus target)))
                        (or (= "ContextMenu" (.-key event)) (and (= "F10" (.-key event)) (.-shiftKey event)))
                        (do (.preventDefault event) (send! [:studio/open-actions cell]))
@@ -219,8 +222,7 @@
                                 :on-click #(send! [:studio/set-launch mode])} title])]
       [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"]]
      [:div.cue-grid-scroll
-      [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight-column cue grid"}
-      (for [y (range rows) x (range 8)] ^{:key (str x "/" y)} [cue-cell db page x y])]]
+      [pad-preview/grid (:id page) rows (and (= :perform (:view ui)) (get-in db [:connection :connected?])) cue-cell db page]]
      [:div.grid-footer [:span#gesture-hint (cond (:edit? ui) "Choose a cell to edit its actions."
                                                (= "held" (:launch-mode ui)) "Hold a cue to play it. Release to fade it out."
                                                :else "Tap to play. Long-press for cue actions.")]

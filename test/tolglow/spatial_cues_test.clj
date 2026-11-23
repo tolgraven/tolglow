@@ -4,6 +4,7 @@
             [tolglow.composition :as composition]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
+            [tolglow.visualization.cue-pads :as pads]
             [tolglow.spatial.cues :as cues]
             [tolglow.studio.web :as web]
             [tolglow.transit :as transit]
@@ -89,6 +90,8 @@
     (try
       (host/submit rt 0 :spatial-cue source)
       (is (= [0 0 0 0 0 0 0 255 255] (host/output rt)))
+      (let [colors (pads/present! (:cue-pad-previews rt) :grid @(:state rt) [pads/query-id :main [0 0] 8])]
+        (is (= [0 255 255] (mapv #(Math/round (* 255.0 %)) (:hue colors))) "Preview reads the same resolved HSL paint as the output"))
       (let [model (assoc-in (state rt) [:variables :x] 0)]
         (host/submit rt 5 :import {:source (persistence/write-string model)}))
       (host/tick rt 10)

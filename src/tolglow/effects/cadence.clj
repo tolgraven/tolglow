@@ -1,6 +1,7 @@
 (ns tolglow.effects.cadence
   "Bind wall-clock measurements to the release show's adaptive keyframe policy."
-  (:require [afterglow.runtime.cadence :as cadence]))
+  (:require [afterglow.runtime.cadence :as cadence]
+            [tolglow.effects.sampling-quality :as quality]))
 
 (defn settings [config]
   (when-not (and (map? config) (boolean? (:enabled? config true)))
@@ -26,15 +27,18 @@
                                            [id {:ms (* period (min stride (:max-stride options)))}])))
                               (:effects state)))
             observer (cadence/observer)]
-        {:config config :options options :previous state :samples (:samples observer)
+        {:config config :options options :previous state :prior-quality (:quality prior) :samples (:samples observer)
          :epoch (:epoch model) :period-ms period
          :inputs {:keyframe-intervals intervals :measure-effect (:measure-effect observer)}}))))
 
 (defn finish [session model elapsed-ms]
   (let [{:keys [options epoch period-ms previous samples config]} session
-        timings {:epoch epoch :versions (versions model) :samples @samples
+        ids (versions model)
+        quality (quality/prepare (:prior-quality session) epoch ids (:instances model))
+        timings {:defer-live-slowdown? (:defer-live-slowdown? session)
+                 :epoch epoch :versions ids :samples (quality/protect @samples (:protected quality))
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
-    {:options options :config config :state (cadence/advance previous timings options)}))
+    {:options options :config config :quality quality :state (cadence/advance previous timings options)}))
 
 (defn status
   "Read the diagnostic ranking on demand, outside the frame publication loop."
