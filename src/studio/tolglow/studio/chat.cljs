@@ -227,9 +227,7 @@
 (defn panel [db]
   (let [chat (:chat db) running? (:running? chat) ready? (get-in chat [:provider :ready?])]
     [:section#view-assistant.view {:hidden (not= :assistant (get-in db [:ui :view]))}
-     [:div.view-heading
-      [:div [:div.eyebrow "A CREATIVE PARTNER"] [:h1 "Describe a feeling. Shape a show."]
-       [:p "Your assistant can see this rig, create effects, and play the show alongside you."]]]
+     [:div.view-heading [:h1 "Show assistant"]]
      [:div.chat-layout
       [:section.panel.chat-panel
        [:div.panel-top [:span.section-label "IN CONVERSATION"]
