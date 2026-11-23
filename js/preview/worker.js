@@ -50,6 +50,7 @@ async function render() {
       Math.min(engine.lastWorkerFrame * (engine.softwareRenderer ? 2 : 1.5), previousInterval * 1.5), previousInterval * .5);
     postMessage({type: 'frame', frameId, stateId, actionThrough, generation, bitmap,
       runtimeId: engine.snapshot?.['runtime-id'], showId: engine.snapshot?.['show-id'], epoch: engine.snapshot?.epoch,
+      showFrame: engine.snapshot?.['frame-number'] ?? 0,
       telemetry: {...engine.getTelemetry(), workerFrameMs: engine.lastWorkerFrame, gpuCompletionWaitMs: engine.lastGPUWait,
         idleBudgetMs: Math.max(0, engine.frameInterval - engine.lastWorkerFrame), bitmapTransferMs: engine.lastBitmapTransfer}}, [bitmap]);
   } catch (error) {stopped = true; send({type: 'error', message: String(error?.message || error)});}

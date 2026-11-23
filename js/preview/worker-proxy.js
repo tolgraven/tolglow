@@ -124,6 +124,7 @@ export class WorkerRoomPreview {
           if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(bitmap);
           else this.presenter.drawImage(bitmap, 0, 0);
           this.presented = true;
+          this.observedFrame?.(this.canvas, message.showId, message.epoch, message.showFrame);
         });
         this.lastFrame = Math.max(this.lastFrame, message.frameId);
         if (accepted) {
@@ -244,6 +245,7 @@ export class WorkerRoomPreview {
     const reason = String(error?.message || error);
     if (!this.presenter && !this.startedRendering) {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
+      Object.defineProperty(this.fallback, 'observedFrame', {get: () => this.observedFrame});
       if (this.fallback.error) {this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null; return;}
       this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setFilm(this.filmSettings); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogOverride);
       if (this.snapshot) this.fallback.update(this.snapshot);

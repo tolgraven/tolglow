@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
+          ref: 9387c0ae211397734a761ac98c4894cbfeeb83e4
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
+          ref: 9387c0ae211397734a761ac98c4894cbfeeb83e4
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
+          ref: 9387c0ae211397734a761ac98c4894cbfeeb83e4
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -196,16 +196,26 @@ jobs:
         run: |
           native=$(.github/scripts/native-build-required "$GITHUB_EVENT_NAME" "$BASE_SHA" "$HEAD_SHA")
           echo "native=$native" >> "$GITHUB_OUTPUT"
-      - name: Run portable sensor and camera analysis tests
+      - name: Exercise audience sensors, camera analysis and gesture timing
         if: steps.paths.outputs.native == 'true'
         env:
           TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
-        run: swift test --package-path native/Core
+          TOLGLOW_AUDIENCE_TIMING_DIR: ${{ runner.temp }}/onset-timing
+        run: |
+          mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR"
+          swift test --package-path native/Core
       - uses: actions/upload-artifact@v4
         if: steps.paths.outputs.native == 'true'
         with:
           name: audience-camera-pose-trace
           path: ${{ runner.temp }}/audience-pose.csv
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-onset-timing
+          path: ${{ runner.temp }}/onset-timing/*.json
           if-no-files-found: error
           retention-days: 10
   native:

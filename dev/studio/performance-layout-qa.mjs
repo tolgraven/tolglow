@@ -2,12 +2,20 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
-import {chromium} from 'playwright-core';
+import {chromium, devices, webkit} from 'playwright-core';
 
 const [origin,directory] = process.argv.slice(2);
 await mkdir(directory,{recursive:true});
-const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-  args:['--disable-dev-shm-usage','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const webkitRun = process.env.STUDIO_TEST_BROWSER === 'webkit';
+const browser = webkitRun
+  ? await webkit.launch()
+  : await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      args:['--disable-dev-shm-usage','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const profiles = [
+  ['phone', 390, 844, true, 'iPhone 15'],
+  ['ipad', 1024, 768, true, 'iPad Pro 11 landscape'],
+  ['desktop', 1440, 900, false, 'Desktop Safari'],
+];
 const measurements = {};
 
 async function positionBoard(page) {
@@ -79,15 +87,44 @@ async function verifyControls(page,touch) {
   await picker.selectOption({label:'Orbit aim'});
 }
 
+async function verifyCueActions(page, name) {
+  const cues = page.getByRole('group', {name:'Performance sections'}).getByRole('button',{name:'Cues',exact:true});
+  if (await cues.isVisible()) await cues.tap();
+  const cell = page.locator('#cue-grid [data-cue-id="ember"]').first();
+  await cell.scrollIntoViewIfNeeded();
+  const bounds = await cell.boundingBox();
+  // Playwright's touchscreen supports taps. Use a real held pointer here, so
+  // WebKit owns capture and the application's gesture timer fires normally.
+  await page.mouse.move(bounds.x + bounds.width/2, bounds.y + bounds.height/2);
+  await page.mouse.down();
+  const actions = page.getByRole('dialog', {name:/Ember/i});
+  try {
+    await actions.waitFor();
+  } finally {
+    await page.mouse.up();
+  }
+  const copy=actions.getByRole('button',{name:/Copy cue/});
+  assert.equal(await copy.isEnabled(),true);
+  assert.equal(await actions.getByRole('button',{name:/Paste here/}).isEnabled(),false);
+  await page.screenshot({path:join(directory,name+'-actions.png')});
+  await actions.getByRole('button',{name:'Close actions'}).tap();
+  await cell.focus();
+  await cell.press('Shift+F10');
+  await actions.waitFor();
+  await page.keyboard.press('Escape');
+  await actions.waitFor({state:'hidden'});
+}
+
 try {
-  for(const [name,width,height,touch] of [['phone',390,844,true],['ipad',1024,768,true],['desktop',1440,900,false]]) {
-    const page=await browser.newPage({viewport:{width,height},hasTouch:touch,deviceScaleFactor:1});
+  for(const [name,width,height,touch,device] of profiles) {
+    const descriptor = webkitRun ? devices[device] : {};
+    const page=await browser.newPage({...descriptor,viewport:{width,height},hasTouch:touch,deviceScaleFactor:1});
     const errors=[];
     page.on('pageerror',error=>errors.push(error.message));
     await page.goto(origin + '/perform');
     await page.locator('[data-live-instance]').first().waitFor({state:'attached',timeout:60000});
     const live=page.getByRole('button',{name:/^Live ·/});
-    if(await live.isVisible()) await live.click();
+    if(await live.isVisible()) await (touch ? live.tap() : live.click());
     await positionBoard(page);
     await page.locator('.strip-monitor:visible .parameter-history svg').first().waitFor();
     await page.waitForFunction(()=>document.querySelector('.strip-monitor:has(.parameter-history) path')?.getAttribute('d')?.includes('L'));
@@ -95,6 +132,7 @@ try {
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
     await verifyControls(page,touch);
+    if (webkitRun && touch) await verifyCueActions(page,name);
     assert.deepEqual(errors,[]);
     await page.close();
   }
