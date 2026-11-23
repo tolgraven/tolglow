@@ -63,7 +63,7 @@ try {
   await touch('touchStart',[start]);
   for (let i=1;i<=10;i++) {
     await touch('touchMove',[{x:start.x+(end.x-start.x)*i/10,y:start.y+(end.y-start.y)*i/10}]);
-    await capture(i);
+    if ([3,6,10].includes(i)) await capture(i);
   }
   await touch('touchEnd',[]);
   const x = Number(await editor.getByLabel('First X',{exact:true}).inputValue());
@@ -90,7 +90,9 @@ try {
   assert.match(await card.locator('.keyframe-sample').innerText(),/result/i);
   if (captures) await card.locator('details[open]').filter({has:page.locator('.keyframe-editor')}).last()
     .screenshot({path:captures+'/published.png'});
-  await editor.getByRole('checkbox',{name:'Limit automatic slowdown'}).check();
+  const ceilingToggle = editor.locator('label').filter({hasText:'Limit automatic slowdown'});
+  assert.ok((await ceilingToggle.boundingBox()).height>=44,'The entire ceiling label is a touch target');
+  await ceilingToggle.tap();
   assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
   await capture(11);
   await editor.getByRole('checkbox',{name:'Sample at a fixed interval'}).uncheck();
