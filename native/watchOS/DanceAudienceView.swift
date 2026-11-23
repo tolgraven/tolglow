@@ -73,6 +73,7 @@ struct DanceAudienceView: View {
                             .font(.caption)
                     }
                 }
+                Toggle("Share wrist axes", isOn: $workout.shareMotionAxes)
                 if workout.active || workout.requesting {
                     Button(workout.active ? "Leave floor" : "Cancel", role: .destructive) { workout.stop() }
                 } else {

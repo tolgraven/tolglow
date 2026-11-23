@@ -27,7 +27,9 @@ final class AudienceSession: ObservableObject {
     private var taps: UInt32 = 0
     private var tapTime = -Double.infinity
     private var lastPhoneSteps: UInt32?
-    private var watch: (effort: Double, steps: UInt32, pulse: Int?, time: Double)?
+    private var watch: (sample: AudienceSample, time: Double, motionTime: Double?)?
+    private var phoneMotion: AudienceMotion?
+    @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
     @Published var allowLockedWatch = false
     private(set) var watchOnlyInBackground = false
@@ -53,6 +55,7 @@ final class AudienceSession: ObservableObject {
         #if !APPCLIP
         motion.stopDeviceMotionUpdates()
         #endif
+        phoneMotion = nil
         meter = DanceMeter(); lastInputTime = -.infinity; taps = 0; tapTime = -.infinity
         lastPhoneSteps = 0
         guard client.joined else { return }
@@ -75,9 +78,14 @@ final class AudienceSession: ObservableObject {
         case .motion:
             guard motion.isDeviceMotionAvailable else { message = "Motion unavailable. Tap along instead."; return }
             motion.deviceMotionUpdateInterval = 1 / 25
-            motion.startDeviceMotionUpdates(to: .main) { sample, _ in
-                guard let sample else { return }
+            motion.startDeviceMotionUpdates(to: .main) { [weak self] sample, _ in
+                guard let self, self.generation == token, let sample else { return }
                 let a = sample.userAcceleration
+                if self.shareMotionAxes {
+                    let r = sample.rotationRate
+                    self.phoneMotion = AudienceMotion(acceleration: SIMD3(a.x, a.y, a.z) * 9.80665,
+                                                      rotation: SIMD3(r.x, r.y, r.z))
+                } else { self.phoneMotion = nil }
                 ingest(sqrt(a.x*a.x + a.y*a.y + a.z*a.z) / 1.3, sample.timestamp)
             }
         #endif
@@ -90,11 +98,11 @@ final class AudienceSession: ObservableObject {
         taps &+= 1; tapTime = now
     }
 
-    @discardableResult func receiveWatch(effort: Double, steps: UInt32, pulse: Int?) -> Bool {
-        guard client.joined, effort.isFinite, (0...1).contains(effort) else { return false }
+    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
+        guard client.joined else { return false }
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
-        watch = (effort, steps, pulse, time)
+        watch = (sample, time, motionTime)
         if watchOnlyInBackground { publish() }
         return true
     }
@@ -123,7 +131,7 @@ final class AudienceSession: ObservableObject {
         let phoneEffort = input == .touch ? exp(-3 * (now - tapTime)) : (now - lastInputTime <= 0.6 ? meter.effort : 0)
         if let data = watch, now - data.time > 2 { endWatch(); lastPhoneSteps = phoneSteps }
         // A paired dancer gets one vote and one step counter even if both devices detect the same step.
-        if let data = watch {
+        if let data = watch?.sample {
             let delta = data.steps &- (lastWatchSteps ?? data.steps)
             if delta <= 8 { totalSteps &+= delta }
             lastWatchSteps = data.steps
@@ -133,7 +141,10 @@ final class AudienceSession: ObservableObject {
             effort = phoneEffort
         }
         lastPhoneSteps = phoneSteps
-        if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort, pulse: watch?.pulse) {
+        let phoneAxes = shareMotionAxes && now - lastInputTime <= 0.6 ? phoneMotion : nil
+        let wristAxes = watch.flatMap { $0.sample.motion?.fresh(measured: $0.motionTime, at: now) }
+        if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort,
+                                       pulse: watch?.sample.pulse, motion: wristAxes ?? phoneAxes) {
             client.offer(packet); serial &+= 1
         }
     }
@@ -148,7 +159,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func stopInputs() {
-        watchOnlyInBackground = false; allowLockedWatch = false
+        watchOnlyInBackground = false; allowLockedWatch = false; shareMotionAxes = false
         stopSampling()
         serial = 0; totalSteps = 0; effort = 0; lastPhoneSteps = nil; endWatch()
     }
