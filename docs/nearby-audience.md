@@ -58,3 +58,11 @@ The QR holds a public fingerprint. A per-connection challenge and ephemeral phon
 ## Qualification
 
 Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
+
+## Operate audience zones in Studio
+
+Open **Connections → Audience**. The list contains enrolled gateway sources whose mappings supply both `audience-count` and `dance-effort`. A source starts at **Waiting for gateway**. When its first observation reaches the show the status changes to **Joined**. **Arm** admits new observations from that gateway session. Use its checkbox to include the zone in the show’s audience mix. A gateway may continue collecting readings while excluded from this mix.
+
+**Dancers** counts the participants in the selected, armed zones. **Dance effort** weights each zone by its dancers. **Pulse sharing** shows how many of those dancers share a fresh pulse measurement. The BPM signal stays in the show model for mappings. On signal expiry the zone drops out of the readings and requires a fresh observation and explicit arming. The operator’s selection survives show save/load. Studio receives this view through the Connections Transit stream. It contains the logical zones and aggregate measurements.
+
+A REPL controller can use the same incremental command as the operator. Submit `:sensor-audience-zone` with `{:device-id "balcony" :included? true}` to the show. Other zones keep their selection. To reproduce the operator flow locally, build the Studio release then run `lein run -m tolglow.qa.audience-zones target/audience-zones`.
