@@ -21,6 +21,11 @@ struct RigCalibrationView: View {
                     } label: {
                         Label("Measure fixture brightness", systemImage: "sun.max")
                     }.disabled(scanner.running || client.busy || client.armed)
+                    NavigationLink {
+                        SurfaceReflectanceView()
+                    } label: {
+                        Label("Measure surface reflectance", systemImage: "rectangle.sun")
+                    }.disabled(scanner.running || client.busy || client.armed)
                     Text("Scan your rig").font(.largeTitle.bold())
                     Text("LiDAR measures visible surfaces. Tap the actual lens for placement and a solid beam landing spot for aim. Fog, reflections and hidden fixtures need manual correction or another view.")
                         .font(.callout).foregroundStyle(.secondary)
@@ -32,7 +37,7 @@ struct RigCalibrationView: View {
                         }
                     }.buttonStyle(.bordered).controlSize(.large)
                     if scanner.running {
-                        RigCameraView(scanner: scanner).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18))
+                        RigCameraView(scanner: scanner, surface: scanner.surface).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18))
                         Picker("Tap identifies", selection: $scanner.selectedKind) {
                             Text("Floor origin").tag("origin"); Text("Floor +Z").tag("heading")
                             Text("Lens").tag("lens"); Text("Beam spot").tag("beam")

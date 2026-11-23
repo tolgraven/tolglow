@@ -6,6 +6,21 @@ struct PhotometryFixture: Decodable, Identifiable {
     let id: String
     let type: String
     let name: String?
+    let reflectanceCapable: Bool?
+    enum CodingKeys: String, CodingKey { case id, type, name, reflectanceCapable = "reflectance-capable?" }
+}
+
+struct MeterReceiver: Decodable, Identifiable {
+    let id: String
+    let revision: String
+    let point: [Double]
+}
+
+struct SurfaceFit: Decodable {
+    let estimate: Double
+    let range: [Double]
+    let ratio: Double
+    enum CodingKeys: String, CodingKey { case estimate, range, ratio = "relative-to-card" }
 }
 
 private struct PhotometryHost: Decodable {
@@ -13,8 +28,9 @@ private struct PhotometryHost: Decodable {
     let epoch: Int
     let output: Bool
     let fixtures: [PhotometryFixture]
+    let receivers: [MeterReceiver]?
     enum CodingKeys: String, CodingKey {
-        case runtime = "runtime-id", epoch, output = "output-capable?", fixtures
+        case runtime = "runtime-id", epoch, output = "output-capable?", fixtures, receivers
     }
 }
 
@@ -24,8 +40,11 @@ private struct BrightnessReply: Decodable {
     let phase: String?
     let fixture: String?
     let presented: Bool?
+    let stepIndex: Int?
+    let generation: Int?
+    let fit: SurfaceFit?
     enum CodingKeys: String, CodingKey {
-        case status, message, phase, fixture = "fixture-id", presented = "presented?"
+        case status, message, phase, fixture = "fixture-id", presented = "presented?", stepIndex = "step-index", generation = "presentation-generation", fit
     }
 }
 
@@ -69,6 +88,10 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
 
 @MainActor final class BrightnessCalibrationClient: ObservableObject {
     let camera = PhotometryCamera()
+    private let stance = FixedCameraStance()
+    @Published private(set) var receivers: [MeterReceiver] = []
+    @Published private(set) var pairCount = 0
+    @Published private(set) var surfaceFit: SurfaceFit?
     @Published private(set) var fixtures: [PhotometryFixture] = []
     @Published private(set) var illuminated: String?
     @Published private(set) var running = false
@@ -92,6 +115,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
     }()
 
     init() {
+        stance.onMoved = { [weak self] in self?.stop("Phone moved. Mount it securely and restart the measurement.") }
         camera.onInterruption = { [weak self] in
             Task { @MainActor in self?.stop("Camera interrupted. Start a fresh calibration.") }
         }
@@ -99,7 +123,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
 
     func connect(_ address: String) {
         guard !busy, !running else { return }
-        host = nil; url = nil; fixtures = []; readings = [:]; outputAvailable = false
+        host = nil; url = nil; fixtures = []; receivers = []; readings = [:]; outputAvailable = false
         guard let origin = URL(string: address), ["http", "https"].contains(origin.scheme ?? ""),
               origin.host != nil, origin.user == nil, origin.password == nil, origin.query == nil,
               origin.fragment == nil, ["", "/"].contains(origin.path) else {
@@ -111,6 +135,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
             try Task.checkCancellation()
             self.host = result; self.url = endpoint
             self.fixtures = result.fixtures
+            self.receivers = result.receivers ?? []
             self.outputAvailable = result.output
             self.status = result.output ? "Select one fixture per type and choose your reference." : "Host has no physical output enabled."
         }
@@ -118,11 +143,16 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
 
     func originChanged() {
         guard !busy, !running else { return }
-        host = nil; url = nil; fixtures = []; readings = [:]; outputAvailable = false
+        host = nil; url = nil; fixtures = []; receivers = []; readings = [:]; outputAvailable = false
         status = "Connect to this Studio origin before arming output."
     }
 
-    func start(ids: [String], shutter: Int32) {
+    struct SurfaceSetup {
+        let receiver: MeterReceiver
+        let fraction: Double
+        let tolerance: Double
+    }
+    func start(ids: [String], shutter: Int32, surface: SurfaceSetup? = nil) {
         guard !busy, !running, let host, let url, host.output, !ids.isEmpty,
               Set(ids).count == ids.count else { return }
         let selected = ids.compactMap { id in fixtures.first(where: { $0.id == id }) }
@@ -130,17 +160,29 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
             status = "Choose one representative per fixture type."; return
         }
         let session = BrightnessLease(url: url, runtime: host.runtime, epoch: host.epoch, ids: ids, http: http)
-        readings = [:]
+        readings = [:]; pairCount = 0; surfaceFit = nil
         perform {
             self.status = "Locking camera exposure, focus and white balance…"
             try await self.camera.start(shutter: shutter)
             try Task.checkCancellation()
             self.lease = session
-            _ = try await session.send("start", ["fixture-ids": ids, "armed?": true])
+            var options: [String: Any] = ["fixture-ids": ids, "armed?": true]
+            if let surface {
+                try self.stance.start()
+                options.merge(["receiver-id": surface.receiver.id, "receiver-revision": surface.receiver.revision,
+                               "card-fraction": surface.fraction, "card-tolerance": surface.tolerance,
+                               "shutter-denominator": Int(shutter)]) { _, v in v }
+            }
+            _ = try await session.send(surface == nil ? "start" : "start-surface", options)
             try Task.checkCancellation()
             self.running = true
             self.renew(session)
-            try await self.light(ids[0], session)
+            if surface == nil {
+                try await self.light(ids[0], session)
+            } else {
+                try await self.setPhase("white", ids[0], session)
+                self.status = "Aim at the receiver center and place the reference card flush in the sampling area."
+            }
         }
     }
 
@@ -160,7 +202,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         }
     }
 
-    private func setPhase(_ phase: String, _ id: String, _ session: BrightnessLease) async throws {
+    @discardableResult private func setPhase(_ phase: String, _ id: String, _ session: BrightnessLease) async throws -> BrightnessReply {
         var reply = try await session.send("step", ["fixture-id": id, "phase": phase])
         let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while reply.fixture != id || reply.phase != phase || reply.presented != true {
@@ -170,6 +212,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         }
         try Task.checkCancellation()
         illuminated = phase == "white" ? id : nil
+        return reply
     }
 
     private func light(_ id: String, _ session: BrightnessLease) async throws {
@@ -217,6 +260,39 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         }
     }
 
+    func captureSurface() {
+        guard !busy, running, let lease, let fixture = lease.ids.first, pairCount < 3 else { return }
+        perform {
+            try self.stance.verify(lock: self.pairCount == 0)
+            try await SurfaceExposure.pair(present: { phase in
+                self.status = "Sampling " + phase + " phase…"
+                return try await self.setPhase(phase, fixture, lease)
+            }, frames: { try await self.camera.measureFrames() }, verifyStance: { try self.stance.verify() },
+            record: { offset, proof, frames in
+                guard let step = proof.stepIndex, let generation = proof.generation else {
+                    throw BrightnessCaptureFailure("The host does not provide presentation evidence.")
+                }
+                let reply = try await lease.send("read-surface",
+                    ["frame-levels": frames, "sample-index": self.pairCount * 2 + offset,
+                     "step-index": step, "presentation-generation": generation])
+                self.surfaceFit = reply.fit
+            })
+            try await self.setPhase("dark", fixture, lease)
+            self.pairCount += 1
+            self.status = self.pairCount == 3 ? "Review the estimate before saving." : "Prepare the next patch without moving the phone."
+        }
+    }
+
+    func applySurface() {
+        guard !busy, running, surfaceFit != nil, let lease else { return }
+        perform {
+            _ = try await lease.send("apply-surface")
+            try Task.checkCancellation()
+            self.lease = nil
+            self.stop("Measured relative diffuse return saved to the rig.")
+        }
+    }
+
     func apply() {
         guard !busy, running, let lease, lease.ids.allSatisfy({ readings[$0] != nil }) else { return }
         let rows: [[String: Any]] = lease.ids.compactMap { id in
@@ -248,7 +324,7 @@ func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http
         generation = UUID()
         action?.cancel(); action = nil
         renewal?.cancel(); renewal = nil
-        running = false; busy = false; illuminated = nil; lease = nil; camera.stop()
+        running = false; busy = false; illuminated = nil; lease = nil; stance.stop(); camera.stop()
         status = message
         if let previous {
             // The host lease also expires when a backgrounded or disconnected
