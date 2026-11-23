@@ -1,6 +1,6 @@
 # Conversation request register
 
-Recorded through request **94**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
+Recorded through request **95**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
 
 **Open** is a to-do for the exact behavior or verification in that row. A linked milestone can already have shipped one part. **Verified** includes a source or merge receipt for the whole row. **Standing** is a recurring working agreement. The [work ledger](work-items.edn) owns implementation status, dependencies, ownership and evidence. For working branches and hardware gaps see the [handoff](request-handoff.md).
 
@@ -189,3 +189,4 @@ Recorded through request **94**. Each number follows the original user messages 
 | R92 | Keep fixture output on its 40 Hz clock and run the Studio room independently at display refresh, including 60 and 120 Hz devices. Improve fog visibility throughout the room and default show worklight to zero. Measure the actual presented frames, with controlled graphics passes and a dark-stage reference on the Air. | `:performance/perceptual-scheduling`, `:render/shared-fog-transmission` | Open |
 | R93 | Correct misplaced text in the Studio screenshots. Check cue names, status, parameter labels, transport and navigation alignment in the rendered phone, iPad and desktop layouts. | `:web/studio-type-alignment`, `:web/responsive-performance-layouts` | Open |
 | R94 | Aim for parity in live show features between the running REPL and Studio. Review discoverability, the shared operation and feedback in both directions. Document justified surface-specific interactions and track missing workflows with an owner. | `:documentation/repl-studio-parity` | Standing |
+| R95 | Use the operator’s private iPhone Cinematic footage as an ongoing reference for the venue renderer. Compare a still and motion, distinguish camera treatment from scene optics, and record available timestamps, presented frame rate and render resolution. | `:render/scene-v2`, `:performance/macbook-air-qualification` | Open |
