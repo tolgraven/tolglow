@@ -40,9 +40,8 @@
       {:status 404 :body ""})))
 
 (defn studio-media [service request]
-  (if-let [{:keys [files capability]} @service]
-    (media-response files capability request)
-    {:status 404 :body ""}))
+  (let [{:keys [files capability]} @service]
+    (if files (media-response files capability request) {:status 404 :body ""})))
 
 (defn- receiver [files capability]
   (let [fetch (partial media-response files capability)]
@@ -51,13 +50,17 @@
                   {::ring/default-options-endpoint nil})
      (ring/create-default-handler))))
 
-(defn close! [service]
-  (locking service
-    (when-let [{:keys [timer server files]} @service]
-      (reset! service nil)
+(defn- end-session! [service next-state]
+  (let [{:keys [timer server files]} @service]
+    (reset! service next-state)
+    (when server
       (.cancel ^Timer timer)
       (reset! files {})
       (.stop server))))
+
+(defn close! [service]
+  (locking service
+    (end-session! service {:disposed? true})))
 
 (defn- check-id! [session writer]
   (when-not (and session (string? writer) (= writer (:writer session)))
@@ -66,7 +69,7 @@
 (defn stop! [service writer]
   (locking service
     (check-id! @service writer)
-    (close! service)
+    (end-session! service nil)
     {:status :closed}))
 
 (defn- expire-task [service session]
@@ -75,13 +78,14 @@
       (locking service
         (when (and (identical? session @service)
                    (> (- (System/nanoTime) @(:last-write session)) (* idle-ms 1000000)))
-          (close! service))))))
+          (end-session! service nil))))))
 
 (defn start! [service address]
   (let [addresses (interfaces)]
     (when-not (some #(= address (:address %)) addresses)
       (fail! 422 "Select a current network interface reachable from the receiver.")))
   (locking service
+    (when (:disposed? @service) (fail! 410 "This Studio has closed."))
     (when @service (fail! 409 "A preview is already being shared from this Studio."))
     (let [capability (str (UUID/randomUUID))
           writer (str (UUID/randomUUID))

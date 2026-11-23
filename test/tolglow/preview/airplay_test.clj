@@ -61,3 +61,18 @@
         (is (thrown? Exception (relay/start! service "0.0.0.0")))
         (scenario! service)
         (finally (relay/close! service))))))
+
+(deftest stopped-shares-can-restart-but-a-closed-studio-cannot-reopen
+  (let [service (relay/create)
+        address "127.0.0.1"
+        interface [{:address address}]]
+    (with-redefs [relay/interfaces (constantly interface)]
+      (let [first-share (relay/start! service address)]
+        (relay/stop! service (:writer first-share)))
+      (let [{:keys [url writer]} (relay/start! service address)]
+        (relay/close! service)
+        (relay/close! service)
+        (is (= 404 (:status (relay/studio-media service {}))))
+        (is (thrown? java.io.IOException (fetch url "GET")))
+        (is (thrown? clojure.lang.ExceptionInfo (relay/publish! service writer "segment-1-1.ts" (buffer "x"))))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"This Studio has closed" (relay/start! service address)))))))
