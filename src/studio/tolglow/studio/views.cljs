@@ -10,6 +10,7 @@
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
+            [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.fog-fields :as fog-fields]
@@ -630,7 +631,7 @@
      [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
       (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
         (when unit (set-ui! [:builder :release-unit] unit))) true]
-     [:p.muted.small "The builder creates an RGB effect with adjustable intensity, plus a matching cue when selected."]
+     [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
      [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
       "Create matching cue"]
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))

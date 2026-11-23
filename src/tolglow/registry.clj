@@ -1,6 +1,8 @@
 (ns tolglow.registry
   "Pure, versioned authoring definitions. This namespace never starts a show."
-  (:require [clojure.string :as str]
+  (:require [afterglow.runtime.keyframes :as keyframes]
+            [afterglow.runtime.keyframes.values :as keyframe-values]
+            [clojure.string :as str]
             [tolglow.fixtures.shutter :as shutter]
             [afterglow.time :as time]
             [afterglow.render.layers :as layers]
@@ -213,6 +215,18 @@
         (when (contains? definition :system)
           (try (system/validate-options (:system definition)) []
                (catch clojure.lang.ExceptionInfo e [(error [:system] (.getMessage e))])))
+        (when (contains? definition :keyframes)
+          (try
+            (keyframes/validate! (:keyframes definition))
+            (let [param (get-in definition [:keyframes :progress :param])
+                  attributes (map :attribute (output-entries (:outputs definition)))]
+              (cond
+                (not= kind :effects) [(error [:keyframes] "Keyframes belong to an effect definition")]
+                (not (and (seq attributes) (every? keyframe-values/continuous attributes)))
+                [(error [:keyframes] "Keyframes need continuous native effect outputs")]
+                (and param (not (#{:number :integer} (get-in definition [:params param :type]))))
+                [(error [:keyframes :progress :param] "Select a numeric effect parameter")]))
+            (catch clojure.lang.ExceptionInfo e [(error [:keyframes] (.getMessage e))])))
         (when (and (contains? definition :duration-ms)
                    (not (and (finite-number? duration-ms) (pos? duration-ms))))
           [(error [:duration-ms] "Duration must be positive finite milliseconds")])

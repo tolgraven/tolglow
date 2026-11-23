@@ -41,7 +41,9 @@
       (throw (ex-info "Invalid benchmark counts or scope" {:options opts})))
     opts))
 
-(defn- command [model id payload]
+(defn command
+  "Apply one benchmark setup command and return the accepted model."
+  [model id payload]
   (let [result (control/apply-command model
                  (merge {:show-id (:show-id model) :epoch (:epoch model) :time-ms 0
                          :command-id (str id) :source :performance-profile} payload))]

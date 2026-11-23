@@ -3,6 +3,7 @@
   Compiler plans are immutable; each evaluation owns its new result arrays."
   (:require [afterglow.render.ir :as ir]
             [afterglow.runtime :as runtime]
+            [afterglow.runtime.keyframes :as keyframes]
             [afterglow.time :as time]
             [tolglow.compiler :as compiler]
             [tolglow.lighting-match :as matching]
@@ -144,7 +145,7 @@
                 (needs-scalar? value (contains? arithmetic-parameter-keys key)))) parameter-keys)
       (some #(not (floating-value? (get env %))) clock-keys)))
 
-(defn compile-effect
+(defn- build-effect
   "Compile definition against a captured rig to the ordinary pure step contract.
 
   Numeric IR outputs, envelopes, stable-ID selectors and duplicate output layers
@@ -158,7 +159,7 @@
 
   Responses work unchanged: (comp (compile-effect definition fixtures)
   response-middleware). The canonical model's parameters are not modified."
-  ([definition fixtures] (compile-effect definition fixtures {}))
+  ([definition fixtures] (build-effect definition fixtures {}))
   ([definition fixtures {:keys [enabled? prepare-group bind-pure] :or {enabled? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
@@ -214,6 +215,19 @@
                        (update :intents #(or % []))))))
            {:backend (if prepare-group :deferred :batch) :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
             :groups (count groups)}))))))
+
+(defn compile-effect
+  "Compile the live backend. Future keyframes retain owned numeric samples. A
+  deferred GPU rig uses its equivalent CPU field evaluator for predictive
+  endpoints; all other frames keep their ordinary compute backend."
+  ([definition fixtures] (compile-effect definition fixtures {}))
+  ([definition fixtures options]
+   (let [step (build-effect definition fixtures options)]
+     (if-not (compiler/predictable-outputs? definition) step
+       (if (= :deferred (:backend (meta step)))
+         (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
+           (keyframes/predictable step (fn [ctx] (@cpu ctx))))
+         (keyframes/predictable step))))))
 
 (defn compiler-for-rig
   "Return definition -> step, suitable for engine/advance and a shell-owned cache.

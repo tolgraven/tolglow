@@ -2,6 +2,8 @@
   "Compile declarative effects to pure context middleware, using the shared
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
+            [afterglow.runtime.keyframes :as keyframes]
+            [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
             [tolglow.lighting-match :as matching]
@@ -134,6 +136,10 @@
         prepared
         (select (validate-frame-fixtures! fixtures))))))
 
+(defn predictable-outputs? [definition]
+  (let [outputs (registry/output-entries (:outputs definition))]
+    (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs))))
+
 (defn compile-effect
   "Return a context -> context middleware function. :outputs accepts an
   attribute->expression map or ordered output descriptors. Numeric expressions
@@ -152,7 +158,8 @@
   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
         select-fixtures (fixture-selector rig selected)]
-    (fn [{:keys [frame instance state] :as context}]
+    ((if (predictable-outputs? definition) keyframes/predictable identity)
+     (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
@@ -215,7 +222,7 @@
         (-> context
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % []))))))))
+            (update :intents #(or % [])))))))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."
