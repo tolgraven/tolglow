@@ -26,6 +26,7 @@
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
+            [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
@@ -615,6 +616,7 @@
                                                                     :version (inc (get-in model [:registry :cues id :version] 0))
                                                                     :reload-policy :preserve-state}}} time-ms)]
       (update cue-result :ack assoc :effect-id id :cue-id id))
+    :variable-block (variable-edit/apply-edit model payload)
     :audio-return-configure
     (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
     :settings

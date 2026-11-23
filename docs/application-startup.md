@@ -75,6 +75,8 @@ take precedence.
 | `:clock-sync` | Configures the show’s synchronization manager and opens the enabled sources. An original `{:type :midi :device "…"}` selects a unique JVM MIDI input by name. |
 | `:audio` | Starts PCM capture using the show audio manager and capture config. |
 | `:waveforms` | Publishes `:definitions` to the waveform registry before subsequent modules run. |
+| `:prefabs` | Registers the named materials in `:definitions`. Put this module before consumers of the material library. |
+| `:variable-blocks` | Installs the show-wide `:bindings` using the registered materials and validates their input types. |
 | `:expressive` | Applies the same validated device/parameter mappings as Studio. |
 | `:agents` | Configures the owned agent manager. An empty options map makes the manager available without initiating a conversation. |
 | `:web-server` | Attaches Ring/Jetty to the existing show. Host and actual bound port are available in the module value. |

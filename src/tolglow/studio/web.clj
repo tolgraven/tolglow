@@ -167,6 +167,7 @@
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
+   "/api/variable-block" :variable-block
    "/api/modulation/start" :modulation-start "/api/modulation/stop" :modulation-stop
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
    "/api/materials" :material-edit
@@ -268,7 +269,7 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
+(defn- post-routes [{:keys [variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
@@ -292,6 +293,7 @@
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/" sync! ok {"live" :live})
    {"/api/materials/preview" #(ok (materials/preview (:json-params %)))
+    "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))
     "/api/spatial/search" (available spatial-search! "Spatial search unavailable"
                                       #(ok {:results (spatial-search! (:json-params %))}))
     "/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))

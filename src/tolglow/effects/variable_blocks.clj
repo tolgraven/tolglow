@@ -28,12 +28,23 @@
 (defn compile-model [model]
   (compile-settings (get-in model [:settings :variable-blocks]) (prefabs/catalog model)))
 
+(defn- same-inputs? [ids before after]
+  (every? #(= (get before %) (get after %)) ids))
+
 (defn prepare! [cache settings entries]
-  (let [cached @cache]
-    (if (and (identical? settings (:settings cached)) (identical? entries (:entries cached)))
+  (let [cached @cache
+        same-settings? (identical? settings (:settings cached))]
+    (cond
+      (and same-settings? (identical? entries (:entries cached)))
       (:plan cached)
-      (let [plan (compile-settings settings entries)]
-        (vreset! cache {:settings settings :entries entries :plan plan})
+
+      (and same-settings? (same-inputs? (:shared-ids cached) (:entries cached) entries))
+      (:plan (vreset! cache (assoc cached :entries entries)))
+
+      :else
+      (let [plan (compile-settings settings entries)
+            ids (prefabs/shared-ids (:bindings settings) (:prefabs settings))]
+        (vreset! cache {:settings settings :entries entries :shared-ids ids :plan plan})
         plan))))
 
 (defn- environment [plan model time-ms]

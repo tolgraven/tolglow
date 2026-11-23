@@ -172,13 +172,13 @@
   [:div.material-library-select
    [:label "Saved material"
     [:select {:aria-label "Saved material" :value (if expected id "")
-              :on-change #(when-let [k (material-id (field-value %))] (rf/dispatch [::choose :materials k]))}
+              :on-change #(when-let [k (material-id (field-value %))] (rf/dispatch-sync [::choose :materials k]))}
      [:option {:value ""} "New material"]
      (for [[k m] (sort-by (comp :name val) materials)]
        ^{:key k} [:option {:value (slug k)} (:name m)])]]
    [:label "Start from a template"
     [:select {:aria-label "Start from a template" :value ""
-              :on-change #(rf/dispatch [::choose :presets (keyword (field-value %))])}
+              :on-change #(rf/dispatch-sync [::choose :presets (keyword (field-value %))])}
      [:option {:value ""} "Choose template…"]
      (for [[k m] (sort-by (comp :name val) presets)]
        ^{:key k} [:option {:value (slug k)} (:name m)])]]])

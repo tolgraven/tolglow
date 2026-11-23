@@ -35,6 +35,11 @@ async function open() {
   return {page, panel};
 }
 
+async function waitForName(page, panel, expected) {
+  const name = await panel.getByLabel("Material name").elementHandle();
+  await page.waitForFunction(([input, value]) => input.value === value, [name, expected]);
+}
+
 async function write(page, button, status) {
   const done = page.waitForResponse(r => r.url().endsWith("/api/materials") && r.request().method() === "POST");
   await button.tap();
@@ -77,8 +82,7 @@ try {
   await other.panel.getByText(/Another operator changed/).waitFor();
   await other.panel.getByRole("button", {name: "Reload library"}).tap();
   await other.panel.getByLabel("Saved material").selectOption(id);
-  await other.panel.getByLabel("Material name").waitFor();
-  assert.equal(await other.panel.getByLabel("Material name").inputValue(), "Tidal glass · deep");
+  await waitForName(other.page, other.panel, "Tidal glass · deep");
   await other.page.close();
 
   await template.selectOption("shader/custom");
@@ -109,7 +113,7 @@ try {
   }
   await panel.getByLabel("Saved material").selectOption(id);
   await panel.getByText(/^Output /).waitFor();
-  assert.equal(await panel.getByLabel("Material name").inputValue(), "Tidal glass · deep");
+  await waitForName(page, panel, "Tidal glass · deep");
   await capture(panel.getByLabel("Material preview"));
   await panel.getByRole("button", {name: "Remove material", exact:true}).tap();
   await write(page, panel.getByRole("button", {name: "Confirm removal"}), 200);
