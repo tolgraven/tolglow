@@ -182,3 +182,24 @@ committed rig and running effects.
 position. **Discard draft** restores the running rig. **Save rig layout** commits
 the shared rig draft, including pending edits to other fixtures or the room.
 The saved layout can be reopened from the layout selector.
+
+## Sculpt a cue volume
+
+In **Rig → Sculpt volume**, choose a sphere, cube or rounded box and use
+**Replace shape**. Drag the centre in the selected editing plane to move the
+whole volume. Drag a coloured axis handle to stretch it about its pivot.
+Numeric controls also work by touch and keyboard. **Undo sculpt** restores the
+preceding edit. The outer, fainter contour marks the outside falloff distance.
+
+Choose a primitive and use **Union**, **Intersect** or **Subtract** to combine
+it with the selected shape. **Editing shape** selects the whole volume or a
+specific part for numeric edits. **Carry shape on a bouncing ball** wraps
+the geometry in a moving body with an initial velocity and restitution.
+
+Select fixture origins, intersecting beams or heads that can aim into the
+volume. Set strength, inside and outside falloff and the response curve.
+**Save volume** registers a named volume for spatial controls. **Register +
+launch cue** creates a regular cue on the selected page and launches it. Its
+paint, registered cues, effects and optional macro travel together. The
+resulting cue can be relaunched or stopped from the grid. Under **Parameter
+modulation**, bind field or color components to live variables or waveforms.
