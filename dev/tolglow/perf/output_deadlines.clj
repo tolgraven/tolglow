@@ -58,13 +58,16 @@
         costs (map :cost-ms renders)
         age (for [{:keys [deadline-ms inputs-at-ms]} renders :when inputs-at-ms] (- deadline-ms inputs-at-ms))
         ready (count (filter #(and (:ready-at-ms %) (<= (:ready-at-ms %) (:deadline-ms %))) renders))
-        fresh (count (filter #(= (:source-time-ms %) (:deadline-ms %)) delivered))]
+        matching (filter #(= (:source-time-ms %) (:deadline-ms %)) delivered)
+        fresh (count (filter #(< (:sink-at-ms %) (+ (:deadline-ms %) 25)) matching))]
     {:nominal-slots (inc (- last-slot first-slot)) :renders (count renders)
      :complete-within-25-ms (count (filter #(and (:ready-at-ms %) (<= (:cost-ms %) 25.0)) renders)) :ready-for-deadline ready
      :sent (count delivered) :publisher-attempts (count outputs)
      :late-sink-entries (count late-sink) :short-sink-gaps (count short-gaps)
-     :meets-sink-timing? (and (empty? late-sink) (empty? short-gaps)) :expired-before-send (count (filter :expired-before-send? outputs))
-     :sent-with-current-source fresh :render-wall-p95-ms (percentile 0.95 costs)
+     :meets-sink-timing? (when (seq delivered) (and (empty? late-sink) (empty? short-gaps)))
+     :expired-before-send (count (filter :expired-before-send? outputs))
+     :sent-with-current-source fresh :matching-source-delivered (count matching)
+     :render-wall-p95-ms (percentile 0.95 costs)
      :input-age-p50-ms (percentile 0.50 age) :input-age-p95-ms (percentile 0.95 age)
      :send-start-lag-p95-ms (percentile 0.95 (map #(- (:started-at-ms %) (:deadline-ms %)) outputs))
      :send-cost-p95-ms (percentile 0.95 (map #(- (:finished-at-ms %) (:started-at-ms %)) outputs))

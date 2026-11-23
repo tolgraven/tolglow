@@ -141,6 +141,34 @@ fog-channel output before its final admission check and spaces the next
 attempt from transport return. An OS pause after the check can still delay
 the downstream sink. [Full slot chart and raw captures](https://github.com/tolgraven/afterglow/pull/89)
 
+### Before and after the final handoff check
+
+The 1,024-pixel and 128-mover rig ran eight six-second captures in a single JVM
+pinned to three logical CPUs. Each case warmed up for 120 slots and measured
+240. In the injected cases, final fixture preparation waited 32 ms for every
+eighth frame ID, after native rendering had finished. These rows use the
+physical capture callback timestamp, including the time after host-side channel
+corrections. The second comparison reverses the version order.
+
+| Preparation | Sender | Full renders within 25 ms / 240 | Full render p95 | Sink entries after slot | Sink gaps under half a period |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Injected, first comparison | Previous | 127 | 37.49 ms | 16 | 0 |
+| Injected, first comparison | Guarded | 179 | 28.99 ms | 0 | 0 |
+| Injected, second comparison | Previous | 135 | 38.03 ms | 24 | 3 |
+| Injected, second comparison | Guarded | 119 | 46.37 ms | 0 | 0 |
+| Ordinary, first comparison | Previous | 45 | 64.01 ms | 0 | 0 |
+| Ordinary, first comparison | Guarded | 142 | 40.03 ms | 0 | 0 |
+| Ordinary, second comparison | Previous | 104 | 42.67 ms | 0 | 0 |
+| Ordinary, second comparison | Guarded | 116 | 40.43 ms | 0 | 0 |
+
+The updated sender discarded 21 attempts during preparation in each injected
+run. Both render versions used the same scene and worker count. The render
+duration differences include wall-clock contention on the shared host.
+The handoff test measures software delivery to a memory sink. A physical
+Art-Net receiver or OLA interface will add transport-specific latency.
+The archive contains all eight raw traces, the baseline revision, and the replay
+script. [Paired handoff replay](https://github.com/tolgraven/afterglow/pull/89)
+
 ## Measuring the scheduler
 
 Start with an explicit reserve on a cold show. Adjust it using observed completion costs, worker and packing time, and wake-up jitter. Take more lead after a miss and recover gradually. If the work cannot fit, skip expired scheduling slots and apply the configured late-frame policy. Prevent a late completion or an old show epoch from overwriting newer output.
