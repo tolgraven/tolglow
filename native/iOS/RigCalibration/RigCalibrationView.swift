@@ -41,8 +41,8 @@ struct RigCalibrationView: View {
                         Text(scanner.worldToRig == nil ? "First tap the rig floor origin, then a floor point in its +Z direction (at least 0.5 m apart)." : "Gravity sets +Y. Floor origin and +Z align the scan to Studio coordinates.")
                             .font(.caption).foregroundStyle(.secondary)
                         if scanner.selectedKind == "surface" { surfaceControls }
-                        Text(scanner.status).font(.callout)
                     }
+                    Text(scanner.status).font(.callout)
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Fixtures to identify").font(.headline)
                         ForEach(client.fixtures.compactMap { $0["id"] as? String }, id: \.self) { id in

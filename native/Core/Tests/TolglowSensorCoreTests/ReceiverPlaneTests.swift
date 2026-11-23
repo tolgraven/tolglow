@@ -3,8 +3,8 @@ import XCTest
 
 final class ReceiverPlaneTests: XCTestCase {
     func testTranslatedRotatedBoundaryUsesMetricOrientedBounds() throws {
-        let center = SIMD2<Float>(3, -4), u = SIMD2<Float>(0.8, 0.6), v = SIMD2<Float>(-0.6, 0.8)
-        let points = [center - 2*u - v, center + 2*u - v, center + 2*u + v, center - 2*u + v]
+        let center = SIMD2<Float>(3, -4)
+        let points: [SIMD2<Float>] = [SIMD2(2, -6), SIMD2(5.2, -3.6), SIMD2(4, -2), SIMD2(0.8, -4.4)]
         let plane = try XCTUnwrap(ReceiverPlane(boundary: points))
         XCTAssertEqual(plane.center.x, center.x, accuracy: 0.0001)
         XCTAssertEqual(plane.center.y, center.y, accuracy: 0.0001)

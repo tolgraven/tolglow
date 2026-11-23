@@ -52,6 +52,7 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
         configuration.worldAlignment = .gravity
         configuration.frameSemantics.insert(.sceneDepth)
         configuration.planeDetection = [.horizontal, .vertical]
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { configuration.sceneReconstruction = .mesh }
         worldID = UUID().uuidString; tracks.removeAll(); pending.removeAll(); captured = 0
         latestTimestamp = 0; goodFrameInterval = false; captureEnabled = false
         alignmentOrigin = nil; alignmentHeading = nil; worldToRig = nil; surface = nil
