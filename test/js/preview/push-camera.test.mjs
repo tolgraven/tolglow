@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {cylindricalCamera, fitCamera} from '../../../js/preview/push-scene.js';
+import {CylindricalLens, cylindricalCamera, fitCamera} from '../../../js/preview/push-scene.js';
 
 test('cylindrical sampling covers both extreme corners and retains angular scale at the centre', () => {
   const ratio = 6, angle = 68*Math.PI/180;
@@ -29,4 +29,20 @@ test('wide fit contains offset truss extremes, floor and raised fixtures', () =>
     const p=new THREE.Vector3(x,y,z).project(camera);
     assert.ok(Math.abs(p.x)<1 && Math.abs(p.y)<1 && Math.abs(p.z)<1);
   }
+});
+
+test('panorama reads and presents the finished canvas, then restores the previous target', () => {
+  const scene = {}, image = {}, sampled = [];
+  let bound = scene;
+  const renderer = {
+    getRenderTarget: () => bound,
+    setRenderTarget(target) { bound = target; },
+    copyFramebufferToTexture(texture) { assert.equal(texture, image); sampled.push(bound); }
+  };
+  const lens = {image, quad: {render() { sampled.push(bound); }}};
+  CylindricalLens.prototype.render.call(lens, renderer);
+  assert.deepEqual(sampled, [null, null]); assert.equal(bound, scene);
+  lens.quad.render = () => {throw Error('lost');};
+  assert.throws(() => CylindricalLens.prototype.render.call(lens, renderer), /lost/);
+  assert.equal(bound, scene);
 });

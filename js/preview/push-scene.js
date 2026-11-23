@@ -54,7 +54,7 @@ export function panoramaCamera(camera, controls, bounds, room) {
 
 // Apply the lens after the regular tone map, fog and editor overlays. This
 // samples one rendered view and avoids rerendering the whole space per sector.
-class CylindricalLens {
+export class CylindricalLens {
   constructor(renderer) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     this.image = new THREE.FramebufferTexture(size.x, size.y);
@@ -72,8 +72,14 @@ class CylindricalLens {
     this.quad = new FullScreenQuad(this.material);
   }
   render(renderer) {
-    renderer.copyFramebufferToTexture(this.image);
-    this.quad.render(renderer);
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(null);
+    try {
+      renderer.copyFramebufferToTexture(this.image);
+      this.quad.render(renderer);
+    } finally {
+      renderer.setRenderTarget(previous);
+    }
   }
   dispose() {this.image.dispose(); this.material.dispose(); this.quad.dispose();}
 }
