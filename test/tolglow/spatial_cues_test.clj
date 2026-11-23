@@ -1,5 +1,6 @@
 (ns tolglow.spatial-cues-test
   (:require [afterglow.render.frame :as frame]
+            [afterglow.spatial.field :as field]
             [clojure.test :refer [deftest is]]
             [tolglow.composition :as composition]
             [tolglow.persistence :as persistence]
@@ -140,6 +141,25 @@
       (host/tick rt 250)
       (is (= (vec (repeat 9 0)) (host/output rt)))
       (is (empty? (:instances (state rt))))
+      (finally (show/stop! rt)))))
+
+(deftest two-optical-cues-share-the-previous-compact-output
+  (let [rt (host/runtime true)
+        region (assoc-in request [:volume :selection] #{:position :beam})
+        observe field/compact-observations
+        reads (atom [])]
+    (try
+      (host/submit rt 0 :spatial-cue region)
+      (host/submit rt 25 :spatial-cue (assoc region :id :second :cell [3 1]))
+      (let [previous (get-in @(:state rt) [:output :compact])]
+        (with-redefs [field/compact-observations
+                      (fn [opts index compact]
+                        (swap! reads conj compact)
+                        (observe opts index compact))]
+          (host/tick rt 50))
+        (is (some? previous))
+        (is (= 1 (count @reads)))
+        (is (identical? previous (first @reads))))
       (finally (show/stop! rt)))))
 
 (deftest cache-only-optical-plans-across-committed-frames

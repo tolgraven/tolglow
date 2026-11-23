@@ -105,3 +105,9 @@ Apply the group/rig response to authored light, enforce concurrent budgets, then
 read and score the delivered emitter channels. Keep coarse/fine encoding and
 bulk frame operations in Afterglow. Run the mixed 2,048-pixel/64-head benchmark
 when changing that path. [Operator guide](../../docs/group-lighting-scenes.md)
+
+The scheduled show receives its physical output ticket from Afterglow. Map the
+remaining physical time to the restorable show clock under the owner lock
+before draining commands. Keep inputs immutable across effect workers and
+fence pending physical samples at transport discontinuities. Run the
+two-worker scheduler test when changing clock capture or output handoff.

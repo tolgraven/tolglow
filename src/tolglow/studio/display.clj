@@ -3,6 +3,7 @@
   mailbox; browser capture, PNG decoding and native output run on one worker."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [afterglow.control.devices.push-3.display :as push-3]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
            [java.lang ProcessHandle]
@@ -298,9 +299,15 @@
        nil)}))
 
 (defn browser-display
-  "Create a display transport backed by the standalone studio re-frame page.
-  Supply an explicit browser executable. :sink overrides native Wayang for tests
-  or other destinations; default Wayang retains its exclusive process-wide lease."
-  [{:keys [sink] :as options}]
-  (transport (assoc options :capture (process-capture options)
-                    :sink (or sink (transports/wayang-display {:renderer! blit!})))))
+  "Create an offscreen re-frame display for a tethered Push. Push 2 uses Wayang.
+  For Push 3, pass :device :push-3 and :usb {:bus b :address a} from enumeration.
+  Both routes accept an injected image sink for capture and replay."
+  [{:keys [device sink usb] :or {device :push-2} :as options}]
+  (when-not (#{:push-2 :push-3} device)
+    (throw (ex-info "Unknown Push display device" {:device device})))
+  (let [sink (or sink (case device
+                        :push-2 (transports/wayang-display {:renderer! blit!})
+                        :push-3 (push-3/sink usb)))]
+    (when (and (:device sink) (not= device (:device sink)))
+      (throw (ex-info "Display and sink select different devices" {:device device :sink (:device sink)})))
+    (assoc (transport (assoc options :capture (process-capture options) :sink sink)) :device device :input :view)))

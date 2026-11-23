@@ -7,6 +7,7 @@
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
@@ -35,10 +36,11 @@
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
-    tolglow.studio.sensor-host-test tolglow.output.scheduler-test
+    tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.render.workers-test tolglow.request-archive-test
-    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test])
+    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
+    tolglow.preview.airplay-test])
 
 (def suites
   {"pure" pure-tests

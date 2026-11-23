@@ -10,6 +10,7 @@
             [tolglow.effects.material-design :as materials]
             [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.connections :as connections]
+            [tolglow.preview.airplay :as airplay]
             [tolglow.visualization.cue-pads :as cue-pads]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
@@ -68,14 +69,15 @@
             compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN")
                                     {:guest-bridge (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_TOKEN")
                                      :verification (keyword (or (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION") "full"))})
-            projections (projection/create)]
+            projections (projection/create)
+            receiver (airplay/create)]
         (state-stream/publish! stream @(:state runtime))
-        {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections
+        {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
          :frame! #(state-stream/publish! stream %)
          :tracing? #(debug-stream/observing? debug)
          :events! #(debug-stream/commit! debug %1 %2 %3 %4)
          :close! (fn [] (workers/close! compute) (debug-stream/close! debug) (state-stream/close! stream)
-                   (projection/clear! projections))}))))
+                   (projection/clear! projections) (airplay/close! receiver))}))))
 
 (defn browser-snapshot
   "Bound preview values. Delta clients receive versioned, exact-base envelopes;
@@ -106,6 +108,12 @@
   ([runtime] (handler runtime (bind! runtime :studio)))
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+            :airplay-interfaces airplay/interfaces
+            :airplay-media (partial airplay/studio-media (:airplay bindings))
+            :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
+            :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
+            :airplay-publish! (fn [{:keys [path-params body]}]
+                                (airplay/publish! (:airplay bindings) (:writer path-params) (:file path-params) body))
             :materials! #(materials/inventory (:model @(:state runtime)))
             :material-preview! #(materials/preview % (show/variables runtime))
             :variable-sources! (fn [{:keys [query readable?] :as opts}]

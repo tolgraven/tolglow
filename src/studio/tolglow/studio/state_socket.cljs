@@ -10,7 +10,7 @@
 (defonce ^:private owner (atom nil))
 (defonce ^:private demand (atom {}))
 (defonce ^:private connections-open? (atom false))
-(defonce ^:private external-preview? (atom false))
+(defonce ^:private preview-surfaces (atom #{}))
 (defn- current? [id] (and id (= id (:id @owner))))
 
 (defn- close-socket! [reason]
@@ -61,7 +61,7 @@
     (when (and id socket (= 1 (.-readyState socket)))
       (let [visible? (not (.-hidden js/document))
             enabled? (and @connections-open? visible?)
-            wanted (visible-queries (set (keys @demand)) visible? @external-preview?)]
+            wanted (visible-queries (set (keys @demand)) visible? (seq @preview-surfaces))]
         (when (not= (boolean subscribed?) enabled?)
           (reply! [id {:op :connections :enabled? enabled?}])
           (swap! owner assoc :subscribed? enabled?))
@@ -69,9 +69,11 @@
           (reply! [id {:op :queries :queries (vec wanted)}])
           (swap! owner assoc :queries wanted))))))
 
-(defn present-preview! [enabled?]
-  (reset! external-preview? enabled?)
-  (update-interest!))
+(defn present-preview!
+  ([enabled?] (present-preview! :pip enabled?))
+  ([surface enabled?]
+   (swap! preview-surfaces (if enabled? conj disj) surface)
+   (update-interest!)))
 
 (defn- release! [query]
   (swap! demand (fn [refs]

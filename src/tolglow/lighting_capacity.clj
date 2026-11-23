@@ -2,6 +2,7 @@
   "Headless show policy and metering. Read resolved universes after blending;
   the audio gain is a limit on the authored look, owned separately from master."
   (:require [afterglow.render.photometry :as photometry]
+            [afterglow.render.dmx :as dmx]
             [tolglow.fixtures.shutter :as shutter]))
 
 (def defaults
@@ -56,15 +57,15 @@
        :attributes (into (cond-> #{:dimmer} (every? channels [:red :green :blue]) (conj :color))
                          (filter channels (keys photometry/emitter-spectrum)))})))
 
-(deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot])
+(deftype MeterAddress [^long universe ^long slot ^long fineUniverse ^long fineSlot ^double pivot ^boolean coarseRange])
 (deftype MeterEmitter [^MeterAddress address ^double brightness ^double watts ^double red ^double green ^double blue])
 (deftype MeterHead [^MeterAddress dimmer ^MeterAddress sharedDimmer ^objects emitters shutters ^double weight])
 
-(defn- address [indices {:keys [coarse fine inverted-from]}]
+(defn- address [indices {:keys [coarse fine inverted-from] :as channel}]
   (when coarse
     (MeterAddress. (indices (first coarse)) (second coarse)
                    (if fine (indices (first fine)) -1) (if fine (second fine) -1)
-                   (or inverted-from -1.0))))
+                   (or inverted-from -1.0) (boolean (:afterglow.render.frame/coarse-range? channel)))))
 
 (defn- meter-head [indices {:keys [emitters dimmer shared-dimmer lamp-color response weight watts shutters]}]
   (let [n (count emitters)
@@ -105,8 +106,9 @@
 (defn- level ^double [^objects buffers ^MeterAddress channel]
   (if (nil? channel) 1.0
     (let [coarse (bit-and 255 (aget ^bytes (aget buffers (.-universe channel)) (.-slot channel)))
-          raw (+ coarse (if (neg? (.-fineUniverse channel)) 0.0
-                          (/ (bit-and 255 (aget ^bytes (aget buffers (.-fineUniverse channel)) (.-fineSlot channel))) 255.0)))
+          raw (if (neg? (.-fineUniverse channel)) (double coarse)
+                (dmx/coarse-units coarse (bit-and 255 (aget ^bytes (aget buffers (.-fineUniverse channel)) (.-fineSlot channel)))
+                                  (.-coarseRange channel)))
           pivot (.-pivot channel)
           drive (if (and (>= pivot 0.0) (>= raw pivot)) (- 255.0 (- raw pivot)) raw)]
       (/ drive 255.0))))
