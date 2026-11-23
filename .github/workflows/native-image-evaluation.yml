@@ -1,0 +1,41 @@
+name: Evaluate full hosted Studio Native Image
+on:
+  push:
+    branches: [codex/apple-full-native-image-evaluation]
+permissions: {contents: read, actions: read}
+jobs:
+  evaluate:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: studio-runtime
+          repository: tolgraven/tolglow
+          run-id: 45142899389
+          github-token: ${{ github.token }}
+      - uses: graalvm/setup-graalvm@v1.6.10
+        with: {java-version: '25', distribution: 'graalvm-community'}
+      - name: Build the full application with direct Clojure initialization
+        shell: bash
+        run: |
+          curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
+          echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
+          native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
+          ./studio-native --port 0 >native-start.log 2>&1 &
+          child=$!
+          trap 'kill "$child" || true' EXIT
+          for ((i=0; i<90; i++)); do
+            if grep -q 'Tolglow Studio listening on' native-start.log; then break; fi
+            kill -0 "$child"
+            sleep 1
+          done
+          origin="$(sed -n 's/Tolglow Studio listening on //p' native-start.log)"
+          curl -fsS "$origin/studio/js/main.js" -o /dev/null
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: native-image-diagnostics
+          path: |
+            *.log
+            reports/
