@@ -101,6 +101,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Development workspace](product/development-workspace.md) | Popup REPL, source/scratch editing, agent branches, reload and Docker terminal |
 | [Show authoring](product/show-authoring.md) | Definitions, sequences, envelopes, randomization and auto show |
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
+| [Local model lab](model-lab/README.md) | Prepared show, Clojure and GLSL corpora, model choices, tokenizer audit, hardware scenarios and release gates |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
 | [Work ledger](work-items.edn) | Authoritative state, exclusive paths and acceptance criteria |
 | [Work log](work-log.md) | Dated evidence and decisions |

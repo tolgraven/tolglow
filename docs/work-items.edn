@@ -87,15 +87,15 @@
   {:id :models/agent-language :title "Expose compact show authoring and shader operations to local and remote agents"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/src/tolglow/agents"] :depends-on [:foundation/tests]
-   :acceptance ["Reuse show/library defaults, mix data and trusted local Clojure one-offs, validate shader changes off the render clock and verify normal Studio/REPL/standalone entry points and rollback."] :evidence []}
+   :acceptance ["Reuse show/library defaults, mix data and trusted local Clojure one-offs, validate shader changes off the render clock and verify normal Studio/REPL/standalone entry points and rollback."] :evidence ["Compact forms use the normal show queue, musical time and trusted REPL functions. Standalone source-rollout and agent routing still need device qualification."]}
   {:id :models/local-adapters :title "Prepare device-aware local model selection, adapter routing and costed training recipes"
    :kind :research :status :planned :owner nil
    :paths ["tolglow/docs/model-lab"] :depends-on [:foundation/tests]
-   :acceptance ["Compare model and adapter revisions, resident memory and thermal limits, size options from phone to Mac. Cost MBP/Studio and NVIDIA through GB200 and test launch preparation without weight updates."] :evidence []}
+   :acceptance ["Compare model and adapter revisions, resident memory and thermal limits, size options from phone to Mac. Cost MBP/Studio and NVIDIA through GB200 and test launch preparation without weight updates."] :evidence ["Nine pinned candidates, both pilot tokenizer preflights, prepared MLX and PEFT launch recipes and costed iPhone to GB200 scenarios are in docs/model-lab. Device memory and thermal measurements are pending."]}
   {:id :models/training-data :title "Assemble reproducible GLSL, show-language and paired source datasets"
-   :kind :implementation :status :planned :owner nil
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/dev/model-lab"] :depends-on [:foundation/tests]
-   :acceptance ["Produce provenance and license-aware train/dev/test sets with family and leakage controls, real shader/command tests and a held-out coding evaluation. Preparation stops before fine-tuning."] :evidence []}
+   :acceptance ["Produce provenance and license-aware train/dev/test sets with family and leakage controls, real shader/command tests and a held-out coding evaluation. Preparation stops before fine-tuning."] :evidence ["Public MIT/EPL split payloads and owner-local generators, family and prompt leakage checks, shader readback, executable show scoring and Clojure reconstruction evaluation are in dev/model-lab. Both pilot tokenizers were exercised. No training ran."]}
   {:id :studio/visible-cue-pad-previews :title "Visualize mounted cue pages through musical keyframes"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/visualization/cue_pads.clj" "tolglow/src/studio/tolglow/studio/cue_pad_preview.cljs"
@@ -103,6 +103,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Share inactive and running samples across visible browser and Push pad cells, clean up every lease and lower visual keyframe frequency before live effects."]
    :evidence ["Release Chromium observed 16 distinct colors on an inactive cue, switched pages, and recorded Transit query disposal. Paired Afterglow PR #71 verifies fair physical MIDI messages and session cleanup. See docs/cue-pad-previews.md for timing, ownership and reproduction."]}
+  {:id :models/pilot-data-preparation :title "Prepare a source-attributed local model pilot for show control, GLSL and Clojure"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/dev/model-lab" "tolglow/docs/model-lab" "tolglow/src/tolglow/agents/forms.clj" "tolglow/test/tolglow/agents/forms_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Produce deterministic public and owner-local corpora, executable held-out checks, pinned tokenizers and hardware-specific recipes without training."]
+   :evidence ["268 public examples. Owner-local generation assembled 1,123 examples across 88 isolated families. Both model snapshots passed tokenizer-only preparation, and reference replays passed 48 held-out EDN command equivalences and 32 WebGL2 numeric checks. See docs/model-lab/README.md for open training, device and deployment gates."]}
   {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
