@@ -32,6 +32,9 @@ jobs:
                   try:b=zstandard.ZstdDecompressor().decompress(b,max_output_size=256*1024*1024)
                   except zstandard.ZstdError:pass
               kinds[b[:6].hex()]+=1
+              at = b.find(b'No matching field found: getScheme')
+              if at >= 0:
+                  print('Clojure launch failure from',path,'\n',re.sub(rb'[^\x20-\x7e\r\n]',b' ',b[max(0,at-55):at+7000]).decode('ascii')[:7000])
               for needle in [b'\x89PNG\r\n\x1a\n',b'\xff\xd8\xff',b'ftypqt  ',b'ftypisom',b'ftypmp42']:
                   at=b.find(needle)
                   if at<0:continue
