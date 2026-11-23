@@ -4,6 +4,7 @@
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.display :as display]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.parameter-precision :as precision]
             [tolglow.studio.web :as web]))
@@ -187,3 +188,23 @@
     (is (= panel (precision/push-view (atom nil) (assoc model :epoch 2) panel)))
     (is (= 8 (get-in (get (project (assoc-in model [:rig :fixtures] [(last fixtures)])) [definition nil]) path)))
     (is (nil? (get-in definition path)))))
+
+(deftest push-parameter-and-audio-surfaces-preserve-the-same-fine-channel
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        snapshot @(:state runtime)
+        schema {:type :number :default 0.5 :bounds [0 1]}
+        definition {:id :aim :params {:pan schema} :outputs {:pan {:op :param :key :pan}}}
+        instance {:id "1:1" :effect-version 1 :definition definition :targets [:head] :params {:pan 0.5}}
+        model (-> (:model snapshot)
+                  (assoc :epoch 1 :instances {"1:1" instance})
+                  (assoc-in [:rig :fixtures] [{:id :head :channels {:pan [1 2]}}]))
+        host (assoc runtime :state (atom (assoc snapshot :model model)))
+        panel {:instance-id "1:1" :epoch 1 :definition-version 1
+               :parameters [{:param :pan :schema schema :value 0.5}]}]
+    (try
+      (let [project (with-redefs [display/browser-display :project!] (show/push-browser-display host {}))]
+        (doseq [mode [:parameters :audio]]
+          (let [view (project (assoc panel :display-mode mode))]
+            (is (= 16 (get-in view [:parameters 0 :schema :dmx-bits])) (str mode))
+            (is (= (= mode :audio) (contains? view :audio-waveform))))))
+      (finally (show/stop! runtime)))))

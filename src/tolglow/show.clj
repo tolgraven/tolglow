@@ -1423,9 +1423,11 @@
                            (assoc-in [:visualization-clock :sample-period-ms]
                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
                     visual (case mode
-                             :parameters (precision/push-view precision-cache model (waveforms/project-display cache snapshot view nil))
-                             :audio (waveforms/project-display cache snapshot view
-                                          (audio/waveform (connections/audio (:connections runtime))))
+                             (:parameters :audio)
+                             (let [capture (when (= mode :audio)
+                                             (audio/waveform (connections/audio (:connections runtime))))]
+                               (->> (waveforms/project-display cache snapshot view capture)
+                                    (precision/push-view precision-cache model)))
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))

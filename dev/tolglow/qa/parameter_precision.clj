@@ -7,9 +7,7 @@
             [tolglow.application :as app]
             [tolglow.demo :as demo]
             [tolglow.show :as show]
-            [tolglow.studio.display :as display]
-            [tolglow.studio.parameter-precision :as precision]
-            [tolglow.waveforms :as waveforms]))
+            [tolglow.studio.display :as display]))
 
 (defn- control [name value]
   {:name name :type :number :bounds [0 1] :default value})
@@ -32,16 +30,19 @@
       (throw (ex-info "Unexpected show command receipt" {:command command :receipt receipt})))
     receipt))
 
-(defn- record [host selection]
-  (let [snapshot @(:state host) model (:model snapshot)
-        view (->> (waveforms/project-display (waveforms/create-cache) snapshot (push/display-view selection model) nil)
-                  (precision/push-view (atom nil) model))
+(defn- record [host project selection]
+  (let [snapshot @(:state host)
+        view (push/display-view selection (:model snapshot))
         buffer (get-in snapshot [:output :universes 1])
         channels (mapv #(bit-and 255 (aget ^bytes buffer %)) [0 5 6])]
-    {:view view :dmx channels}))
+    {:parameters (project (assoc view :display-mode :parameters))
+     :audio (project (assoc view :display-mode :audio))
+     :dmx channels}))
 
 (defn- capture! [host dir]
   (let [id (:instance-id (command! host {:op :cue/launch :cue-id :precision :launch {:mode :persistent}}))
+        ;; The headless Chromium worker below consumes these actual host projections.
+        project (with-redefs [display/browser-display :project!] (show/push-browser-display host {}))
         profile (push/profile {})
         state (assoc (:initial-state profile) :ready? true :selected-instance id :selected-cue :precision)
         input (fn [state cc]
@@ -51,15 +52,16 @@
         turn! (fn [cc] (let [command (first (:commands (input shifted cc)))]
                           (when-not command (throw (ex-info "Expected encoder edit" {:cc cc})))
                           (command! host command)))
-        before (record host shifted)
+        before (record host project shifted)
         _ (turn! 71)
         _ (turn! 72)
-        after (record host shifted)
+        after (record host project shifted)
         frames [before after]]
     (when-not (= [[127 127 255] [128 128 0]] (mapv :dmx frames))
       (throw (ex-info "Unexpected committed coarse/fine bytes" {:channels (mapv :dmx frames)})))
-    (spit (io/file dir "capture.ndjson")
-          (apply str (map-indexed (fn [i frame] (str (display/frame-request i (:view frame)) "\n")) frames)))
+    (doseq [[mode file] [[:parameters "capture.ndjson"] [:audio "audio.ndjson"]]]
+      (spit (io/file dir file)
+            (apply str (map-indexed (fn [i frame] (str (display/frame-request i (mode frame)) "\n")) frames))))
     (spit (io/file dir "dmx.json") (json/write-str (mapv :dmx frames)))
     id))
 
