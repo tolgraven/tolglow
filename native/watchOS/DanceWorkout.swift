@@ -9,10 +9,11 @@ import TolglowSensorCore
     @Published private(set) var effort = 0.0
     @Published private(set) var steps: UInt32 = 0
     @Published private(set) var bpm: Int?
-    @Published private(set) var status = "Join the floor on your iPhone first."
+    @Published private(set) var status = "Choose where to share your wrist motion."
 
     private let store = HKHealthStore()
     private let motion: MotionSampler
+    let link: WatchFloorLink
     private let relay: WatchRelay
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
@@ -28,12 +29,20 @@ import TolglowSensorCore
     init(motion: MotionSampler, relay: WatchRelay) {
         self.motion = motion
         self.relay = relay
+        self.link = WatchFloorLink(phone: relay)
         super.init()
+        link.interrupted = { [weak self] message in self?.stop(message) }
     }
+
+    func prepareConnection() { relay.activate() }
 
     func start(withPulse: Bool) {
         guard !active, !requesting else { return }
-        guard relay.reachable else { relay.activate(); status = "Connect your iPhone and join the floor, then tap again."; return }
+        guard link.ready else {
+            if link.route == .pairedPhone { relay.activate(); status = "Join the floor on iPhone, or choose Nearby stage for Watch only." }
+            else { status = "Choose a nearby stage before sharing." }
+            return
+        }
         motion.stop()
         relay.cancelPending()
         generation = UUID()
@@ -89,7 +98,7 @@ import TolglowSensorCore
     }
 
     private func beginMotion() {
-        guard relay.reachable else { stop("iPhone disconnected. Rejoin when it is reachable."); return }
+        guard link.ready else { stop("Connection lost. Rejoin before sharing."); return }
         requesting = false
         active = true
         meter = DanceMeter()
@@ -97,7 +106,7 @@ import TolglowSensorCore
         steps = 0
         serial = 0
         lastMotion = ProcessInfo.processInfo.systemUptime
-        relay.beginAudience()
+        link.begin()
         // Skip the last cached observation from any previous conducting session.
         motionUpdates = motion.$values.dropFirst().sink { [weak self] values in
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }
@@ -127,7 +136,7 @@ import TolglowSensorCore
         bpm = pulse?.bpm(at: now)
         guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm) else { return }
         serial &+= 1
-        relay.sendAudience(sample)
+        link.send(sample)
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {
@@ -136,8 +145,8 @@ import TolglowSensorCore
         ticker = nil
         motionUpdates?.cancel()
         motionUpdates = nil
+        link.end()
         if active || requesting {
-            relay.endAudience()
             motion.stop()
         }
         active = false

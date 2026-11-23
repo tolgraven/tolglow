@@ -8,15 +8,19 @@ import SwiftUI
         motion.onObservation = { [weak self] sample in self?.relay.send(sample) }
         relay.onFailure = { [weak self] in
             guard let self else { return }
-            if self.workout.active || self.workout.requesting { self.workout.stop(self.relay.status) }
-            self.motion.stop()
+            if self.workout.active || self.workout.requesting {
+                if self.workout.link.route == .pairedPhone { self.workout.stop(self.relay.status) }
+            } else { self.motion.stop() }
         }
     }
     func sceneChanged(_ phase: ScenePhase) {
         if phase == .active || workout.runningWorkout { return }
         // HealthKit may present the permission sheet while the scene is inactive.
         if workout.requesting && phase == .inactive { return }
-        if workout.active || workout.requesting { workout.stop("Left the app. Dance sharing stopped.") }
+        let stage = workout.link.stage
+        if workout.active || workout.requesting || (phase == .background && (stage.looking || stage.connecting || stage.joined)) {
+            workout.stop("Left the app. Dance sharing stopped.")
+        }
         motion.stop()
         relay.cancelPending()
     }
@@ -41,7 +45,7 @@ struct WatchRoot: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    NavigationLink("Dance floor") { DanceAudienceView(workout: workout) }
+                    NavigationLink("Dance floor") { DanceAudienceView(workout: workout) }.accessibilityIdentifier("dance-floor")
                     Text(motion.armed ? "CONDUCTING" : "DISARMED").font(.headline).foregroundStyle(motion.armed ? .green : .orange)
                     Button("Primary action") { motion.primaryAction() }
                         .handGestureShortcut(.primaryAction, isEnabled: motion.armed)

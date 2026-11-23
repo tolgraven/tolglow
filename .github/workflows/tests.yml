@@ -215,3 +215,14 @@ jobs:
         with:
           name: audience-clip-simulator
           path: ${{ runner.temp }}/audience-clip
+      - name: Capture solo Watch stage enrollment
+        run: native/Tests/capture_watch_audience.sh "$RUNNER_TEMP/watch-audience"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: watch-audience
+          path: |
+            ${{ runner.temp }}/watch-audience/*.png
+            ${{ runner.temp }}/watch-audience/*.mp4
+            ${{ runner.temp }}/watch-audience/ui.xcresult
+          retention-days: 10

@@ -206,4 +206,4 @@ password** removes the local credential for the selected origin. Existing
 browser sessions expire on their normal schedule. OSC pairing for the phone
 and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).
 
-The [nearby Dance floor guide](../docs/nearby-audience.md) covers Bluetooth stage discovery, phone and Watch participation and the lightweight QR App Clip.
+The [nearby Dance floor guide](../docs/nearby-audience.md) covers Bluetooth stage discovery, paired or standalone Watch enrollment and the lightweight QR App Clip. Choose **Nearby stage** on Watch to participate directly over Bluetooth while away from the paired iPhone.

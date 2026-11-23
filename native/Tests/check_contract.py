@@ -72,6 +72,15 @@ class Contract(unittest.TestCase):
         self.assertIn("private var sharePulse = false", view)
         self.assertIn("workout.start(withPulse: sharePulse)", view)
 
+    def test_solo_watch_uses_the_shared_stage_central(self):
+        manifest = (ROOT / "project.yml").read_text()
+        watch = manifest.split("  TolglowWatch:\n    type: application", 1)[1].split("  WatchAudienceUITests:", 1)[0]
+        for key in ["WKRunsIndependentlyOfCompanionApp: true", "NSBluetoothAlwaysUsageDescription:",
+                    "Audience/AudienceClient.swift", "Audience/AudienceRadio.swift"]:
+            self.assertIn(key, watch)
+        self.assertNotIn("iOS/", watch)
+        self.assertNotIn("import Network", (ROOT / "watchOS/WatchFloorLink.swift").read_text())
+
     def test_native_control_and_webview_share_the_operator_auth_boundary(self):
         access = (ROOT / "iOS/StudioOperatorAccess.swift").read_text()
         self.assertIn("NSURLAuthenticationMethodHTTPBasic", access)

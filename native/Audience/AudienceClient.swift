@@ -33,7 +33,11 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central.state == .poweredOn else {
-            if central.state != .unknown && central.state != .resetting { leave(); status = "Allow Bluetooth and turn it on to join" }
+            if central.state == .resetting && (connecting || joined) {
+                leave(); status = "Bluetooth restarted. Find your stage again."
+            } else if central.state != .unknown && central.state != .resetting {
+                leave(); status = "Allow Bluetooth and turn it on to join"
+            }
             return
         }
         if looking { central.scanForPeripherals(withServices: [AudienceRadio.service]) }
