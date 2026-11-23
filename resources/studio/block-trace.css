@@ -27,3 +27,26 @@
 #push-display .block-trace-legend {gap:18px}
 
 .block-trace-viewport {width:100%;min-height:150px}
+.block-editor {margin:.4rem 0}
+.block-builder {display:grid;gap:.65rem;padding:.65rem;background:#161b17;border:1px solid #495441;border-radius:6px}
+.block-builder label,.block-input {display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;color:#c4ccbb}
+.block-builder select,.block-builder input {min-height:40px;max-width:100%;background:#202720;color:#e6eddb;border:1px solid #576850;border-radius:4px;padding:0 .5rem}
+.block-stage-list,.block-stage details[open] {display:grid;gap:.5rem}
+.block-stage {border-left:2px solid #a6c294;background:#1b211c;padding:.45rem .65rem}
+.block-stage header,.block-stage-blend,.block-stage-add,.block-stage-order {display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.block-stage header {justify-content:space-between}
+.block-stage button {min-height:40px}
+.block-stage summary {cursor:pointer;min-height:40px;padding-top:.5rem}
+.block-stage input[type=number] {width:5.5rem}
+.block-input-vector {display:inline-flex;gap:.3rem;flex-wrap:wrap}
+.block-trace-presented {color:#6edef1}
+.block-trace-clock {display:flex;gap:.4rem 1rem;flex-wrap:wrap;font-size:11px;color:#bcc8bc;font-variant-numeric:tabular-nums}
+#push-display .block-trace:has(.block-trace-clock) svg {height:69px}
+
+.block-editor > .text-button {min-height:42px}
+.block-stage-order .text-button {min-width:44px;min-height:44px;font-size:14px}
+.block-stage-order .text-button:disabled {opacity:.38}
+.block-stage-editor {display:grid;gap:.6rem}
+.block-stage-add {justify-content:flex-end}
+.block-stage .button,.block-builder .button {min-height:42px}
+.block-stage header strong {color:#d6e7c4}

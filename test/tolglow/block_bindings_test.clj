@@ -153,3 +153,32 @@
             (is (= [0.5 0.5 1.0] (:position sample)))
             (is (< (abs (- expected (:result sample))) 1e-10))
             (is (< (abs (- expected (get-in values [(:id fixture) :focus]))) 1e-10))))))))
+
+(deftest a-beat-tween-can-be-the-dry-signal
+  (let [effect {:id :fade :version 1
+                :outputs {:focus {:op :tween :spec {:keyframes [{:at {:beats 0} :value 0.0}
+                                                                 {:at {:beats 1} :value 1.0}]}}}
+                :blocks {[:outputs :focus] {:stages [{:block :optics/ribbed-glass
+                                                      :coordinates [0.0 0.0]}]}}}
+        frame {:time-ms 750.0 :transport {:beat 11.5} :fixtures rig}
+        ctx {:frame frame :instance {:id :fade :started-at-beat 11 :started-at-ms 500} :assignments []}
+        scalar ((compiler/compile-effect effect) ctx)
+        typed ((batch/compile-effect effect rig) ctx)
+        trace #(runtime/observe % [[:outputs :focus] :near])]
+    (is (= 0.5 (:base (trace scalar)) (:base (trace typed))))
+    (is (= (* 0.5 0.825) (:result (trace scalar)) (:result (trace typed)) (:value (first (:assignments scalar)))))))
+
+(deftest invalid-read-holds-last-good-variable-until-recovery
+  (let [path [:variables :dimmer] plan (variable-blocks/compile-settings {:bindings {path {:stages []}}})
+        model {:epoch 1 :variables {:dimmer 0.75}}
+        read (fn [m before] (variable-blocks/sample plan m 25.0 before))
+        good (read model nil)
+        bad-model (assoc-in model path :broken)
+        failed (read bad-model good)
+        held (read bad-model failed)
+        recovered (read (assoc-in model path 0.2) held)]
+    (is (= 0.75 (get-in (variable-blocks/resolved bad-model failed) path)
+           (get-in (variable-blocks/resolved bad-model held) path)))
+    (is (:held? (variable-blocks/inspect held path)))
+    (is (= 0.2 (get-in (variable-blocks/resolved model recovered) path)))
+    (is (nil? (:held? (variable-blocks/inspect (read (assoc bad-model :epoch 2) held) path))))))

@@ -30,6 +30,7 @@
             [tolglow.spatial.actions :as spatial-actions]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [afterglow.runtime.keyframes.storage :as keyframe-storage]
             [tolglow.rig.pixel-storage :as pixel-storage]
             [tolglow.event-subscribers :as event-subscribers]
             [tolglow.integrations.live-sync :as live-sync]
@@ -122,8 +123,9 @@
         normalized (time/normalize-duration (:source duration) (:meter duration))]
     (check! (= normalized duration) (conj path :duration) "Timer duration does not match its source and captured meter")))
 
-(defn- validate-instance! [r id instance]
-  (let [path [:instances id]
+(defn- validate-instance! [model id instance]
+  (let [r (:registry model)
+        path [:instances id]
         definition (:definition instance)]
     (check! (and (string? id) (= id (:id instance)) (map? instance)
                  (or (identifier? (:cue-id instance)) (and (contains? instance :cue-id) (nil? (:cue-id instance))))
@@ -139,6 +141,9 @@
     (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
     (compiler/compile-effect definition)
     (system/validate-state instance)
+    (when-let [window (:tolglow.effects.keyframes/saved instance)]
+      (try (keyframe-storage/restore window (get-in model [:rig :fixtures]) (:epoch model))
+           (catch Exception e (fail! (conj path :keyframes) (.getMessage e)))))
     (registry/resolve-params (:params definition {}) (:params instance))
     (when-let [recorded (or (get-in r [:versions [:effects (:effect-id instance) (:effect-version instance)]])
                            (let [current (get-in r [:effects (:effect-id instance)])]
@@ -283,7 +288,7 @@
     (check! (and (natural? (get-in model [:control key]))
                  (or (not= key :history-limit) (pos? (get-in model [:control key]))))
             [:control key] "Invalid control counter/history limit"))
-  (doseq [[id instance] (:instances model)] (validate-instance! (:registry model) id instance))
+  (doseq [[id instance] (:instances model)] (validate-instance! model id instance))
   (let [orders (map :order (vals (:instances model)))]
     (check! (= (count orders) (count (distinct orders))) [:instances] "Instance launch orders must be unique"))
   (doseq [[id page] (:pages model)]

@@ -3,9 +3,8 @@
             [reagent.core :as r]
             [reagent.ratom :as ratom]
             [tolglow.studio.block-trace :as trace]
+            [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.spatial-preview :refer [watch-visibility]]))
-
-(rf/reg-sub ::fixtures (fn [db _] (get-in db [:server-projection :view :rig :fixtures])))
 
 (rf/reg-sub-raw ::history
   (fn [db [_ query]]
@@ -31,18 +30,17 @@
     (for [[i option] (map-indexed vector options)]
       ^{:key i} [:option {:value i} (label option)])]])
 
-(defn- history-plot [query]
+(defn history-plot
+  "Subscribe only while mounted. The caller owns visibility."
+  [query]
   [trace/plot @(rf/subscribe [::history query]) false {:binding-path (nth query 2)}])
 
 (defn- observe [instance-id path]
   (r/with-let [target (r/atom nil)]
-    (let [fixtures @(rf/subscribe [::fixtures])
-          ids (into [nil] (map :id) fixtures)
-          target-id (selected ids @target)
-          names (into {} (map (juxt :id #(or (:name %) (trace/path-label [(:id %)])))) fixtures)
+    (let [target-id (when (and @target (contains? @(rf/subscribe [::picker/ids]) @target)) @target)
           query (cond-> [:runtime/block-trace instance-id path] target-id (conj target-id))]
       [:<>
-       [choice "Fixture" ids target-id #(get names % "Origin") #(reset! target %)]
+       [picker/choose "Fixture" "Origin" target-id #(reset! target %)]
        [:div.block-trace-viewport
         [watch-visibility (fn [visible?] (when visible? [history-plot query]))]]])))
 

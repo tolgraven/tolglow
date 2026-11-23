@@ -42,6 +42,11 @@
 
 #?(:cljs (defrecord BeatFraction [numerator denominator]))
 
+#?(:cljs
+   (extend-type BeatFraction
+     IPrintWithWriter
+     (-pr-writer [fraction writer _] (-write writer (str (:numerator fraction) "/" (:denominator fraction))))))
+
 (defn fraction? [v] #?(:clj (ratio? v) :cljs (instance? BeatFraction v)))
 
 (defn fraction-value

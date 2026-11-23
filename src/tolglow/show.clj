@@ -6,6 +6,9 @@
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
+            [afterglow.runtime.keyframes :as keyframes]
+            [tolglow.effects.keyframes :as effect-keyframes]
+            [tolglow.effects.cadence :as cadence]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -221,6 +224,8 @@
          _ (lighting/validate! (:settings model))
          _ (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]))
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
+         _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
+             (cadence/settings config))
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
@@ -238,7 +243,8 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! block-trace/register!
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
+                                                                             effect-keyframes/register! block-trace/register!
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
@@ -264,10 +270,14 @@
                         (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
                                (:event-callback-options options)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options) :log-file (:fault-log-file options)})
-      :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
+      :state (atom {:model (effect-keyframes/without-checkpoints model)
+                    :keyframes (effect-keyframes/restored model)
+                    :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
+                    :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
+      :adaptive-keyframes (:adaptive-keyframes options)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -606,6 +616,7 @@
                      (update :pause-look pause-look/normalize))
             settings (edit-scoped-settings model scope values (:device-id payload))
             _ (when (= scope :variable-blocks) (variable-blocks/compile-settings settings))
+            _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -991,10 +1002,12 @@
                                                                  (or (pause-look/blackout? model) (zero? (:master model)))))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
+                 sampling (when-not restored? (cadence/begin runtime before model))
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:model (cond-> model (get-in model fog-deadline/saved-ids-path)
+                   {:keyframes (effect-keyframes/restored model)
+                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
                              (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
                     :output (if restored-output
                               (update restored-output :universes
@@ -1041,13 +1054,18 @@
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]))
-                           variables (variable-blocks/sample variable-plan model time-ms)
+                           variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
+                           model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
-                           result (engine/advance model (cond-> {:time-ms time-ms :epoch (:epoch model)
+                           result (engine/advance model (cond-> (merge {:time-ms time-ms :epoch (:epoch model)
+                                                         :keyframes (:keyframes before) :keyframe-params (:overrides modulation-result)
+                                                         :keyframe-generation (:responses model)
                                                          :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                                              (:inputs sampling))
                                                           variables (assoc :resolved-variables variable-inputs))
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
-                                                    (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
+                                                    (fn [definition] (keyframes/with-inputs ((:compile runtime) definition)
+                                                                                   (comp middleware modulation-middleware))))
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
@@ -1117,7 +1135,7 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :variable-observation variables :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :variable-observation variables :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1156,7 +1174,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
-                   publication (try (connections/publish! (:connections runtime) (block-trace/source next-state)
+                   publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
                                     (catch Exception error (vreset! reactive-error (error-data error)) nil))
                    trace (:delivery-trace publication)]
@@ -1169,7 +1187,10 @@
              (when @reactive-error
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (doseq [observer (vals @(:observers runtime))]
-               ((:frame! observer) @(:state runtime))))))
+               ((:frame! observer) @(:state runtime)))
+             (when sampling
+               (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)]
+                 (swap! (:state runtime) assoc :cadence (cadence/finish sampling (:model next-state) elapsed)))))))
        (finally
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
@@ -1399,12 +1420,14 @@
 (defn- capture-show [runtime format-show]
   ;; Model/output come from one commit. Serialize after releasing the frame
   ;; owner so that large pixel runs can keep rendering during a download.
-  (let [[model output] (locking (:lock runtime)
-                         (let [{:keys [model output]} @(:state runtime)
-                               atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (fog-deadline/save-ids (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model)) output)
-                              atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
-    (format-show model (render/portable-frame output))))
+  (let [[model output windows] (locking (:lock runtime)
+                                 (let [{:keys [model output keyframes]} @(:state runtime)
+                                       atmosphere (venue-fog/for-save runtime output)
+                                       model (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))]
+                                   [(cond-> (fog-deadline/save-ids model output)
+                                      atmosphere (assoc-in venue-fog/saved-path atmosphere))
+                                    output keyframes]))]
+    (format-show (effect-keyframes/for-save model windows) (render/portable-frame output))))
 
 (defn export-show
   "Freeze the full domain state and last output from one committed snapshot."
@@ -1672,7 +1695,8 @@
   ([{:keys [frame-rate] :or {frame-rate 40} :as options}]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [sink (output/open-sink! options)
-         runtime (try (create-runtime (assoc options :sink sink :independent-output? true))
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))

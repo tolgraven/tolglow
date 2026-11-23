@@ -8,8 +8,10 @@
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
+            [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
+            [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.fog-fields :as fog-fields]
@@ -629,7 +631,11 @@
      [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
       (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
         (when unit (set-ui! [:builder :release-unit] unit))) true]
-     [:p.muted.small "The builder creates an RGB effect with adjustable intensity, plus a matching cue when selected."]
+     [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
+     (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
+       [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
+                             :outputs {:color nil :dimmer nil}}
+        (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])
      [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
       "Create matching cue"]
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
@@ -679,6 +685,8 @@
                                                           (when (and (or (.-ctrlKey event) (.-metaKey event)) (= "Enter" (.-key event)))
                                                             (.preventDefault event) (send! [:studio/definition-publish])))}]])
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
+        (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
+          [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
         [visual-builder db]
         [:div.button-row
          [:button#publish-definition.button.primary {:disabled (boolean (:publishing? definition))

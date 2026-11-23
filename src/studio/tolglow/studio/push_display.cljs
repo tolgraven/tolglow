@@ -28,7 +28,7 @@
     (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
       (let [history (when (= identity (:trace-identity previous)) (:trace-samples previous))]
         (assoc next :trace-identity identity
-               :trace-options (select-keys (:block-trace view) [:binding-path :stage-index :component-index])
+               :trace-options (select-keys (:block-trace view) [:binding-path :stage-index :component-index :write-index])
                :trace-samples (trace/append-sample (or history []) sample)))
       next)))
 

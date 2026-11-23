@@ -4,7 +4,9 @@
             [reagent.core :as r]
             [tolglow.authoring.output-patch :as patch]
             [tolglow.studio.block-inspector :as block-inspector]
+            [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.events :as events]
+            [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (defn- wire [id] (events/wire-id id))
@@ -179,11 +181,66 @@
     [:details.cue-fault-log [:summary (str "Show diagnostics · " (count entries))]
      (for [[i fault] (map-indexed vector entries)] ^{:key i} [fault-details fault])]))
 
+(defn keyframe-request [db [id version _ :as key] context spec]
+  (let [instance (typed-instance db id)
+        original (:definition instance)]
+    (when-not (and instance (= version (:version original)) (= context (token db)))
+      (throw (js/Error. "The show or effect changed. Reopen the keyframe editor.")))
+    {:db (assoc-in db [:ui :inspector key] {:busy? true})
+     :studio/http {:path "/api/definition" :typed? true
+                   :body {:kind :effects :expected-version version
+                          :definition (cond-> (dissoc original :keyframes) spec (assoc :keyframes spec))}
+                   :on-success [:inspect/result key context true]
+                   :on-failure [:inspect/result key context false]}}))
+
+(rf/reg-event-fx :inspect/keyframes
+  (fn [{:keys [db]} [_ key context spec]]
+    (try (keyframe-request db key context spec)
+         (catch :default e {:db (assoc-in db [:ui :inspector key] {:error (.-message e)})}))))
+
+(defn- sample-view [id target attribute]
+  (let [query (cond-> [:runtime/keyframe id] (and target attribute) (conj target attribute))
+        sample @(rf/subscribe [:studio/remote query])]
+    (when (:unit sample)
+      [:div.keyframe-sample
+       [:p (str "Progress " (when (number? (:progress sample)) (.toFixed (:progress sample) 3))
+                " · " (keyframes/duration-text (:start sample)) " – " (keyframes/duration-text (:end sample)) " " (name (:unit sample)))]
+       (when (contains? sample :origin)
+         [:dl (for [k [:origin :target :result]] ^{:key k} [:div [:dt (name k)] [:dd (pr-str (get sample k))]])])])))
+
+(defn- timeline [instance definition latest context]
+  (r/with-let [draft (r/atom (:keyframes definition)) selection (r/atom {})
+               key [(:id instance) (:version definition) :keyframes]]
+    (let [{:keys [busy? error sent]} @(rf/subscribe [:inspect/status key])
+          numeric (into [] (keep (fn [[id schema]] (when (numeric-schema? schema) id))) (:params definition))
+          first-fixture @(rf/subscribe [::picker/first-id])
+          attributes (into [] (distinct (map :attribute (patch/rows definition))))
+          target (get @selection :target first-fixture)
+          attribute (get @selection :attribute (first attributes))]
+      [:section
+       [keyframes/editor @draft numeric #(reset! draft %)]
+       [picker/choose "Inspect fixture" "Choose fixture" target #(swap! selection assoc :target %)]
+       [choice "Inspect output" attributes attribute #(swap! selection assoc :attribute %)]
+       [sample-view (:id instance) target attribute]
+       [:button.button {:disabled (or busy? (not= latest (:version definition)) (= @draft (:keyframes definition)))
+                        :on-click #(rf/dispatch [:inspect/keyframes key context @draft])}
+        "Publish keyframe settings"]
+       (when error [:p {:role "alert"} error])
+       (when sent [:small (str "Published v" sent)])])
+    (finally (rf/dispatch [:inspect/forget key]))))
+
+(defn- timing-panel [instance definition latest context]
+  (r/with-let [open? (r/atom false)]
+    [:details.slot-parameter-editor {:on-toggle #(reset! open? (.. % -currentTarget -open))}
+     [:summary "Keyframe timing"]
+     (when @open? [timeline instance definition latest context])]))
+
 (defn- effect-inputs [instance faults]
   (let [{:keys [definition latest-version token values]} @(rf/subscribe [:inspect/definition (:id instance)])]
     [:section.cue-inspected-effect
      [:header [:strong (or (:name definition) (wire (:effect-id instance)))]
       [:small (str "v" (:effect-version instance) " · " (widgets/label (:reload-policy instance)))]]
+     ^{:key (str (:id instance) "/" (:version definition))} [timing-panel instance definition latest-version token]
      (for [[i fault] (map-indexed vector (faults-for faults instance))] ^{:key i} [fault-details fault])
      (when (seq (:blocks definition))
        [block-inspector/inspector (:id instance) (:blocks definition)])

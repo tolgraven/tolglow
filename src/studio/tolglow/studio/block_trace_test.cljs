@@ -24,3 +24,10 @@
     (is (= [1 2] (mapv :time-ms (:trace-samples next-view))))
     (is (= [1] (mapv :time-ms (:trace-samples (push/observe-view next-view (assoc v :epoch 3))))))
     (is (nil? (:trace-samples (push/observe-view next-view (assoc v :display-mode :audio)))))))
+
+(deftest native-keyframe-writes-keep-the-sampled-and-presented-values-distinct
+  (let [observed (assoc (sample 5) :keyframe {:trace-source :target
+                                              :native {:result [[0.16 0.2] [0.3 0.4]]}})]
+    (is (= [:result "Sampled final" [1.9]] (nth (trace/lines [observed] 0 1 1) 3)))
+    (is (= [:presented "Interpolated" [0.4]] (peek (trace/lines [observed] 0 1 1))))
+    (is (= [0.2] (last (peek (trace/lines [(assoc-in observed [:keyframe :native :result] [0.2])] 0 0)))))))

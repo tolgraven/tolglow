@@ -2,12 +2,17 @@
   "Once-per-frame modulation of shared show variables, using the show clock.
   External sources retain their dry value across frames and save/restore."
   (:require [afterglow.render.ir :as ir]
+            [afterglow.runtime.events :as events]
             [afterglow.time :as time]
             [tolglow.compiler.blocks :as blocks]))
 
-(defn compile-settings [{:keys [bindings prefabs]}]
+(defn compile-settings [{:keys [bindings prefabs] :as settings}]
+  (when-not (or (nil? settings)
+                (and (map? settings) (every? #{:bindings :prefabs} (keys settings))
+                     (or (nil? bindings) (map? bindings))))
+    (throw (ex-info "Variable blocks require a settings map with named bindings" {})))
   (when (seq bindings)
-    (when-not (every? #(= :variables (first %)) (keys bindings))
+    (when-not (every? #(and (vector? %) (= :variables (first %))) (keys bindings))
       (throw (ex-info "Show-wide bindings require paths starting with :variables" {})))
     (doseq [path (keys bindings)
             length (range 2 (count path))]
@@ -25,17 +30,39 @@
         (vreset! cache {:settings settings :plan plan})
         plan))))
 
-(defn sample [plan model time-ms]
-  (when plan
-    (let [{:keys [beat meter]} (:transport model)
-          env {:beat beat :elapsed-beats beat :meter (time/normalize-meter meter)
-               :time-ms time-ms :elapsed-ms time-ms :position [0.0 0.0 0.0]
-               :params (blocks/with-variables plan {} model)}]
-      (reduce-kv (fn [out path evaluate]
-                   (try (assoc-in out [:values path] (evaluate env))
-                        (catch Exception error
-                          (assoc-in out [:errors path] (.getMessage error)))))
-                 {:env env :traces (:traces plan)} (:evaluate plan)))))
+(defn- environment [plan model time-ms]
+  (let [{:keys [beat meter]} (:transport model)]
+    (blocks/sample-tweens
+     plan {:beat beat :elapsed-beats beat :meter (time/normalize-meter meter)
+           :time-ms time-ms :elapsed-ms time-ms :position [0.0 0.0 0.0]
+           :params (blocks/with-variables plan {} model)})))
+
+(defn sample
+  ([plan model time-ms] (sample plan model time-ms nil))
+  ([plan model time-ms previous]
+   (when plan
+     (let [env (environment plan model time-ms)
+           same? (and (= (:epoch model) (:epoch previous)) (identical? (:traces plan) (:traces previous)))
+           last-values (when same? (:values previous))
+           read-path (fn [out path evaluate]
+                       (try (assoc-in out [:values path] (evaluate env))
+                            (catch Exception error
+                              (cond-> (assoc-in out [:errors path] (.getMessage error))
+                                (contains? last-values path)
+                                (assoc-in [:values path] (get last-values path))))))]
+       (reduce-kv read-path {:epoch (:epoch model) :env env :traces (:traces plan)} (:evaluate plan))))))
+
+(defn collect-events [model before after]
+  (if (or (:errors before) (:errors after))
+    (let [before (when (= (:epoch model) (:epoch before)) (:errors before))
+          failed (for [[path message] (:errors after) :when (not= message (get before path))]
+                   {:type :variable-block/failed :path path :message message
+                    :held? (contains? (:values after) path)})
+          recovered (for [path (keys before) :when (and (contains? (:values after) path)
+                                                       (not (contains? (:errors after) path)))]
+                      {:type :variable-block/recovered :path path})]
+      (events/collect model :modulation {:kind :show :id :variable-blocks} (concat failed recovered)))
+    model))
 
 (defn resolved [model observation]
   (reduce-kv assoc-in model (:values observation)))
@@ -44,5 +71,6 @@
   (when-let [trace (get (:traces observation) path)]
     (let [env (:env observation)]
       (if-let [error (get-in observation [:errors path])]
-        {:error error :time-ms (:time-ms env)}
+        (cond-> {:error error :time-ms (:time-ms env)}
+          (contains? (:values observation) path) (assoc :held? true :result (get-in observation [:values path])))
         (assoc (trace env) :time-ms (:time-ms env))))))

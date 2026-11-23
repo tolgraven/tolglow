@@ -171,7 +171,7 @@ with captured/synthetic observations. No alternate OSC listener is introduced.
 
 `GET /api/calibration` includes names and revisions of measured receivers. `POST /api/venue-surface` accepts the reviewed geometry, `:surface-name`, `:world-id`, `:anchor-id`, `:runtime-id` and `:expected-epoch`. Supply the listed `:expected-surface-revision` to update an existing measurement. An edit to its geometry invalidates the revision. Other rig edits survive. Clojure callers can submit the same map with `(show/submit! runtime :venue-surface measurement)`.
 
-Reality tracking supplies an oriented rectangular extent. Surface reflectance, textures, mesh topology and individually resolved LED emitters require separate measurements. Compare scans of a measured wall and platform from several viewpoints on a physical LiDAR device to quantify placement, orientation and size errors.
+Reality tracking supplies an oriented rectangular extent. The reference-card procedure below measures neutral diffuse return. Textures, mesh topology and individually resolved LED emitters require separate measurements. Compare scans of a measured wall and platform from several viewpoints on a physical LiDAR device to quantify placement, orientation and size errors.
 
 ## Validation and remaining work
 
@@ -220,3 +220,19 @@ Primary Apple references:
 - [ARCamera](https://developer.apple.com/documentation/arkit/arcamera)
 - [ARFrame timestamp](https://developer.apple.com/documentation/arkit/arframe/timestamp)
 - [Visualizing and interacting with a reconstructed scene](https://developer.apple.com/documentation/arkit/visualizing-and-interacting-with-a-reconstructed-scene)
+
+## Measure a receiver's diffuse return
+
+A matte neutral card with a rated reflectance fraction and tolerance provides a local reference under one fixture's white spectrum. Use an already measured receiver and a stationary fixture with rig coordinates and a saved white brightness measurement. Complete fixture photometry first if the fixture list is empty.
+
+1. Aim the fixture at the receiver center shown in **Scan rig → Measure surface reflectance**. Use the front of the plane. Keep the room clear of fog, changing ambient light, shadows and specular glare. The host checks source distance and incidence against the rig and rejects grazing or back-side illumination.
+2. Mount the rear wide camera on a tripod facing the same point. Enter the nominal fraction and absolute tolerance printed on the reference card's certificate. For example, an 18% card with a one-percentage-point tolerance uses `0.18` and `0.01`. Remove any diffuser used for fixture photometry.
+3. Choose shutter speed and arm. The host lights the selected fixture full white and darkens other patched emitters through the existing photometry lease. Exposure, focus, white balance and SDR transfer stay fixed. Cover the entire outlined camera sampling area with the card flush against the receiver. Tap **Measure reference**.
+4. Remove the card and tap **Measure uncovered surface**. Replace the card flush at the same point and tap **Verify reference**. Each action acquires 15 linearized frames with the fixture dark and 15 with it white. The phone checks its stance and the host checks that the same physical phase remained confirmed across exposure. Movement, clipping, weak light, flicker or a reference drift above 5% invalidates the run.
+5. Review the card-relative ratio, the reflectance estimate and its observed range. **Save to receiver** stores the three pairs' summaries, reference rating, source geometry, shutter and derived values at `[:rig :surfaces i :reflectance]`. The WebGL receiver uses the neutral estimate for both direct illumination and secondary reflected light. Save the show to keep the measurement.
+
+The two card signals bracket the surface reading. Dark subtraction removes steady ambient light. The estimated fraction equals the surface signal divided by the mean card signal, multiplied by the card's rated fraction. Measured source distance, incidence and brightness identify the illumination. Their common factors cancel because the card and bare surface occupy the same spot. The range uses the 10th and 90th percentile frame readings of each phase, both card observations and the card's rated tolerance. It describes observed variation. Unknown iPhone image processing, spectral response, tripod translation, surface curvature, card placement and non-diffuse reflections can contribute additional error. Enter matte, homogeneous patches as separate receivers when materials vary.
+
+REPL callers submit `:start-surface`, `:step`, `:heartbeat`, `:read-surface` and `:apply-surface` through the photometry service. Each reading carries the current step index and presentation generation. The `:cancel` operation or an expired lease releases the output override. See `tolglow.fixture-photometry-test` for the full exchange with captured output.
+
+For physical qualification, compare estimates of several certified neutral tiles, including one held out from calibration. Repeat from different tripod positions and distances under the same fixed fixture spectrum, then repeat with another fixture. Record the card certificate, camera model, shutter, incidence, reference drift, estimate, range and independent instrument reading. The current measurement supplies neutral diffuse luminance. Chromatic and specular response require independent measurements.
