@@ -125,9 +125,12 @@
                  :on-change #(change! (get choices (js/Number (.. % -target -value))))}
         (for [[i v] (map-indexed vector choices)] ^{:key i} [:option {:value i} (widgets/label v)])]])
     (sequential? value)
-    [:fieldset.source-components [:legend label]
-     (for [[index v] (map-indexed vector value)]
-       ^{:key index} [number-field (str label " " (inc index)) v #(change! (assoc (vec value) index %)) schema])]
+    (let [kind (widgets/parameter-kind schema)
+          names (or (:component-labels schema) (case kind :color ["R" "G" "B"] :range ["Low" "High"] ["X" "Y" "Z" "W"]))]
+      [:fieldset.source-components
+       [:legend (when (= :color kind) [:i.source-color-swatch {:style {:background (widgets/color-css value)}}]) label]
+       (for [[index v] (map-indexed vector value)]
+         ^{:key index} [number-field (str label " " (get names index (inc index))) v #(change! (assoc (vec value) index %)) schema])])
     :else [number-field label value change! schema]))
 
 (defn- lfo-editor [id param schema base source catalog]
@@ -155,7 +158,7 @@
           [:label.source-field [:span "Unit"]
            [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
             (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
-          [number-field "Phase" phase #(update! :phase %) {}]
+          [number-field "Phase (cycles)" phase #(update! :phase %) {}]
           [endpoint "From" schema from #(update! :from %)]
           [endpoint "To" schema to #(update! :to %)]]
          (when (seq (:params wave))

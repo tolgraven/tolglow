@@ -122,8 +122,8 @@ async function verifyControls(page,touch,profile) {
   await edit.getByRole('button',{name:'Use base value',exact:true}).waitFor();
   await close(edit);
   const vector=await attach('Orbit aim', async panel => {
-    await panel.getByLabel('From 1',{exact:true}).fill('-0.85');
-    await panel.getByLabel('To 1',{exact:true}).fill('0.42');
+    await panel.getByLabel('From X',{exact:true}).fill('-0.85');
+    await panel.getByLabel('To X',{exact:true}).fill('0.42');
   });
   await close(vector);
   const picker=scope.getByLabel('Monitored parameter');
