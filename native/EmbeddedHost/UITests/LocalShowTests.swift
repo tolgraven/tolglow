@@ -11,7 +11,7 @@ final class LocalShowTests: XCTestCase {
     func testRunStopAndRestartTheLocalShow() throws {
         let app = XCUIApplication()
         app.launch()
-        let studio = app.tabBars.buttons["Studio"]
+        let studio = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Studio")).firstMatch
         XCTAssertTrue(studio.waitForExistence(timeout: 20))
         studio.tap()
         app.buttons["On this device"].tap()
