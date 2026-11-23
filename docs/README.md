@@ -104,7 +104,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
 | [Local model lab](model-lab/README.md) | Prepared show, Clojure and GLSL corpora, model choices, tokenizer audit, hardware scenarios and release gates |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
-| [Work ledger](work-items.edn) | Authoritative state, exclusive paths and acceptance criteria |
+| [GitHub Issues](https://github.com/tolgraven/tolglow/issues) | Open work, completed changes, acceptance criteria and verification |
 | [Work log](work-log.md) | Dated evidence and decisions |
 
 Tests run actual production functions and dependencies, using capture sinks and
@@ -116,8 +116,7 @@ while execution inside Max/Live, real provider accounts, physical audio routing
 and AAA simulator fidelity remain separate work. The trainable robot duck is retained as later research;
 its exact product and SDK are still unconfirmed.
 
-Contributors read repository and folder `AGENTS.md`, claim disjoint paths in the
-ledger, and coordinate changes to shared contracts before editing consumers.
-Record evidence before releasing a claim; keep implemented, proposed and
+Contributors read repository and folder `AGENTS.md`, link their issue and coordinate changes to shared files before editing them.
+Record verification in the issue and keep implemented, proposed and
 research behavior distinct. [Testing](testing.md) separates focused agent results
 from integrated runs so overlapping suites are never added twice.

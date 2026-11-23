@@ -6,7 +6,7 @@ checkout, build configuration or AGENTS.md was present in the workspace.
 This is the historical survey of the listed revisions, not the current project
 layout or delivery status. The application now has `src/tolglow/`, `resources/`,
 `test/`, `dev/`, `bin/`, root manifests and the separate `src/studio/` frontend.
-See [the architecture index](README.md) and [work ledger](work-items.edn) for
+See [the architecture index](README.md) and [GitHub Issues](https://github.com/tolgraven/tolglow/issues) for
 the current implementation; original behavior remains a feature-parity reference.
 
 | Repository | Branch | Survey baseline |
