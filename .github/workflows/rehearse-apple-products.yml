@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      matrix: {mode: [runtime-init, image-init]}
+      matrix: {mode: [impl-vars, compiled-namespaces]}
     steps:
       - uses: actions/checkout@v7.0.1
         with: {ref: 85231c28fc417f19cdafce433a0e17eb13d77371}
@@ -17,6 +17,7 @@ jobs:
         with: {distribution: graalvm-community, java-version: '25'}
       - run: .github/scripts/install-lein
       - name: Compile the application logger dependencies
+        env: {MODE: '${{ matrix.mode }}'}
         run: |
           mkdir -p probe/src/logging probe/resources/META-INF/native-image/diagnostics
           cd probe
@@ -30,6 +31,7 @@ jobs:
           CLJ
           cat > src/logging/probe.clj <<'CLJ'
           (ns logging.probe (:gen-class)
+            (:require [slf4j-timbre.adapter] [slf4j-timbre.factory] [slf4j-timbre.service-provider])
             (:import [com.github.fzakaria.slf4j.timbre TimbreServiceProvider]
                      [org.slf4j LoggerFactory]))
           (defn -main [& _]
@@ -50,13 +52,31 @@ jobs:
           Path('resources/META-INF/native-image/diagnostics/reflect-config.json').write_text(json.dumps([
             {'name':c,'allDeclaredConstructors':True,'allPublicMethods':True,'allDeclaredMethods':True,'allDeclaredFields':True} for c in classes]))
           PY
+          if [[ "$MODE" == impl-vars ]]; then
+            lein deps
+            mkdir -p src/slf4j_timbre
+            dep="$HOME/.m2/repository/com/fzakaria/slf4j-timbre/0.4.1/slf4j-timbre-0.4.1.jar"
+            for name in adapter factory service_provider; do
+              unzip -p "$dep" "slf4j_timbre/$name.clj" | sed 's/(:gen-class/(:gen-class :load-impl-ns false/' > "src/slf4j_timbre/$name.clj"
+            done
+          else
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('resources/META-INF/native-image/diagnostics/reflect-config.json')
+          data=json.loads(p.read_text())+[{'name':'slf4j_timbre.'+n+'__init','allDeclaredMethods':True} for n in ['adapter','factory','service_provider']]
+          p.write_text(json.dumps(data))
+          PY
+          fi
           lein uberjar
       - name: Run the native logger and emit its cause
         env: {MODE: '${{ matrix.mode }}'}
         run: |
           cd probe
           flags=()
-          if [[ "$MODE" == image-init ]]; then flags+=(--initialize-at-build-time=com.github.fzakaria.slf4j.timbre); fi
+          if [[ "$MODE" == compiled-namespaces ]]; then
+            flags+=('-H:IncludeResources=slf4j_timbre/.*__init.class')
+          fi
           native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses "${flags[@]}" \
             -H:IncludeResources='.*\.clj[cs]?' -jar "$(find target -name '*-standalone.jar' -print -quit)" logger
           ./logger
