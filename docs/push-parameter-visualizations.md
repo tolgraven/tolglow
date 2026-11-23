@@ -1,0 +1,13 @@
+# Parameter visualization on Push and Studio
+
+The default parameter bank draws RGB colors and three-component vectors in three dimensions. The spatial widget labels the axes and the current components. It draws venue positions and direction vectors in the declared bounds. For RGB it uses the unit RGB cube. For a three-component vector with `:semantic/type :orientation` or `:rotation`, the axes show Euler rotations around X, Y and Z in that order; degrees are the default, and `:unit :radians` selects radians. A vector without bounds uses a symmetric power-of-two display range. The axis labels and numeric readout preserve the value’s units.
+
+Open **Connections → Parameter visualization** to choose the full bank’s view. **Automatic by type** uses an effect parameter's optional `:visualization :history` or `:controls` preference. **Time graph** plots the effective value received from the show for each continuous parameter. The **History window** zooms from half a beat to sixteen beats. Discrete controls keep their choices. The **Control values** view includes the existing component strips, dials and waveform picker previews. The captured-audio and material-trace display modes remain independently selectable.
+
+In **Perform**, expand an effect and use **History** underneath a parameter. Use **Window** to zoom and **3D** to return to the spatial view on a color or vector. Component editors, including the XYZ popover, continue to apply changes through the ordinary parameter commands.
+
+History samples carry the show time and beat of the actual frame. A stopped beat stays at the same position while parameter edits replace its sample. Rewinding or switching instances starts a new trace. A plot keeps at most 256 samples at up to 10 Hz, and its lines connect the available observations. Missing values leave gaps. Closing the history, switching a Push bank or display mode, or hiding a Studio plot releases its history. The spatial view projects three coordinates on demand. When the visual scheduler lengthens the sampling interval under load, the moving marker interpolates between the two most recent observations. Euler axes take the shorter rotation. The numeric readout continues to show the actual parameter value.
+
+## Reproduce the display check
+
+Build the Studio with `npm run studio:build`, then run `lein run -m tolglow.qa.push-parameters`. The check starts a local preview show, records 48 parameter updates through the Push projection, captures the passive Chromium display, and edits a live vector through the touch layout. It saves the 960 × 160 frames and Studio screenshot under `target/push-parameter-qa`. Set `CHROMIUM` to the installed browser executable when it is outside `/usr/bin/chromium`.

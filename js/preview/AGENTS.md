@@ -15,6 +15,8 @@ owns controls; committed JVM emitted output is authoritative.
   Close rejected bitmaps, fence show/epoch changes and stop all worker resources
   on disposal. Never transfer the visible canvas: startup failure must leave it
   usable by the shared main-thread capability fallback.
+- `render-quality.js` owns physical pixel budgets and asynchronous GPU measurements.
+  `film.js` owns the display transform, image antialiasing and grain.
 - `geometry.js`, `room.js`, `materials.js` own procedural geometry/materials.
 - `math.js` is the explicit rig/output projection. Match CPU elevation/calibration
   and fixture rotation. Never invent light output when emitted-color is absent.

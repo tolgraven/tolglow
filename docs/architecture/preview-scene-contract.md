@@ -167,7 +167,7 @@ The low tier retains a 10 Hz budget for software rendering. Actual cadence
 depends on the display, GPU completion time, graphics settings and browser.
 Auto quality reduces target dimensions after repeated over-budget frames and
 recovers gradually with sustained headroom. The worker uses completed GPU work
-for this decision. The fallback uses CPU submission time. Manual quality keeps
+for this decision. The direct renderer samples GPU elapsed-time queries or asynchronous completion fences. Manual quality keeps
 its configured resolution. The fog field keeps its bounded simulation timestep
 across display rates.
 Workers use display callbacks when supported and an elapsed-time deadline on
@@ -191,6 +191,31 @@ rig once per change and receives new output independently from camera input.
 Display callbacks perform graphics work locally. Tests exercise frame sampling,
 120/60 Hz clocks and worker/fallback rendering. Physical 120 Hz MacBook Pro and
 iPad Pro performance requires measurement on those devices.
+
+### Presentation resolution and highlight range
+
+The scene, scattering integration and output canvas each have a pixel budget. The
+canvas follows the panel’s physical pixels, up to UHD. Geometry is multisampled
+where the GPU supports the same sample count for RGBA16F color and 24-bit depth.
+At most 16 million colour/depth samples are allocated. Low quality leaves that
+memory for lighting. After fog and glass, bloom runs on scene-linear HDR. The final
+pass resolves remaining edges with FXAA, then dithers and adds adjustable grain at
+presentation resolution. The editor draws on top. **Image** in the Perform preview
+adjusts exposure, bloom strength and grain independently.
+
+On a display advertising high dynamic range, Studio checks for floating-point
+canvas storage and extended compositor tone mapping. A direct WebGL canvas preserves
+highlights up to four times diffuse white. Ordinary displays and bitmap-transfer
+surfaces use ACES and sRGB. `getTelemetry().displayRange` reports the negotiated
+result. Software screenshots exercise SDR. Physical highlight brightness and sustained
+refresh on an HDR Mac or iPad require a device measurement.
+
+Auto starts with the detected device class. Warm renders of the actual rig form
+a continuous workload benchmark. Four consecutive over-budget samples reduce the
+scene raster. Sixty comfortably under budget allow recovery, then a higher tier.
+A one-second settling period follows each change. A low-cost preview may reach
+the full 4K scene budget. Fog, glass, lighting and the display clock remain local
+to the currently visible preview.
 
 ### Suspension and resume
 

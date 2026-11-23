@@ -151,3 +151,9 @@
     (is (= true (get-in expanded [:db :ui :performance :expanded "4:1"])))
     (is (= (:show base) (get-in expanded [:db :show])))
     (is (nil? (:fx expanded)))))
+
+(deftest grouped-xyz-keeps-editable-base-and-plots-effective-components
+  (let [components [[:x {:default 1}] [:y {:default 2}] [:z {:default 3}]]
+        instance {:id "4:1" :params {"x" 0.25 :z 0.7}}
+        show {:modulation {:overrides {(keyword "4:1") {"y" 0.5 :z 0}}}}]
+    (is (= {:base [0.25 2 0.7] :effective [0.25 0.5 0]} (performance/xyz-readings show instance components)))))

@@ -26,6 +26,7 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
@@ -278,15 +279,33 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
+     (when (and (nil? handlers) (#{"number" "integer" "vector" "color" "range"} type)
+                (or (not (:compact? options)) (visualization/spatial-kind schema)))
+       [visualization/studio schema (if (some? overlay) overlay value)])
      (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
+
+(defn- preview-film-controls [settings]
+  [:details.preview-film
+   [:summary "Image"]
+   (for [[key label high step default] [[:exposure "Exposure" 3 0.01 0.85]
+                                         [:bloom "Bloom" 2 0.01 0.28]
+                                         [:grain "Grain" 0.08 0.001 0.0015]]]
+     ^{:key key}
+     [:label label
+      [:input {:type "range" :min 0 :max high :step step :value (get settings key default)
+               :aria-label (str "Preview " label)
+               :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
 
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
-     [playback/control "preview"]
-     [:button.text-button {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
+     (when (= :perform (get-in db [:ui :view])) [playback/control "preview"])
+     [:button.text-button.preview-fullscreen-tools
+      {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
+       :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
+     [:button.text-button.preview-expand-control {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
@@ -309,7 +328,8 @@
         [:option {:value "interpolate"} "Smooth · one frame delay"]]]
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
-       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])
+       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]
+      [preview-film-controls (get-in db [:ui :preview-settings])]])
    [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere "
                         [:span.muted
                          (if-let [air (get-in db [:show :output :atmosphere])]

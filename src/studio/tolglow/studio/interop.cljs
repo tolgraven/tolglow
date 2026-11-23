@@ -13,7 +13,7 @@
 
 (defn preview-recipients [registered action owner]
   ;; Both views display the same saved light/camera settings. Momentary actions belong to the visible view.
-  (if (and (nil? owner) (#{:fog :worklight :lighting-mode :quality :camera :reset} action))
+  (if (and (nil? owner) (#{:fog :worklight :bloom :grain :exposure :lighting-mode :quality :camera :reset} action))
     (vals (:previews registered))
     (when-let [engine (preview-engine registered owner)] [engine])))
 
@@ -27,6 +27,7 @@
         :resize (js-invoke engine "resize")
         :worklight (when (fn? (aget engine "setWorkLight")) (js-invoke engine "setWorkLight" value))
         :lighting-mode (js-invoke engine "setLightingMode" value)
+        (:bloom :grain :exposure) (js-invoke engine "setFilm" (clj->js {action value}))
         :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
         :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
         :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))

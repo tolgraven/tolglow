@@ -77,7 +77,7 @@ function applyState(message) {
   engine.platform.viewport = state.viewport; engine.visible = true;
   if (engine.restorePending) engine.restoreContext();
   engine.reducedMotion.matches = state.reducedMotion;
-  engine.setQuality(state.quality); engine.setWorkLight(state.workLight); engine.setFog(state.fog);
+  engine.setQuality(state.quality); engine.setFilm(state.film); engine.setWorkLight(state.workLight); engine.setFog(state.fog);
   engine.setLightingMode(state.lightingMode);
   if (state.snapshot) {
     const snapshot = state.snapshot;
