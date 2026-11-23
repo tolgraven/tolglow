@@ -5,6 +5,7 @@
             [sci.core :as sci]
             [tolglow.data :as data]
             [tolglow.modules :as modules]
+            [tolglow.native.repl :as native-repl]
             [tolglow.show :as show])
   (:import [java.io File]))
 
@@ -21,9 +22,12 @@
           [".clj" ".cljc"])))
 
 (defn- interpreter [folder]
-  (sci/init {:load-fn (partial ns-source folder)
-             :namespaces {'tolglow.show {'submit! show/submit!
-                                         'variables show/variables}}}))
+  (sci/init (cond-> {:namespaces {'tolglow.show {'submit! show/submit!
+                                                  'variables show/variables}}}
+              folder (assoc :load-fn (partial ns-source folder)))))
+
+(defn default-evaluator []
+  (partial native-repl/evaluator (interpreter nil)))
 
 (defn- folder-config [ctx folder]
   (if-let [edn (inside-file folder "tolglow.edn")]
@@ -37,8 +41,11 @@
 
 (defn- module-source [ctx namespaces id]
   (some (fn [n]
-          (sci/eval-form ctx (list 'require (list 'quote n)))
-          (some-> (sci/resolve ctx (symbol (str n) (name id))) deref))
+          (let [id (symbol (str n) (name id))
+                v (or (sci/resolve ctx id)
+                      (do (sci/eval-form ctx (list 'require (list 'quote n)))
+                          (sci/resolve ctx id)))]
+            (when (and v (not (:private (meta v)))) @v)))
         namespaces))
 
 (defn read-show
@@ -56,6 +63,7 @@
                    result
                    (if-let [setup (module-source ctx search-in-namespaces id)]
                      (modules/register result id setup)
-                     result)))]
-    {:config (update config :init dissoc :search-in-namespaces)
-     :registry (reduce extend registry ids)}))
+                     (throw (ex-info "No setup function registered for enabled module" {:module id})))))]
+    {:config config
+     :registry (reduce extend registry ids)
+     :evaluator-factory (partial native-repl/evaluator ctx)}))

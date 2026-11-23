@@ -16,10 +16,13 @@
   (locking running
     (when @running (throw (ex-info "This isolate already owns a show." {})))
     (alter-var-root #'math/*rnd* #(or % (java.util.Random.)))
-    (let [{cfg :config registry :registry} (if (seq folder)
+    (let [{cfg :config registry :registry evaluator :evaluator-factory} (if (seq folder)
                                              (source/read-show folder application/registry)
-                                             {:config (application/default-config) :registry application/registry})
-          local-show (assoc (modules/settings cfg :show) :credential-path (str (io/file home "credentials.edn")))
+                                             {:config (application/default-config) :registry application/registry
+                                              :evaluator-factory (source/default-evaluator)})
+          local-show (-> (modules/settings cfg :show)
+                         (assoc :credential-path (str (io/file home "credentials.edn")))
+                         (assoc-in [:repl-options :session-options :evaluator-factory] evaluator))
           local-web {:enabled true :host "127.0.0.1" :port 0}
           show (application/start! (assoc cfg :show local-show :web-server local-web) registry)
           port (get-in show [:application :modules :web-server :port])]

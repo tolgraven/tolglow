@@ -27,6 +27,10 @@ For example, place the following files in the same folder.
 
 This example makes the custom module's value available to later modules at `[:modules :cue-page]`. Open **Open included show** for the demo without an external folder.
 
+## Live REPL
+
+Open Studio’s REPL in the running show. Each session has its own interpreter namespace and uses the same bounded input queue, streamed output, results, interruption, scratch buffers and saved history as a JVM session. You can require namespaces from the chosen folder and call `tolglow.show/submit!` with the live `runtime`. Definitions from the active session appear in completion and documentation popups. A namespace change applies to subsequent forms. Use `(tolglow.repl/capture-locals!)` inside a function or `let` to make its evaluated locals available through the session's debug namespace.
+
 ## Build and qualification
 
 Use the paired Afterglow revision from the tests workflow. The **Embedded Apple Studio Native Image** workflow runs the production re-frame build, tests the selected folder interpreter, and packages the matching Leiningen `embedded-host` profile. It compiles the same C entry points for the iOS simulator and the iOS device ABI on their supported Gluon toolchains. Simulator and hardware Mach-O binaries have separate artifacts. [GluonFX platforms](https://docs.gluonhq.com/#_platforms) · [GraalVM compatibility](https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/)
@@ -36,7 +40,7 @@ For a local build, install Xcode, XcodeGen, Maven, Node and Leiningen. In Tolglo
 ```sh
 npm ci
 npm run studio:build
-lein with-profile +embedded-host test :only tolglow.native.show-source-test
+lein with-profile +embedded-host test tolglow.native.show-source-test tolglow.native.repl-test
 lein with-profile +embedded-host uberjar
 native/EmbeddedHost/build-framework ios-sim "$(find target -name '*-standalone.jar' -print -quit)" build/native-host
 native/Tests/check-embedded-studio

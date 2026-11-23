@@ -46,7 +46,7 @@ jobs:
           npm ci
           npm run studio:build
           if [[ "$EMBEDDED_STUDIO" == true ]]; then
-            lein with-profile +embedded-host test :only tolglow.native.show-source-test
+            lein with-profile +embedded-host test tolglow.native.show-source-test tolglow.native.repl-test
             lein with-profile +embedded-host uberjar
           else
             lein uberjar
