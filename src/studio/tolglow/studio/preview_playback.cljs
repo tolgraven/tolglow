@@ -1,7 +1,8 @@
 (ns tolglow.studio.preview-playback
   "The live media stream belongs to the mounted preview control."
   (:require [reagent.core :as r]
-            [re-frame.core :as rf]))
+            [re-frame.core :as rf]
+            [tolglow.studio.state-socket :as socket]))
 
 (defn- button [text title action]
   [:button.text-button {:type "button" :title title :aria-label title :on-click action} text])
@@ -9,6 +10,9 @@
 (defn control [canvas-id]
   (let [state (r/atom "unavailable")
         capture (atom nil)
+        changed! (fn [phase]
+                   (reset! state phase)
+                   (socket/present-preview! (= phase "active")))
         attach! (fn [video]
                   (let [alive? #(.-isConnected video)
                         failed! #(rf/dispatch [:studio/toast % true])]
@@ -19,7 +23,7 @@
                                      (when (js-invoke module "canPresentCanvas" canvas video)
                                        (reset! capture
                                                (js/Reflect.construct (aget module "CanvasPlayback")
-                                                 #js [canvas video #(reset! state %) failed!]))
+                                                 #js [canvas video changed! failed!]))
                                        (reset! state "idle"))))))
                         (.catch #(when (alive?) (failed! (.-message %)))))))
         mount! (fn [node] (when node (attach! node)))
