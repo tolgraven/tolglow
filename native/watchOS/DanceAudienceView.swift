@@ -35,13 +35,14 @@ struct DanceAudienceView: View {
                     if !participating { Button("Disconnect") { workout.stop() } }
                 } else {
                     Text("Watch only. Leave the floor on your iPhone first.").font(.caption)
-                    Button(stage.looking ? "Stop searching" : "Find stages") {
-                        if stage.looking { workout.stop("Stage search stopped.") } else { link.discover() }
+                    Button(stage.looking || link.checkingPhone ? "Stop searching" : "Find stages") {
+                        if stage.looking || link.checkingPhone { workout.stop("Stage search stopped.") }
+                        else { link.discover() }
                     }.disabled(stage.connecting)
                     ForEach(stage.venues) { venue in
                         Button(venue.name) { stage.join(venue.id) }
                     }
-                    Text(stage.status).font(.caption2)
+                    Text(link.checkingPhone ? "Checking your paired iPhone…" : stage.status).font(.caption2)
                 }
             } else if !participating {
                 Text(link.phoneJoined ? "Your iPhone is on the floor. Leave on iPhone to join directly." :
@@ -81,7 +82,7 @@ struct DanceAudienceView: View {
         .navigationTitle("Dance floor")
         .onAppear { workout.prepareConnection() }
         .onDisappear {
-            if participating || stage.joined || stage.looking || stage.connecting { workout.stop() }
+            if participating || link.route == .nearbyStage { workout.stop() }
         }
     }
 }

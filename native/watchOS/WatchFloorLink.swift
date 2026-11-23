@@ -9,7 +9,8 @@ import TolglowSensorCore
     @Published private(set) var route = AudienceWatchRoute.pairedPhone
     @Published private(set) var phoneJoined = false
     var interrupted: ((String) -> Void)?
-    private var verifying: UUID?
+    @Published private var verifying: UUID?
+    var checkingPhone: Bool { verifying != nil }
     private var phoneDeadline: Task<Void, Never>?
     private var ending = false
 

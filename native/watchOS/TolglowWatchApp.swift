@@ -17,8 +17,7 @@ import SwiftUI
         if phase == .active || workout.runningWorkout { return }
         // HealthKit may present the permission sheet while the scene is inactive.
         if workout.requesting && phase == .inactive { return }
-        let stage = workout.link.stage
-        if workout.active || workout.requesting || (phase == .background && (stage.looking || stage.connecting || stage.joined)) {
+        if workout.active || workout.requesting || (phase == .background && workout.link.route == .nearbyStage) {
             workout.stop("Left the app. Dance sharing stopped.")
         }
         motion.stop()
