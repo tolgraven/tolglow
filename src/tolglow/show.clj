@@ -102,8 +102,8 @@
             [afterglow.control.devices.repl :as devices]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
-  (:import [java.util UUID]
-           [java.util.concurrent LinkedBlockingQueue Executors ScheduledExecutorService TimeUnit]))
+  (:import [java.util Arrays UUID]
+           [java.util.concurrent LinkedBlockingQueue]))
 
 (defn- clock-time [clock]
   (let [{:keys [origin-nanos time-ms]} @clock]
@@ -199,7 +199,7 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
-(declare send-output! heartbeat! submit!)
+(declare prepare-output prepare-safety-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
@@ -284,8 +284,15 @@
                               (connections/close! owned)
                               (throw error)))
            publisher (output-scheduler/create
-                      (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
-                        (:send! sink) (assoc :receipt-capacity 256)
+                      (cond-> {}
+                        (:send! sink)
+                        (assoc :receipt-capacity 256
+                               :prepare-output (fn [buffers source]
+                                                 (prepare-output @runtime-ref (:output-context source) buffers source))
+                               :output-valid-until-ms (fn [source checked-at-ms]
+                                                        (fog-deadline/next-cutoff (:safety-state source) checked-at-ms))
+                               :prepare-safety-output (fn [buffers source] (prepare-safety-output @runtime-ref buffers source))
+                               :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
@@ -304,9 +311,10 @@
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
-      :publisher publisher :independent-output? (boolean (:independent-output? options))
+      :publisher publisher :presentation-clock (volatile! 0)
+      :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
-      :scheduler (atom nil) :leases (atom {})
+      :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
@@ -771,14 +779,40 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- send-output! [runtime universes frame-number]
-  (when-let [send! (get-in runtime [:sink :send!])]
-    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)
-          memory @(:fog-deadlines runtime)
-          packet (if memory (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms]))) packet)]
-      (send! packet frame-number)
-      (when (:plan @(:venue-fog runtime))
-        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
+(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+  (let [packet (retirement/include-retired retirement universes)]
+    (if (seq safety-state)
+      (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
+                                 ((get-in runtime [:publisher :now-ms])) stale-source?)
+      packet)))
+
+(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
+  (let [{:keys [compiled retirement]} output-context
+        off-bytes (:fog-off-bytes compiled)
+        corrected (prepare-output runtime output-context universes source)
+        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
+                    ;; Old light bytes may now address a pump. Recover it using
+                    ;; the current patch, even if its universe was absent before.
+                    (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
+                          packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
+                      (fog-deadline/apply-off-bytes packet off-bytes))
+                    corrected)]
+    ;; A transport can fail after writing only part of the attempted packet.
+    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+              (and (not (identical? universes corrected))
+                   (some (fn [[universe ^bytes bytes]]
+                           (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                         corrected)))
+      corrected)))
+
+(defn- present-output! [runtime packet frame-number]
+  ((get-in runtime [:sink :send!]) packet frame-number)
+  (when (:plan @(:venue-fog runtime))
+    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+
+(defn- send-output! [runtime universes frame-number fog-demands]
+  (when (get-in runtime [:sink :send!])
+    (present-output! runtime (prepare-output runtime @(:patch runtime) universes {:safety-state fog-demands}) frame-number)))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -909,6 +943,7 @@
             captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])]
         ;; Rebase from the original model once; never merge the new beat first.
         (let [model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
+          (when discontinuity? (vswap! (:presentation-clock runtime) inc))
           ;; A local Play command may already have flipped :playing? before the
           ;; subsequent Link sample arrives. Remember that musical anchors were
           ;; frozen until we have the resumed peer phase to rebase them against.
@@ -972,12 +1007,30 @@
            (when @(:running runtime)
              (swap! (:state runtime) assoc-in [:status :audio-resume-error] (error-data error)))))))
 
+(defn- capture-render-time [runtime time-ms slot]
+  (if-not slot [time-ms nil]
+    (let [physical ((get-in runtime [:publisher :now-ms]))
+          remaining (- (:deadline-ms slot) physical)]
+      (when (pos? remaining)
+        [(+ (now-ms runtime) remaining) (assoc slot :inputs-at-ms physical)]))))
+
+(defn- begin-presentation! [runtime model slot]
+  (let [clock-id [@(:presentation-clock runtime) (get-in model [:transport :playing?])]
+        options (merge {:period-ms (/ 1000.0 (:frame-rate runtime))}
+                       (get-in model [:settings :output :presentation]))
+        compiled (patch! runtime (get-in model [:rig :fixtures]))]
+    (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
+                                   compiled
+                                   options (or (pause-look/blackout? model) (zero? (:master model)))
+                                   (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
   this cycle with fresh command identity and the captured source epoch."
   ([runtime] (tick! runtime (now-ms runtime)))
-  ([runtime time-ms]
+  ([runtime time-ms] (tick! runtime time-ms nil))
+  ([runtime time-ms output-slot]
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
@@ -985,9 +1038,9 @@
          author-request (volatile! nil)]
      (try
        (locking (:lock runtime)
-         (when @(:running runtime)
+         (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
-                 time-ms (max time-ms (get-in before [:model :time-ms]))
+                 time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
                  _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
@@ -1043,11 +1096,7 @@
                  photo-session (photometry/current model)
                  model (if (and photo-session (not= (:base-rig photo-session) (:rig model))) (photometry/disarm model) model)
                  photo-session (photometry/current model)
-                 presentation-token (when (:independent-output? runtime)
-                                      (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
-                                                                 (patch! runtime (get-in model [:rig :fixtures]))
-                                                                 (get-in model [:settings :output :presentation] {})
-                                                                 (or (pause-look/blackout? model) (zero? (:master model)))))
+                 presentation-token (when (:independent-output? runtime) (begin-presentation! runtime model output-slot))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
                  sampling (when-not restored? (cadence/begin runtime before model))
@@ -1239,8 +1288,13 @@
                       (swap! (:state runtime) assoc-in [:status :sync-error] (error-data error)))))
              (try (if (:independent-output? runtime)
                     (when-not (get-in next-state [:status :error])
-                      (output-scheduler/complete! (:publisher runtime) presentation-token (:output next-state)))
-                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)))
+                      (output-scheduler/complete! (:publisher runtime)
+                                                  (cond-> presentation-token
+                                                    output-slot (assoc :show-time-ms (get-in next-state [:model :time-ms])
+                                                                       :beat (get-in next-state [:model :transport :beat])))
+                                                  (assoc (:output next-state) :safety-state (get-in next-state [:output :fog-demands]))))
+                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)
+                                  (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
@@ -1379,7 +1433,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
-                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1390,7 +1444,6 @@
                                          (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
 
-                              (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
@@ -1788,6 +1841,13 @@
     (throw (ex-info "Development operation belongs to a previous server process" {})))
   (service (:development runtime) operation payload))
 
+(defn render-slot!
+  "Take the latest inputs at render start and evaluate them for the scheduled
+  output time. The physical clock and the restorable show clock have distinct
+  origins; only the time remaining to the deadline crosses that boundary."
+  [runtime slot]
+  (tick! runtime nil slot))
+
 (defn start!
   "Start the scheduled show in preview, or explicitly select :ola or :artnet output."
   ([] (start! {}))
@@ -1799,11 +1859,8 @@
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
-                        (throw error)))
-         scheduler (Executors/newSingleThreadScheduledExecutor)]
+                        (throw error)))]
      (try
-       (reset! (:scheduler runtime) scheduler)
-       (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate))
-       (.scheduleAtFixedRate scheduler ^Runnable #(tick! runtime) 0 (long (/ 1000000000 frame-rate)) TimeUnit/NANOSECONDS)
+       (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate) #(render-slot! runtime %))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))
