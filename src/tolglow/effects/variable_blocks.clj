@@ -43,6 +43,23 @@
            :time-ms time-ms :elapsed-ms time-ms :position [0.0 0.0 0.0]
            :params (blocks/with-variables plan {} model)})))
 
+(defn- writable? [model path]
+  (loop [parent model depth 0]
+    (cond
+      (nil? parent) true
+      (not (map? parent)) false
+      (= (inc depth) (count path)) true
+      :else (recur (get parent (nth path depth)) (inc depth)))))
+
+(defn- sample-path [model env last-values out path evaluate]
+  (if (writable? model path)
+    (try (assoc-in out [:values path] (evaluate env))
+         (catch Exception error
+           (cond-> (assoc-in out [:errors path] (.getMessage error))
+             (contains? last-values path)
+             (assoc-in [:values path] (get last-values path)))))
+    (assoc-in out [:errors path] "A parent of this variable binding holds a non-map value")))
+
 (defn sample
   ([plan model time-ms] (sample plan model time-ms nil))
   ([plan model time-ms previous]
@@ -50,12 +67,7 @@
      (let [env (environment plan model time-ms)
            same? (and (= (:epoch model) (:epoch previous)) (identical? (:traces plan) (:traces previous)))
            last-values (when same? (:values previous))
-           read-path (fn [out path evaluate]
-                       (try (assoc-in out [:values path] (evaluate env))
-                            (catch Exception error
-                              (cond-> (assoc-in out [:errors path] (.getMessage error))
-                                (contains? last-values path)
-                                (assoc-in [:values path] (get last-values path))))))]
+           read-path (partial sample-path model env last-values)]
        (reduce-kv read-path {:epoch (:epoch model) :env env :traces (:traces plan)} (:evaluate plan))))))
 
 (defn collect-events [model before after]
@@ -71,7 +83,9 @@
     model))
 
 (defn resolved [model observation]
-  (reduce-kv assoc-in model (:values observation)))
+  ;; An event later in the frame can replace an observed parent before a view reads it.
+  (reduce-kv (fn [m path value] (if (writable? m path) (assoc-in m path value) m))
+             model (:values observation)))
 
 (defn inspect [observation path]
   (when-let [trace (get (:traces observation) path)]

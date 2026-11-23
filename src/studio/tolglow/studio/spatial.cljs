@@ -9,7 +9,7 @@
             [tolglow.studio.spatial-fields :refer [number-input xyz]]
             [tolglow.studio.volume-sculpt :as sculpt]
             [tolglow.studio.spatial-picker :as picker]
-            [tolglow.studio.spatial-preview :as preview]))
+            [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (def shapes [[:ball "Ball"] [:sphere "Sphere"] [:box "Box"] [:cylinder "Cylinder"] [:hdr "HDR spill"]])
 (defn default-spec [shape]
@@ -211,7 +211,7 @@
      [:div.spatial-body-header [:strong (picker/label id)] [:small (picker/label (:shape draft))]
       [:button.text-button {:disabled disabled? :on-click #(let [bound (into {} (keep (fn [[k b]] (when (= id (:volume-id b)) [k nil]))) (:bindings settings))]
                                                             (rf/dispatch [::save {:volumes {id nil} :bindings bound} "Volume removed." draft-key]))} "Remove volume"]]
-     [preview/watch-visibility (fn [visible?] (when (and visible? (:enabled? settings)) [telemetry id]))]
+     [watch-visibility (fn [visible?] (when (and visible? (:enabled? settings)) [telemetry id]))]
      (when (not= :hdr (:shape draft))
        [:button.button {:on-click #(rf/dispatch [::sculpt/open id draft])} "Sculpt in 3D"])
      [volume-fields id draft edit!]
