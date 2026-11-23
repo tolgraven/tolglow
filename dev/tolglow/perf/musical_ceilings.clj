@@ -21,12 +21,15 @@
               :outputs {:color (op :vec3 (field :x) (field :y) (field :z))}}
         steer {:id :steer :targets (mapv :id (subvec rig pixels))
                :outputs {:aim (op :vec3 (op :add 1.31 beat) 0.75 (op :add 3.27 beat))}}
+        pulse {:id :pulse :targets [(:id (first rig))]
+               :outputs {:dimmer (op :floor (op :add 0.18 (op :fract (op :add (op :multiply 2 {:op :beat}) 0.04))))
+                         :color [1 1 1]}}
         put (fn [m {:keys [id] :as definition}]
               (-> m
                   (bench/command [id :publish] {:op :registry/publish :kind :effects
                                                 :definition (assoc definition :version 1)})
                   (bench/command [id :cue] {:op :cue/put :cue {:id id :effect-id id}})))
-        effects (into [wash steer] (filter #(#{:pulse :shutter} (:id %))) (quality/programs rig pixels))]
+        effects (into [wash steer pulse] (filter #(= :shutter (:id %))) (quality/programs rig pixels))]
     (-> (reduce put (control/new-show {:show-id :ceilings :rig {:fixtures rig}}) effects)
         (composition/save {:id :stage :mode :macro :slots (mapv #(hash-map :cue-id %) [:wash :steer :pulse])})
         (composition/start :stage 0))))
@@ -99,7 +102,10 @@
                          (= 1 (get-in post [:rates :wash :stride])) (not (:wash-window? post))
                          (= 8 (get-in post [:rates :steer :stride]))
                          (every? #(= 1 (get-in % [:rates :pulse :stride])) frames)
-                         (some #(> (:pulse %) 0.5) frames) (some #(pos? (:shutter %)) frames))
+                         (every? (fn [period]
+                                   (and (some #(> (:pulse %) 0.5) period)
+                                        (some #(pos? (:shutter %)) period)))
+                                 (split-at tempo-edit frames)))
             (throw (ex-info "Mixed compound did not exercise both ceilings and discrete output" {:before pre :after post})))
           {:pixels pixels :movers movers :tempo-change-frame tempo-edit :frames frames
            :artdmx-sha256 (.formatHex (HexFormat/of) (.digest digest))}))

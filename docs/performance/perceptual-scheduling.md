@@ -93,10 +93,10 @@ eight and the pulse keeps its frame-accurate evaluation.
 
 Worker costs and total frame pressure are injected for reproducible admission.
 Cue launches, both workers, native blending and ArtDMX packing run normally.
-Four lit pulse frames, nine shutter changes, every active instance and all
+Sixteen lit pulse frames, eight at each tempo, nine shutter changes, every active instance and all
 intent records match. Maximum native RGB error was 1.12 × 10⁻¹⁶ and maximum
 aim displacement was 2.23 × 10⁻¹⁶ m. Both sets of ArtDMX packets had SHA-256
-`ef163e31c1e8e19e135763da930e1af70b3442fd640f343d8f3a0dc9ca9da56c`.
+`c4cd7c04222dc08a39098c36285bdf57f92ecc5bb8a0ef7b4111cdea36efb1b2`.
 
 ```sh
 lein run -m tolglow.perf.musical-ceilings target/musical-ceilings.edn 1024 128
