@@ -36,6 +36,14 @@ async function change({page, panel}, name) {
   assert.equal((await receipt).status(),200);
 }
 
+async function waitForLease(leases, active) {
+  const deadline = Date.now()+5000;
+  while (leases.at(-1)!==active && Date.now()<deadline) {
+    await new Promise(resolve => setTimeout(resolve,40));
+  }
+  assert.equal(leases.at(-1),active,active ? 'View requests the live sampler' : 'Hidden plot releases the sampler');
+}
+
 async function capture(page, file) {
   if (evidence) await page.screenshot({path:evidence+'/'+file});
 }
@@ -81,10 +89,13 @@ try {
       await new Promise(resolve => setTimeout(resolve,65));
     }
   }
+  await page.locator('#view-compose').evaluate(el => el.scrollIntoView({block:'start'}));
+  await waitForLease(leases,false);
+  await panel.locator('.block-trace-viewport').scrollIntoViewIfNeeded();
+  await waitForLease(leases,true);
   await panel.getByRole('button',{name:'Close editor'}).tap();
   await page.waitForFunction(() => !document.querySelector('.variable-block-editor'));
-  await new Promise(resolve => setTimeout(resolve,300));
-  assert.equal(leases.at(-1),false,'Closing the inspector releases its remote sampler');
+  await waitForLease(leases,false);
   await change(second,'Remove chain');
   await second.panel.getByText('Variable chain removed.').waitFor();
   assert.deepEqual([...first.errors,...second.errors,...desktop.errors],[]);
