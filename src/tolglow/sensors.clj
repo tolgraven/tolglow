@@ -6,6 +6,7 @@
             [afterglow.time :as musical-time]
             [tolglow.agents.credentials :as credentials]
             [tolglow.sensors.audience :as audience]
+            [tolglow.sensors.audience.zones :as zones]
             [tolglow.sensors.osc :as osc])
   (:import [java.util UUID]
            [java.security MessageDigest]
@@ -183,6 +184,9 @@
      :udp (when-let [udp (:udp state)] {:port (:port udp) :status ((:status udp))})
      :devices (into {} (map (fn [[id device]] [id (assoc (select-keys device [:session-id :armed? :last-sample-id :received-at-ms])
                                                         :credential-ready? (boolean (:token device)))])) (:devices state))}))
+
+(defn audience-status [manager model]
+  (zones/operator-view model (:devices @(:state manager))))
 
 (defn latest [manager device-id] (get-in (live manager) [:devices device-id :latest]))
 
