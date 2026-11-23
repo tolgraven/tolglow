@@ -79,6 +79,7 @@ jobs:
         run: |
           command -v xcodegen || brew install xcodegen
           native/Packaging/bundle-macos build/studio.jar "$PWD/build/deliverables" build
+          native/Tests/check_source_archive "build/deliverables/Tolglow Studio.app/Contents/Resources"
           python3 native/Tests/check_packaged_studio.py "build/deliverables/Tolglow Studio.app"
           ditto -c -k --keepParent "build/deliverables/Tolglow Studio.app" build/Tolglow-Studio-arm64.zip
       - uses: actions/upload-artifact@v7.0.2

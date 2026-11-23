@@ -13,17 +13,19 @@ archive_repo() {
   sha="$(git -C "$source" rev-parse HEAD)"
   git -C "$work" init --quiet "$name"
   git -C "$work/$name" fetch --quiet --depth=1 --no-tags "$source" "$sha"
-  git -C "$work/$name" checkout --quiet -b master FETCH_HEAD
+  git -C "$work/$name" symbolic-ref HEAD refs/heads/master
+  git -C "$work/$name" update-ref refs/heads/master "$sha"
+  git -C "$work/$name" read-tree HEAD
   git -C "$work/$name" remote add origin "https://github.com/tolgraven/$name.git"
   git -C "$work/$name" update-ref refs/remotes/origin/master "$sha"
   git -C "$work/$name" branch --quiet --set-upstream-to=origin/master master
   # Fetch metadata contains the machine-local build checkout location.
   rm "$work/$name/.git/FETCH_HEAD"
   rm -rf "$work/$name/.git/logs"
-  test -z "$(git -C "$work/$name" status --porcelain)"
+  git -C "$work/$name" fsck --no-reflogs --no-dangling >&2
   echo "$sha"
 }
 t="$(archive_repo tolglow "$tolglow")"
 a="$(archive_repo afterglow "$afterglow")"
 printf '%s-%s\n' "$t" "$a" > "$dest/source-version.txt"
-(cd "$work" && zip -qr "$dest/application-sources.zip" tolglow afterglow)
+(cd "$work" && zip -qr "$dest/application-sources.zip" tolglow/.git afterglow/.git)

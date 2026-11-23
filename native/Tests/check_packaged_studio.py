@@ -16,7 +16,7 @@ def exercise(java, jar, environment):
             '(ns fixture-setup) (defn enabled [_ _] (spit "started" "loaded") {})')
         (folder / "show.clj").write_text(
             "(ns show) (def config {:init {:components [:show] :modules [:enabled :web-server] "
-            ":search-in-namespaces [\u0027fixture-setup]}})")
+            ":search-in-namespaces [(quote fixture-setup)]}})")
         ready = folder / "port"
         args = [str(java), "-Djava.awt.headless=true", "-cp", str(jar), "clojure.main",
                 "-m", "tolglow.desktop", str(folder), str(ready)]

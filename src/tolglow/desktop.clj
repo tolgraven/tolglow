@@ -2,7 +2,8 @@
   "Own the show process started by the macOS Studio window."
   (:require [clojure.java.io :as io]
             [tolglow.application :as app]
-            [tolglow.data :as data])
+            [tolglow.data :as data]
+            [tolglow.modules :as modules])
   (:import [clojure.lang Compiler DynamicClassLoader RT]
            [java.io File]
            [java.nio.file Files Path StandardCopyOption]))
@@ -27,12 +28,13 @@
 
 (defn- with-application-sources [cfg]
   (if-let [sources (not-empty (System/getenv "TOLGLOW_APPLICATION_SOURCES"))]
-    (if (contains? (:show cfg) :workspace-options)
-      cfg
-      (assoc-in cfg [:show :workspace-options]
-                {:repositories {:tolglow (str (io/file sources "tolglow"))
-                                :afterglow (str (io/file sources "afterglow"))}
-                 :workspace-parent (str (io/file sources "workspaces"))}))
+    (let [settings (modules/settings cfg :show)]
+      (if (contains? settings :workspace-options)
+        cfg
+        (let [options {:repositories {:tolglow (str (io/file sources "tolglow"))
+                                      :afterglow (str (io/file sources "afterglow"))}
+                       :workspace-parent (str (io/file sources "workspaces"))}]
+          (assoc cfg :show (assoc settings :workspace-options options)))))
     cfg))
 
 (defn run-show! [^File folder ^Path ready input]
