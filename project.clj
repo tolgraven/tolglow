@@ -47,7 +47,7 @@
               (not= 'tolglow.studio.terminal-docker-test (ns-name (:ns metadata))))
    :docker (fn [metadata]
              (= 'tolglow.studio.terminal-docker-test (ns-name (:ns metadata))))}
-  :aliases {"check-roadmap" ["run" "-m" "tolglow.check-roadmap"]
+  :aliases {"check-requests" ["run" "-m" "tolglow.check-requests"]
             "test-pure" ["run" "-m" "tolglow.test-runner" "pure"]
             "test-parity" ["run" "-m" "tolglow.test-runner" "parity"]}
   :min-lein-version "2.13.1")
