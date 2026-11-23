@@ -36,7 +36,15 @@ async function signal(panel, control, query, source) {
   page.on("request", observe);
   try {
     const box = group.getByRole("searchbox", {name:"Find signal"});
-    await box.pressSequentially(query, {delay:10});
+    // Dispatch the burst in one browser task. Separate driver round trips can
+    // themselves exceed the debounce window on a busy CI host.
+    await box.evaluate((input, text) => {
+      const {set} = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+      for (const character of text) {
+        set.call(input, input.value + character);
+        input.dispatchEvent(new InputEvent("input", {bubbles:true, data:character, inputType:"insertText"}));
+      }
+    }, query);
     const choice = group.getByRole("button", {name:source,exact:true});
     await choice.waitFor();
     await page.waitForFunction(() => !document.querySelector(".signal-choices [role=status]"));
