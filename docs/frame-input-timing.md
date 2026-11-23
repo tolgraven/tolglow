@@ -42,6 +42,24 @@ exercise a known lower bound. The other scene patches 1,024 RGBW pixels and
 Each case uses two effect workers and full universe buffers in a capture
 sink. Actual Art-Net or OLA interface latency requires a separate run.
 
+### Dedicated Ubuntu runner
+
+On the 1,024-pixel and 128-mover rig, **238 of 240 slots completed a full render
+within 25 ms** on the paired CI runner. With measured lead the render took
+7.12 ms at p95, 226 slots sent their own sample, and median input age at the
+nominal target was 7.24 ms. Reserving the full period gave 237 current-source
+sends and 24.84 ms median input age. When a source missed its slot the direct
+policy held the last one. The resulting p95 age at actual send was 31.65 ms
+with measured lead and 26.92 ms with fixed lead.
+
+With the known six-millisecond Ember wait, the measured policy completed all
+240 renders in 25 ms and sent 236 current sources. Render p95 was 9.61 ms.
+Median input age at the slot was 10.02 ms versus 24.82 ms with fixed lead.
+The fixed run completed 237 renders within 25 ms and sent 237 current sources.
+The rendering and sender p95s reflect software execution through the memory
+sink. The performance artifact includes the raw observations and cold startup
+for all four cases. [Paired Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45191695719/job/137751416392)
+
 ### Recorded local result
 
 On the 1,024-pixel, 128-mover rig, 215 of 240 nominal slots produced a full
