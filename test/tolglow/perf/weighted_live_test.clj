@@ -1,7 +1,10 @@
 (ns tolglow.perf.weighted-live-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.edn :as edn]
+            [clojure.test :refer [deftest is]]
             [tolglow.perf.weighted-live :as live]
-            [tolglow.perf.weighted-live.transport :as transport]))
+            [tolglow.perf.weighted-live.transport :as transport])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
 (deftest a-delayed-render-never-builds-a-queue-of-move-batches
   (let [issued (atom []) send (fn [] (let [r (vec (repeatedly 4 promise))] (swap! issued conj r) r))
@@ -75,3 +78,13 @@
     (is (= {:minimum 512 :actual 32} (get-in (last @rows) [:incomplete-universes :short-payloads 2])))
     (send! (assoc packets 2 (byte-array 512)) 4)
     (is (nil? (:incomplete-universes (last @rows))))))
+
+(deftest an-unqualified-capture-is-saved-before-the-command-fails
+  (let [file (Files/createTempFile "weighted-capture" ".edn" (make-array FileAttribute 0))
+        report {:summary {:show-output-exercised? false :incomplete-packets 1}}]
+    (try
+      (with-redefs [live/capture (constantly report)]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"complete lit and moving output"
+                             (live/-main (str file))))
+        (is (= report (edn/read-string (slurp (.toFile file))))))
+      (finally (Files/deleteIfExists file)))))

@@ -210,4 +210,7 @@
         report (capture config)]
     (io/make-parents path)
     (spit path (pr-str report))
-    (prn (select-keys report [:rig :summary :window-resources :motion]))))
+    (prn (select-keys report [:rig :summary :window-resources :motion]))
+    (when-not (get-in report [:summary :show-output-exercised?])
+      (throw (ex-info "Live venue probe did not exercise complete lit and moving output"
+                      {:report path})))))
