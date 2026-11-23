@@ -68,6 +68,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Find a source; edit, save and remove one binding without replacing sibling edits. Observe the live stages only when visible."]
    :evidence ["The Ring/show-owner regression suite covers stale edits, disjoint paths, invalid stages, and source discovery. dev/studio/variable-blocks-browser-qa.mjs edits one saved variable from two browser sessions, reads the wet amount back, observes the live trace, and verifies socket release. The release was exercised at 390, 1024 and 1440 CSS pixels."]}
+  {:id :push/page-overview :title "Browse cue pages in cue and type colors on the Push display"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/control/display.clj" "tolglow/src/tolglow/controllers/page_overview.clj" "tolglow/src/studio/tolglow/studio/page_overview.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Browse banks, switch palettes and select a page through captured controller input; render a bounded wide display without evaluating inactive pages."]
+   :evidence ["Captured eight real Push profile input transitions with the production Ring/re-frame 960×160 display, tested pinned swatches, stable cache and eight-tile bounds. See docs/push-page-overview.md for screenshot and motion evidence."]}
   {:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]

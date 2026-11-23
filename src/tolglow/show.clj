@@ -24,6 +24,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -1402,15 +1403,25 @@
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)]
+  (let [cache (waveforms/create-cache)
+        pages (volatile! nil)]
     (display/browser-display
-     (assoc options :project! (fn [view]
-                                (let [snapshot @(:state runtime)
-                                      audio (audio/waveform (connections/audio (:connections runtime)))]
-                                  (-> (block-trace/project-display (:id runtime) (:model snapshot)
-                                        (waveforms/project-display cache (assoc snapshot :runtime-id (:id runtime)) view audio))
-                                      (assoc-in [:visualization-clock :sample-period-ms]
-                                                (cue-pads/sample-period-ms (:cue-pad-previews runtime))))))))))
+     (assoc options :project!
+            (fn [view]
+              (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
+                    model (:model snapshot)
+                    mode (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters)
+                    view (cond-> (assoc view :display-mode mode)
+                           (#{:parameters :audio} mode)
+                           (assoc-in [:visualization-clock :sample-period-ms]
+                                     (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
+                    visual (case mode
+                             :parameters (waveforms/project-display cache snapshot view nil)
+                             :audio (waveforms/project-display cache snapshot view
+                                          (audio/waveform (connections/audio (:connections runtime))))
+                             :block-trace (block-trace/project-display (:id runtime) model view)
+                             view)]
+                (page-overview/project-display pages model visual)))))))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
