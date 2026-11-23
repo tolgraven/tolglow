@@ -107,3 +107,18 @@
         (rx/publish! graph (assoc-in model [:settings :prefabs :definitions :tour/copper] (material 0.6)))
         (is (= 0.6 (get-in @query [:tour/copper :inputs :factor]))))
       (finally (rx/close! graph)))))
+
+(deftest editing-an-unrelated-material-preserves-the-last-good-sensor-value
+  (let [cache (volatile! nil)
+        path [:variables :sensor]
+        settings {:bindings {path {:stages [{:block :tour/copper}]}}}
+        entries {:tour/copper (material 0.5)}
+        plan (variables/prepare! cache settings entries)
+        model (assoc-in (demo/model) path 0.8)
+        good (variables/sample plan model 25)
+        next-plan (variables/prepare! cache settings (assoc entries :tour/glass (material 0.2)))
+        bad (variables/sample next-plan (assoc-in model path :offline) 50 good)]
+    (is (identical? plan next-plan))
+    (is (true? (:held? (variables/inspect bad path))))
+    (is (= 0.4 (:result (variables/inspect bad path))))
+    (is (not (identical? next-plan (variables/prepare! cache settings {:tour/copper (material 0.2)}))))))
