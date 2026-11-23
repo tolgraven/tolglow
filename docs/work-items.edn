@@ -1,14 +1,7 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :performance/multirate-quality :title "Measure perceptual error and schedule visual and live work at separate rates"
-   :kind :implementation :status :in-progress :owner "adaptive-render-quality"
-   :paths ["tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/docs/performance/multirate-quality.md"]
-   :depends-on [:foundation/tests]
-   :acceptance ["Compare a full-rate show with independent color, world-space moving-head aim and continuous pulse sample intervals, keeping discrete and cue lifecycle events exact."
-                "Measure 40 Hz processor headroom and output error, define recoverable quality levels and classify physical-GPU results separately from software rendering."]
-   :evidence ["Checkpoint and reproduction are tracked in docs/performance/multirate-quality.md."]}
-  {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+ [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
            "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"
