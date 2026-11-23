@@ -88,3 +88,27 @@
                              (live/-main (str file))))
         (is (= report (edn/read-string (slurp (.toFile file))))))
       (finally (Files/deleteIfExists file)))))
+
+(deftest failed-receipt-matching-saves-the-unmatched-observations
+  (let [file (Files/createTempFile "weighted-receipts" ".edn" (make-array FileAttribute 0))
+        output {:slot 2 :frame-id 3 :sent-at-ms 50 :sent-by-ms 52}
+        wire-row {:id 3 :at-ms 51}
+        observations {:renders [{:slot 2 :ready-at-ms 49}]
+                      :outputs [output] :missed-wakes [{:slot 1}]
+                      :first-slot 1 :last-slot 2}
+        cases [[[] "Sink receipt does not match its admission" {:output output :sink nil}]
+               [[(assoc wire-row :id 7)] "Sink receipt does not match its admission"
+                {:output output :sink (assoc wire-row :id 7)}]
+               [[wire-row wire-row] "Unexpected capture-sink call" {:entry wire-row}]]]
+    (try
+      (doseq [[wire message data] cases]
+        (with-redefs [live/capture (fn [_] (live/with-measured-outputs observations wire))]
+          (let [failure (try (live/-main (str file))
+                             (catch clojure.lang.ExceptionInfo e e))
+                error {:message message :data data}]
+            (is (= message (ex-message failure)))
+            (is (= {:report (str file) :receipt-error error} (ex-data failure)))
+            (is (= (assoc observations :wire wire :receipt-error error
+                                       :summary {:show-output-exercised? false})
+                   (edn/read-string (slurp (.toFile file))))))))
+      (finally (Files/deleteIfExists file)))))

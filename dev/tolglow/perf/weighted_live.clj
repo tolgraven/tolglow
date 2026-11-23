@@ -140,6 +140,21 @@
            :show-output-exercised? (boolean (and lit (empty? faults) (empty? incomplete) (> aim-states 1)
                                                  (every? #(< 1 %) poses))))))
 
+(defn with-measured-outputs
+  "Join the publisher and wire observations, or keep both raw lists with the
+  receipt error so a rejected capture can still be inspected."
+  [{:keys [renders outputs first-slot last-slot] :as report} wire]
+  (let [{:keys [matched receipt-error]}
+        (try
+          {:matched (measured-outputs outputs wire)}
+          (catch clojure.lang.ExceptionInfo e
+            {:receipt-error {:message (ex-message e) :data (ex-data e)}}))]
+    (if receipt-error
+      (assoc report :wire wire :receipt-error receipt-error
+                    :summary {:show-output-exercised? false})
+      (assoc report :outputs matched
+                    :summary (summarize renders matched first-slot last-slot)))))
+
 (defn- observations! [runtime ids]
   (let [owner (:publisher runtime) renders (atom []) outputs (atom []) wakes (atom [])]
     (observe! (:timeline owner) :last renders (partial render-row runtime ids))
@@ -175,11 +190,11 @@
         (stop-executor! (:executor control))
         (wait-until clock (timeline/deadline grid (+ 3 last-slot)))
         (drain-publisher! owner)
-        (let [deliveries (measured-outputs @outputs @wire)]
+        (with-measured-outputs
           {:first-slot first-slot :last-slot last-slot :period-ms 25
-           :summary (summarize @renders deliveries first-slot last-slot)
            :window-resources resources :motion (motion-result control)
-           :renders @renders :missed-wakes @wakes :outputs deliveries}))
+           :renders @renders :missed-wakes @wakes :outputs @outputs}
+          @wire))
       (finally (.shutdownNow ^ScheduledExecutorService (:executor control))))))
 
 (defn capture [{:keys [pixels warmup slots] :or {pixels 20000 warmup 160 slots 240}}]
@@ -210,7 +225,9 @@
         report (capture config)]
     (io/make-parents path)
     (spit path (pr-str report))
-    (prn (select-keys report [:rig :summary :window-resources :motion]))
+    (prn (select-keys report [:rig :summary :window-resources :motion :receipt-error]))
+    (when-let [{:keys [message] :as error} (:receipt-error report)]
+      (throw (ex-info message {:report path :receipt-error error})))
     (when-not (get-in report [:summary :show-output-exercised?])
       (throw (ex-info "Live venue probe did not exercise complete lit and moving output"
                       {:report path})))))
