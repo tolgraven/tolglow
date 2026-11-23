@@ -41,8 +41,12 @@ struct CaptureStage {
             const buttons = [...document.querySelectorAll('.stage-invitation button')];
             return JSON.stringify({
               url: location.origin + location.pathname,
+              documentStartedAt: performance.timeOrigin,
               readyState: document.readyState,
               visibility: document.visibilityState,
+              appMounted: !!document.querySelector('#app'),
+              appChildren: document.querySelector('#app')?.childElementCount,
+              selectedView: document.querySelector('a[data-view][aria-current=page]')?.dataset.view,
               connections: document.querySelectorAll('#view-connections').length,
               connectionBadge: document.querySelector('#connection-label')?.textContent,
               stagePanels: panels.length,
@@ -57,7 +61,7 @@ struct CaptureStage {
         let request = URLRequest(url: qr, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
         let response = try? await URLSession.shared.data(for: request)
         let status = (response?.1 as? HTTPURLResponse)?.statusCode ?? 0
-        FileHandle.standardError.write(Data("Stage \(phase), QR HTTP \(status): \(state ?? "JS unavailable")\n".utf8))
+        FileHandle.standardError.write(Data("Stage \(phase), QR HTTP \(status), WebKit path \(view.url?.path ?? "none"), loading \(view.isLoading): \(state ?? "JS unavailable")\n".utf8))
     }
 
     @MainActor static func capture(_ view: WKWebView, _ path: URL) async throws {
@@ -89,14 +93,36 @@ struct CaptureStage {
         application.setActivationPolicy(.regular)
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addUserScript(WKUserScript(source: """
-          window.stageCapturePageEvents = [];
-          for (const name of ['visibilitychange', 'pagehide', 'pageshow']) {
-            window.addEventListener(name, event => {
-              const events = window.stageCapturePageEvents;
-              if (events.length === 16) events.shift();
-              events.push([name, document.visibilityState, event.persisted ?? null]);
-            });
-          }
+          (() => {
+            const events = window.stageCapturePageEvents = [];
+            const record = (name, detail) => {
+              if (events.length === 32) events.shift();
+              events.push([Math.round(performance.now()), name, detail]);
+            };
+            document.addEventListener('visibilitychange', () => record('visibilitychange', document.visibilityState));
+            for (const name of ['pagehide', 'pageshow', 'popstate']) {
+              window.addEventListener(name, event => record(name, event.persisted ?? null));
+            }
+            const knownErrors = ['TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'NotFoundError', 'InvalidStateError', 'HierarchyRequestError'];
+            const reportError = (event, error, source = '') => {
+              const stack = typeof error?.stack === 'string' ? error.stack : '';
+              const locations = stack.match(/studio[/]js[/][a-zA-Z0-9._-]+[.]js:[0-9]+:[0-9]+/g) ?? [];
+              record(event, {type: knownErrors.includes(error?.name) ? error.name : 'other',
+                             source: source.endsWith('/studio/js/main.js') ? 'studio' : 'other',
+                             locations: locations.slice(0, 8)});
+            };
+            window.addEventListener('error', event => reportError('error', event.error, event.filename));
+            window.addEventListener('unhandledrejection', event => reportError('unhandledrejection', event.reason));
+            let mounted;
+            const observeMount = () => {
+              const current = !!document.querySelector('#app > *');
+              if (current !== mounted) {
+                record(current ? 'mount' : 'unmount', null);
+                mounted = current;
+              }
+            };
+            new MutationObserver(observeMount).observe(document, {childList: true, subtree: true});
+          })();
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1050, height: 760), configuration: configuration)
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -134,9 +160,11 @@ struct CaptureStage {
         try await capture(view, folder.appendingPathComponent("stage-invitation.png"))
         await report("before Save QR", view: view, qr: imageURL)
         _ = try await view.evaluateJavaScript("document.querySelector('.stage-invitation a[download]').click()")
+        await report("after clicking Save QR", view: view, qr: imageURL)
         for _ in 0..<100 where !FileManager.default.fileExists(atPath: destination.path) {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
+        await report("after writing Save QR", view: view, qr: imageURL)
         let qr = try Data(contentsOf: destination)
         guard qr.starts(with: [137,80,78,71,13,10,26,10]) else { throw Failure.badImage }
         let decoder = VNDetectBarcodesRequest()

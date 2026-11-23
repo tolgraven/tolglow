@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          fetch-depth: 4
+          fetch-depth: 8
           persist-credentials: false
       - name: Verify and unpack the previously built Apple Silicon app
         env:
@@ -47,21 +47,3 @@ jobs:
           test "$(cat "$app/Contents/Resources/source-version.txt")" = "$BUILT_MERGE-$AFTERGLOW_HEAD"
       - name: Exercise the revised capture with the archived packaged app
         run: native/Tests/capture-compiled-mac "build/packaged/Tolglow Studio.app" build/media
-      - name: Report the packaged app log
-        if: always()
-        run: |
-          if test -s build/media/window.log; then
-            tail -n 120 build/media/window.log | sed -E 's/[[:xdigit:]]{64}/[redacted]/g'
-          fi
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: packaged-stage-replay
-          if-no-files-found: ignore
-          path: |
-            build/media/window.log
-            build/media/compiled-studio.png
-            build/media/compiled-studio.gif
-            build/media/stage-ready.png
-            build/media/stage-invitation.png
-            build/media/stage-closed.png
