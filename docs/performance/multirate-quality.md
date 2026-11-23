@@ -132,3 +132,51 @@ frame-by-frame reference output and run independently of host speed.
 
 [Master performance workflow](../../.github/workflows/performance.yml) ·
 [Flash recovery experiment](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
+
+## Aim error relative to a projected spot
+
+```sh
+lein run -m tolglow.perf.beam-fidelity target/quality/beam-fidelity.edn 0.25
+```
+
+A direction error of one degree is easy to see in a pencil beam. The same
+angular error in a broad wash can leave its projected spot mostly in place.
+This replay quantifies the displacement on a planar floor. Sixteen groups of
+four moving heads sit six metres above the receiver. Within each group the
+fixtures follow the same lateral orbit and phase. Their targets are either
+0.7 or 6 metres below the lens, and their full beam angles are either 5° or
+40°. The lens radius is 5 mm. The show emits a frame every 25 ms at 120 BPM.
+
+The replay decodes each fixture's 16-bit pan and tilt from the actual DMX
+universes. Afterglow applies the mount calibration, reconstructs the world
+direction and intersects the lens cone with the floor. For every fixture and
+frame, compare aim angle, angle as a fraction of the beam's half-angle, floor
+displacement in metres, and displacement in units of the original projected
+ellipse. An ellipse-relative distance of one places the candidate spot centre
+on the reference spot boundary along that direction.
+
+The EDN report includes two bars of reference and four-frame footprint traces
+for one representative fixture in each group. The optional positive radius
+budget selects the longest interval whose worst observed first-bar displacement
+fits the given fraction. The report then shows its worst second-bar error.
+This offline comparison uses the projected optical footprint and DMX commands.
+Actuator latency and physical response require separate hardware measurements.
+
+Across 160 measured frames, both independent full-rate runs agreed. At a
+four-frame interval the measured p95 angular error was 3.424° for the near
+target and 0.623° for the far target. The physical size of the expected
+spot changed the visible significance of those angles.
+
+| Target depth | Full beam angle | p95 displacement at stride 2 | At stride 4 | At stride 8 | Stride admitted by the first bar at a 0.25-radius budget |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0.7 m | 5° | 0.334 | 1.295 | 4.788 | 1 |
+| 0.7 m | 40° | 0.054 | 0.205 | 0.701 | 4 |
+| 6 m | 5° | 0.064 | 0.245 | 0.897 | 2 |
+| 6 m | 40° | 0.009 | 0.034 | 0.124 | 8 |
+
+All displacement columns use reference spot radii. Admission uses the maximum,
+so the narrow far beam chose stride two even though its stride-four p95 was
+below the cap. The worst second-bar displacement for these choices was 0,
+0.210, 0.068 and 0.138 radii respectively. A changing movement program or zoom
+can invalidate a calibrated interval. An online policy would have to detect
+that change or resample before relying on earlier measurements.
