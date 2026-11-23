@@ -19,33 +19,32 @@ export function displayTransform() {
   return pass;
 }
 
-// For a heavily downscaled room, evaluate the expensive edge search once per
-// source pixel. The native-size film pass can then do one filtered lookup.
+// Resolve every composited edge at source resolution. Both programs run from
+// frame one, so an adaptive resize cannot compile shaders during a cue launch.
 export class EdgePass extends ShaderPass {
-  constructor() { super(FXAAShader); this.enabled = false; }
+  constructor() { super(FXAAShader); }
   setSize(width, height) { this.uniforms.resolution.value.set(1 / width, 1 / height); }
 }
 
-// FXAA uses the source texel size after display encoding. Dither and grain use
-// physical presentation pixels, so scaling the fog or room cannot enlarge them.
+// A single bilinear lookup presents the resolved image at panel resolution.
+// Dither and grain use physical pixels even when the scene budget changes.
 export class FilmPass extends ShaderPass {
   constructor() {
-    super({...FXAAShader,
-      uniforms: {...FXAAShader.uniforms, grain: {value: 0.0015}, phase: {value: 0}, resolveAtDisplay: {value: true}},
-      fragmentShader: FXAAShader.fragmentShader.replace('void main()', 'void resolveEdges()') + `
+    super({
+      uniforms: {tDiffuse: {value: null}, grain: {value: 0.0015}, phase: {value: 0}},
+      vertexShader: FXAAShader.vertexShader,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
         uniform float grain;
         uniform float phase;
-        uniform bool resolveAtDisplay;
+        varying vec2 vUv;
         void main() {
-          if (resolveAtDisplay) resolveEdges();
-          else gl_FragColor = texture2D(tDiffuse, vUv);
+          vec3 color = texture2D(tDiffuse, vUv).rgb;
           vec2 pixel = gl_FragCoord.xy;
           float dither = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715)))) - 0.5;
           float noise = fract(52.9829189 * fract(dot(pixel + phase, vec2(0.06711056, 0.00583715)))) - 0.5;
-          gl_FragColor.rgb += vec3(dither / 255.0 + noise * grain);
-          gl_FragColor.a = 1.0;
+          gl_FragColor = vec4(color + dither / 255.0 + noise * grain, 1.0);
         }`
     });
   }
-  setSize(width, height) { this.uniforms.resolution.value.set(1 / width, 1 / height); }
 }

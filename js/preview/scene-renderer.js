@@ -355,8 +355,6 @@ export class SceneRenderer {
       this.displayRange = configureDisplayRange(this.renderer.getContext(), displayWidth, displayHeight, this.hdrRequested);
       this.outputPass.uniforms.extendedDisplay.value = this.displayRange === 'extended';
     }
-    this.edges.enabled = displayWidth > width * 1.4;
-    this.film.uniforms.resolveAtDisplay.value = !this.edges.enabled;
     const samples = sceneSamples(this.quality, width, height, this.samples);
     if (width === this.width && height === this.height && this.sceneTarget.samples === samples) return;
     if (samples !== this.sceneTarget.samples) {
