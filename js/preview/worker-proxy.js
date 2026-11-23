@@ -1,3 +1,4 @@
+import {DisplayRefresh} from './display-clock.js';
 import {RigEditorInput} from './editor.js';
 import * as THREE from 'three';
 import {SceneRenderer} from './scene-renderer.js';
@@ -36,6 +37,8 @@ export class WorkerRoomPreview {
       reducedMotion: () => this.reducedMotion.matches, changed: () => this.sendState()});
     this.navigation.subscribe(state => this.notifyNavigation(state));
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
+    this.displayHz = 60;
+    this.refresh = new DisplayRefresh(hz => {this.displayHz = hz; this.sendState();});
     this.activity = new PreviewActivity(canvas, active => this.changeActivity(active));
     this.setStatus('Starting background room renderer…');
     try {
@@ -65,6 +68,7 @@ export class WorkerRoomPreview {
   get ready() {return this.fallback ? this.fallback.ready : this._ready;}
   setStatus(text) {if (this.status && this.status.textContent !== text) this.status.textContent = text;}
   changeActivity(active) {
+    this.refresh.setActive(active && !this.paused);
     if (this.disposed || this.fallback) return;
     this.visible = active; ++this.generation;
     this.navigation.refreshActivity(); clearTimeout(this.startupTimer);
@@ -86,7 +90,7 @@ export class WorkerRoomPreview {
     this.channel.offer({snapshot: this.snapshot, receivedAt: this.receivedAt, lightingMode: this.lightingMode, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
       generation: this.generation, paused: this.paused,
       reducedMotion: this.reducedMotion.matches, coarsePointer: this.coarsePointer.matches,
-      quality: this.qualityChoice, film: this.filmSettings, fog: this.fogOverride, workLight: this.workLight,
+      quality: this.qualityChoice, displayHz: this.displayHz, film: this.filmSettings, fog: this.fogOverride, workLight: this.workLight,
       camera: {position: this.camera.position.toArray(), target: this.controls.target.toArray(), up: this.camera.up.toArray(), fov: this.camera.fov, name: this.cameraName},
       actions: this.actions.slice()});
   }
@@ -210,8 +214,8 @@ export class WorkerRoomPreview {
     this.controls.target.fromArray(fixture.position); this.camera.position.fromArray(fixture.position).add(new THREE.Vector3(1.3, .5, 2));
     this.controls.update(); this.cameraName = 'fixture'; this.sendState(); return true;
   }
-  pause() {this.paused = true; if (this.fallback) return this.fallback.pause(); this.navigation.refreshActivity(); this.sendState();}
-  resume() {this.paused = false; if (this.fallback) return this.fallback.resume(); this.navigation.refreshActivity(); this.sendState();}
+  pause() {this.paused = true; this.refresh.setActive(false); if (this.fallback) return this.fallback.pause(); this.navigation.refreshActivity(); this.sendState();}
+  resume() {this.paused = false; if (!this.fallback) this.refresh.setActive(this.visible); if (this.fallback) return this.fallback.resume(); this.navigation.refreshActivity(); this.sendState();}
   draw() {
     if (this.disposed || this.error) return Promise.resolve(false);
     if (this.fallback) return Promise.resolve(this.fallback.draw() !== false);
@@ -228,6 +232,7 @@ export class WorkerRoomPreview {
       navigation: this.getNavigationState(), camera: this.camera.position.toArray(), target: this.controls.target.toArray()};
   }
   stopProxy() {
+    this.refresh?.setActive(false);
     this.editorInput?.dispose(); this.editorInput = null;
     clearTimeout(this.startupTimer); this.navigation?.dispose(); this.abort.abort();
     this.resizeObserver?.disconnect(); this.activity?.dispose(); this.controls.dispose(); this.channel?.close();
