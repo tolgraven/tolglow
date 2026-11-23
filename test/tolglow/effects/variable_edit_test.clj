@@ -68,3 +68,24 @@
       (is (< (abs (- 0.2 (:wash (show/variables runtime)))) 1.0e-9))
       (is (= material (get-in @(:state runtime) [:model :settings :variable-blocks :prefabs :venue/dusk])))
       (finally (show/stop! runtime)))))
+
+
+(deftest guarded-variable-edits-resolve-shared-materials-and-local-overrides
+  (let [material {:name "Wash transmission" :mode :multiply :inputs {:factor 0.5} :glsl "factor"}
+        local (assoc-in material [:inputs :factor] 0.25)
+        model (-> (demo/model)
+                  (assoc-in [:settings :prefabs :definitions] {:venue/wash material :venue/private material})
+                  (assoc-in [:settings :variable-blocks :prefabs :venue/private] local))
+        runtime (show/create-runtime {:model model :workspace-options nil})
+        handler (studio/handler runtime)
+        bind! (fn [path stage]
+                (post! runtime handler "/api/variable-block"
+                       {:op :put :path [:variables path] :expected nil
+                        :binding {:base 0.8 :stages [{:block stage}]}
+                        :runtime-id (:id runtime) :expected-epoch 0}))]
+    (try
+      (is (= :accepted (get-in (bind! :wash :venue/wash) [1 :status])))
+      (is (= :accepted (get-in (bind! :private-wash :venue/private) [1 :status])))
+      (is (< (abs (- 0.4 (:wash (show/variables runtime)))) 1.0e-9))
+      (is (< (abs (- 0.2 (:private-wash (show/variables runtime)))) 1.0e-9))
+      (finally (show/stop! runtime)))))

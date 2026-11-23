@@ -242,3 +242,28 @@
     (is (every? pos? (subvec gpu 1 3)) "The overbright source whitens")
     (is (every? pos? (subvec gpu 4 7)) "Spill whitens the nearby receiver")
     (is (every? zero? (subvec gpu 8 12)) "The distant receiver remains dark")))
+
+(deftest show-variable-uniforms-reach-the-native-shader-and-dmx
+  (let [fixture {:id :receiver :position [0.0 1.0 0.0] :universe 1 :address 1
+                 :channels {:red 1 :green 2 :blue 3 :dimmer 4}}
+        effect {:id :filtered :version 1 :outputs {:color [1.0 1.0 1.0] :dimmer 1.0}
+                :blocks {[:outputs :color] {:stages [{:block :optics/gel
+                                                      :inputs {:transmission {:op :variable :path [:surface :rgb]
+                                                                              :type :vec3}}
+                                                      :amount {:op :variable :path [:surface :wet]}}]}}}
+        model (assoc (control/new-show {:registry {:effects {:filtered effect}}
+                                        :variables {:surface {:rgb [0.0 0.5 1.0] :wet 0.5}}})
+                     :rig {:fixtures [fixture]})
+        run (fn [backend]
+              (let [frames (atom {})
+                    rt (show/create-runtime {:model model :sink (capture frames) :workspace-options nil
+                                             :compute-backend backend :gpu-budget-ms 5000})]
+                (try
+                  (is (= :accepted (:status (first (run-commands! rt 25.0 [{:op :effect/launch :effect-id :filtered}])))))
+                  (when (= :native-gpu backend)
+                    (let [status (get-in (show/snapshot rt) [:status :compute])]
+                      (is (pos? (:native-dispatches status)))
+                      (is (zero? (:cpu-fallbacks status)))))
+                  (mapv #(bit-and % 255) (take 4 (get-in (val (last (sort @frames))) [1])))
+                  (finally (show/stop! rt)))))]
+    (is (= [128 191 255 255] (run :cpu) (run :native-gpu)))))

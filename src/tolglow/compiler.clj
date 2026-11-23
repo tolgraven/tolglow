@@ -110,7 +110,9 @@
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
-        block-plan (when (contains? definition :blocks) (blocks/prepare definition entries prepare-expression))
+        block-plan (when (or (contains? definition :blocks)
+                             (some (comp blocks/reads-variable? :value) entries))
+                     (blocks/prepare (merge {:blocks {}} definition) entries prepare-expression))
         outputs (mapv (partial compile-output schemas bind-pure (some? block-plan)) (range)
                       (or (:outputs block-plan) entries))
         selected (when (contains? definition :targets) (set (:targets definition)))
@@ -162,7 +164,7 @@
         (compile-plan definition bind-pure)
         positions (when block-plan (blocks/positions rig))
         select-fixtures (fixture-selector rig selected)]
-    ((if (predictable-outputs? definition) keyframes/predictable identity)
+    (cond->
      (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
@@ -229,7 +231,9 @@
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % [])))))))))
+            (update :intents #(or % [])))))
+      block-plan (vary-meta blocks/step-info block-plan)
+      (predictable-outputs? definition) keyframes/predictable))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

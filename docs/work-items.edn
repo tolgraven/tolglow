@@ -31,6 +31,17 @@
    :depends-on [:foundation/tests]
    :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
    :evidence ["Afterglow #65 and Tolglow #108. Six fragment shaders and two native field programs were compared with the JVM on Mesa and SwiftShader. The focused host tests launch real effects, trace scalar and batched values, check per-frame variable resolution and reload the Transit show. A running Ring Studio release and the passive Push webview provided the visual recordings. Physical hardware and the shared UV/world fixture-input follow-up are tracked separately."]}
+  {:id :effects/show-prefabs :title "Reuse registered materials across effects and variable chains"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/effects/prefabs.clj"] :depends-on [:effects/composable-blocks]
+   :acceptance ["Publish one material, use it in independent effects and preserve each captured revision through a show file."]
+   :evidence ["In the release Studio, two independently published effects selected the same custom material by name. The show runtime tests compare live globals with pinned effect observations and reload the captured definitions from Transit. The screenshot and ten-step recording accompany the change."]}
+  {:id :effects/material-live-inputs :title "Read live signal paths as material inputs"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/compiler/blocks.clj" "afterglow/src/afterglow/runtime/keyframes.clj"]
+   :depends-on [:effects/show-prefabs]
+   :acceptance ["Assign a registered variable to a shader stage input, inspect through the live fixture frame and refresh only dependent keyframes."]
+   :evidence ["Scalar, batched, scalar fallback and predicted frame tests cover direct audio, sensor and indexed variable reads, raw state, trace values and a Transit round trip. A release Studio trace records dimmer modulation from an analyzed 80 Hz amplitude-modulated PCM signal."]}
   {:id :studio/global-variable-blocks :title "Edit and inspect a shared show variable’s material chain"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/variable_blocks.cljs" "tolglow/src/tolglow/effects/variable_edit.clj"]
@@ -61,6 +72,12 @@
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
    :evidence ["Afterglow #55. The spatial suite passed 7 tests and 43 assertions, including a wall impact where a fixture is crossed four times in one physical substep."]}
+  {:id :studio/material-designer :title "Design and preview shared show materials"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/material_designer.cljs" "tolglow/src/tolglow/effects/material_design.clj"]
+   :depends-on [:effects/show-prefabs]
+   :acceptance ["Preview an unpublished material, edit its defaults and safely save or remove it from a touch device."]
+   :evidence ["Two independent Ring clients edit a material, recover from a stale write and verify protected deletion while a global binding is active. The release Studio at 390, 1024 and 1440 pixels creates a named input, scrubs a four-beat shader sample and validates edits before publishing. The still and recording show the touch workflow."]}
   {:id :show/spatial-bindings :title "Bind ranked registered effects and cues to scoped fixture contact" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/spatial/actions.clj"] :depends-on [:foundation/tests]
    :acceptance ["Retarget a real cue and release only the instances owned by the binding."]

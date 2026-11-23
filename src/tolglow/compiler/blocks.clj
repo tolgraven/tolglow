@@ -3,6 +3,7 @@
   (:require [afterglow.render.blocks :as blocks]
             [afterglow.render.ir :as ir]
             [afterglow.runtime :as runtime]
+            [afterglow.runtime.keyframes :as keyframes]
             [tolglow.composition.tween :as tween]))
 
 (defn- fail! [path message]
@@ -11,7 +12,11 @@
 (defn- path-of [{:keys [op key path]}]
   (case op
     :param [:params key]
-    :variable (into [:variables] (or path [key]))
+    :variable (let [segments (or path [key])]
+                (when-not (and (vector? segments) (seq segments)
+                               (every? #(or (keyword? %) (string? %) (nat-int? %)) segments))
+                  (fail! [:variable] "Use a nonempty show variable path of keys or vector indices"))
+                (into [:variables] segments))
     :varying [:varyings key]
     nil))
 
@@ -32,17 +37,30 @@
           (fail! [:outputs id] "This attribute has several assignments. Use its output index."))
         (first indices))))
 
-(defn- var-uniforms [bindings]
-  (into {} (map-indexed
-             (fn [i path]
-               [path {:op :param :key (keyword "tolglow.block-input" (str i))
-                      :type (get-in bindings [path :type] :number)}]))
-        (sort-by pr-str (filter #(= :variables (first %)) (keys bindings)))))
+(defn- read-variable [{:keys [uniforms bindings]} path explicit-type]
+  (let [bound-type (when-let [binding (get bindings path)] (:type binding :number))
+        type (or explicit-type bound-type :number)
+        known (get @uniforms path)]
+    (when-not (#{:number :vec2 :vec3 :vec4} type)
+      (fail! path "Read a numeric scalar or a vector with two to four components"))
+    (when (or (and bound-type (not= type bound-type)) (and known (not= type (:type known))))
+      (fail! path "Uses of the same variable must agree on its numeric type"))
+    (or known
+        (let [index (count @uniforms)
+              input {:op :param :key (keyword "tolglow.block-input" (str index)) :type type}]
+          (when (>= index 64)
+            (fail! path "A field plan supports up to 64 distinct variable inputs"))
+          (vswap! uniforms assoc path input)
+          input))))
 
-(defn- raw-value [{:keys [type-param entries uniforms]} [kind id :as path]]
+(defn reads-variable? [expression]
+  (and (map? expression) (or (= :variable (:op expression))
+                             (some reads-variable? (:args expression)))))
+
+(defn- raw-value [{:keys [type-param entries] :as compiler} [kind id :as path]]
   (case kind
     :params (type-param {:op :param :key id} path)
-    :variables (get uniforms path)
+    :variables (read-variable compiler path nil)
     :outputs (if-some [i (output-index entries id)] (:value (nth entries i))
                  (fail! path "Unknown output assignment"))
     :varyings nil))
@@ -50,9 +68,12 @@
 (declare binding-plan)
 
 (defn- lower-input [{:keys [bindings type-param] :as compiler} current trail node path]
+  (when (and (= :variable (:op node)) (contains? bindings path) (:type node))
+    (read-variable compiler path (:type node)))
   (cond
     (and (= path current) (#{:params :variables} (first path))) (raw-value compiler path)
     (contains? bindings path) (:expression (binding-plan compiler path trail))
+    (= :variable (:op node)) (read-variable compiler path (:type node))
     (= :param (:op node)) (type-param node current)
     :else (fail! current (str "Unknown block input " path))))
 
@@ -101,34 +122,43 @@
     (assoc entry :value (or (:expression numbered) (:expression named)
                             (lower compiler [:outputs i] #{} 0 value)))))
 
-(defn prepare [{:keys [blocks prefabs params targets]} entries prepare-expression]
+(defn- binding-outputs [entries paths]
+  (into {}
+        (keep (fn [[kind id :as path]]
+                (when (= kind :outputs)
+                  (let [{:keys [attribute targets]} (nth entries (output-index entries id))]
+                    [path {:attribute attribute :targets (when targets (set targets))}]))))
+        paths))
+
+(defn prepare [{:keys [blocks prefabs imported-prefabs params targets]} entries prepare-expression]
   (when-not (and (map? blocks) (<= (count blocks) 64) (every? valid-path? (keys blocks)))
     (fail! [] "Use up to 64 binding paths in :params, :variables, :varyings or :outputs"))
   (when-not (or (nil? prefabs) (and (map? prefabs) (<= (count prefabs) 64) (every? keyword? (keys prefabs))))
     (fail! [] "Use up to 64 named local prefab definitions"))
-  (let [uniforms (var-uniforms blocks)
-        reserved (set (map (comp :key val) uniforms))
+  (let [uniforms (volatile! {})
         ;; Identical references share a lowered tree. The cache lives only while
         ;; compiling this definition and never enters the live step or show file.
         prepared (volatile! {})
         tweens (volatile! {})
         compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
-                  :catalog (merge blocks/library prefabs)
+                  :catalog (merge blocks/library imported-prefabs prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
-    (when (or (some reserved (keys params)) (some #(= "tolglow.block-tween" (namespace %)) (keys params))) (fail! [] "Parameter ID collides with a block variable binding"))
+    (when (some (comp #{"tolglow.block-input" "tolglow.block-tween"} namespace) (keys params))
+      (fail! [] "Parameter ID collides with a block input binding"))
     (doseq [path (keys blocks)] (binding-plan compiler path #{}))
     (let [outputs (mapv (partial output-entry compiler) (range) entries)]
       {:outputs outputs
        :tweens (mapv (fn [{:keys [input sample]}] [(:key input) sample]) (vals @tweens))
-     :uniforms uniforms
-     :targets (when (some? targets) (set targets))
-     :output-bindings (into {} (keep (fn [[kind id :as path]]
-                                       (when (= kind :outputs)
-                                         (let [{:keys [attribute targets]} (nth entries (output-index entries id))]
-                                           [path {:attribute attribute :targets (when targets (set targets))}]))))
-                            (keys blocks))
-     :expressions (update-vals @prepared :expression)
-     :traces (update-vals @prepared blocks/compile-trace)})))
+       :uniforms @uniforms
+       :targets (when (some? targets) (set targets))
+       :output-bindings (binding-outputs entries (keys blocks))
+       :expressions (update-vals @prepared :expression)
+       :traces (update-vals @prepared blocks/compile-trace)})))
+
+(defn step-info [metadata plan]
+  (if (seq (:uniforms plan))
+    (assoc metadata ::keyframes/variable-paths (vec (keys (:uniforms plan))))
+    metadata))
 
 (defn with-variables [plan params frame]
   (reduce-kv (fn [result path uniform]
@@ -162,7 +192,7 @@
   "Retain the traced plan and numeric inputs from a successful step. Queries
   run on demand. Exclude opaque effect state from the captured environment."
   [context plan env frame index]
-  (if-not plan context
+  (if (empty? (:traces plan)) context
     (let [inputs (dissoc env :state) number (:number frame) rig (:fixtures frame)]
       (vary-meta context assoc ::runtime/observe
                  (fn [[path target]] (observation plan inputs number rig index path target))))))
