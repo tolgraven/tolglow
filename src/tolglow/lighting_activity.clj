@@ -2,6 +2,7 @@
   "Perceptual activity in the committed lighting look. Output is a relative
   performance control, not a measurement of electrical power or a safety limit."
   (:require [afterglow.render.frame :as frame]
+            [afterglow.render.dmx :as dmx]
             [afterglow.runtime.events :as events]
             [clojure.set :as set]
             [tolglow.fixtures.shutter :as shutter-profile]
@@ -16,11 +17,11 @@
 
 (defn- unit ^double [^double x] (min 1.0 (max 0.0 x)))
 
-(defn- channel-value [universes {:keys [coarse fine inverted-from]}]
+(defn- channel-value [universes {:keys [coarse fine inverted-from] :as channel}]
   (when coarse
     (let [read-byte (fn [[u i]] (bit-and 255 (int (nth (get universes u) i))))
           hi (read-byte coarse)
-          raw (+ hi (if fine (/ (read-byte fine) 255.0) 0.0))]
+          raw (if fine (dmx/coarse-units hi (read-byte fine) (::frame/coarse-range? channel)) (double hi))]
       {:byte hi
        :value (unit (/ (if (and inverted-from (>= raw inverted-from))
                          (- 255.0 (- raw inverted-from)) raw) 255.0))})))

@@ -38,6 +38,11 @@
       (fail! [:params] "Response result does not satisfy its parameter schema"))
     result))
 
+(defn- target-params [schemas params]
+  (if (= params :all)
+    (sort-by str (keep (fn [[k schema]] (when (numeric-types (:type schema)) k)) schemas))
+    (filter #(contains? schemas %) params)))
+
 (defn compile-response
   "Validate and compile one response to context -> context middleware.
 
@@ -76,12 +81,7 @@
         (if-not (matches? select instance) context
           (let [schemas (get-in instance [:definition :params] {})
                 values (registry/resolve-params schemas (:params instance {}))
-                selected (if (= params :all)
-                           (sort-by str (keep (fn [[k schema]] (when (numeric-types (:type schema)) k)) schemas))
-                           params)
-                ;; Explicit keys that the instance does not define are skipped,
-                ;; allowing a global :level response across heterogeneous effects.
-                selected (filter #(contains? schemas %) selected)]
+                selected (target-params schemas params)]
             (if (empty? selected) context
               (let [{:keys [value done?]} (sample state frame)
                     amount (tween/interpolate (first range) (second range) value)
@@ -109,6 +109,26 @@
     (fail! [] "Response IDs must be unique within one middleware chain"))
   (let [middleware (mapv compile-response responses)]
     (fn [context] (reduce (fn [context f] (f context)) context middleware))))
+
+(defn- diagnose [context response]
+  (let [instance (:instance context)]
+    (if-not (matches? (:select response {}) instance) context
+      (reduce (fn [current param]
+                (try
+                  ((compile-response (assoc response :params [param])) current)
+                  (catch Exception error
+                    (update current :response-values (fnil conj [])
+                            {:id (:id response) :params [param] :error (ex-message error)}))))
+              context (target-params (get-in instance [:definition :params]) (:params response [:level]))))))
+
+(defn monitor-middleware
+  "Use the render chain on healthy inputs. For a failed instance, identify the
+  affected response and parameter and retain independent inputs for inspection."
+  [responses]
+  (let [apply-chain (compile-middleware responses)]
+    (fn [context]
+      (try (apply-chain context)
+           (catch Exception _ (reduce diagnose context responses))))))
 
 (defn apply-responses
   "Apply response data in vector order to an effect context. For repeated frames

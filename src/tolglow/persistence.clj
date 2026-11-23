@@ -17,6 +17,7 @@
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.modulation :as modulation]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.show.lighting :as lighting]
             [tolglow.atmosphere.control :as fog-control]
@@ -143,6 +144,7 @@
     (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
     (compiler/compile-effect definition)
     (system/validate-state instance)
+    (parameter-sources/validate-saved! model instance)
     (when-let [window (:tolglow.effects.keyframes/saved instance)]
       (try (keyframe-storage/restore window (get-in model [:rig :fixtures]) (:epoch model))
            (catch Exception e (fail! (conj path :keyframes) (.getMessage e)))))

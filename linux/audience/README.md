@@ -12,7 +12,7 @@ Run the gateway from this directory.
 lein run --advertise "East stage" https://tolgraven.se east-stage.png hci0
 ```
 
-The CLI prints a stage invitation and writes its scannable QR to the selected path. Use the HTTPS origin configured for your signed app or Clip. The 128-bit service UUID and local name are advertised over BLE. Scanning the QR pins the SHA-256 fingerprint of the ephemeral stage’s public key. Restarting the gateway creates a new key and invitation. Stop the process to withdraw the stage. Without OSC settings the console reports only the current participant count.
+The CLI prints a stage invitation and writes its scannable QR to the selected path. The gateway checks that a QR reader can locate the symbol and decode the exact URL before it writes the PNG. For fingerprints whose default pattern confuses the reader, it selects another standard QR mask. Use the HTTPS origin configured for your signed app or Clip. The 128-bit service UUID and local name are advertised over BLE. Scanning the QR pins the SHA-256 fingerprint of the ephemeral stage’s public key. Restarting the gateway creates a new key and invitation. Stop the process to withdraw the stage. Without OSC settings the console reports only the current participant count.
 
 To connect to a show, enroll an OSC sensor named `audience` in Tolglow, set the environment variables below, and start the stage. Arm the new session after its first observation. The regular Tolglow configuration maps its aggregate channels to parameters and its `dance-step` gestures to cues. [Sensor setup and arming](../../docs/sensors.md)
 

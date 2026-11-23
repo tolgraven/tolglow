@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
@@ -24,6 +25,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -100,7 +102,7 @@
             [afterglow.control.devices.repl :as devices]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
-  (:import [java.util UUID]
+  (:import [java.util Arrays UUID]
            [java.util.concurrent LinkedBlockingQueue]))
 
 (defn- clock-time [clock]
@@ -119,10 +121,14 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
-(defn project-snapshot [runtime {:keys [model output status modulation-view]}]
-  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+(defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
+  (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
+        responses? (some #(not= false (:enabled? %)) (:responses model))
+        resolve-inputs (waveforms/resolved-inputs snapshot response/monitor-middleware)
+        optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
+        definitions (precision/model-definitions (:parameter-precision runtime) model)
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))]
@@ -138,15 +144,18 @@
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
+            :parameter-waveforms (parameter-sources/waveform-options model)
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
-            :effects (mapv #(assoc % :categories (registry/definition-categories %))
+            :effects (mapv #(assoc (get definitions [% nil]) :categories (registry/definition-categories %))
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
-            :instances (mapv #(-> % (dissoc :state)
-                                  (assoc :categories (registry/definition-categories (:definition %)))
+            :instances (mapv #(-> % (dissoc :state :parameter-bindings)
+                                  (assoc :definition (get definitions [(:definition %) (:targets %)])
+                                         :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
+                                         :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
@@ -190,7 +199,7 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
-(declare prepare-output present-output! heartbeat! submit!)
+(declare prepare-output prepare-safety-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
@@ -213,16 +222,16 @@
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
-                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
+                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
-  (when (and (= :native-gpu compute-backend) (not batch?))
-    (throw (ex-info "Native GPU expressions require :batch? true" {})))
+  (when (and (contains? #{:native-gpu :distributed} compute-backend) (not batch?))
+    (throw (ex-info "GPU expressions require :batch? true" {})))
   (compute/open!
    (cond-> (select-keys options [:compute-backend :movement-backend :gpu-options])
-     (or (= :native-gpu compute-backend) (= :native-gpu movement-backend))
+     (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
 (defn- configure-runtime
@@ -278,7 +287,10 @@
                       (cond-> {}
                         (:send! sink)
                         (assoc :receipt-capacity 256
-                               :prepare-output (fn [buffers id] (prepare-output @runtime-ref buffers id))
+                               :prepare-output (fn [buffers source]
+                                                 (let [runtime @runtime-ref]
+                                                   (prepare-output runtime @(:patch runtime) buffers source)))
+                               :prepare-safety-output (fn [buffers source] (prepare-safety-output @runtime-ref buffers source))
                                :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
@@ -315,6 +327,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
@@ -388,10 +401,11 @@
                                                         (:events result))))))
                    result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (seq (get-in model [:modulation :controllers]))
+               (or (seq (get-in model [:modulation :controllers]))
+                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
                (not= :patch (get-in payload [:source :type]))
                (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation modulation/hold
+        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
                 {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
         result))))
 
@@ -573,6 +587,10 @@
       {:model (-> model (assoc :registry (:registry result)) (assoc-in [:pages id] (:page result))
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
+    (:modulation-bind :modulation-unbind)
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
+      {:model (update (edit model payload) :revision inc)
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -760,20 +778,37 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- prepare-output [runtime universes frame-number]
-  (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)]
-    (if-let [memory @(:fog-deadlines runtime)]
-      (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms])))
+(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+  (let [packet (retirement/include-retired retirement universes)]
+    (if (seq safety-state)
+      (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
+                                 ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
+
+(defn- prepare-safety-output [runtime universes {:keys [uncertain?] :as source}]
+  (let [{:keys [compiled retirement] :as patch} @(:patch runtime)
+        off-bytes (:fog-off-bytes compiled)
+        corrected (prepare-output runtime patch universes source)]
+    (if (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+      ;; A failed transport may have changed pump bytes even if our last
+      ;; complete packet shows them off. Use idle bytes for newly mapped pumps.
+      (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
+            packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
+        (fog-deadline/apply-off-bytes packet off-bytes))
+      (when (and (not (identical? universes corrected))
+                 (some (fn [[universe ^bytes bytes]]
+                         (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                       corrected))
+        corrected))))
 
 (defn- present-output! [runtime packet frame-number]
   ((get-in runtime [:sink :send!]) packet frame-number)
   (when (:plan @(:venue-fog runtime))
     (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
 
-(defn- send-output! [runtime universes frame-number]
+(defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])
-    (present-output! runtime (prepare-output runtime universes frame-number) frame-number)))
+    (present-output! runtime (prepare-output runtime @(:patch runtime) universes {:safety-state fog-demands}) frame-number)))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -1063,26 +1098,36 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:keyframes (effect-keyframes/restored model)
-                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
-                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
-                    :output (if restored-output
-                              (update restored-output :universes
-                                      #(fog-deadline/restore-packet
-                                         (patch! runtime (get-in model [:rig :fixtures]))
-                                         (get-in model fog-deadline/saved-ids-path)
-                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
-                              (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
-                    :status {:restored? true :frame-ms 0}}
+                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})
+                         random (modulation/captured-overrides model)]
+                     {:parameter-samples params :modulation-view {:overrides random}
+                      :resolved-param-overrides (merge-with merge random (:overrides params))
+                      :keyframes (effect-keyframes/restored model)
+                      :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
+                               (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
+                      :output (if restored-output
+                                (update restored-output :universes
+                                        #(fog-deadline/restore-packet
+                                           (patch! runtime (get-in model [:rig :fixtures]))
+                                           (get-in model fog-deadline/saved-ids-path)
+                                           (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
+                                (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
+                      :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
+                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                                      (get-in before [:parameter-samples :plans]))
+                           control-view (if (seq (:overrides parameter-samples))
+                                          (update (:modulation-view before) :overrides
+                                                  #(merge-with merge % (:overrides parameter-samples)))
+                                          (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model before time-ms (reactions runtime) command))
+                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1099,16 +1144,17 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 prior-output)) command (:modulation-view before) prior-output))
+                                                 prior-output)) command control-view prior-output))
                            model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
                            hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
                            hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
-                                                                              (:modulation-view before) hdr-scope) {}))
+                                                                              control-view hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
+                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                                                       (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
@@ -1202,6 +1248,8 @@
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+                                                  :live-routing (live-sync/parameter-routing (connections/sync (:connections runtime))))
                         :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1239,8 +1287,9 @@
                                                   (cond-> presentation-token
                                                     output-slot (assoc :show-time-ms (get-in next-state [:model :time-ms])
                                                                        :beat (get-in next-state [:model :transport :beat])))
-                                                  (:output next-state)))
-                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)))
+                                                  (assoc (:output next-state) :safety-state (get-in next-state [:output :fog-demands]))))
+                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)
+                                  (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
@@ -1379,7 +1428,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
-                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1444,6 +1493,7 @@
   Supply the browser executable and optional injected sink in options."
   [runtime options]
   (let [cache (waveforms/create-cache)
+        precision-cache (atom nil)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
     (display/browser-display
@@ -1457,9 +1507,11 @@
                            (assoc-in [:visualization-clock :sample-period-ms]
                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
                     visual (case mode
-                             :parameters (waveforms/project-display cache snapshot view nil)
-                             :audio (waveforms/project-display cache snapshot view
-                                          (audio/waveform (connections/audio (:connections runtime))))
+                             (:parameters :audio)
+                             (let [capture (when (= mode :audio)
+                                             (audio/waveform (connections/audio (:connections runtime))))]
+                               (->> (waveforms/project-display cache snapshot view capture)
+                                    (precision/push-view precision-cache model)))
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))

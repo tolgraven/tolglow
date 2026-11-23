@@ -2,12 +2,7 @@
 
 [Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
 
-`work-items.edn` is authoritative. `:done` means the named milestone's acceptance
-criteria have evidence, not that every related product requirement is finished.
-Broad roadmap items stay open when a smaller v1 module is delivered. Active
-items need an owner, finished prerequisites and disjoint repository-prefixed
-paths. The validator checks dependency cycles, missing evidence and overlapping
-active claims; directory claims include all descendants and globs are forbidden.
+Use [GitHub Issues](https://github.com/tolgraven/tolglow/issues) to find work across Tolglow and Afterglow. Each issue records its scope and verification. Closed issues retain the delivery history.
 
 ## Delivered v1 modules
 
@@ -20,7 +15,7 @@ modules now implement the following narrower milestones:
 | --- | --- | --- |
 | Control model | Typed commands, source identity, bounded duplicate receipts, epochs/revisions, captured definitions, pure bindings/views and codecs | Complete adapter and human-performance parity |
 | Runtime | Explicit state, bounded workers, deterministic replay corpus, private-clock pause, independent AR and opacity | Representative complete-show replay, full effect-family migration and production I/O qualification |
-| Device sessions | Composable Push 2 adapter, injected MIDI/display IO, lifecycle/hold cleanup, generic MIDI/OSC/sensor/REPL sessions | Physical Push 2 checks; native Push 3 protocol/display work |
+| Device sessions | Composable Push 2 adapter, injected MIDI/display IO, lifecycle/hold cleanup, generic MIDI/OSC/sensor/REPL sessions | Physical Push 2 checks and [tethered Push 3 display qualification](push-display-packaging.md#tethered-push-3) |
 | Authoring | Validated registry/compiler, tweens/envelopes, macro/sequence primitives, response middleware, seeded constrained random and emission-aware policy | Complete editors, stepped fades, richer seek/catch-up and creative show planning |
 | CPU rendering | Ordered attributes, normalized RGBW/dimmer, basic calibrated aiming, patch validation/coarse-fine packing, typed CPU/GLSL expressions | Broader fixture photometry/calibration and end-to-end deadline evidence |
 | Integrations | Fixture library, sync/session boundary, Live bridge source assets, typed patch kernel, provider sessions | Actual Max/Live execution, audio/peer qualification, external providers and broader fixture formats |
@@ -86,9 +81,7 @@ passing suites; final combined source/manifest counts remain the root's gate.
 | `development_terminal_reliability_feature_parity` | Docker lifecycle, workspace recovery and control parity audit | Delayed-create cleanup, durable catalog and identified original feature gaps |
 | `dependency_upgrades_clojure_jvm_frontend` | Verified dependency pins and migration changes | Current stable Clojure/JVM/frontend versions, paired tests and production build |
 
-The ledger contains exact paths and current owners. Completed agents are not
-background services; update the ledger when assigning further work. Coordinate
-schema changes across owners before editing shared boundaries.
+Coordinate shared schema changes with contributors on the relevant issue or pull request.
 
 ## Remaining functional migration and performance gates
 
@@ -116,9 +109,8 @@ one-shot/duration semantics across cue types. Improve semantic randomization
 and autonomous scheduling while respecting darkness, emission dependencies and
 human overrides. Registry-generated pages must preserve deliberate layouts.
 
-Complete the Push 2 rewrite through capture replay and physical tests. Verify
-Push 3 controller capabilities independently; do not infer its display/USB
-protocol from Push 2. Validate iPad Safari and phones beyond desktop viewport
+Complete the Push 2 rewrite through capture replay and physical tests. Run the [tethered Push 3 screen qualification](push-display-packaging.md#tethered-push-3)
+on a physical unit and capture the expression controls from that device. Validate iPad Safari and phones beyond desktop viewport
 emulation: multitouch holds, radial long-press actions with accessible menu
 alternatives, scrolling, reconnects, keyboard use and sustained frame latency.
 

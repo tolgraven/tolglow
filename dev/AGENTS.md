@@ -5,7 +5,7 @@ reader must not eval the fork manifest or invoke its plugins; preserve exclusion
 and explicit application overrides. Keep `project.clj` canonical and use its
 Leiningen profiles for backend, frontend and benchmarks. Test
 runner errors must exit nonzero. Do not turn namespace loading failures into
-skips. `check_roadmap.clj` validates local tracking without external writes.
+skips. Record tooling changes and their verification on the corresponding GitHub issue.
 
 Container tooling is explicit development infrastructure. Never use a host-shell
 fallback for project checks or terminal input. Mount only the service-owned paired

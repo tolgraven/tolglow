@@ -142,3 +142,19 @@
                                                                        :selector {:volume-id :orbit}})}})]
     (is (= (vec (repeat 8 {:kind :volume :label "Orbit"})) (get-in view [:target-picker :rows])))
     (is (= 2 (get-in view [:target-picker :page])))))
+
+(deftest operator-readouts-preserve-dmx-resolution
+  (let [codes (fn [bits] (let [max-code (dec (bit-shift-left 1 bits))]
+                           (map #(widgets/number-label {:dmx-bits bits} (/ % max-code))
+                                (range (inc max-code)))))]
+    (is (= "0.123" (widgets/number-label 0.123456789)))
+    (is (= "0.12346" (widgets/number-label {:dmx-bits 16} 0.123456789)))
+    (is (= "114.123" (widgets/number-label {:dmx-bits 16 :bounds [-180 180]} 114.123456789)))
+    (is (= "114" (widgets/number-label {:dmx-bits 8 :bounds [0 255]} 114.123456789)))
+    (is (= "0" (widgets/number-label {:dmx-bits 8} -0.000000001)))
+    (is (= "-1.23e-7" (widgets/number-label -0.0000001234)))
+    (is (= "1 · -0.123" (widgets/value-label {:type :vector} [1.0 -0.123456789])))
+    (is (= "123456" (widgets/number-label 123456)))
+    (is (= "—" (widgets/number-label js/NaN)))
+    (is (= 256 (count (distinct (codes 8)))))
+    (is (= 65536 (count (distinct (codes 16)))))))

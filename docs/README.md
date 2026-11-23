@@ -1,6 +1,6 @@
 # Tolglow / Afterglow architecture program
 
-[Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
+[Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md) · [REPL and Studio parity](repl-studio-parity.md)
 
 Use the [repository map](../README.md#repository-map) to find the Clojure show
 runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
@@ -54,6 +54,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
 | [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Musical effect keyframes](effect-keyframes.md) | Project effect output, shape transitions and inspect a head while a cue runs |
+| [Distributed rendering](performance/distributed-compute.md) | Enable browser GPU workers and reproduce the two-universe output measurements |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU rendering, Afterglow GPU ownership and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
@@ -103,7 +104,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
 | [Local model lab](model-lab/README.md) | Prepared show, Clojure and GLSL corpora, model choices, tokenizer audit, hardware scenarios and release gates |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
-| [Work ledger](work-items.edn) | Authoritative state, exclusive paths and acceptance criteria |
+| [GitHub Issues](https://github.com/tolgraven/tolglow/issues) | Open work, completed changes, acceptance criteria and verification |
 | [Work log](work-log.md) | Dated evidence and decisions |
 
 Tests run actual production functions and dependencies, using capture sinks and
@@ -115,8 +116,7 @@ while execution inside Max/Live, real provider accounts, physical audio routing
 and AAA simulator fidelity remain separate work. The trainable robot duck is retained as later research;
 its exact product and SDK are still unconfirmed.
 
-Contributors read repository and folder `AGENTS.md`, claim disjoint paths in the
-ledger, and coordinate changes to shared contracts before editing consumers.
-Record evidence before releasing a claim; keep implemented, proposed and
+Contributors read repository and folder `AGENTS.md`, link their issue and coordinate changes to shared files before editing them.
+Record verification in the issue and keep implemented, proposed and
 research behavior distinct. [Testing](testing.md) separates focused agent results
 from integrated runs so overlapping suites are never added twice.

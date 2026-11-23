@@ -38,7 +38,9 @@ Pass a source map under `:browser-observations` to `show/create-runtime` or `sho
                              (every? #(and (number? %) (Double/isFinite (double %))) v)))})
 ```
 
-In Studio initialization, call `tolglow.studio.observations/register-sampler!` with that sampler keyword and a function of the presented canvas. Return a value or a promise for the completed value. For a local simulation, read a copy of its latest completed coordinate vector. Return `nil` to skip a frame. Promise rejections skip that sample and a later eligible frame can retry. The same grant, deduplication, validation and cleanup apply to each registered sampler.
+In Studio initialization, call `tolglow.studio.observations/register-sampler!` with that sampler keyword and a function of the presented canvas. Return a value or a promise for the completed value. For a local simulation, read a copy of its latest completed coordinate vector. Return `nil` to skip a frame. Promise rejections skip that sample and a later eligible frame can retry. The same grant, deduplication, validation and cleanup apply to each registered sampler. Replacing a reader during live coding allows its successor to sample at the next presented frame, even if the old promise never settles.
+
+For cancellable work register the two-argument reader with `(register-sampler! id {:abortable? true} (fn [canvas signal] ...))`. Pass that signal to a fetch or attach a listener to release local resources. Removing the final demand, replacing the grant or replacing the reader aborts an outstanding sample. A browser bitmap request that has already started can finish later. The built-in RGB reader closes the abandoned bitmap before any pixel readback.
 
 ## Rehearse both presentation paths
 

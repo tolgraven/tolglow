@@ -10,6 +10,7 @@
             [tolglow.effects.material-design :as materials]
             [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.connections :as connections]
+            [tolglow.preview.airplay :as airplay]
             [tolglow.visualization.cue-pads :as cue-pads]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
@@ -27,6 +28,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.studio.state-stream :as state-stream]
+            [tolglow.render.workers :as workers]
             [tolglow.observations :as observations]
             [tolglow.studio.web :as web]))
 
@@ -64,14 +66,18 @@
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
-            projections (projection/create)]
+            compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN")
+                                    {:guest-bridge (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_TOKEN")
+                                     :verification (keyword (or (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION") "full"))})
+            projections (projection/create)
+            receiver (airplay/create)]
         (state-stream/publish! stream @(:state runtime))
-        {:debug-stream debug :state-stream stream :browser-projections projections
+        {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
          :frame! #(state-stream/publish! stream %)
          :tracing? #(debug-stream/observing? debug)
          :events! #(debug-stream/commit! debug %1 %2 %3 %4)
-         :close! (fn [] (debug-stream/close! debug) (state-stream/close! stream)
-                   (projection/clear! projections))}))))
+         :close! (fn [] (workers/close! compute) (debug-stream/close! debug) (state-stream/close! stream)
+                   (projection/clear! projections) (airplay/close! receiver))}))))
 
 (defn browser-snapshot
   "Bound preview values. Delta clients receive versioned, exact-base envelopes;
@@ -102,6 +108,12 @@
   ([runtime] (handler runtime (bind! runtime :studio)))
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+            :airplay-interfaces airplay/interfaces
+            :airplay-media (partial airplay/studio-media (:airplay bindings))
+            :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
+            :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
+            :airplay-publish! (fn [{:keys [path-params body]}]
+                                (airplay/publish! (:airplay bindings) (:writer path-params) (:file path-params) body))
             :materials! #(materials/inventory (:model @(:state runtime)))
             :material-preview! #(materials/preview % (show/variables runtime))
             :variable-sources! (fn [{:keys [query readable?] :as opts}]
@@ -110,6 +122,7 @@
                                    (variable-edit/sources vars query opts)))
             :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
+            :compute-stream! #(workers/response (:compute-stream bindings) %)
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
             :state-stream! #(state-stream/response (:state-stream bindings) %)
             :definition! (fn [kind id]

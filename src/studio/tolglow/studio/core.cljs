@@ -3,6 +3,7 @@
             [reagent.dom.client :as rdom]
             [tolglow.studio.events]
             [tolglow.studio.navigation :as nav]
+            [tolglow.studio.page-routes :as pages]
             [tolglow.studio.subs]
             [tolglow.studio.interop]
             [tolglow.studio.views :as views]
@@ -44,15 +45,8 @@
                (case (.-key event)
                  ("b" "B") (rf/dispatch [:studio/blackout-toggle])
                  " " (do (.preventDefault event) (rf/dispatch [:studio/transport-toggle]))
-                 "1" (rf/dispatch [:studio/set-view :perform])
-                 "2" (rf/dispatch [:studio/set-view :compose])
-                 "3" (rf/dispatch [:studio/set-view :rig])
-                 "4" (rf/dispatch [:studio/set-view :library])
-                 "5" (rf/dispatch [:studio/set-view :assistant])
-                 "6" (rf/dispatch [:studio/set-view :connections])
-                 "7" (rf/dispatch [:studio/set-view :develop])
-                 "8" (rf/dispatch [:studio/set-view :debug])
-                 nil))))))
+                 (when-let [route (pages/shortcut-routes (.-key event))]
+                   (rf/dispatch [:studio/set-view route]))))))))
 
 (defn ^:export init! []
   (let [match (nav/current-match)]
