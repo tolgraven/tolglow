@@ -58,7 +58,24 @@ Median input age at the slot was 10.02 ms versus 24.82 ms with fixed lead.
 The fixed run completed 237 renders within 25 ms and sent 237 current sources.
 The rendering and sender p95s reflect software execution through the memory
 sink. The performance artifact includes the raw observations and cold startup
-for all four cases. [Paired Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45191695719/job/137751416392)
+for all four original cases. [Paired Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45191695719/job/137751416392)
+
+The original dense-rig trace had nine late frames by less than one
+millisecond. Two others ran late by 1.07 ms and 2.46 ms and one by 16.72 ms.
+If each measured render had taken the same time in the available idle window,
+1.5 ms more lead would have covered ten of the twelve misses. The developer
+replay now runs a separate measured-lead policy with 6% of a physical period
+of extra reserve after cold startup. It records real output at that lead so
+the candidate can be compared with the production and fixed-period policies.
+
+In a separate six-second local run, the dense rig completed **234 of 240**
+frames within 25 ms with extra reserve and sent 222 current samples. With
+the production lead it completed 229 and sent 212. Render p95 was 12.46 ms
+and 12.55 ms, respectively. The extra reserve increased median input age
+at the target from 10.79 to 11.92 ms and p95 lower-source age at actual send
+from 37.52 to 37.80 ms. In the eight-mover scene it completed 235 frames
+and sent 230 current samples, versus 232 and 218 with production lead. The
+extra reserve remains a developer benchmark option.
 
 ### Recorded local result
 
@@ -83,7 +100,12 @@ four-vCPU Linux environment. For example, the eight-mover measured run took
 job records its own traces. The replay checks that every transmitted lighting
 source completed by its deadline, source times stayed ordered, and physical
 send calls remained at least half a nominal frame apart, allowing 0.01 ms
-for floating-point rounding. The raw trace retains cold startup.
+for floating-point rounding. The earlier shared capture also recorded two
+previously unseen sources handed to the sink a whole slot late, 35.8 ms
+after the dense rig's deadline and 88.4 ms after the eight-mover deadline.
+The sender now checks expiry again after packing. Every future release
+replay rejects a sink call for an elapsed slot and counts those dropped
+attempts separately. The raw trace retains cold startup.
 [Measured timeline and replay files](https://github.com/tolgraven/afterglow/pull/89)
 
 ## Measuring the scheduler

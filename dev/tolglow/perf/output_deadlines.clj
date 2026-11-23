@@ -38,7 +38,8 @@
         fresh (count (filter #(= (:source-time-ms %) (:deadline-ms %)) outputs))]
     {:nominal-slots (inc (- last-slot first-slot)) :renders (count renders)
      :complete-within-25-ms (count (filter #(and (:ready-at-ms %) (<= (:cost-ms %) 25.0)) renders)) :ready-for-deadline ready
-     :sent (count outputs) :sent-with-current-source fresh :render-wall-p95-ms (percentile 0.95 costs)
+     :sent (count (filter :sent-at-ms outputs)) :expired-before-send (count (filter :expired-before-send? outputs))
+     :sent-with-current-source fresh :render-wall-p95-ms (percentile 0.95 costs)
      :input-age-p50-ms (percentile 0.50 age) :input-age-p95-ms (percentile 0.95 age)
      :send-start-lag-p95-ms (percentile 0.95 (map #(- (:started-at-ms %) (:deadline-ms %)) outputs))
      :send-cost-p95-ms (percentile 0.95 (map #(- (:finished-at-ms %) (:started-at-ms %)) outputs))
@@ -54,6 +55,8 @@
         samples (keep :source-time-ms measured)
         sent (keep :sent-at-ms measured)]
     (when-not (and (seq samples) (every? ready-by-slot samples)
+                   (every? (fn [{:keys [sent-at-ms deadline-ms]}]
+                             (or (nil? sent-at-ms) (< sent-at-ms (+ deadline-ms 25)))) measured)
                    (every? true? (map <= samples (rest samples)))
                    (every? true? (map #(>= (- %2 %1) 12.49) sent (rest sent)))
                    (some #(some pos? (:bytes %)) wire))
@@ -98,10 +101,16 @@
 
 (defn- compare-leads [name scene warmup frames delay-ms adaptive-first?]
   (let [capture #(run-case name scene warmup frames delay-ms)
-        adaptive #(assoc (capture) :policy :measured)
-        full-period #(with-redefs [timeline/lead-ms :period-ms]
-                       (assoc (capture) :policy :full-period))]
-    (mapv (fn [run] (run)) (if adaptive-first? [adaptive full-period] [full-period adaptive]))))
+        measured-lead timeline/lead-ms
+        guarded-lead (fn [grid]
+                       (cond-> (measured-lead grid)
+                         (seq (:costs grid)) (+ (* 0.06 (:period-ms grid)))))
+        run (fn [id lead]
+              (with-redefs [timeline/lead-ms lead] (assoc (capture) :policy id)))
+        policies {:measured measured-lead :measured-extra-reserve guarded-lead :full-period :period-ms}
+        order (if adaptive-first? [:measured :measured-extra-reserve :full-period]
+                                  [:full-period :measured :measured-extra-reserve])]
+    (mapv #(run % (policies %)) order)))
 
 (defn -main [path & [warmup frames]]
   (let [warmup (parse-long (or warmup "80"))
