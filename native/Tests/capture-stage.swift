@@ -1,4 +1,5 @@
 import AppKit
+import Vision
 import WebKit
 
 @main
@@ -59,6 +60,7 @@ struct CaptureStage {
           (()=>{const image=document.querySelector('.stage-invitation-qr img');
             return !!image && image.complete && image.naturalWidth > 48})()
         """)
+        let invitation = try await view.evaluateJavaScript("document.querySelector('.stage-invitation-qr input').value") as! String
         let imageURL = try await view.evaluateJavaScript("document.querySelector('.stage-invitation-qr img').src") as! String
         try await capture(view, folder.appendingPathComponent("stage-invitation.png"))
         _ = try await view.evaluateJavaScript("document.querySelector('.stage-invitation a[download]').click()")
@@ -67,6 +69,13 @@ struct CaptureStage {
         }
         let qr = try Data(contentsOf: destination)
         guard qr.starts(with: [137,80,78,71,13,10,26,10]) else { throw Failure.badImage }
+        let decoder = VNDetectBarcodesRequest()
+        decoder.symbologies = [.qr]
+        try VNImageRequestHandler(url: destination, options: [:]).perform([decoder])
+        guard decoder.results?.map(\.payloadStringValue) == [invitation],
+              invitation.range(of: #"^https://lights\.example\.org/audience/[0-9a-f]{64}$"#,
+                               options: .regularExpression) != nil else { throw Failure.badImage }
+        print("Decoded the saved stage QR and verified its public HTTPS invitation.")
         _ = try await view.evaluateJavaScript("document.querySelector('.stage-invitation button').click()")
         try await wait(view, "!!document.querySelector('.stage-invitation input[type=url]')")
         try await capture(view, folder.appendingPathComponent("stage-closed.png"))

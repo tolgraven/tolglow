@@ -71,7 +71,8 @@
      [:p (str stage-name " · " device-id)]
      (when url [:div.stage-invitation-qr
                 [:img {:src png :width 160 :height 160 :alt "Scan to join this stage"}]
-                [:div [:p "This QR expires when the stage stops or the show reloads."]
+                [:div [:label "Invitation URL" [:input {:type "url" :read-only true :value url}]]
+                 [:p "This QR expires when the stage stops or the show reloads."]
                  [:p [:a.button {:href png :download "tolglow-stage.png"} "Save QR image"]]]])
      [:button.button {:type "button" :disabled pending? :on-click #(rf/dispatch [::operate :stop])} "Stop stage"]]))
 
