@@ -77,6 +77,8 @@ async function verifyControls(page,touch,profile) {
   assert.equal(await fader.isVisible(),true);
   assert.deepEqual(await sweep.locator('.strip-fader-bounds>span').allTextContents(),['0','0.45']);
   const {card,activate,open,close,attach,detach}=sourceChecks(page,touch);
+  const opacity=card.getByRole('slider',{name:'Effect opacity'});
+  const initialOpacity=await opacity.inputValue();
   const strip=card.getByRole('group',{name:'Parameter strip'});
   assert.equal(await strip.locator('.param-row').count(),8);
   assert.equal(await strip.locator('.param-source-trigger').count(),8);
@@ -155,6 +157,7 @@ async function verifyControls(page,touch,profile) {
   await detach('Orbit aim');
   await detach('Intensity');
   assert.equal(await card.locator('.strip-monitor').count(),0);
+  assert.equal(await opacity.inputValue(),initialOpacity,'Editing a source leaves the cue opacity untouched');
   assert.equal(await strip.getByRole('slider',{name:'Intensity rotary'}).getAttribute('aria-valuenow'), original);
   const base=strip.getByRole('slider',{name:'Intensity rotary'});
   await base.focus();

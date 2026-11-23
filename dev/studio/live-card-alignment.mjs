@@ -16,6 +16,7 @@ function geometry(board) {
     });
     return {name:card.querySelector('h3').textContent, card:box(card), header:box(card.querySelector('header')),
       title:box(card.querySelector('h3')), phase:box(card.querySelector('.live-effect-phase')),
+      tags:[...card.querySelectorAll('.category-tag')].map(box), details:box(card.querySelector('.live-effect-expand')),
       footer:box(card.querySelector('.performance-instance')), actions:[...card.querySelectorAll('.performance-actions>.button')].map(box),
       bank:box(bank),
       overflow:bank.scrollWidth-bank.clientWidth, cells};
@@ -39,10 +40,14 @@ export async function checkCardAlignment(page, profile, directory, measurement) 
   measurement.smallCards = {titles:small.map(card=>Math.round(card.title.y-card.card.y)),
     footerSpread:Math.round(spread(firstCardRow.map(card=>card.footer.y))),
     footerOffset:small.map(card=>Math.round(card.footer.y-card.card.y))};
+  console.info(profile, 'cue bank', measurement.bank, 'action rails', measurement.smallCards);
   const before = process.env.STUDIO_LAYOUT_BASELINE==='1';
   if (!before) {
     for(const card of cards) {
       assert.ok(card.overflow<=1,profile+' '+card.name+' bank fits');
+      assert.ok(card.title.right<=card.details.x,profile+' '+card.name+' title clears details');
+      assert.ok(card.title.bottom<=card.phase.y,profile+' '+card.name+' state has its own line');
+      for(const tag of card.tags) assert.ok(Math.abs(tag.y-card.phase.y)<=2,profile+' '+card.name+' category and state align');
       assert.ok(spread(card.actions.map(button=>button.y))<=1,profile+' '+card.name+' system actions align');
     }
     assert.ok(measurement.bank.unusedRight<=1,profile+' full bank width');
