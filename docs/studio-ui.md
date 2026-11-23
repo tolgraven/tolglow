@@ -517,4 +517,4 @@ In **Compose**, select a cue and use **Add cue** to append a slot. Each row keep
 
 In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
 
-After an optimized build, run `node dev/studio/compose-rig-layout-qa.mjs ORIGIN OUTPUT` against a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.
+After an optimized build, run `lein run -m tolglow.qa.performance-layout target/authoring-layout authoring` to start a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.
