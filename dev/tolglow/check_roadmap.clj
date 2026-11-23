@@ -1,7 +1,8 @@
 (ns tolglow.check-roadmap
   "Validate the local cross-repository work ledger, without external services."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [tolglow.check-requests :as requests]))
 
 (def statuses #{:planned :in-progress :blocked :done})
 (def kinds #{:documentation :implementation :research})
@@ -59,4 +60,9 @@
 
 (defn -main [& [path]]
   (let [ledger (edn/read-string (slurp (or path "docs/work-items.edn")))]
-    (println "Work ledger valid:" (count (:items ledger)) "items" (validate ledger))))
+    (println "Work ledger valid:" (count (:items ledger)) "items" (validate ledger))
+    (when-not path
+      (let [current (slurp "docs/request-coverage.md")]
+        (when-let [previous (System/getenv "TOLGLOW_PREVIOUS_REQUESTS")]
+          (requests/preserve-ids! (slurp previous) current))
+        (println "Conversation coverage:" (requests/validate ledger current))))))

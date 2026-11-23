@@ -91,3 +91,44 @@ the mover interval reduced its peak error fourfold. On this scene the selective
 CPU lane cost more than full rate. A live governor should protect measured
 transients, slow only costly predictable inputs under sustained pressure, and
 recover in steps when the delivery deadline allows it.
+
+## Worker CPU cost of direct, endpoint and interpolated frames
+
+```sh
+lein run -m tolglow.perf.sampling-cost target/quality/sampling-cost.edn
+```
+
+The stage replay uses the JVM's per-thread CPU clock around each effect on
+its rendering worker. An observer identifies actual endpoint evaluations.
+Snapshot projection, DMX delivery, other threads and time spent descheduled
+are outside this measurement. Enabling the same sampler observer in every
+lane keeps its normal overhead in the measurement. The two workers render
+a wash and 64-head aim program simultaneously. Frame output, endpoint
+preparation and interpolation use the release implementations.
+
+For each expression depth, the show runs at stride 1, 4, 4 and 1 in that order.
+Each lane warms up for 40 frames and records 100. Both stride-four runs must
+actually execute 25 endpoint frames and 75 interpolation frames per effect.
+The report includes sample counts, medians, p95 and mean thread CPU for each
+stage and the whole effect. Compare mean task CPU across the entire window
+when predicting savings. Endpoint and interpolation frames have different costs.
+
+In an eight-oscillator replay, the wash took 1.76–2.06 ms per frame
+at full rate and 0.69–1.31 ms at stride four. The 64-head aim program took
+0.12–0.16 ms directly and 0.29–0.82 ms with the same four-frame spacing.
+Its interpolated frames were cheap, but its 25 endpoint frames outweighed
+those savings. The existing 0.75 ms minimum cost already keeps these direct
+aim evaluations below the automatic slowdown threshold on this machine.
+
+## Continuous evidence
+
+The existing master performance workflow retains `multirate-quality.edn` and
+`transient-scheduling.edn` alongside the measured Tolglow and Afterglow commit IDs. It also stores the candidate’s worker-stage distributions in `sampling-cost.edn`.
+A change to either replay or to the adaptive scheduler triggers the PR job. The
+existing master push and weekly jobs use the same CPU replay. Manual revision
+comparisons record both reports for each revision that contains their source.
+Timing percentiles are recorded for comparison. The fidelity assertions use
+frame-by-frame reference output and run independently of host speed.
+
+[Master performance workflow](../../.github/workflows/performance.yml) ·
+[Flash recovery experiment](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
