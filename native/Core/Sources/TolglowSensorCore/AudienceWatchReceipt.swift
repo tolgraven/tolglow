@@ -46,13 +46,15 @@ public struct AudienceWatchReceipt {
 /// Heart sharing lasts only as long as fresh workout samples arrive. HealthKit
 /// keeps read permission private, so a denied or unavailable sensor looks silent.
 public struct AudiencePulse {
-    private let started: Date
+    private let started: Date?
     private var latest: (Int, Date)?
 
-    public init(started: Date) { self.started = started }
+    public init(started: Date? = nil) { self.started = started }
+
+    public mutating func withdraw() { self = AudiencePulse() }
 
     public mutating func observe(_ value: Double, measured: Date, now: Date) {
-        guard value.isFinite, (30...240).contains(value),
+        guard let started, value.isFinite, (30...240).contains(value),
               measured >= started, (0...12).contains(now.timeIntervalSince(measured)),
               latest.map({ measured >= $0.1 }) ?? true else { return }
         latest = (Int(value.rounded()), measured)
@@ -63,6 +65,7 @@ public struct AudiencePulse {
     }
 
     public func interrupted(at time: Date) -> Bool {
-        time.timeIntervalSince(latest?.1 ?? started) > 60
+        guard let started else { return false }
+        return time.timeIntervalSince(latest?.1 ?? started) > 60
     }
 }

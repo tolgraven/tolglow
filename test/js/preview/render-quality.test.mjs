@@ -36,7 +36,7 @@ test('HDR requires observed float storage and extended compositor mode', () => {
 });
 
 test('completed warm frames control auto quality with headroom and hysteresis', () => {
-  const engine = {qualityChoice: 'auto', quality: 'desktop', options: TIERS.desktop, draws: 2, visible: true,
+  const engine = {qualityChoice: 'auto', quality: 'desktop', options: TIERS.desktop, targetHz: 120, draws: 2, visible: true,
     renderScale: 1, scaleChangedAt: 0, applyTier(next) {this.quality = next; this.options = TIERS[next];}};
   const sample = (ms, count) => {for (let i = 0; i < count; i++) SceneRenderer.prototype.measureLoad.call(engine, ms, 3000 + i);};
   sample(3, 59);
@@ -48,4 +48,20 @@ test('completed warm frames control auto quality with headroom and hysteresis', 
   assert.ok(engine.renderScale < .9 && engine.resizePending);
   engine.qualityChoice = 'desktop'; const scale = engine.renderScale; sample(30, 60);
   assert.equal(engine.renderScale, scale);
+});
+
+
+test('a 15 ms warm workload keeps its spatial budget on a 60 Hz panel and adapts on 120 Hz', () => {
+  function scene(displayHz) {
+    const engine = Object.create(SceneRenderer.prototype);
+    Object.assign(engine, {displayHz, quality: 'mobile', qualityChoice: 'auto', options: TIERS.mobile,
+      draws: 10, visible: true, renderScale: 1, scaleChangedAt: 0});
+    return engine;
+  }
+  const standard = scene(60), fast = scene(120);
+  for (let i = 0; i < 5; i++) {
+    standard.measureLoad(15, 2000 + i); fast.measureLoad(15, 2000 + i);
+  }
+  assert.equal(standard.renderScale, 1);
+  assert.ok(fast.renderScale < 1);
 });
