@@ -21,6 +21,10 @@ In the packaged Mac app, open **Connections → Stage invitation**. Start the OS
 3. Serve that file from `https://lights.example.org/.well-known/apple-app-site-association` with HTTP 200 and `Content-Type: application/json`. Use the final HTTPS host directly. The template names `org.tolglow.ios.Clip` under `appclips.apps` and gives the parent `org.tolglow.ios` a Universal Link for `/audience/*`. Adjust both identifiers if you change them in `native/project.yml`.
 4. Configure the App Clip experience for the matching audience URL prefix in App Store Connect. Scan a current stage QR with the parent absent, then repeat with the parent installed. Verify the expected stage, participant consent screen and leave action on the actual phone. [Associate your Clip with a website](https://developer.apple.com/documentation/appclip/associating-your-app-clip-with-your-website) · [Associated Domains](https://developer.apple.com/documentation/xcode/supporting-associated-domains) · [Configure the launch experience](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
 
+## Verified simulator build
+
+At commit `790398a`, the Release companion measured 7,914,609 unpacked bytes, including its 1,348,995-byte App Clip and 1,299,988-byte Watch app. This build supports iPhone and iPad simulators. The Mac build saved the live invitation through WKWebView. Apple Vision decoded its exact HTTPS session URL, and stopping the stage retired its image endpoint. [Simulator bundle and size report](https://github.com/tolgraven/tolglow/actions/runs/45168401845/artifacts/14818055911) · [Mac screenshot and demonstration](https://github.com/tolgraven/tolglow/tree/1491baeec1dfb0dfe1696e2cba355c856a886651/apple-stage/native)
+
 ## Install the simulator artifact
 
 The Packaged Apple Studio workflow builds the Release iPhone/iPad companion with its embedded Watch app and Clip. Download `Tolglow-Companion-simulator`, unzip the artifact, and run these commands on a Mac with a booted iPhone or iPad simulator matching the listed architecture.
