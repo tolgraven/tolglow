@@ -53,7 +53,8 @@
               "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
-   :paths ["tolglow/dev/tolglow/perf/musical_ceilings.clj"
+   :paths ["tolglow/dev/tolglow/perf/independent_effects.clj" "tolglow/docs/performance/independent-effect-workers.md"
+           "tolglow/dev/tolglow/perf/musical_ceilings.clj"
            "tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
