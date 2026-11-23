@@ -162,6 +162,7 @@ async function verifyControls(page,touch,profile) {
     [await card.getAttribute('data-live-instance'),original]);
   await activate(card.getByRole('button',{name:'Pause',exact:true}));
   await activate(card.getByRole('button',{name:'Resume',exact:true}));
+  await card.getByRole('button',{name:'Pause',exact:true}).waitFor();
 }
 
 async function verifyShellActions(page,profile,touch) {
