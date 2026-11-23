@@ -149,6 +149,9 @@ test('Room preview keeps beam crossings additive below the bloom threshold', asy
       assert.equal(quadrature.counts.highFull.maximum, 72);
       assert.ok(quadrature.counts.plume.minimum === 24 && quadrature.counts.plume.maximum > 24 && quadrature.counts.plume.maximum <= 72);
       assert.ok(quadrature.counts.desktopPlume.minimum === 48 && quadrature.counts.desktopPlume.maximum > 48 && quadrature.counts.desktopPlume.maximum <= 72);
+      assert.equal(quadrature.boundary.minimumCompleted, 48);
+      assert.equal(quadrature.boundary.maximumCompleted, 48);
+      assert.ok(quadrature.boundary.maximumEvaluated <= 72);
     }
     if (directory) await writeFile(join(directory, 'evidence.json'), JSON.stringify(all, null, 2));
   } finally {

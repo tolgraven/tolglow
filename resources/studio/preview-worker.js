@@ -4972,7 +4972,11 @@ void integrateFog(out vec4 volumeOutput){
    subdivisions=detailed?max(1,72/raySteps):1;
    if(detailed && raySteps>36 && raySteps<72 && detailCount>0){
     int local=baseIndex-detailFirst;
-    subdivisions=1+(local+1)*extra/detailCount-local*extra/detailCount;
+    // Floating overlap can include a touching neighbor outside floor/ceil's
+    // integer range. Only that range owns extra samples; otherwise a local=-1
+    // interval can spend a 25th extra sample and truncate the far end of a ray.
+    if(local>=0 && local<detailCount)
+     subdivisions=1+(local+1)*extra/detailCount-local*extra/detailCount;
    }
    stepSize=baseStep/float(subdivisions);
   }

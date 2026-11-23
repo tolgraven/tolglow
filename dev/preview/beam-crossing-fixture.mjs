@@ -296,11 +296,31 @@ function measureQuadrature({auto = true} = {}) {
     // termination; it must still integrate every interval exactly once.
     engine.setFog(.05); fog.field.clear(.5); fog.upload();
     const fullCounts=counts(24), mobileFullCounts=counts(32), desktopFullCounts=counts(48), highFullCounts=counts(72);
+    // Probe a bounded grid of touching endpoints: repeated multiply/add can
+    // round an edge onto the neighboring base interval differently from floor.
+    // Counting only <=72 samples misses the old defect: it requested 73 and
+    // silently stopped before completing base interval 48. Probe completion too.
+    const bounded = counted
+      .replace('float baseStep=(finish-start)/float(raySteps);',
+        `float testIndex=floor(gl_FragCoord.x)+floor(gl_FragCoord.y)*${fog.target.width}.;
+         start=.03+mod(testIndex,127.)*.071;finish=start+3.1+mod(testIndex,71.)*.103;
+         float baseStep=(finish-start)/float(raySteps);`)
+      .replace('if(all(lessThan(detailMin,detailMax)))detailSpan=boxHit(eye,ray,detailMin,detailMax);',
+        'detailSpan=start+vec2(mod(testIndex,24.),mod(testIndex,24.)+24.)*baseStep;')
+      .replace('volumeOutput=vec4(samples,0.,0.,1.);','volumeOutput=vec4(samples,float(baseIndex),0.,1.);');
+    fog.volumeMaterial.fragmentShader=bounded; fog.volumeMaterial.needsUpdate=true;
+    const boundaryPixels=sample(48);
+    const boundary={minimumCompleted:Infinity,maximumCompleted:-Infinity,maximumEvaluated:0};
+    for(let i=0;i<boundaryPixels.length;i+=4)if(boundaryPixels[i]>0){
+      boundary.minimumCompleted=Math.min(boundary.minimumCompleted,boundaryPixels[i+1]);
+      boundary.maximumCompleted=Math.max(boundary.maximumCompleted,boundaryPixels[i+1]);
+      boundary.maximumEvaluated=Math.max(boundary.maximumEvaluated,boundaryPixels[i]);
+    }
     return {config,coarse:error(coarse),adaptive:error(adaptive),
       counts:{plume:plumeCounts,mobilePlume:mobilePlumeCounts,desktopPlume:desktopPlumeCounts,
         haze:hazeCounts,mobileHaze:mobileHazeCounts,desktopHaze:desktopHazeCounts,highHaze:highHazeCounts,
         full:fullCounts,mobileFull:mobileFullCounts,desktopFull:desktopFullCounts,highFull:highFullCounts},
-      finiteNonnegative:[coarse,adaptive,reference].every(pixels=>pixels.every(value=>Number.isFinite(value)&&value>=0))};
+      boundary, finiteNonnegative:[coarse,adaptive,reference].every(pixels=>pixels.every(value=>Number.isFinite(value)&&value>=0))};
   } finally {
     materials.forEach((material,i)=>{material.fragmentShader=shaders[i]; material.needsUpdate=true;});
     fog.uniforms.raySteps.value=baseSteps;
