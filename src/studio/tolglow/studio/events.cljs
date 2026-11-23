@@ -35,7 +35,7 @@
 (defn- dispatch-result [event result] (when event (rf/dispatch (conj event result))))
 
 (def guarded-paths
-  #{"/api/definition" "/api/rig" "/api/composition" "/api/composition/run"
+  #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/run"
     "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
