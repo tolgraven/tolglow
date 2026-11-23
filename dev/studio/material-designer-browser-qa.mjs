@@ -45,6 +45,7 @@ try {
   await panel.getByLabel("Material ID").fill(id);
   await panel.getByLabel("Material name").fill("Tidal glass");
   await panel.getByText(/^Output /).waitFor();
+  assert.ok(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1), "Material editor must fit the touch viewport");
   await capture(panel.getByLabel("Material preview"));
   const field = panel.locator(".material-field");
   const before = await field.evaluate(canvas => canvas.toDataURL());
@@ -68,15 +69,24 @@ try {
   await write(page, panel.getByRole("button", {name: "Save material"}), 200);
   await write(other.page, other.panel.getByRole("button", {name: "Save material"}), 422);
   await other.panel.getByText(/Another operator changed/).waitFor();
+  await other.panel.getByRole("button", {name: "Reload library"}).tap();
+  await other.panel.getByLabel("Saved material").selectOption(id);
+  await other.panel.getByLabel("Material name").waitFor();
+  assert.equal(await other.panel.getByLabel("Material name").inputValue(), "Tidal glass · deep");
   await other.page.close();
 
   await template.selectOption("shader/custom");
+  await panel.getByText("Add an input", {exact: true}).tap();
+  await panel.getByLabel("Input name").fill("chroma");
+  await panel.getByRole("button", {name:"Add input", exact:true}).tap();
+  await panel.getByRole("spinbutton", {name:"Chroma"}).waitFor();
+  await panel.getByText("Add an input", {exact: true}).tap();
   await panel.getByLabel("GLSL expression").fill("bad_shader");
   await panel.locator(".material-preview .danger").waitFor();
   assert.equal(await panel.getByRole("button", {name: "Save material"}).isDisabled(), true);
   await panel.getByLabel("Material name").fill("Polar glass");
   await panel.getByLabel("Material ID").fill("venue/polar-glass");
-  await panel.getByLabel("GLSL expression").fill("vec3(0.08 + 0.7 * abs(sin(position.y + 1.2 * position.x + phase)), 0.3 + 0.68 * cos(0.7 * position.x - position.y) * cos(position.y), 0.48 + 0.48 * sin(1.7 * position.x + position.y))");
+  await panel.getByLabel("GLSL expression").fill("vec3(0.08 + 0.7 * abs(sin(position.y + 1.2 * position.x + phase)), 0.3 + 0.68 * cos(0.7 * position.x - position.y) * cos(position.y), chroma + 0.48 * sin(1.7 * position.x + position.y + phase))");
   await panel.getByText(/^Output /).waitFor();
   await capture(panel.getByLabel("GLSL expression"));
   if (output) {
