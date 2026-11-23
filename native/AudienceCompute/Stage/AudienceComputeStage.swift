@@ -16,6 +16,7 @@ final class AudienceComputeStage {
         init(_ connection: NWConnection) { link = connection }
     }
 
+    private let subjectKey = SymmetricKey(size: .bits256)
     private let room: String
     private let poolPort: UInt16
     private let token: String
@@ -164,7 +165,8 @@ final class AudienceComputeStage {
                 }
             }
             guard let guest = p.guest else { close(id); return }
-            try service.start(floats: capacity, subject: room + "/" + guest.uuidString)
+            let subject = HMAC<SHA256>.authenticationCode(for: Data(guest.uuidString.utf8), using: subjectKey)
+            try service.start(floats: capacity, subject: subject.map { String(format: "%02x", $0) }.joined())
         } catch { close(id) }
     }
 }
