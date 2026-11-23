@@ -39,7 +39,7 @@ try {
   const open = async () => {
     const summary = card.locator('summary').filter({hasText:'Keyframe timing'});
     if (!await summary.isVisible()) await card.getByRole('button',{name:/Expand .* controls/}).tap();
-    if (!await card.getByLabel('Keyframe interval',{exact:true}).isVisible()) await summary.tap();
+    if (!await card.getByRole('checkbox',{name:'Sample at a fixed interval'}).isVisible()) await summary.tap();
   };
   await open();
   const interval = card.getByLabel('Keyframe interval',{exact:true});
@@ -90,6 +90,28 @@ try {
   assert.match(await card.locator('.keyframe-sample').innerText(),/result/i);
   if (captures) await card.locator('details[open]').filter({has:page.locator('.keyframe-editor')}).last()
     .screenshot({path:captures+'/published.png'});
+  await editor.getByRole('checkbox',{name:'Limit automatic slowdown'}).check();
+  assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
+  await capture(11);
+  await editor.getByRole('checkbox',{name:'Sample at a fixed interval'}).uncheck();
+  assert.equal(await interval.count(),0);
+  await capture(12);
+  const savedCap = page.waitForResponse(r=>r.url().endsWith('/api/definition') && r.request().method()==='POST');
+  await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
+  assert.ok((await savedCap).ok());
+  await page.waitForFunction(async ({id}) => {
+    const state = await (await fetch('/api/state',{headers:{accept:'application/json'}})).json();
+    return state.instances.find(x=>x.id===id)?.['effect-version']===3;
+  },{id:launch['instance-id']});
+  await open();
+  assert.equal(await interval.count(),0);
+  assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
+  assert.equal(await editor.getByRole('checkbox',{name:'Limit automatic slowdown'}).isChecked(),true);
+  assert.equal(await editor.getByRole('checkbox',{name:'Sample at a fixed interval'}).isChecked(),false);
+  const capOnly = (await request('/api/state')).instances.find(x=>x.id===launch['instance-id']).definition.keyframes;
+  assert.equal(capOnly.interval,undefined);
+  assert.equal(capOnly['max-interval'].beats,0.125);
+  if (captures) await editor.screenshot({path:captures+'/ceiling-published.png'});
   assert.deepEqual(errors,[]);
-  console.log('Touch drag, exact beat fractions, spring edit, published v2 and live native values verified.');
+  console.log('Touch drag, fractional intervals, native values and cap-only hot reload verified through v3.');
 } finally {await browser.close();}

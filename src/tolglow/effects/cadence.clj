@@ -13,6 +13,22 @@
                   [id [effect-id effect-version (get-in model [:registry :effects effect-id :version])]]))
         (:instances model)))
 
+(defn- stride-limits [prior definitions transport period global-max]
+  (when (seq definitions)
+    (let [{:keys [bpm meter]} transport]
+      (if (and (identical? definitions (:definitions prior))
+               (= [bpm meter period global-max] (:clock prior)))
+        prior
+        {:definitions definitions :clock [bpm meter period global-max]
+         :limits (update-vals definitions #(cadence/maximum-stride % transport period global-max))}))))
+
+(defn- requested-intervals [entries ids period global-max limits]
+  (into {} (keep (fn [[id {:keys [stride version]}]]
+                   (let [available (min stride global-max (get limits id global-max))]
+                     (when (and (> available 1) (= version (get ids id)))
+                       [id {:ms (* period available)}]))))
+        entries))
+
 (defn begin [runtime before model]
   (let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes runtime))]
     (when (and config (:enabled? config true) (seq (:instances model)))
@@ -21,24 +37,24 @@
             state (:state prior)
             ids (versions model)
             period (/ 1000.0 (:frame-rate runtime))
+            quality (quality/prepare (:quality prior) (:epoch model) ids (:instances model))
+            limits (stride-limits (:ceilings prior) (:ceilings quality) (:transport model) period (:max-stride options))
             intervals (when (= (:epoch model) (:epoch state))
-                        (into {} (keep (fn [[id {:keys [stride version]}]]
-                                         (when (and (> stride 1) (= version (get ids id)))
-                                           [id {:ms (* period (min stride (:max-stride options)))}])))
-                              (:effects state)))
+                        (requested-intervals (:effects state) ids period (:max-stride options) (:limits limits)))
             observer (cadence/observer)]
-        {:config config :options options :previous state :prior-quality (:quality prior) :samples (:samples observer)
+        {:config config :options options :previous state :quality quality :ceilings limits :samples (:samples observer)
          :epoch (:epoch model) :period-ms period
          :inputs {:keyframe-intervals intervals :measure-effect (:measure-effect observer)}}))))
 
 (defn finish [session model elapsed-ms]
   (let [{:keys [options epoch period-ms previous samples config]} session
         ids (versions model)
-        quality (quality/prepare (:prior-quality session) epoch ids (:instances model))
+        quality (quality/prepare (:quality session) epoch ids (:instances model))
+        limits (stride-limits (:ceilings session) (:ceilings quality) (:transport model) period-ms (:max-stride options))
         timings {:defer-live-slowdown? (:defer-live-slowdown? session)
-                 :epoch epoch :versions ids :samples (quality/protect @samples (:protected quality))
+                 :epoch epoch :versions ids :max-strides (:limits limits) :samples (quality/protect @samples (:protected quality))
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
-    {:options options :config config :quality quality :state (cadence/advance previous timings options)}))
+    {:options options :config config :quality quality :ceilings limits :state (cadence/advance previous timings options)}))
 
 (defn status
   "Read the diagnostic ranking on demand, outside the frame publication loop."

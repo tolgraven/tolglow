@@ -54,3 +54,23 @@
         intervals (get-in (cadence/begin runtime state model) [:inputs :keyframe-intervals])]
     (is (nil? (:a intervals)))
     (is (< 25 (get-in intervals [:b :ms])))))
+
+(deftest tempo-edits-clip-the-next-frame-before-workers-run
+  (let [wash (assoc (definition static) :id :wash :keyframes {:max-interval {:beats 1/8}})
+        aim (assoc (definition static) :id :aim)
+        model {:epoch 0 :transport {:bpm 120}
+               :instances {:a (captured wash) :b (captured aim)}
+               :registry {:effects {:wash wash :aim aim}}}
+        runtime {:frame-rate 40 :adaptive-keyframes {:enabled? true :pressure-frames 1}}
+        observe (fn [state _]
+                  (let [s (cadence/begin runtime state model)]
+                    (reset! (:samples s) {:a {:predictive? true :total-ms 8 :calls 1}
+                                          :b {:predictive? true :total-ms 3 :calls 1}})
+                    {:cadence (cadence/finish s model 35)}))
+        warm (reduce observe {} (range 15))
+        steady (cadence/begin runtime warm model)
+        changed (cadence/begin runtime warm (assoc-in model [:transport :bpm] 240))]
+    (is (identical? (get-in warm [:cadence :ceilings]) (:ceilings steady)))
+    (is (= {:a {:ms 50.0} :b {:ms 200.0}} (get-in steady [:inputs :keyframe-intervals])))
+    (is (= {:b {:ms 200.0}} (get-in changed [:inputs :keyframe-intervals])))
+    (is (= {:a 1} (get-in changed [:ceilings :limits])))))
