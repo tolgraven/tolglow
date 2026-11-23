@@ -27,7 +27,7 @@ jobs:
           unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
           java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(compile 'tolglow.persistence)"
           jar uf studio.jar -C override .
-          native-image --no-fallback --initialize-at-run-time=thi.ng.math.core__init --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
+          native-image --no-fallback --initialize-at-run-time=thi.ng.math.core__init --initialize-at-build-time=com.cognitect.transit.impl --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
           ./studio-native --port 0 >native-start.log 2>&1 &
           child=$!
           trap 'kill "$child" || true' EXIT
@@ -82,6 +82,8 @@ jobs:
             <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
             <configuration><target>ios</target><mainClass>tolglow.application</mainClass><nativeImageArgs>
               <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
+              <nativeImageArg>--initialize-at-run-time=thi.ng.math.core__init</nativeImageArg>
+              <nativeImageArg>--initialize-at-build-time=com.cognitect.transit.impl</nativeImageArg>
             </nativeImageArgs></configuration></plugin></plugins></build>
           </project>
           POM
