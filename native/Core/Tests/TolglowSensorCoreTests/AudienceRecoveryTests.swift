@@ -63,6 +63,9 @@ final class AudienceRecoveryTests: XCTestCase {
         let id = UUID()
         var radio = AudienceRecovery()
         var floor = AudienceFloor()
+        XCTAssertFalse(AudienceWatchReceipt.startsBaseline(sent: 1.99, afterStageJoin: 2))
+        XCTAssertFalse(AudienceWatchReceipt.startsBaseline(sent: 2.5, afterStageJoin: 2))
+        XCTAssertTrue(AudienceWatchReceipt.startsBaseline(sent: 2.51, afterStageJoin: 2))
         func sample(_ serial: UInt32, _ steps: UInt32) throws -> AudienceSample {
             try XCTUnwrap(AudienceSample(serial: serial, steps: steps, effort: 0.5))
         }

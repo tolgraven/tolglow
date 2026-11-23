@@ -2,6 +2,14 @@ import Foundation
 
 /// Tracks live WatchConnectivity samples only. A delayed sample cannot reopen an ended session.
 public struct AudienceWatchReceipt {
+    private static let maximumClockLead = 0.5
+
+    /// The Watch clock can lead the stage phone by up to half a second.
+    /// A receipt older than this watermark cannot establish a fresh baseline.
+    public static func startsBaseline(sent: Double, afterStageJoin joined: Double) -> Bool {
+        sent.isFinite && joined.isFinite && sent - joined > maximumClockLead
+    }
+
     public private(set) var current: UUID?
     private var lastSerial: UInt32 = 0
     private var retired: [UUID] = []
@@ -21,7 +29,7 @@ public struct AudienceWatchReceipt {
     }
 
     public mutating func accept(session: UUID, sample: AudienceSample, sent: Double, now: Double) -> Bool {
-        guard sent.isFinite, now.isFinite, (-0.5...2.0).contains(now - sent),
+        guard sent.isFinite, now.isFinite, (-Self.maximumClockLead...2.0).contains(now - sent),
               !retired.contains(session) else { return false }
         if current == session {
             let advance = sample.serial &- lastSerial

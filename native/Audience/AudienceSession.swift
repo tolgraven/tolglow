@@ -31,6 +31,7 @@ final class AudienceSession: ObservableObject {
     private var phoneMotion: AudienceMotion?
     @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
+    private var wristStageJoin: TimeInterval?
     @Published var allowLockedWatch = false
     private(set) var watchOnlyInBackground = false
     private var generation = UUID()
@@ -40,7 +41,10 @@ final class AudienceSession: ObservableObject {
     #endif
 
     init() {
-        client.onJoin = { [weak self] in self?.startInputs() }
+        client.onJoin = { [weak self] in
+            self?.wristStageJoin = Date().timeIntervalSince1970
+            self?.startInputs()
+        }
         client.onEnd = { [weak self] in self?.stopInputs() }
         client.onSuspend = { [weak self] in self?.pauseInputs() }
     }
@@ -110,11 +114,15 @@ final class AudienceSession: ObservableObject {
         taps &+= 1; tapTime = now
     }
 
-    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
+    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?, sent: TimeInterval) -> Bool {
         // Acknowledge wrist receipt during a brief stage outage. Drop this
         // observation; the first fresh wrist count after rejoining is a baseline.
         if client.reconnecting { return true }
         guard client.joined else { return false }
+        if let joined = wristStageJoin {
+            guard AudienceWatchReceipt.startsBaseline(sent: sent, afterStageJoin: joined) else { return true }
+            wristStageJoin = nil
+        }
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
         watch = (sample, time, motionTime)
@@ -176,6 +184,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func stopInputs() {
+        wristStageJoin = nil
         watchOnlyInBackground = false; allowLockedWatch = false; shareMotionAxes = false
         stopSampling()
         serial = 0; totalSteps = 0; effort = 0; lastPhoneSteps = nil; endWatch()

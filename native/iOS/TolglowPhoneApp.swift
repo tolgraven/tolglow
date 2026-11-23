@@ -23,8 +23,8 @@ import TolglowSensorCore
         }
         osc.onFailure = { [weak self] in self?.disarmPhone(); self?.disarmRelay() }
         relay.onFailure = { [weak self] in self?.disarmRelay() }
-        relay.audienceReceive = { [weak self] sample, measured in
-            self?.audience.receiveWatch(sample, motionTime: measured) ?? false
+        relay.audienceReceive = { [weak self] sample, measured, sent in
+            self?.audience.receiveWatch(sample, motionTime: measured, sent: sent) ?? false
         }
         relay.phoneFloorActive = { [weak self] in
             guard let client = self?.audience.client else { return false }
