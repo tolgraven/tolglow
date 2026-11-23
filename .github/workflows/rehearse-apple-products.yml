@@ -26,7 +26,13 @@ jobs:
           product="$(find product -name embedded-ipad-studio.zip -print -quit)"
           ditto -x -k "$product" original
           mkdir -p native/build/embedded
-          ditto original/TolglowPhone.app/Frameworks/TolglowRuntime.framework native/build/embedded/TolglowRuntime.framework
+          framework=native/build/embedded/TolglowRuntime.framework
+          ditto original/TolglowPhone.app/Frameworks/TolglowRuntime.framework "$framework"
+          # Xcode strips development headers/modules from applications when embedding.
+          mkdir -p "$framework/Headers" "$framework/Modules"
+          cp native/EmbeddedHost/TolglowRuntime.h "$framework/Headers/"
+          cp native/EmbeddedHost/module.modulemap "$framework/Modules/"
+          codesign --force --sign - "$framework"
       - run: native/Tests/check-embedded-studio
       - run: |
           mkdir -p result
