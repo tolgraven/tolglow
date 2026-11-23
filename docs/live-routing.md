@@ -120,11 +120,24 @@ the units/range, stale status and current activity. Configuring the same input a
 both a cue mapping and a patch route is explicit; neither path silently disables
 the other.
 
-Current Live MIDI capture is the companion device's routed MIDI stream, which
-may include existing clip playback on that track. It is **not** a subscription
-to every Session View track or Drum Rack chain. Session-wide note routing,
-learned Live parameter observers publish native-range automation values. MSP audio-feature emitters use the separate audio-return boundary.
-The patch kernel and source `:kind` fields do not imply those capabilities exist.
+The companion receives MIDI routed through its track, including Session or
+Arrangement clip playback. Learned device parameters publish native-range
+automation values. MSP audio-feature emitters use the audio-return boundary.
+
+## Record a pickup before a repeating section
+
+A Session clip can start before its loop brace. Tolglow keeps that opening
+section at its original beat and wraps the clip position when playback reaches
+the right edge. The song beat keeps advancing. An edit received just after a new
+Live status can use the preceding observation of the paired clip to locate the
+gesture at its original time. [Live manual, Clip and Loop Region Settings](https://www.ableton.com/en/live-manual/12/clip-view/#clip-and-loop-region-settings)
+
+1. Import [pickup-automation.mid](../resources/devices/ableton-live/examples/pickup-automation.mid) into a MIDI Session slot. Select 4/4 and 120 BPM. In Clip View set Start to **1.1.1**, enable Loop, set Position to **1.3.1** and Length to **1.0.0** (one bar). Standard MIDI files carry notes and timing. Set the loop brace in Live.
+2. Pair the bridge with that slot in Lighting mode. Map MIDI channel 1, pitch **36** to a held cue, and assign pitch **100** as its editable velocity lane for a numeric `:level` parameter with range `[0 1]`. The first cue gate lasts 1½ beats. The next starts on beat 2 and repeats every four beats.
+3. Play from the clip start. The level lane has velocities **33, 64** in the pickup and **96, 127** inside the loop. On the next pass only **96, 127** replay. Edit the first pickup velocity to **96** and replay from Start. The first level should change from `32/126` to `95/126`. The later pickup step remains `0.5`.
+4. On a fresh pass, arm the track and overdub a level change halfway through the first beat. Inspect the added pitch-100 note in Live's note editor at **1.1.3**. Repeat the gesture halfway through the first beat *of the loop* and inspect **1.3.3**. Verify that ending the cue releases its held instance.
+
+`lein run -m tolglow.qa.live-pickup` reads the supplied Standard MIDI File and prints the actual lighting commands for the first pass and one repeat. Pass a MIDI file exported from the edited Live clip to inspect its note timing and velocities under the same mappings. The headless suite also exercises the recording worker and checks the destination beat and velocity it sends for each adjustment. Live/Max playback timing, recording admission and physical output still need a licensed host run.
 
 ## Verified Live APIs and limits
 

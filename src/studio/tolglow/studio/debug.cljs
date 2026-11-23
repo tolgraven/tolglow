@@ -1,5 +1,6 @@
 (ns tolglow.studio.debug
   (:require [clojure.string :as str]
+            [goog.dom :as dom]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.debug-socket]
@@ -65,8 +66,20 @@
 
 (rf/reg-event-db :debug/filter
   (fn [db [_ k v]] (-> db (assoc-in [:debug :filters k] v) (assoc-in [:debug :limit] 50))))
+(rf/reg-event-db :debug/toggle-filters
+  (fn [db _] (update-in db [:debug :filters-open?] not)))
+(rf/reg-fx :debug/focus
+  (fn [id]
+    (r/after-render #(some-> (or (dom/getElement id) (dom/getElement "debug-filters-toggle")) .focus))))
+(rf/reg-event-fx :debug/clear-filters
+  (fn [{:keys [db]} _]
+    {:db (update db :debug assoc :filters {} :limit 50) :debug/focus "debug-filter-type"}))
 (rf/reg-event-db :debug/more (fn [db _] (update-in db [:debug :limit] #(+ (or % 50) 50))))
-(rf/reg-event-db :debug/select-row (fn [db [_ id]] (assoc-in db [:debug :selected] id)))
+(defn- row-id [id] (str "debug-event-" id))
+(rf/reg-event-fx :debug/select-row
+  (fn [{:keys [db]} [_ id]]
+    {:db (assoc-in db [:debug :selected] id)
+     :debug/focus (if id "debug-inspector-title" (row-id (get-in db [:debug :selected])))}))
 (rf/reg-event-db :debug/bank (fn [db [_ n]] (assoc-in db [:debug :bank] n)))
 (rf/reg-event-db :debug/freeze
   (fn [db _]
@@ -105,26 +118,43 @@
          :let [selected (get selections k "")
                options (cond-> (set (mapcat #(field-values % k) rows)) (seq selected) (conj selected))]]
      ^{:key k} [:label title
-                [:select {:aria-label title :value selected :on-change #(emit! [:debug/filter k (value %)])}
+                [:select {:id (str "debug-filter-" (name k)) :aria-label title :value selected :on-change #(emit! [:debug/filter k (value %)])}
                  [:option {:value ""} "All"]
                  (for [choice (sort options)] ^{:key choice} [:option {:value choice} choice])]])])
 (defn- subscribers-label [v]
   (cond (nil? v) "Unobserved" (empty? v) "None" :else (str/join ", " (map label v))))
+(defn- event-toolbar [{:keys [filters-open? filters skipped frozen cursor frozen-cursor]} shown total]
+  (let [active (keep (fn [[field title]]
+                       (when-let [choice (not-empty (get filters field))]
+                         (str title " · " choice)))
+                     filter-fields)]
+    [:div.debug-event-tools
+     [:span.debug-count (str shown " of " total " events")]
+     [:button#debug-filters-toggle.button {:type "button" :aria-expanded (boolean filters-open?)
+                      :aria-controls "debug-filter-controls"
+                      :title (when (seq active) (str/join ", " active))
+                      :on-click #(emit! [:debug/toggle-filters])}
+      "Filters" (when (seq active) [:span.debug-filter-count (count active)])]
+     [:button.button {:type "button" :aria-pressed (some? frozen) :on-click #(emit! [:debug/freeze])}
+      (if frozen (str "Resume · " (- (or cursor 0) (or frozen-cursor 0)) " new") "Pause feed")]
+     (when (pos? (or skipped 0)) [:span.debug-gap (str skipped " missed upstream")])]))
+
 (defn- event-list [debug]
   (let [rows (displayed-rows debug)
         visible (into [] (filter #(matches? (:filters debug) %)) (rseq rows))
         shown (take (:limit debug 50) visible)
         selected (some #(when (= (:id %) (:selected debug)) %) rows)]
     [:<>
-     [:div.debug-feed-tools
-      [:span.debug-count (str (count shown) " of " (count visible) " events")]
-      (when (pos? (:skipped debug 0)) [:span.debug-gap (str (:skipped debug) " missed upstream")])
-      [:button.button {:aria-pressed (some? (:frozen debug)) :on-click #(emit! [:debug/freeze])}
-       (if (:frozen debug) (str "Resume · " (- (or (:cursor debug) 0) (or (:frozen-cursor debug) 0)) " new") "Pause feed")]]
-     [filters rows (:filters debug)]
+     [event-toolbar debug (count shown) (count visible)]
+     [:div#debug-filter-controls {:hidden (not (:filters-open? debug))}
+      (when (:filters-open? debug)
+        [:div.debug-filter-panel
+         [filters rows (:filters debug)]
+         (when (some (comp seq val) (:filters debug))
+           [:button.button.debug-clear {:type "button" :on-click #(emit! [:debug/clear-filters])} "Clear filters"])])]
      (when selected
        [:section.debug-inspector
-        [:div.debug-feed-tools [:h3 (label (:type selected))] [:button.button {:on-click #(emit! [:debug/select-row nil])} "Close detail"]]
+        [:div.debug-feed-tools [:h3#debug-inspector-title {:tab-index -1} (label (:type selected))] [:button.button {:on-click #(emit! [:debug/select-row nil])} "Close detail"]]
         [:dl (for [[k v] [["Event" (:id selected)] ["Emitter" (pr-str (:emitter selected))]
                           ["Subscribers" (subscribers-label (:subscribers selected))]
                           ["Delivery" (case (:delivery selected) :observed "Observed" :matched "Matched" "Unobserved")]
@@ -135,13 +165,16 @@
         [:pre (pr-str (:data selected))]])
      (if (seq visible)
        [:div.debug-event-list
-        [:div.debug-table-head [:span "Local time"] [:span "Event / emitter"] [:span "Subscribers"]]
+        [:div.debug-table-head
+         [:span [:span.debug-time-heading "Local time"] [:span.debug-time-mobile-heading "Time / recipients"]]
+         [:span "Event / emitter"] [:span "Subscribers"]]
         (for [{:keys [id timestamp type category emitter subscribers]} shown]
-          ^{:key id} [:button.debug-row {:type "button" :data-category (label category) :aria-pressed (= (:id selected) id)
+          ^{:key id} [:button.debug-row {:id (row-id id) :type "button" :data-category (label category) :aria-pressed (= (:id selected) id)
                                          :on-click #(emit! [:debug/select-row (when (not= id (:id selected)) id)])}
                       [:time {:date-time (when (instance? js/Date timestamp) (.toISOString timestamp))} (format-clock timestamp)]
                       [:span.debug-event-name [:strong (label type)] [:small (str (label category) " · " (label (:id emitter)))]]
-                      [:span.debug-recipients (subscribers-label subscribers)]])]
+                      [:span.debug-recipients {:title (str "Subscribers · " (subscribers-label subscribers))}
+                       (subscribers-label subscribers)]])]
        [:p.debug-empty (if (seq rows) "No events match these filters." "Waiting for emitted events.")])
      (when (< (count shown) (count visible))
        [:button.button {:on-click #(emit! [:debug/more])} "Show older events"])
