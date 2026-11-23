@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: b50873d834cc5a2d9b84090f36790ddeeea7eb03
+          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -46,6 +46,16 @@ jobs:
         working-directory: tolglow
         run: |
           if [[ "${{ matrix.suite }}" == pure ]]; then lein test-pure; else lein test; fi
+      - name: Exercise Linux GATT and the paired OSC receiver
+        if: matrix.java == '21' && matrix.suite == 'pure'
+        working-directory: tolglow/linux/audience
+        run: lein with-profile +paired test
+      - name: Verify public model data and offline preparation
+        if: matrix.java == '17' && matrix.suite == 'pure'
+        working-directory: tolglow
+        run: |
+          python3 -m unittest discover -s dev/model-lab
+          python3 -m unittest discover -s dev/model-lab/code
       - name: Preserve conversation request IDs from the PR base
         if: github.event_name == 'pull_request' && matrix.suite == 'pure' && matrix.java == '17'
         working-directory: tolglow
@@ -70,7 +80,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: b50873d834cc5a2d9b84090f36790ddeeea7eb03
+          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -139,7 +149,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: b50873d834cc5a2d9b84090f36790ddeeea7eb03
+          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -215,3 +225,14 @@ jobs:
         with:
           name: audience-clip-simulator
           path: ${{ runner.temp }}/audience-clip
+      - name: Capture solo Watch stage enrollment
+        run: native/Tests/capture_watch_audience.sh "$RUNNER_TEMP/watch-audience"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: watch-audience
+          path: |
+            ${{ runner.temp }}/watch-audience/*.png
+            ${{ runner.temp }}/watch-audience/*.mp4
+            ${{ runner.temp }}/watch-audience/ui.xcresult
+          retention-days: 10

@@ -1,0 +1,86 @@
+{
+  "blur": {
+    "attribution": "Jam3 / Experience-Monks. Upstream credits RasterGrid\u2019s Efficient Gaussian Blur with Linear Sampling.",
+    "commit": "5dbb6e97aa43d4be9369bdd88e835f47023c5e2a",
+    "license": "MIT",
+    "notice": "LICENSE.md",
+    "repository": "Experience-Monks/glsl-fast-gaussian-blur",
+    "sha256": {
+      "13.glsl": "1bcd19301f5ff287d357000baaabd375874134e6c42ad377ea155434d501d036",
+      "5.glsl": "a45dd9ddefea67c5ed4b10e1174ece4de857705851e308b58194f060f0387961",
+      "9.glsl": "b3f6672b9d43d7551cfdb50fba8ed9f7414f63467945b551bb6704f994a22aa6",
+      "LICENSE.md": "fb153e8eaf70c10aa169bc3d7401946a9d51163cafaca23458cea8e67de972f4"
+    },
+    "split": "valid"
+  },
+  "easing": {
+    "attribution": "glslify/glsl-easings, originally published by Hugh Kennedy. Its README credits Robert Penner\u2019s easing functions.",
+    "commit": "e3c39929ef207dc1bfe465711eb0aaf087672a38",
+    "license": "MIT",
+    "notice": "LICENSE.md",
+    "repository": "glslify/glsl-easings",
+    "sha256": {
+      "LICENSE.md": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b",
+      "back-in.glsl": "c5d3dfa32055c81b2ebf37748b158823cba99eb1869dffb4f1bb21aab1c75235",
+      "back-out.glsl": "de656efe7313c873e26e2ef82e4c59b4f7df59a13bf52dfeb513e1cb09a3b50b",
+      "circular-in.glsl": "7ac54dc97c8122a2ac932cd863c2edf6596b6c3ba55d74cd0cc5de06549e1704",
+      "circular-out.glsl": "6ff40287f166e159b60571d1f4b8131ac8694ddb0e0a55a74622dc0135e1c76f",
+      "cubic-in.glsl": "458d04f0ca55b93f21ed9fcbfa8b941cecc573ce5df282438789c84a3c861e9f",
+      "cubic-out.glsl": "32057edbec06156d29833a4774fea1fa76134051c863125768c41a9c5ac6f425",
+      "exponential-in.glsl": "7aabb117dcdccc56397757d5fb486643cfea85552ab10e31cb238676574e316b",
+      "exponential-out.glsl": "a8af0c2850c945a257ae830a3dac0bd60691c2885c53bb7138f61a4ccb4a4e35",
+      "quadratic-in-out.glsl": "7151f2435980bdd46de48162be726aaea4b04309bb90824481c21ae41b99f5e0",
+      "quadratic-in.glsl": "2724e85ec1f352020141d7d588dacf086d76896cf1fdf64f5e4e10d939c0a375",
+      "quadratic-out.glsl": "cef13b0e9bd8f099c91841b3f3351460d85b1741cc4940a612bdd2128fe6fbb9",
+      "quartic-in.glsl": "ab42cade149b58ff5ee8731db67b5f302fe860bba2c924e4c68b5503f733784e",
+      "quintic-in.glsl": "356ecd654212c61bbc4e46c87a3a4f68e1c16a0bac23e5d2ab9cc8ad8d086e22",
+      "sine-in-out.glsl": "66b4fe981ec77a89c736bf4f7d80ae1408b49cd42925f0d6aac44c9453234820",
+      "sine-in.glsl": "030bfefe14fcb8a287de7c350efe4455720b71e4145d3c6c605d5db19823ecb5",
+      "sine-out.glsl": "51965090e31838dcb069de0d8ff98a5f8596a1192fe557936123af4677d86e6b"
+    },
+    "split": "train"
+  },
+  "noise": {
+    "attribution": "Ashima Arts (simplex noise), Ian McEwan, and Stefan Gustavson (classic and cellular noise). Per-file authorship is retained in the GLSL.",
+    "commit": "22434e04d7753f7e949e8d724ab3da2864c17a0f",
+    "license": "MIT",
+    "notice": "LICENSE",
+    "repository": "stegu/webgl-noise",
+    "sha256": {
+      "LICENSE": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916",
+      "src/cellular2D.glsl": "bf62bbd254b005980f1fef7da0624ff2be116c501d2a0b938bfb0fad4cec8ef6",
+      "src/cellular3D.glsl": "916ffd60d91331bf2ca2f7f74b937cc7d51927cc084bc3cd927d469008a884b5",
+      "src/classicnoise2D.glsl": "8be368391b941b0c44d24122ee3d383341bc81dc809bd82bffdd2b5b7debff3b",
+      "src/classicnoise3D.glsl": "ae29ba259df8d1dc44df822558ceb21444a053d1fe57a0b631ef7e48edd4bb33",
+      "src/classicnoise4D.glsl": "10305c547002915c27bd1f529eef0fe8d52ed583831c8c55a32299018a185f6a",
+      "src/noise2D.glsl": "b0f27c923227e8b2d7618f09dc666e2397f608ca7929f798da632647c3f41884",
+      "src/noise3D.glsl": "bf18982b8edd25218b5096cba6f7838a0508416be51acd1fd88d0ba8acb5169e",
+      "src/noise4D.glsl": "2d4f0d93748b19d974e4132a3ab631772fd655d84d269444f1e7b2279296f91b"
+    },
+    "split": "train"
+  },
+  "palette": {
+    "attribution": "Erkaman. Upstream credits Inigo Quilez for the cosine-palette technique.",
+    "commit": "2183c2352891f08afe6b7f27e29119a6e9ca78ec",
+    "license": "MIT",
+    "notice": "LICENSE",
+    "repository": "Erkaman/glsl-cos-palette",
+    "sha256": {
+      "LICENSE": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b",
+      "index.glsl": "4ae9a91a1f6a37a29369afa8666a5a3c7adaf244d5b6cf171f3bddd5b9565cca"
+    },
+    "split": "test"
+  },
+  "transfer": {
+    "attribution": "Three.js authors, including the credits in the upstream MIT license.",
+    "commit": "7e89746a687bb88271253698fa108b1dd59825d0",
+    "license": "MIT",
+    "notice": "LICENSE",
+    "repository": "mrdoob/three.js",
+    "sha256": {
+      "LICENSE": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+      "src/renderers/shaders/ShaderChunk/colorspace_pars_fragment.glsl.js": "609ef2ba45f73b95a8980cb91b62b61d65581d75067e7c1e45b976aaa397052a"
+    },
+    "split": "train"
+  }
+}

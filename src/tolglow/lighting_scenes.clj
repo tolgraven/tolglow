@@ -313,6 +313,13 @@
                {} groups)]
     {:patch patch :universes universes :plans plans :reference-brightness reference}))
 
+(defn- local-scene-gain [gain target error close? suspended?]
+  (cond
+    suspended? gain
+    (zero? target) (max 0.0 (- gain 0.2))
+    close? gain
+    :else (max 0.0 (min 1.0 (+ gain (max -0.2 (min 0.2 (* error 0.7))))))))
+
 (defn feedback
   "Use one committed normalized measurement per group. Each update is bounded;
   operator blackout, pause and master zero suspend regulation. Generated fill
@@ -337,23 +344,23 @@
          (let [suspended? (or suspended? (:blackout? m) (get-in instance [:system :paused?]) (= :releasing (:phase instance))
                               (zero? (:master m)) (false? (get-in m [:transport :playing?])))
                error (- target value)
+               tolerance (if (zero? target) 0.0 0.015)
                close? (if (and global? (map? measurement))
-                        (and (<= (abs (- target (:dimmest-source measurement))) 0.015)
-                             (<= (abs (- target (:brightest-source measurement))) 0.015))
-                        (<= (abs error) 0.015))
-               next-gain (cond global? 1.0 (or close? suspended?) gain
-                               :else (max 0.0 (min 1.0 (+ gain (max -0.2 (min 0.2 (* error 0.7)))))))
+                        (and (<= (abs (- target (:dimmest-source measurement))) tolerance)
+                             (<= (abs (- target (:brightest-source measurement))) tolerance))
+                        (<= (abs error) tolerance))
+               next-gain (if global? 1.0 (local-scene-gain gain target error close? suspended?))
                capped? (and (> error 0.015) (>= gain 0.999))
                saturated (if (and capped? (not suspended?)) (min 6 (inc (or saturated 0))) 0)
                status (cond suspended? :limited
                             (and global? (:brightest-source measurement)
-                                 (> (:brightest-source measurement) (+ target 0.015))) :over-target
+                                 (> (:brightest-source measurement) (+ target tolerance))) :over-target
                             (and global? (:lowest-ceiling measurement)
                                  (> target (+ (:lowest-ceiling measurement) 1.0e-8))) :limited
                             close? :at-target
                             (and (> saturated 2) (zero? value)) :unlit
                             (> saturated 2) :limited
-                            (and (< error -0.015) (zero? gain)) :over-target :else :seeking)
+                            (and (< error (- tolerance)) (zero? gain)) :over-target :else :seeking)
                metrics (when (map? measurement) measurement)
                same-group? (and (or (nil? metrics) (every? (fn [[k v]] (= v (get group k))) metrics)) (= instance-id (:instance-id (get-in m (group-path id))))
                                 (= target (:target group)) (= value (:actual group))

@@ -11,6 +11,7 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     @Published private(set) var joined = false
     @Published private(set) var looking = false
     @Published private(set) var connecting = false
+    var onJoin: (() -> Void)?
     var onEnd: (() -> Void)?
     private var manager: CBCentralManager?
     private var devices: [UUID: CBPeripheral] = [:]
@@ -18,6 +19,16 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     private var identity: CBCharacteristic?
     private var hello: CBCharacteristic?
     private var samples: CBCharacteristic?
+    #if !APPCLIP
+    @Published private(set) var offersCompute = false
+    private var grantField: CBCharacteristic?
+    private var grantReply: ((Data?) -> Void)?
+    func requestComputeGrant(_ completion: @escaping (Data?) -> Void) {
+        guard grantReply == nil, joined, room != nil, let peer, let grantField else { completion(nil); return }
+        grantReply = completion
+        peer.readValue(for: grantField)
+    }
+    #endif
     private var room: String?
     private var key: SymmetricKey?
     private var queued: AudienceSample?
@@ -33,7 +44,11 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central.state == .poweredOn else {
-            if central.state != .unknown && central.state != .resetting { leave(); status = "Allow Bluetooth and turn it on to join" }
+            if central.state == .resetting && (connecting || joined) {
+                leave(); status = "Bluetooth restarted. Find your stage again."
+            } else if central.state != .unknown && central.state != .resetting {
+                leave(); status = "Allow Bluetooth and turn it on to join"
+            }
             return
         }
         if looking { central.scanForPeripherals(withServices: [AudienceRadio.service]) }
@@ -47,12 +62,19 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         venues.append(Venue(id: peripheral.identifier, name: name))
     }
 
-    func join(_ id: UUID) {
-        guard looking, let device = devices[id] else { return }
-        manager?.stopScan(); looking = false; connecting = true
+    func stopBrowsing() {
+        if manager?.isScanning == true { manager?.stopScan() }
+        looking = false
+    }
+
+    @discardableResult func join(_ id: UUID) -> Bool {
+        guard manager?.state == .poweredOn, !connecting, !joined, let device = devices[id] else { return false }
+        stopBrowsing()
+        connecting = true
         peer = device; device.delegate = self; manager?.connect(device)
         status = "Connecting to stage"
         deadline()
+        return true
     }
 
     private func deadline() {
@@ -70,12 +92,20 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         guard peer === peripheral else { return }
         guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == AudienceRadio.service })
         else { failed("Stage service unavailable"); return }
-        peripheral.discoverCharacteristics([AudienceRadio.identity, AudienceRadio.hello, AudienceRadio.samples], for: service)
+        var ids = [AudienceRadio.identity, AudienceRadio.hello, AudienceRadio.samples]
+        #if !APPCLIP
+        if room != nil { ids.append(AudienceRadio.computeGrant) }
+        #endif
+        peripheral.discoverCharacteristics(ids, for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard peer === peripheral else { return }
         let list = service.characteristics ?? []
+        #if !APPCLIP
+        grantField = list.first { $0.uuid == AudienceRadio.computeGrant }
+        offersCompute = grantField != nil && room != nil
+        #endif
         identity = list.first { $0.uuid == AudienceRadio.identity }
         hello = list.first { $0.uuid == AudienceRadio.hello }
         samples = list.first { $0.uuid == AudienceRadio.samples }
@@ -84,7 +114,18 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peer === peripheral, characteristic.uuid == AudienceRadio.identity else { return }
+        guard peer === peripheral else { return }
+        #if !APPCLIP
+        if characteristic.uuid == AudienceRadio.computeGrant {
+            let callback = grantReply; grantReply = nil
+            guard error == nil, let key, let packet = characteristic.value,
+                  let sealed = try? AES.GCM.SealedBox(combined: packet),
+                  let clear = try? AES.GCM.open(sealed, using: key, authenticating: Data("guest-compute-v1".utf8))
+            else { callback?(nil); return }
+            callback?(clear); return
+        }
+        #endif
+        guard characteristic.uuid == AudienceRadio.identity else { return }
         guard error == nil, let identity = characteristic.value, identity.count == 81, let hello else { failed("Invalid stage identity"); return }
         let publicKey = Data(identity.prefix(65))
         guard
@@ -101,7 +142,10 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         guard peer === peripheral else { return }
         guard error == nil else { failed("Stage declined the connection or sample"); return }
         timeout?.cancel()
-        if characteristic.uuid == AudienceRadio.hello { connecting = false; joined = true; status = "Sharing with this stage" }
+        if characteristic.uuid == AudienceRadio.hello {
+            connecting = false; joined = true; status = "Sharing with this stage"
+            onJoin?()
+        }
         pending = false
         flush()
     }
@@ -125,6 +169,9 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func leave() {
+        #if !APPCLIP
+        grantReply?(nil); grantReply = nil; grantField = nil; offersCompute = false
+        #endif
         let old = peer
         peer = nil; joined = false; connecting = false; looking = false
         old?.delegate = nil

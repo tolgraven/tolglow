@@ -193,3 +193,21 @@
     (deliver proceed true)
     (is (= :closed (deref pending 1000 ::timeout)))
     (is (= [reference] @deleted))))
+
+(deftest a-continuous-sensor-backlog-releases-drained-packets
+  (let [{:keys [manager pair model]} (fixture {:drain-limit 1 :queue-limit 3})
+        backing (fn [queue]
+                  (if (instance? clojure.lang.APersistentVector$SubVector queue)
+                    (.-v ^clojure.lang.APersistentVector$SubVector queue)
+                    queue))]
+    (try
+      (service/ingest! manager (packet pair 0 0 0.0))
+      (loop [model model i 1]
+        (when (<= i 200)
+          (service/ingest! manager (packet pair i i 0.5))
+          (let [result (advance manager model i i)]
+            (recur (:model result) (inc i)))))
+      (let [queue (:queue @(:state manager))]
+        (is (= [200] (mapv #(get-in % [:observation :sample-id]) queue)))
+        (is (<= (count (backing queue)) (:queue-limit manager))))
+      (finally (service/close! manager)))))

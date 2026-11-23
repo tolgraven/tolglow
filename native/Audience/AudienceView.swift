@@ -177,6 +177,14 @@ struct AudienceView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             .padding(16).background(surface, in: RoundedRectangle(cornerRadius: 14))
+            if let room, client.offersCompute {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Stage rendering").font(.headline)
+                    GuestComputeControl(client: client, room: room)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16).background(surface, in: RoundedRectangle(cornerRadius: 14))
+            }
             #endif
             if !session.message.isEmpty { Text(session.message).font(.subheadline).foregroundStyle(.secondary) }
         }

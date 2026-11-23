@@ -66,6 +66,28 @@
         (is (= 0 (byte-at rt 5)))
         (finally (show/stop! rt))))))
 
+(deftest a-zero-brightness-target-extinguishes-the-scenes-own-light
+  (doseq [batch? [true false]]
+    (let [rt (local batch?)
+          clock (atom 0)
+          target! #(issue! rt clock :lighting-scene {:op :apply :group-id :wash
+                                                     :target % :effect-ids []})
+          output #(mapv (partial byte-at rt) (range 4))]
+      (try
+        (issue! rt clock :command {:op :cue/launch :cue-id :manual})
+        (target! 0.4)
+        (ticks! rt clock 20)
+        (is (some pos? (output)))
+        (target! 0.0)
+        (ticks! rt clock 20)
+        (is (= [0 0 0 0] (output)))
+        (is (= :at-target (:status (group! rt :wash))))
+        (is (= 89 (byte-at rt 4)) "Another operator-owned light stays at its chosen level")
+        (target! 0.2)
+        (ticks! rt clock 20)
+        (is (some pos? (output)))
+        (finally (show/stop! rt))))))
+
 (deftest target-from-vars-and-event-fields
   (let [rt (local false) clock (atom 0) issue #(issue! rt clock %1 %2)
         action {:op :lighting/scene :scene {:op :apply :group-id :wash :effect-ids []}
