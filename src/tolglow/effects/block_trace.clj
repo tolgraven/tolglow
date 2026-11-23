@@ -3,7 +3,8 @@
   (:require [afterglow.reactive :as graph]
             [afterglow.render.blocks :as blocks]
             [afterglow.runtime :as runtime]
-            [tolglow.effects.variable-blocks :as variable-blocks]))
+            [tolglow.effects.variable-blocks :as variable-blocks]
+            [tolglow.effects.prefabs :as prefabs]))
 
 (defn source [{:keys [model variable-observation]}]
   (if variable-observation
@@ -19,7 +20,9 @@
 (def ^:private builtin-summaries (update-vals blocks/library #(select-keys % [:name :mode :inputs])))
 
 (defn library [context [_ effect-id]]
-  (let [custom (get-in @(:db context) [:registry :effects effect-id :prefabs])]
+  (let [model @(:db context)
+        {:keys [imported-prefabs prefabs]} (get-in model [:registry :effects effect-id])
+        custom (merge imported-prefabs (prefabs/catalog model) prefabs)]
     (if (seq custom) (merge builtin-summaries (update-vals custom #(select-keys % [:name :mode :inputs])))
         builtin-summaries)))
 

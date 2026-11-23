@@ -52,6 +52,21 @@ A prefab accepts a numeric GLSL expression or a typed IR `:expression`. Supporte
 
 Use `tolglow.signals/waveform-block` to capture a registered waveform as a local prefab. Its selected version and parameter defaults travel with the effect. Use `{:channel :slope}`, `:angular-velocity` or `:jagginess` to drive a second field from the waveform’s motion.
 
+## Reuse a material across the show
+
+Store reusable definitions under `[:settings :prefabs :definitions]`. In Studio, open **Definitions → Assign blocks**, select an output, cue parameter or private input and choose the material by name. The same stage ID works in a global variable chain.
+
+```clojure
+{:prefabs
+ {:definitions
+  {:venue/copper-ripple
+   {:name "Copper ripple" :mode :multiply
+    :inputs {:phase {:op :bar} :depth 0.4}
+    :glsl "mix(1.0, 0.5 + 0.5 * cos(6.2831853 * (position.x - phase)), depth)"}}}}
+```
+
+For example, place `{:block :venue/copper-ripple}` in the color stages of two independent effects. Each published revision captures the shared definitions it uses under `:imported-prefabs`. A later library edit takes effect in global variable chains on the next frame. Republish an effect to adopt the edit there. Pinned and archived revisions keep their original look across Transit saves and reloads. An effect can override a shared material by providing the same ID in its own `:prefabs` map.
+
 ## Shared variables
 
 Attach a chain to `[:variables :weather :density]` in an effect and read it through `{:op :variable :path [:weather :density]}`. This resolves the input privately for that effect. To shape it for every running effect, configure the same path in show settings.

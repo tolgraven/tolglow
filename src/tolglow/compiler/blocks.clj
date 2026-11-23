@@ -101,7 +101,7 @@
     (assoc entry :value (or (:expression numbered) (:expression named)
                             (lower compiler [:outputs i] #{} 0 value)))))
 
-(defn prepare [{:keys [blocks prefabs params targets]} entries prepare-expression]
+(defn prepare [{:keys [blocks prefabs imported-prefabs params targets]} entries prepare-expression]
   (when-not (and (map? blocks) (<= (count blocks) 64) (every? valid-path? (keys blocks)))
     (fail! [] "Use up to 64 binding paths in :params, :variables, :varyings or :outputs"))
   (when-not (or (nil? prefabs) (and (map? prefabs) (<= (count prefabs) 64) (every? keyword? (keys prefabs))))
@@ -113,7 +113,7 @@
         prepared (volatile! {})
         tweens (volatile! {})
         compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
-                  :catalog (merge blocks/library prefabs)
+                  :catalog (merge blocks/library imported-prefabs prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
     (when (or (some reserved (keys params)) (some #(= "tolglow.block-tween" (namespace %)) (keys params))) (fail! [] "Parameter ID collides with a block variable binding"))
     (doseq [path (keys blocks)] (binding-plan compiler path #{}))

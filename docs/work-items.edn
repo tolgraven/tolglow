@@ -1,7 +1,12 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
+ [{:id :effects/show-prefabs :title "Reuse registered materials across effects and variable chains"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/effects/prefabs.clj"] :depends-on [:effects/composable-blocks]
+   :acceptance ["Publish one material, use it in independent effects and preserve each captured revision through a show file."]
+   :evidence ["In the release Studio, two independently published effects selected the same custom material by name. The show runtime tests compare live globals with pinned effect observations and reload the captured definitions from Transit. The screenshot and ten-step recording accompany the change."]}
+  {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
    :depends-on [:foundation/tests]

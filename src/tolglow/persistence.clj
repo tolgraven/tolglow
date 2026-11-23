@@ -15,6 +15,7 @@
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
+            [tolglow.effects.prefabs :as prefabs]
             [tolglow.modulation :as modulation]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.show.lighting :as lighting]
@@ -257,7 +258,8 @@
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
-  (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]))
+  (prefabs/validate! (get-in model [:settings :prefabs]))
+  (variable-blocks/compile-model model)
   (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
   (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
   (when (contains? (:settings model) :lighting-capacity)
