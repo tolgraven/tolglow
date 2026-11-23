@@ -87,6 +87,7 @@ export async function measureRoom(durationMs) {
     roomOverDisplay: windowRaf.hz ? presented.hz / windowRaf.hz : null,
     withinFivePercentOfConfigured: targetHz ? presented.hz >= .95 * targetHz : null};
   return {durationMs: elapsedMs, invalid, rendererThread: worker ? 'worker' : 'main',
+    sampleBoundaryEpochMs: {start: performance.timeOrigin + boundary, end: performance.timeOrigin + ended},
     frameMeasurement: worker ? 'accepted DOM bitmap' : 'completed main-thread film pass',
     presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
