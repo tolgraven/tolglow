@@ -40,6 +40,8 @@
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
            "tolglow/docs/performance/keyframe-admission.md" "tolglow/docs/performance/captures/admission-cost.edn"
+           "tolglow/dev/tolglow/perf/stride_break_even.clj" "tolglow/test/tolglow/stride_break_even_test.clj"
+           "tolglow/docs/performance/captures/stride-break-even.zip"
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
@@ -47,7 +49,9 @@
               "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
               "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
               "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
-              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."]}
+              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."
+              "Tolglow #153 and Afterglow #84 measured the complete endpoint/blend cost and retained one checked fixture-position lookup per frozen rig. The 11-universe replay matched full state, output and events."
+              "At 1,024 pixels and 512 moving heads, shallow spatial aim lost worker time at stride two and saved it at four in both held-out trials. All tested intervals retained the full-rate show output. See docs/performance/keyframe-admission.md and the paired raw reports."]}
   {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
    :kind :documentation :status :planned :owner nil
    :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
