@@ -1,0 +1,118 @@
+{
+  "baseline": [
+    {
+      "people": 1,
+      "front": 1.0,
+      "balcony": 0.0,
+      "target": 1.0,
+      "status": "limited",
+      "dmx": [
+        255,
+        191,
+        255,
+        255,
+        0
+      ]
+    },
+    {
+      "people": 4,
+      "front": 1.0,
+      "balcony": 0.0,
+      "target": 0.25,
+      "status": "at-target",
+      "dmx": [
+        75,
+        57,
+        75,
+        75,
+        0
+      ]
+    },
+    {
+      "people": 4,
+      "front": 1.0,
+      "balcony": 1.0,
+      "target": 1.0,
+      "status": "limited",
+      "dmx": [
+        255,
+        191,
+        255,
+        255,
+        0
+      ]
+    },
+    {
+      "people": 0,
+      "front": 0.0,
+      "balcony": 0.0,
+      "target": 0.0,
+      "status": "at-target",
+      "dmx": [
+        3,
+        2,
+        3,
+        3,
+        0
+      ]
+    }
+  ],
+  "corrected": [
+    {
+      "people": 1,
+      "front": 1.0,
+      "balcony": 0.0,
+      "target": 1.0,
+      "status": "limited",
+      "dmx": [
+        255,
+        191,
+        255,
+        255,
+        0
+      ]
+    },
+    {
+      "people": 4,
+      "front": 1.0,
+      "balcony": 0.0,
+      "target": 0.25,
+      "status": "at-target",
+      "dmx": [
+        75,
+        57,
+        75,
+        75,
+        0
+      ]
+    },
+    {
+      "people": 4,
+      "front": 1.0,
+      "balcony": 1.0,
+      "target": 1.0,
+      "status": "limited",
+      "dmx": [
+        255,
+        191,
+        255,
+        255,
+        0
+      ]
+    },
+    {
+      "people": 0,
+      "front": 0.0,
+      "balcony": 0.0,
+      "target": 0.0,
+      "status": "at-target",
+      "dmx": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}
