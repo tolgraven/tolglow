@@ -333,50 +333,63 @@
 (rf/reg-event-fx :studio/end-all
   (fn [{:keys [db]} _] {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) (get-in db [:show :instances]))}))
 
-;; A pointer may be released before its launch acknowledgement arrives. Keep
-;; that released record until the exact instance ID is available to retire.
-(rf/reg-event-fx :studio/gesture-down
-  (fn [{:keys [db]} [_ pointer]]
-    (let [id (:pointer-id pointer) mode (get-in db [:ui :launch-mode]) edit? (get-in db [:ui :edit?])
-          held? (and (:cue-id pointer) (= mode "held") (not edit?))
-          pointer (assoc pointer :mode mode :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id]) :held? held?)]
-      (if (get-in db [:pointers id]) {}
-        {:db (assoc-in db [:pointers id] pointer)
-         :fx (when held? [(let [[effect payload] (launch-fx db (:cue-id pointer) "held" [:studio/held-launched id])]
-                           [effect (assoc payload :on-failure [:studio/held-failed id])])])
-         :dispatch-later (when (and (not held?) (not= id "keyboard")) [{:ms 500 :dispatch [:studio/gesture-long id]}])}))))
+(rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
+
+(defn- launch-held [db {:keys [cue-id pointer-id press-id] :as pointer}]
+  ;; The command's origin survives pointer release, reuse and show replacement.
+  (let [owner (select-keys pointer [:pointer-id :press-id :epoch :runtime-id])]
+    (update (launch-fx db cue-id "held" [:studio/held-launched owner]) 1
+            assoc :on-failure [:studio/held-failed pointer-id press-id])))
+
+(rf/reg-event-fx :studio/gesture-down [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id] :as input}]]
+    (when-not (get-in db [:pointers pointer-id])
+      (let [mode (get-in db [:ui :launch-mode])
+            held? (and cue-id (= mode "held") (not (get-in db [:ui :edit?])))
+            pointer (merge input (select-keys (:show db) [:epoch :runtime-id])
+                           {:press-id unique :mode mode :held? held?})]
+        (cond-> {:db (assoc-in db [:pointers pointer-id] pointer)}
+          held? (assoc :fx [(launch-held db pointer)])
+          (and (not held?) (not= pointer-id "keyboard"))
+          (assoc :dispatch-later [{:ms 500 :dispatch [:studio/gesture-long pointer-id unique]}]))))))
+
 (rf/reg-event-fx :studio/held-failed
-  (fn [{:keys [db]} [_ id error]] {:db (update db :pointers dissoc id) :dispatch [:studio/failure error]}))
+  (fn [{:keys [db]} [_ id press-id error]]
+    (cond-> {:dispatch [:studio/failure error]}
+      (= press-id (get-in db [:pointers id :press-id])) (assoc :db (update db :pointers dissoc id)))))
 (rf/reg-event-db :studio/gesture-move
   (fn [db [_ {:keys [pointer-id client-x client-y]}]]
     (if-let [pointer (get-in db [:pointers pointer-id])]
       (if (> (js/Math.hypot (- client-x (:client-x pointer)) (- client-y (:client-y pointer))) 12)
         (assoc-in db [:pointers pointer-id :moved?] true) db) db)))
 (rf/reg-event-fx :studio/gesture-long
-  (fn [{:keys [db]} [_ id]]
-    (when-let [pointer (get-in db [:pointers id])]
-      (when-not (or (:moved? pointer) (:released? pointer))
+  (fn [{:keys [db]} [_ id press-id]]
+    (let [pointer (get-in db [:pointers id])]
+      (when (and press-id (= press-id (:press-id pointer)) (not (:moved? pointer)))
         {:db (assoc-in db [:pointers id :long?] true)
-         :dispatch [:studio/open-actions (select-keys pointer [:cue-id :x :y])]}))))
+         :dispatch [:studio/open-actions (select-keys pointer [:page-id :cue-id :x :y])]}))))
+
+(defn- end-held [db owner instance beacon?]
+  (command db "instance/end" {:instance-id instance} nil (:epoch owner) beacon? (:runtime-id owner)))
+
 (rf/reg-event-fx :studio/held-launched
-  (fn [{:keys [db]} [_ id ack]]
-    (let [pointer (get-in db [:pointers id]) instance (:instance-id ack)]
-      (if (or (nil? pointer) (:released? pointer))
-        {:db (update db :pointers dissoc id)
-         :fx (when instance [(command db "instance/end" {:instance-id instance} nil (:epoch pointer) false (:runtime-id pointer))])}
-        {:db (-> db (assoc-in [:pointers id :instance-id] instance) (assoc-in [:ui :selected-instance] instance))}))))
+  (fn [{:keys [db]} [_ {:keys [pointer-id press-id] :as owner} {:keys [instance-id]}]]
+    (when instance-id
+      (if (= press-id (get-in db [:pointers pointer-id :press-id]))
+        {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
+                 (assoc-in [:ui :selected-instance] instance-id))}
+        {:fx [(end-held db owner instance-id false)]}))))
+
 (defn release-pointer [db id beacon?]
   (if-let [pointer (get-in db [:pointers id])]
-    (if (and (:held? pointer) (nil? (:instance-id pointer)))
-      {:db (assoc-in db [:pointers id :released?] true)}
-      {:db (update db :pointers dissoc id)
-       :fx (when (:instance-id pointer) [(command db "instance/end" {:instance-id (:instance-id pointer)} nil (:epoch pointer) beacon? (:runtime-id pointer))])})
+    (cond-> {:db (update db :pointers dissoc id)}
+      (:instance-id pointer) (assoc :fx [(end-held db pointer (:instance-id pointer) beacon?)]))
     {}))
 (rf/reg-event-fx :studio/gesture-up
   (fn [{:keys [db]} [_ id]]
     (let [pointer (get-in db [:pointers id]) result (release-pointer db id false)]
       (cond-> result
-        (and pointer (not-any? pointer [:held? :moved? :long? :released?]))
+        (and pointer (not-any? pointer [:held? :moved? :long?]))
         (assoc :dispatch (if (or (get-in db [:ui :edit?]) (nil? (:cue-id pointer)))
                            [:studio/open-actions (select-keys pointer [:cue-id :x :y])]
                            [:studio/launch (:cue-id pointer) (:mode pointer)]))))))
@@ -440,7 +453,6 @@
         cells (filterv #(not (and (= x (:x %)) (= y (:y %)))) (:cells page))
         cells (cond-> cells cue-id (conj {:x x :y y :cue-id cue-id}))]
     (command db "page/put" {:page (assoc page :cells cells)})))
-(rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
 (rf/reg-fx :studio/focus-instance
   (fn [id]
     (js/requestAnimationFrame

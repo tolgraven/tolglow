@@ -48,18 +48,29 @@
     (is (< (js/Math.abs (- 0.7 (get-in updated [:show :instances 0 :params :level]))) 0.000001))
     (is (< (js/Math.abs (- 0.7 (get-in updated [:drafts ["7:9" :level] :fields :value]))) 0.000001))))
 
-(deftest released-before-acknowledgement-ends-exact-instance
-  (let [db (assoc-in base [:ui :launch-mode] "held")
-        down (transition db [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}])
-        released (transition (:db down) [:studio/gesture-up 11])
-        ack (transition (:db released) [:studio/held-launched 11 {:instance-id "7:10"}])]
-    (is (= "cue/launch" (:op (first-command down))))
-    (is (= "held" (get-in (first-command down) [:fields :launch :mode])))
-    (is (true? (get-in released [:db :pointers 11 :released?])))
-    (is (= "instance/end" (:op (first-command ack))))
-    (is (= "7:10" (get-in (first-command ack) [:fields :instance-id])))
-    (is (= 7 (:epoch (first-command ack))))
-    (is (empty? (get-in ack [:db :pointers])))))
+(deftest reused-pointer-and-late-held-acknowledgement-stay-independent
+  (let [gesture [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0}]
+        db (-> base (assoc-in [:ui :launch-mode] "held") (assoc-in [:show :runtime-id] "first-show"))
+        first-down (transition db gesture)
+        first-launch (first-command first-down)
+        released (:db (transition (:db first-down) [:studio/gesture-up 11]))
+        new-show (update released :show assoc :epoch 8 :runtime-id "second-show")
+        second-down (transition new-show gesture)
+        second-ack (conj (:on-success (first-command second-down)) {:instance-id "8:1"})
+        holding (:db (transition (:db second-down) second-ack))
+        late (transition holding (conj (:on-success first-launch) {:instance-id "7:10"}))
+        late-failure (transition holding (conj (:on-failure first-launch) "Timed out"))
+        final-release (first-command (transition holding [:studio/gesture-up 11]))]
+    (is (= "held" (get-in first-launch [:fields :launch :mode])))
+    (is (empty? (:pointers released)))
+    (is (= "cue/launch" (:op (first-command second-down))))
+    (is (= "8:1" (get-in holding [:pointers 11 :instance-id])))
+    (is (nil? (:db late)))
+    (is (nil? (:db late-failure)))
+    (is (= {:op "instance/end" :epoch 7 :runtime-id "first-show" :fields {:instance-id "7:10"}}
+           (select-keys (first-command late) [:op :epoch :runtime-id :fields])))
+    (is (= {:epoch 8 :runtime-id "second-show" :fields {:instance-id "8:1"}}
+           (select-keys final-release [:epoch :runtime-id :fields])))))
 
 (deftest independent-pointers-and-page-exit-release
   (let [db (assoc base :pointers {1 {:held? true :instance-id "7:11" :epoch 7}
@@ -72,12 +83,18 @@
     (is (true? (:beacon? (first-command exit))))
     (is (empty? (get-in exit [:db :pointers])))))
 
-(deftest long-press-opens-actions-without-launch
-  (let [down (transition base [:studio/gesture-down {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}])
-        long (transition (:db down) [:studio/gesture-long 1])
-        up (transition (:db long) [:studio/gesture-up 1])]
-    (is (= 500 (get-in down [:dispatch-later 0 :ms])))
-    (is (= :studio/open-actions (first (:dispatch long))))
+(deftest only-the-current-press-can-open-its-cue-actions
+  (let [pad {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}
+        down (transition base [:studio/gesture-down pad])
+        released (:db (transition (:db down) [:studio/gesture-up 1]))
+        rebound (transition released [:studio/gesture-down (assoc pad :cue-id "breathe" :x 1)])
+        timeout #(get-in % [:dispatch-later 0 :dispatch])
+        early (transition (:db rebound) (timeout down))
+        menu (transition (:db rebound) (timeout rebound))
+        up (transition (:db menu) [:studio/gesture-up 1])]
+    (is (= 500 (get-in rebound [:dispatch-later 0 :ms])))
+    (is (empty? early))
+    (is (= [:studio/open-actions {:cue-id "breathe" :x 1 :y 0}] (:dispatch menu)))
     (is (nil? (:dispatch up)))
     (is (empty? (:fx up)))))
 
