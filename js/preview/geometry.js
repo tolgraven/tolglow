@@ -77,6 +77,10 @@ export function createMovingHead(fixture, materials) {
   return entry;
 }
 export function disposeGeometry(root) {
-  const geometries = new Set(); root.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
+  const geometries = new Set();
+  root.traverse(object => {
+    if (object.geometry) geometries.add(object.geometry);
+    if (object.userData.ownsReceiverMaterial) object.material.dispose();
+  });
   for (const geometry of geometries) geometry.dispose();
 }

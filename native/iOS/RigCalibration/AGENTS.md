@@ -16,3 +16,9 @@ Measure passive room receivers from tracked plane boundaries in the same aligned
 AR world. Freeze the outline for review and send only the selected rectangle.
 Revision checks guard remeasurement. Keep passive entry available on a preview
 host and invalidate local geometry when the alignment or tracking world changes.
+
+Surface reflectance uses the shared photometry camera after the AR session stops.
+Require reviewed receiver geometry, a fixed calibrated lamp and the same marked
+camera patch for both card observations and the bare surface. Keep camera frames
+on the phone. Retain the card tolerance and geometry with the estimate. Use the
+native build and cited venue comparison separately when reporting accuracy.

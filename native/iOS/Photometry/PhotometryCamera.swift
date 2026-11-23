@@ -19,7 +19,7 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private var observers: [NSObjectProtocol] = []
     private var exposureSeconds = 0.0
     private var iso: Float = 0
-    private var pending: CheckedContinuation<Double, Error>?
+    private var pending: CheckedContinuation<[Double], Error>?
     private var requestID = UUID()
     private var settleUntil = 0.0
     private var values: [Double] = []
@@ -104,6 +104,10 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     }
 
     func measure() async throws -> Double {
+        try PhotometryFrame.stableMedian(await measureFrames())
+    }
+
+    func measureFrames() async throws -> [Double] {
         try await withCheckedThrowingContinuation { resume in
             queue.async {
                 guard self.pending == nil, self.session.isRunning else {
@@ -121,7 +125,7 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         }
     }
 
-    private func finish(_ result: Result<Double, Error>) {
+    private func finish(_ result: Result<[Double], Error>) {
         let prior = pending
         pending = nil
         prior?.resume(with: result)
@@ -143,7 +147,7 @@ final class PhotometryCamera: NSObject, AVCaptureVideoDataOutputSampleBufferDele
                 return
             }
             values.append(try Self.frameLuminance(buffer, transfer: transfer))
-            if values.count == 15 { finish(.success(try PhotometryFrame.stableMedian(values))) }
+            if values.count == 15 { finish(.success(values)) }
         } catch {
             if fogFeed != nil { onInterruption?() }
             else { finish(.failure(error)) }

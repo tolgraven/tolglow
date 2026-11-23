@@ -11,6 +11,7 @@
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.venue-scan :as venue-scan]
+            [tolglow.rig.reflectance :as reflectance]
             [tolglow.rig.photometry :as photometry]
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.studio.debug-stream :as debug-stream]
@@ -92,6 +93,7 @@
             :photometry! #(let [model (:model @(:state runtime))]
                             {:runtime-id (:id runtime) :epoch (:epoch model)
                              :output-capable? (boolean (and (:independent-output? runtime) (get-in runtime [:sink :send!])))
+                             :receivers (reflectance/receivers (:rig model))
                              :fixtures (photometry/fixtures model)})
             :calibration! #(let [model (:model @(:state runtime))]
                              {:runtime-id (:id runtime) :epoch (:epoch model) :show-id (:show-id model)

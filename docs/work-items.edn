@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
+ [{:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
+   :kind :implementation :status :in-progress :owner "iphone-surface-reflectance"
+   :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]
+   :depends-on [:native/venue-receivers :native/photometry-camera]
+   :acceptance ["Measure repeated card and surface phases under a confirmed fixed fixture, then apply the reviewed estimate in the preview."]
+   :evidence []}
+  {:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
    :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
    :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
    :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
