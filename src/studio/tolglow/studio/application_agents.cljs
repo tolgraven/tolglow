@@ -3,7 +3,8 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.output-reader :as output]))
 
 (def defaults {:open? false :generation 0 :serial 0 :pending {} :errors {} :tasks []
                :selected nil :events [] :items {} :order [] :cursor 0
@@ -54,9 +55,10 @@
               "workspace/check" (update-task s {:id (:selected s) :checks (assoc (:checks (task s) {}) (:profile event) (:result event))})
               "task/status" (update-task s (assoc (select-keys event [:status :error :checks :candidate]) :id (:selected s)))
               (update s :events #(vec (take-last 24 (conj (if (vector? %) % []) event))))))
-          (-> s (assoc :cursor (:cursor data) :dropped? (:dropped? data))
+          (-> s (assoc :cursor (:cursor data) :dropped? (or (:dropped? s) (:dropped? data)))
               (update-task {:id (:selected s) :status (:status data)})) (:events data)))
 
+(rf/reg-sub :application-agents/token (fn [db _] (token db)))
 (rf/reg-sub :application-agents/state (fn [db _] (state db)))
 (rf/reg-event-fx :application-agents/open
   (fn [{:keys [db]} _]
@@ -73,23 +75,30 @@
 (rf/reg-event-fx :application-agents/list
   (fn [{:keys [db]} _]
     (when (and (:open? (state db)) (not (get-in (state db) [:pending :list])))
-      (if (get-in db [:show :runtime-id]) (request db :list nil {} nil)
-        {:dispatch-later [{:ms 250 :dispatch [:application-agents/list]}]}))))
+      (when (get-in db [:show :runtime-id]) (request db :list nil {} nil)))))
 (rf/reg-event-fx :application-agents/select
   (fn [{:keys [db]} [_ id]]
     (let [s (release-view-requests (state db))]
-      (cond-> {:db (store db (assoc s :selected id :cursor 0 :items {} :order [] :events [] :dropped? false))}
-        (:open? s) (assoc :fx [[:dispatch [:application-agents/status id]] [:dispatch [:application-agents/poll id]]])))))
+      (cond-> {:db (store db (assoc s :selected id :cursor 0 :items {} :order [] :events [] :dropped? false :stream-complete? false))}
+        (:open? s) (assoc :dispatch [:application-agents/status id])))))
 (rf/reg-event-fx :application-agents/status
   (fn [{:keys [db]} [_ id]]
     (when (and (:open? (state db)) (= id (:selected (state db))) (not (get-in (state db) [:pending [:status id]])))
       (request db [:status id] :status {:id id} nil))))
-(rf/reg-event-fx :application-agents/poll
-  (fn [{:keys [db]} [_ id expected-token]]
+(rf/reg-event-fx :application-agents/progress
+  (fn [{:keys [db]} [_ t id cursor {:keys [value error]}]]
     (let [s (state db)]
-      (when (and (:open? s) (= id (:selected s)) (not (get-in s [:pending [:events id]]))
-                 (or (nil? expected-token) (current? db expected-token)))
-        (request db [:events id] :events {:id id :cursor (:cursor s)} nil)))))
+      (when (and (:open? s) (current? db t) (= id (:selected s)) (= cursor (:cursor s)))
+        (cond
+          error {:db (store db (assoc-in s [:errors :progress] "Task progress is unavailable."))}
+          (= id (:task-id value))
+          (let [done? (and (finished? (:status value)) (= (:cursor value) (:available-cursor value)))
+                next (-> (consume-events s value)
+                         (assoc :stream-complete? done?)
+                         (update :errors dissoc :progress))]
+            (cond-> {:db (store db next)}
+              (or done? (:dropped? value)) (assoc :dispatch [:application-agents/status id]))))))))
+
 (defn start-payload [form]
   (when-not (and (contains? #{"codex"} (:provider form)) (contains? #{"tolglow" "afterglow"} (:repo form))
                  (contains? #{"manual" "after-turn"} (:policy form))
@@ -117,9 +126,8 @@
           (case operation
             nil {:db (store db (merge s (select-keys data [:available? :runner-ready? :execution-configured? :providers :tasks
                                                           :preview-available? :activation-available? :configuration-persisted?])))
-                 :dispatch (cond
-                             (:selected s) [:application-agents/poll (:selected s)]
-                             (seq (:tasks data)) [:application-agents/select (:id (last (:tasks data)))])}
+                 :dispatch (when (and (nil? (:selected s)) (seq (:tasks data)))
+                             [:application-agents/select (:id (last (:tasks data)))])}
             :configure {:db (store db (merge s (select-keys data [:providers :configuration-persisted?])))
                         :dispatch [:application-agents/list]}
             :start {:db (store db (cond-> (update-task s data)
@@ -129,20 +137,12 @@
             :cancel {:db (store db (update-task s data))
                      :dispatch (when (and (:open? s) (= (:id data) (:selected s)))
                                  [:application-agents/status (:id data)])}
-            :events (if (not= (:selected s) (:task-id data)) {:db (store db s)}
-                      {:db (store db (consume-events s data))
-                       :dispatch (when (or (:dropped? data) (finished? (:status data))) [:application-agents/status (:selected s)])
-                       :dispatch-later (when-not (finished? (:status data))
-                                         [{:ms 400 :dispatch [:application-agents/poll (:selected s) t]}])})
             {:db (store db s)}))))))
 (rf/reg-event-fx :application-agents/failed
   (fn [{:keys [db]} [_ t key serial error]]
     (let [s (state db)]
       (when (owns-request? db (get-in s [:pending key]) t serial)
-        {:db (store db (-> s (update :pending dissoc key) (assoc-in [:errors key] error)))
-         :dispatch-later (when (and (:open? s) (vector? key) (= :events (first key)) (= (:selected s) (second key)))
-                           [{:ms 1200 :dispatch [:application-agents/poll (:selected s) t]}])}))))
-
+        {:db (store db (-> s (update :pending dissoc key) (assoc-in [:errors key] error)))}))))
 (defn- item-view [item]
   (case (:item-type item)
     "agent_message" [:article.application-agent-message [:span.application-agent-speaker "Codex"] [:p (:text item)]]
@@ -195,6 +195,10 @@
         configured? (some #(and (= "codex" (:id %)) (:configured? %)) (:providers s))
         busy? (contains? (:pending s) :start)]
     [:section.panel.application-agents {:aria-label "Application coding agent"}
+     (when (and (:open? s) (:selected s) (not (:stream-complete? s)))
+       (let [id (:selected s) cursor (:cursor s)]
+         (output/at [:development/task-events id cursor]
+                    [:application-agents/progress @(rf/subscribe [:application-agents/token]) id cursor])))
      [:div.panel-top [:span.section-label "APPLICATION AGENT"]
       [:span.small.muted (cond (not (:available? s)) "Loading or unavailable" (not (:runner-ready? s)) "Runner unavailable"
                                configured? "Codex connected" :else "Connect Codex")]]

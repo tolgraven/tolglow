@@ -274,3 +274,41 @@
               (is (empty? (:jobs (terminal/status boundary)))))
             (finally (agents/close! owner) (terminal/close! boundary))))))
     @*report-counters*))
+
+(deftest task-output-leases-replay-the-retained-window-and-release-their-watch
+  (fixtures/with-workspace {}
+    (fn [{:keys [manager]}]
+      (let [send-lines (promise) finish-turn (promise) wake (promise)
+            execute! (fn [{:keys [on-line!] :as request}]
+                       @send-lines
+                       (doseq [n (range 48)]
+                         (on-line! :stdout (json/write-str {:type "item.completed"
+                                                           :item {:id (str n) :type "agent_message" :text (str n)}})))
+                       @finish-turn
+                       (completed! request))
+            owner (agents/create-manager (assoc (options manager execute!) :event-limit 32))]
+        (try
+          (let [id (:id (agents/start! owner {:provider :codex :repo :tolglow :policy :manual :prompt "Read a fixture"}))
+                source (fn [n] (agents/event-source owner [:development/task-events id n]))
+                lease (source 0)
+                events (get-in @(:state owner) [:runs id :events])
+                watches #(count (.getWatches ^clojure.lang.Atom events))
+                before (watches)
+                detach ((:observe! lease) (fn [] (deliver wake true)))
+                read! (fn [lease] ((:sample! lease) ((:source! lease))))]
+            (is (= (inc before) (watches)))
+            (deliver send-lines true)
+            (is (deref wake 10000 false))
+            (deliver finish-turn true)
+            (is (= :completed (:status (finish owner id))))
+            (let [first (read! lease)
+                  second (read! (source (:cursor first)))]
+              (is (:dropped? first))
+              (is (= 16 (count (:events first))))
+              (is (= (:available-cursor first) (:cursor second)))
+              (is (= :completed (:status second)))
+              (is (apply < (map :cursor (concat (:events first) (:events second))))))
+            (detach)
+            (is (= before (watches)))
+            (is (= {:error :unavailable} @(get (agents/event-source owner [:development/task-events "unknown" 0]) :result))))
+          (finally (deliver send-lines true) (deliver finish-turn true) (agents/close! owner)))))))

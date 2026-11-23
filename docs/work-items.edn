@@ -622,11 +622,11 @@
    :acceptance ["Open a workspace, receive an external check completion while the show is idle, release demand on leaving, and issue no periodic status reads."]
    :evidence ["Chromium on the optimized Studio bundle observed a check started outside the page enter running and passed, reconnected to its final status, and recorded zero workspace-status HTTP reads with the show held at frame zero. The real Transit socket integration also verifies the last subscriber releases the workspace watch. Reproduce with lein run -m tolglow.qa.workspace-status."]}
   {:id :studio/developer-output-push :title "Stream coding-agent events and terminal output to their active panes"
-   :kind :implementation :status :planned :owner nil
+   :kind :implementation :status :done :owner "Studio development streams"
    :paths ["tolglow/src/studio/tolglow/studio/application_agents.cljs" "tolglow/src/studio/tolglow/studio/terminal.cljs" "tolglow/src/tolglow/development"]
    :depends-on [:development/workspace-service-v1]
    :acceptance ["Replace timed reads of agent events and terminal output with demand-driven operator streams. Preserve cursors, bounded replay, exit status, gap handling and teardown. Verify both panes receive output while the show clock is paused and produce no idle HTTP reads."]
-   :evidence []}
+   :evidence ["The release browser recovered a local provider transcript after reopening, replayed actual Docker zsh output on remount, drained exit 0, and recorded no idle terminal or task-event HTTP reads. The two-operator Transit regression verified that wrong-repository demand receives no terminal bytes, and releasing the final reader detaches the watch. Reproduce with lein run -m tolglow.qa.developer-output after building Studio and its development image."]}
   {:id :web/typed-state-push
    :title "Deliver committed show state through Reitit, Transit and bounded WebSockets"
    :kind :implementation :status :done :owner nil
