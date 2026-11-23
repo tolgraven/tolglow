@@ -36,14 +36,14 @@
 (defn admission
   "Validate credentials held by the Studio worker or stage bridge. The host
   chooses guest verification. A guest never receives either credential."
-  [hub {:keys [op token caps]}]
+  [hub direct-stage? {:keys [op token caps]}]
   (let [bytes (credential token) limit (:max-result-floats caps)
         matches? #(and bytes % (MessageDigest/isEqual bytes %))]
     (when (and (= :hello op) (pos-int? limit))
       (let [base {:max-result-floats (min limit max-result-floats)}]
         (cond
           (matches? (:bridge-token hub))
-          (when (and (= true (:guest? caps)) (string? (:subject caps)) (<= 1 (count (:subject caps)) 128))
+          (when (and direct-stage? (= true (:guest? caps)) (string? (:subject caps)) (<= 1 (count (:subject caps)) 128))
             (assoc base :verification (:verification hub) :subject (:subject caps)))
           (and (matches? (:token hub)) (not (contains? caps :guest?))) base)))))
 
@@ -84,11 +84,11 @@
     (when @(:id client) (schedule-send! hub socket client))
     (throw (ex-info "Compute peer unavailable" {}))))
 
-(defn- open! [hub socket]
+(defn- open! [hub direct-stage? socket]
   (locking hub
     (if (or @(:closed? hub) (>= (count @(:clients hub)) max-clients))
       (ws/close socket 1013 "Compute unavailable")
-      (let [client {:id (atom nil) :closed? (atom false) :sending? (atom false)
+      (let [client {:direct-stage? direct-stage? :id (atom nil) :closed? (atom false) :sending? (atom false)
                     :timer (atom nil) :out (ArrayBlockingQueue. 4)}]
         (swap! (:clients hub) assoc socket client)
         (reset! (:timer client)
@@ -99,7 +99,7 @@
                            5 TimeUnit/SECONDS))))))
 
 (defn- admit! [hub socket client hello]
-  (let [caps (or (admission hub hello) (throw (ex-info "Compute admission denied" {})))]
+  (let [caps (or (admission hub (:direct-stage? client) hello) (throw (ex-info "Compute admission denied" {})))]
     ;; Queue welcome before work, release the writer only after successful pool membership.
     (.add ^ArrayBlockingQueue (:out client)
           (cond-> {:op :welcome} (:verification caps) (assoc :verification (:verification caps))))
@@ -131,18 +131,27 @@
                 (admit! hub socket client packet))))))
       (catch Exception _ (retire! hub socket 1008 "Compute session rejected")))))
 
-(defn response [hub {:keys [scheme remote-addr headers] :as request}]
+(defn- local-origin? [{:keys [remote-addr headers]}]
+  (and (string? remote-addr) (origin/loopback-host? remote-addr)
+       (origin/loopback-host? (.getHost (java.net.URI. (get headers "origin"))))))
+
+(defn- stage-transport? [request]
+  (and (local-origin? request) (not (::origin/proxied? request))
+       (not-any? (:headers request)
+                 ["forwarded" "via" "x-real-ip" "x-forwarded-for" "x-forwarded-host" "x-forwarded-proto"])))
+
+(defn response [hub {:keys [scheme headers] :as request}]
   (cond
     (nil? hub) {:status 503 :body "Distributed rendering unavailable"}
     (not (and (seq (get headers "origin")) (origin/same-origin? request)))
     {:status 403 :body "Same-origin Studio session required"}
-    (not (or (and (origin/loopback-host? remote-addr)
-                  (origin/loopback-host? (.getHost (java.net.URI. (get headers "origin")))))
+    (not (or (local-origin? request)
              (and (= :https scheme) (::access/operator? request))))
     {:status 403 :body "Authenticated HTTPS Studio session required"}
     (not (ws/upgrade-request? request)) {:status 426 :headers {"Upgrade" "websocket"} :body "WebSocket required"}
     :else
-    {::ws/listener {:on-open #(open! hub %)
-                    :on-message #(receive! hub %1 %2)
-                    :on-close (fn [socket _ _] (retire! hub socket 1000 "Compute disconnected"))
-                    :on-error (fn [socket _] (retire! hub socket 1011 "Compute disconnected"))}}))
+    (let [direct-stage? (stage-transport? request)]
+      {::ws/listener {:on-open #(open! hub direct-stage? %)
+                      :on-message #(receive! hub %1 %2)
+                      :on-close (fn [socket _ _] (retire! hub socket 1000 "Compute disconnected"))
+                      :on-error (fn [socket _] (retire! hub socket 1011 "Compute disconnected"))}})))

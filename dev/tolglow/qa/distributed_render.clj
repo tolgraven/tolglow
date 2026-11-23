@@ -98,7 +98,7 @@
     {:frames (count complete) :partial-frames (count partial) :packets (count packets)
      :pre-roll-frames (count (take-while #{idle} complete))}))
 
-(defn- prove! [runtime cpu capture root mode]
+(defn- prove! [runtime cpu capture root mode guest-counts]
   (let [phases (atom [])
         peer-count (if (= mode :operator-phone) 1 2)
         pool #(:pool (stats runtime))
@@ -127,15 +127,20 @@
                 (eventually "one participant leaves the stage" #(= 1 (:workers (pool)))))
             (eventually "peer loss during a leased run"
                         #(let [p (pool)] (and (= 1 (:workers p)) (> (:missed p) misses)))))))
-      (advance "promote the next running cue" [{:op :instance/remove :instance-id id}])
-      (wait-draws)
+      (let [before (when guest-counts (:full-slices @guest-counts))]
+        (advance "promote the next running cue" [{:op :instance/remove :instance-id id}])
+        (wait-draws)
+        (when guest-counts
+          (let [verified (- (:full-slices @guest-counts) before)]
+            (assert (pos? verified) "The surviving guest must have a new fully verified slice after peer loss")
+            (swap! guest-counts assoc :full-slices-after-loss verified))))
       (let [result (merge {:heads 64 :layers 18 :universes 2 :first-completed-ms cold-ms
                            :final (stats runtime) :phases (phase-run @phases)}
                           (verify-artnet! root capture cpu @phases))]
         (spit (io/file root "finish") "done")
         result))))
 
-(defn- observe! [runtime cpu capture dir mode]
+(defn- observe! [runtime cpu capture dir mode & [guest-counts]]
   (let [fuse chain/fuse evaluate distributed/evaluate!
         started (System/nanoTime) stages (atom {}) samples (atom [])
         timed-fusion (fn [cache prepare blocks]
@@ -150,7 +155,7 @@
                                                 :duration-ms (/ (- (System/nanoTime) t) 1e6)}))
                          batch))]
     (with-redefs [chain/fuse timed-fusion distributed/evaluate! timed-render]
-      (let [result (prove! runtime cpu capture dir mode)]
+      (let [result (prove! runtime cpu capture dir mode guest-counts)]
         (when-not (and (get @stages [18 1]) (get @stages [17 1]))
           (throw (ex-info "Expected 18 and later 17 native groups to fuse to one" {:shapes @stages})))
         (assoc result
@@ -168,9 +173,8 @@
                                     (when (pair group env job first-copy second-copy)
                                       (swap! counts update :redundant-slices inc)
                                       true))]
-      (let [result (observe! runtime cpu capture dir mode)
-            {:keys [full-slices redundant-slices]} @counts]
-        (assert (pos? full-slices) "The single remaining guest must receive full verification")
+      (let [result (observe! runtime cpu capture dir mode counts)
+            {:keys [redundant-slices]} @counts]
         (when (= "redundant" (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION"))
           (assert (pos? redundant-slices) "Both independently admitted guests must verify a shared slice"))
         (assoc result :guest-verifications @counts)))))
