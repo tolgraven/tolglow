@@ -33,7 +33,8 @@
   response chain once for all projected instances, respecting private clocks."
   [{:keys [model resolved-param-overrides modulation-view]}]
   (let [overrides (or resolved-param-overrides (:overrides modulation-view))
-        middleware (response/compile-middleware (filterv #(not= false (:enabled? %)) (:responses model [])))]
+        responses (filterv #(not= false (:enabled? %)) (:responses model []))
+        middleware (if (seq responses) (response/compile-middleware responses) identity)]
     (fn [instance]
       (middleware {:instance (update instance :params merge (get overrides (:id instance)))
                    :frame (instance-clock model instance)}))))

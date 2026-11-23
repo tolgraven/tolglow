@@ -15,6 +15,19 @@
 (defn- bridge [config]
   (ableton/new-bridge (assoc (select-keys (:live config) [:mappings :parameters :channel :mode]) :id :live)))
 
+(defn parameter-routing
+  "Snapshot destinations currently owned by a running Live or mapped MIDI input."
+  [manager]
+  (let [{:keys [active status config bridge]} @(:state manager)]
+    (when (and (= :running status) active (= :lighting (:mode bridge)) (seq (:parameters bridge)))
+      (let [resources @(:resources active)]
+        (let [ports (cond-> []
+                      (:live resources) (conj (get-in config [:live :source-id]))
+                      (and (:midi resources) (get-in config [:midi :control?])) (conj (get-in config [:midi :source-id])))]
+          (when (seq ports)
+            {:parameters (:parameters bridge) :channel (:channel bridge)
+             :bridge-id (get-in config [:live :bridge-id]) :source-ids ports}))))))
+
 (defn ingest-live!
   "Admit a companion bridge callback only for the configured bridge and current
   explicit run handshake. Queued callbacks from an older show/run cannot become

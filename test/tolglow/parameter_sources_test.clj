@@ -97,3 +97,42 @@
           (is (= [64 64] @packet))
           (is (empty? (:parameter-sources (instance restored-id))))))
       (finally (show/stop! rt)))))
+
+(deftest observed-source-types-and-static-projection-cost
+  (let [base (fixture/model)
+        older (get-in base [:instances "0:1"])
+        newer (assoc older :id "0:2" :order 1)
+        model (-> base (assoc-in [:instances "0:2"] newer)
+                  (assoc-in [:instances "0:1" :definition :spatial-volume :sources :level] {:variable [:ball :speed]})
+                  (assoc :routing {:enabled? true
+                                   :spec {:routes [{:id :bass :destination :left :source "audio/bass-pitch-hz"}]
+                                          :destinations {:left {:param :level}}}
+                                   :state {:routes {:bass {:instance-id "0:1"}}}}))
+        live {:channel 2 :bridge-id "venue" :parameters {23 {:cue-id :wash :param :level :lane-note 60}
+                                                          45 {:cue-id :wash :param :level :disabled? true}}}
+        sources (sources/source-index model {:spatial-overrides {"0:1" {:level 0.5}} :live-routing live})]
+    (is (= [:patch :spatial] (mapv :type (get-in sources ["0:1" :level]))))
+    (is (= "audio/bass-pitch-hz" (get-in sources ["0:1" :level 0 :source-id])))
+    (is (= {:variable [:ball :speed]} (get-in sources ["0:1" :level 1 :source])))
+    (is (= [{:type :live :controller 23 :bridge-id "venue" :channel 2 :lane-note 60}]
+           (get-in sources ["0:2" :level])))
+    (is (empty? (sources/source-index base {})))
+    (is (empty? (sources/project older {} #(throw (AssertionError. "Unbound static cards must not resolve parameters")) false)))))
+
+(deftest composed-registered-waveforms-capture-their-lowered-input-version
+  (let [library (signals/new-registry)
+        composite (fn [registry version]
+                    {:id :stacked :version version :range [0 1] :params {}
+                     :expression (signals/sample registry :saw {:phase {:op :param :key signals/phase-input}})})
+        first-library (signals/publish library (composite library 1))
+        model (bind-to (assoc (fixture/model) :waveforms first-library) :level (assoc saw :waveform :stacked))
+        sample (fn [m cache] (sources/sample m {:beat 0.25 :time-ms 125} cache))
+        first-output (sample model {})
+        replace-saw (assoc (get-in library [:waveforms :saw]) :version 2 :expression {:op :const :value 0.7})
+        second-library (signals/publish first-library replace-saw)
+        captured (sample (assoc model :waveforms second-library) (:plans first-output))
+        updated (sample (assoc model :waveforms (signals/publish second-library (composite second-library 2)))
+                        (:plans captured))]
+    (is (= 0.25 (get-in first-output [:overrides "0:1" :level])))
+    (is (= (:overrides first-output) (:overrides captured)))
+    (is (= 0.7 (get-in updated [:overrides "0:1" :level])))))

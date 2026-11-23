@@ -11,9 +11,13 @@
 (def ^:private builtins (delay (signals/new-registry)))
 (defn- waveforms [model] (or (:waveforms model) @builtins))
 
-(defn waveform-options [model]
-  (->> (:waveforms (waveforms model)) vals (sort-by (comp str :id))
+(defn- options [registry]
+  (->> (:waveforms registry) vals (sort-by (comp str :id))
        (mapv #(select-keys % [:id :name :range :params :version]))))
+
+(def ^:private builtin-options (delay (options @builtins)))
+(defn waveform-options [model]
+  (if-let [registry (:waveforms model)] (options registry) @builtin-options))
 
 (defn- require! [condition message]
   (when-not condition (throw (ex-info message {:type ::invalid-binding}))))
@@ -108,29 +112,66 @@
 
 (defn- append [sources id param entry] (update-in sources [id param] (fnil conj []) entry))
 
-(defn source-index [model live-sources]
-  (let [random (modulation/source-index model)
-        live (reduce-kv (fn [result id inputs]
-                          (reduce-kv (fn [out param entry] (append out id param entry)) result inputs))
-                        random (or live-sources {}))
-        routing (:routing model)]
-    (if-not (:enabled? routing) live
+(defn- patch-sources [sources model]
+  (let [routing (:routing model)]
+    (if-not (:enabled? routing) sources
       (reduce (fn [out {:keys [id destination source]}]
                 (let [instance (get-in routing [:state :routes id :instance-id])
                       param (get-in routing [:spec :destinations destination :param])]
                   (if (and param (contains? (:instances model) instance))
                     (append out instance param {:type :patch :route-id id :source-id source})
                     out)))
-              live (get-in routing [:spec :routes])))))
+              sources (get-in routing [:spec :routes])))))
 
-(defn project [instance sources resolve-inputs]
-  (let [blocks (for [[kind param :as path] (keys (get-in instance [:definition :blocks])) :when (= :params kind)]
-                 [param {:type :blocks :path path}])
-        fields (reduce (fn [m [param source]] (update m param (fnil conj []) source)) sources blocks)
-        {:keys [response-values] resolved :instance} (resolve-inputs instance)
-        fields (reduce (fn [m {:keys [params id]}]
-                         (reduce #(update %1 %2 (fnil conj []) {:type :response :id id}) m params))
-                       fields response-values)]
-    (into {} (map (fn [[param entries]]
-                    [param {:base-value (get-in instance [:params param])
-                            :effective-value (get-in resolved [:params param]) :sources entries}])) fields)))
+(defn- live-destinations [sources model {:keys [parameters] :as routing}]
+  (if-not (seq parameters) sources
+    (let [latest (reduce (fn [m instance] (if (= :running (:phase instance))
+                                           (assoc m (:cue-id instance) (:id instance)) m))
+                         {} (sort-by :order (vals (:instances model))))]
+      (reduce-kv
+        (fn [out controller {:keys [disabled? cue-id instance-id param lane-note]}]
+          (let [id (get latest cue-id instance-id)]
+            (if (and (not disabled?) (get-in model [:instances id :definition :params param]))
+              (append out id param (cond-> (assoc (dissoc routing :parameters) :type :live :controller controller)
+                                     lane-note (assoc :lane-note lane-note)))
+              out)))
+        sources parameters))))
+
+(defn- spatial-sources [sources model overrides]
+  (reduce-kv (fn [out id fields]
+               (reduce-kv (fn [out param _]
+                            (let [source (get-in model [:instances id :definition :spatial-volume :sources param])]
+                              (append out id param {:type :spatial :source source})))
+                          out fields))
+             sources (or overrides {})))
+
+(defn source-index [model {:keys [sources spatial-overrides live-routing]}]
+  (let [writers (-> {} (patch-sources model) (live-destinations model live-routing))
+        random (merge-with (partial merge-with into) writers (modulation/source-index model))
+        waveforms (reduce-kv (fn [result id inputs]
+                               (reduce-kv (fn [out param entry] (append out id param entry)) result inputs))
+                             random (or sources {}))]
+    (spatial-sources waveforms model spatial-overrides)))
+
+(defn- parameter-blocks [instance]
+  (for [[kind param :as path] (keys (get-in instance [:definition :blocks])) :when (= :params kind)]
+    [param {:type :blocks :path path}]))
+
+(defn- add-responses [fields responses]
+  (reduce (fn [m {:keys [params id]}]
+            (reduce #(update %1 %2 (fnil conj []) {:type :response :id id}) m params))
+          fields responses))
+
+(defn project [instance sources resolve-inputs responses?]
+  (let [blocks (parameter-blocks instance)]
+    (if (or (seq sources) responses? (seq blocks))
+      (let [context (try (resolve-inputs instance)
+                         (catch Exception error {:error (.getMessage error)}))
+            fields (reduce (fn [m [param source]] (update m param (fnil conj []) source))
+                           (add-responses sources (:response-values context)) blocks)]
+        (into {} (for [[param entries] fields]
+                   [param (cond-> {:base-value (get-in instance [:params param])
+                                   :effective-value (get-in context [:instance :params param])
+                                   :sources entries}
+                            (:error context) (assoc :error (:error context)))])))
+      {})))

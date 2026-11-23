@@ -121,7 +121,8 @@
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
-  (let [sources (parameter-sources/source-index model (:sources parameter-samples))
+  (let [sources (parameter-sources/source-index model parameter-samples)
+        responses? (some #(not= false (:enabled? %)) (:responses model))
         resolve-inputs (waveforms/resolved-inputs snapshot)
         optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
@@ -150,7 +151,7 @@
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
-                                  (assoc :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs))
+                                  (assoc :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?))
                                   (assoc :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
@@ -1193,7 +1194,9 @@
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
-                        :parameter-samples parameter-samples :resolved-param-overrides input-overrides
+                        :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+                                                  :live-routing (live-sync/parameter-routing (connections/sync (:connections runtime))))
+                        :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
                      (catch Exception error
