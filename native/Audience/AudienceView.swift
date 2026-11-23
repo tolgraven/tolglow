@@ -14,12 +14,11 @@ struct AudienceView: View {
     #if APPCLIP
     @State private var showFullApp = false
     #endif
-    let room: String?
+    private var room: String? { client.room }
 
-    init(session: AudienceSession, room: String? = nil) {
+    init(session: AudienceSession) {
         self.session = session
         self.client = session.client
-        self.room = room
     }
 
     private var background: Color {
@@ -41,13 +40,29 @@ struct AudienceView: View {
                     Text("Dance floor")
                         .font(.largeTitle.bold())
                         .accessibilityAddTraits(.isHeader)
-                    if client.joined {
+                    if client.invalidInvitation {
+                        Label("Scan a valid stage invitation to join.", systemImage: "qrcode.viewfinder")
+                            .font(.headline)
+                    } else if client.reconnecting {
+                        HStack(spacing: 10) {
+                            ProgressView().tint(accent)
+                            Text(client.status).font(.headline)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.updatesFrequently)
+                    } else if client.joined {
                         joinedControls
                     } else if client.looking || client.connecting {
                         discovery
                     } else {
                         if attemptedJoin { Text(client.status).font(.headline) }
                         introduction
+                        #if !APPCLIP
+                        if room != nil {
+                            Button("Browse without this invitation") { client.browseWithoutInvitation() }
+                                .frame(minHeight: 44)
+                        }
+                        #endif
                     }
                     #if APPCLIP
                     Button { showFullApp = true } label: {
@@ -64,13 +79,17 @@ struct AudienceView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(background)
-            .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                #if APPCLIP
+                if !client.invalidInvitation { actionBar }
+                #else
+                actionBar
+                #endif
+            }
             .toolbar(.hidden, for: .navigationBar)
         }
         .tint(accent)
-        .onChange(of: client.joined) { _, joined in if joined { session.startInputs() } }
         .onChange(of: session.input) { _, _ in session.resetInput() }
-        .onChange(of: room) { _, _ in client.leave() }
         .onChange(of: phase) { _, value in
             if value == .background { session.enterBackground() }
             if value == .active { session.foreground() }
@@ -168,7 +187,7 @@ struct AudienceView: View {
             }
             #if !APPCLIP
             VStack(alignment: .leading, spacing: 8) {
-                Text("Optional sharing").font(.headline)
+                Text("Optional sensor sharing").font(.headline)
                 if session.input == .motion {
                     Toggle("Phone acceleration and rotation", isOn: $session.shareMotionAxes).frame(minHeight: 48)
                 }
@@ -181,6 +200,7 @@ struct AudienceView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Stage rendering").font(.headline)
                     GuestComputeControl(client: client, room: room)
+                        .buttonStyle(.bordered).controlSize(.large)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16).background(surface, in: RoundedRectangle(cornerRadius: 14))
@@ -241,7 +261,15 @@ struct AudienceView: View {
     }
 
     @ViewBuilder private var dockControls: some View {
-        if client.joined {
+        if client.invalidInvitation {
+            #if !APPCLIP
+            primary("Browse without this invitation", symbol: "dot.radiowaves.left.and.right") { client.browseWithoutInvitation() }
+            #endif
+        } else if client.reconnecting {
+            Button("Cancel reconnection") { client.leave() }
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .buttonStyle(.bordered)
+        } else if client.joined {
             if session.input == .touch {
                 primary("Tap a step", symbol: "hand.tap.fill") { session.tap() }
             }

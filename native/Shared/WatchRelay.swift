@@ -27,7 +27,7 @@ import WatchConnectivity
         }, errorHandler: nil)
     }
 
-    var audienceReceive: ((AudienceSample, Double?) -> Bool)?
+    var audienceReceive: ((AudienceSample, Double?, TimeInterval) -> Bool)?
     var audienceEnded: (() -> Void)?
     private var audienceSession: UUID?
     private var audienceSending = false
@@ -193,7 +193,7 @@ import WatchConnectivity
                                                              sent: sent, received: received,
                                                              uptime: ProcessInfo.processInfo.systemUptime)
                 if accepted, let previous, previous != audienceID { self.audienceEnded?() }
-                replyHandler(["received": accepted && self.audienceReceive?(sample, measured) == true])
+                replyHandler(["received": accepted && self.audienceReceive?(sample, measured, sent) == true])
             } else if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
                 self.discoveredDeviceID = device
                 replyHandler(["received": true])

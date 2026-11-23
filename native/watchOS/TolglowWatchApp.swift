@@ -14,7 +14,9 @@ import SwiftUI
         }
     }
     func sceneChanged(_ phase: ScenePhase) {
-        if phase == .active || workout.runningWorkout { return }
+        if phase == .active { workout.link.stage.setForeground(true); return }
+        if phase == .background { workout.link.stage.setForeground(false) }
+        if workout.runningWorkout { return }
         // HealthKit may present the permission sheet while the scene is inactive.
         if workout.requesting && phase == .inactive { return }
         if workout.active || workout.requesting || (phase == .background && workout.link.route == .nearbyStage) {
