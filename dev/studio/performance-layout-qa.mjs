@@ -118,7 +118,7 @@ async function verifyControls(page,touch,profile) {
   await activate(edit.getByRole('button',{name:'Use base value',exact:true}));
   await edit.getByRole('button',{name:'Resume LFO',exact:true}).waitFor();
   await scope.waitFor({state:'detached'});
-  assert.equal(await card.getByRole('button',{name:'Edit source for Intensity'}).count(),1);
+  await card.getByRole('button',{name:'Edit source for Intensity'}).locator('.transport-symbol.pause').waitFor();
   await activate(edit.getByRole('button',{name:'Resume LFO',exact:true}));
   await edit.getByRole('button',{name:'Use base value',exact:true}).waitFor();
   await scope.waitFor({state:'attached'});
