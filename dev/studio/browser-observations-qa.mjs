@@ -12,6 +12,7 @@ await mkdir(target, {recursive: true});
 await access('resources/studio/js/main.js');
 const classpath = execFileSync('lein', ['classpath'], {encoding:'utf8'}).trim();
 const host = spawn('java', ['-cp',classpath,'clojure.main','-m','tolglow.qa.browser-observations'], {stdio:['pipe','pipe','inherit']});
+host.stdin.on('error', error => {if (error.code !== 'EPIPE') console.error(error);});
 const output = createInterface({input: host.stdout})[Symbol.asyncIterator]();
 async function response(command) {
   if (command) host.stdin.write(command + '\n');
@@ -109,6 +110,6 @@ try {
   await writeFile(target + '/observations.json', JSON.stringify(report,null,2)+'\n');
   console.log(JSON.stringify(report));
 } finally {
-  host.stdin.end('quit\n');
+  if (host.exitCode === null && !host.stdin.destroyed) host.stdin.end('quit\n');
   await browser.close();
 }
