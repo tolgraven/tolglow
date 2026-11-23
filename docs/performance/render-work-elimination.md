@@ -116,6 +116,20 @@ In the first version, `(< low value high)` inside the beam loop increased whole-
 
 On the physical M4 MacBook Air the optimized CPU show took 62.13 ms median, with zero of 36 frames meeting 25 ms. The standalone hardware shader including readback took 1.91 ms median. Full-show results include the rig, scheduling settings, paired GPU-material timings and a link to the corrected checksum-pinned replay kit. [MacBook Air measurements](https://github.com/tolgraven/tolglow/pull/174)
 
+#### Preparing the sphere fade curve
+
+Two complete show hosts rendered four moving spheres, eight overlapping washes, 64 moving heads and either 10,000 or 20,000 RGBW pixels. Each pair alternated execution order. A prepared Clojure function computes the response for floating-point fade widths. Across 18 warmup and 36 timed pairs all fixture transitions, state, effect operations, sampled preview and ArtDMX bytes agreed. Both CPU configurations missed the 25 ms deadline on all 36 frames at each size.
+
+| Median per frame | 10,000 pixels, original → prepared | 20,000 pixels, original → prepared |
+| --- | ---: | ---: |
+| Sphere sampling allocation | 13.39 → 10.98 MB | 21.18 → 19.22 MB |
+| Sphere sampling CPU | 68.29 → 57.24 ms | 103.09 → 94.80 ms |
+| Whole-show allocation | 33.05 → 30.62 MB | 63.22 → 61.24 MB |
+| Whole-show elapsed | 479.90 → 399.58 ms | 197.64 → 179.63 ms |
+
+On shared Linux, whole-show elapsed p95 fell from 1,255.09 to 901.55 ms at 10,000 pixels and from 1,189.75 to 1,100.24 ms at 20,000 pixels. The separate native-material run used Mesa software OpenGL. At 20,000 pixels its median allocation fell from 46.73 to 41.95 MB while its median elapsed time increased from 200.57 to 218.79 ms. All 72 GPU-material frames missed 25 ms. Samples and bytes matched the CPU run. [Complete traces, comparison and reproduction](https://github.com/tolgraven/afterglow/pull/90)
+
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
