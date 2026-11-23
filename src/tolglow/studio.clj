@@ -7,6 +7,7 @@
             [tolglow.show :as show]
             [tolglow.spatial.targets :as targets]
             [tolglow.effects.faults :as faults]
+            [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.connections :as connections]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
@@ -77,6 +78,7 @@
   ([runtime] (handler runtime (bind! runtime :studio)))
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+            :variable-sources! #(variable-edit/sources (get-in @(:state runtime) [:model :variables]) (:query %))
             :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
