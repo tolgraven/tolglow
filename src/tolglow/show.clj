@@ -43,6 +43,7 @@
             [afterglow.reactive :as graph]
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
+            [tolglow.spatial.cues :as spatial-cues]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
             [tolglow.waveforms :as waveforms]
@@ -416,6 +417,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :event-subscriber (let [updated (subscribers/configure model payload)]
@@ -1024,7 +1026,7 @@
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
-                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path))
+                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
                                    (spatial/advance model before time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
@@ -1051,21 +1053,24 @@
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           modulation-middleware (modulation/middleware (:overrides modulation-result))
+                           input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
+                           modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]))
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
-                           result (engine/advance model (cond-> (merge {:time-ms time-ms :epoch (:epoch model)
-                                                         :keyframes (:keyframes before) :keyframe-params (:overrides modulation-result)
-                                                         :keyframe-generation (:responses model)
-                                                         :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
-                                                              (:inputs sampling))
-                                                          variables (assoc :resolved-variables variable-inputs))
-                                                  (let [middleware (response-middleware! runtime (:responses model []))]
-                                                    (fn [definition] (keyframes/with-inputs ((:compile runtime) definition)
-                                                                                   (comp middleware modulation-middleware))))
+                           frame-input (cond-> (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                                               :keyframes (:keyframes before) :keyframe-params input-overrides
+                                               :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
+                                               :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                              (:inputs sampling))
+                           response (response-middleware! runtime (:responses model []))
+                           inputs (comp response modulation-middleware)
+                           compile-step (fn [definition]
+                                          (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
+                                            (keyframes/with-inputs step inputs)))
+                           result (engine/advance model frame-input compile-step
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
@@ -1107,7 +1112,9 @@
                                             hdr? (assoc :hdr hdr-opts)
                                             (:observe-hdr? space) (assoc :observe-hdr? true))
                            resolved (effect-faults/resolve-output result
-                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options))
+                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
+                                      (if-let [groups (get-in space [:fields :groups])]
+                                        #(spatial-cues/mask-contributions % groups) identity))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])

@@ -122,7 +122,7 @@
 (defn- catalog [model]
   (let [rig (get-in model [:rig :fixtures]) by-id (into {} (map (juxt :id identity)) rig)
         registry (:registry model)
-        volumes (get-in model [:settings :spatial :volumes] (get-in model [:variables :spatial :members]))]
+        volumes (merge (get-in model [:variables :spatial :members]) (get-in model [:settings :spatial :volumes]))]
     (concat
      (for [{:keys [id name channels]} rig] {:kind :fixture :id id :label (or name (label id))
                                              :selector {:fixture-ids [id]} :attributes (set (keys channels))})

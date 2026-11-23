@@ -7,6 +7,15 @@
    :depends-on [:foundation/tests]
    :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
    :evidence ["Afterglow #65 and Tolglow #108. Six fragment shaders and two native field programs were compared with the JVM on Mesa and SwiftShader. The focused host tests launch real effects, trace scalar and batched values, check per-frame variable resolution and reload the Transit show. A running Ring Studio release and the passive Push webview provided the visual recordings. Physical hardware and the shared UV/world fixture-input follow-up are tracked separately."]}
+  {:id :show/spatial-volume-cues :title "Spawn editable spatial cues that paint native fixture values and scope registered looks"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/spatial/cues.clj" "tolglow/src/tolglow/spatial.clj" "tolglow/src/tolglow/spatial/actions.clj"
+           "afterglow/src/afterglow/render/layers.clj" "afterglow/test/afterglow/render/layers_test.clj" "tolglow/src/tolglow/persistence.clj" "tolglow/src/tolglow/show.clj"
+           "tolglow/src/tolglow/studio/web.clj" "tolglow/test/tolglow/spatial_cues_test.clj"]
+   :depends-on [:show/spatial-bindings]
+   :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
+   :evidence ["The pure/parity CI runner includes tolglow.spatial-cues-test. The host suite captures native DMX across weighted boundaries, Ring grid placement, HSL modulation, reachable aim-only selection, exact beat deadlines and instance remapping through Transit."
+              "Editing the room beneath a running volume emits one diagnostic, preserves unrelated pixel output and recovers automatically. The Studio browser scenario submits the sculpted field to the running show using the iPad layout."]}
   {:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/runtime/keyframes.clj" "tolglow/src/tolglow/effects/keyframes.clj" "tolglow/src/studio/tolglow/studio/keyframe_editor.cljs"]
@@ -493,6 +502,7 @@
    :owner "tolglow_dense_mixed_venue_profiling_and_show_host_optimization"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
            "tolglow/dev/tolglow/perf/venue_rig.clj" "tolglow/docs/performance/dense-venue.md"
+           "tolglow/dev/tolglow/perf/weighted_venue.clj" "tolglow/docs/performance/weighted-venue.md"
            "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
@@ -504,7 +514,8 @@
                 "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
                 "Measure actual acknowledged WebSocket subscribers and withheld-ACK backpressure alongside identical host ticks"
                 "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
-   :evidence ["docs/performance/dense-venue.md records scalar-checked twisted 3D rigs with 64 differently mounted moving heads, synchronous ArtDMX and deterministic independent publication."
+   :evidence ["docs/performance/weighted-venue.md checks moving field weights, overlapping origin and emitted-beam membership, scalar output and independent publication at 10k/20k pixels and 64 movers."
+              "docs/performance/dense-venue.md records scalar-checked twisted 3D rigs with 64 differently mounted moving heads, synchronous ArtDMX and deterministic independent publication."
               "docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
               "Tolglow #78 delivers 17 ArtDMX universes for four foggers and 2,048 pixels in direct and independent-output modes. The profile identified the #80 batching fix, reducing direct CPU with fog from 24.33 to 5.78 ms/frame. See docs/performance/venue-fog.md for wall-time overruns and allocation."
               "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"

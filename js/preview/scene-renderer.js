@@ -14,6 +14,7 @@ import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
 import {clamp, roomDimensions, fixtureDirection, emittedColor, beamAngle, structuralKey, axisDegrees} from './math.js';
 import {SurfaceReflections} from './reflections.js';
+import {GlassPass} from './glass.js';
 import {VolumetricFog} from './fog.js';
 import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.js';
 
@@ -104,6 +105,7 @@ export class SceneRenderer {
     this.fog = new VolumetricFog(this.renderer, {quality: this.options.fog || this.quality}); this.fog.setRoom(this.room); this.fog.setAmount(this.fogAmount);
     this.composer = new EffectComposer(this.renderer, new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, depthBuffer: false}));
     this.inputPass = new TexturePass(this.compositeTarget.texture); this.composer.addPass(this.inputPass);
+    this.glass = new GlassPass(this); this.composer.addPass(this.glass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .28, .4, 1.1); this.composer.addPass(this.bloom);
     this.outputPass = new OutputPass(); this.composer.addPass(this.outputPass);
     this.rebuild({room: {width: 12, height: 5, depth: 10}, fixtures: [], trusses: []});
@@ -159,6 +161,19 @@ export class SceneRenderer {
     if (!snapshot || this.disposed) return;
     if (!this.platform.worker) {this.editorInput ||= new RigEditorInput(this); this.editorInput.update(snapshot);}
     if (!this.visible || !this.renderer) {this.snapshot = snapshot; return;}
+    const opticalShow = showIdentity(snapshot);
+    if (this.opticalShow !== opticalShow) this.glass?.dispose();
+    this.opticalShow = opticalShow;
+    if (this.glass) {
+      this.glass.update(snapshot['glass-meshes'], snapshot['glass-volumes']);
+      // Composer swaps HDR images. Depth storage is only needed while surfaces
+      // can overlap. Recreate the attachments before the next input pass.
+      for (const target of [this.composer.readBuffer, this.composer.writeBuffer]) {
+        if (target.depthBuffer === this.glass.enabled) continue;
+        target.dispose();
+        target.depthBuffer = this.glass.enabled;
+      }
+    }
     this.editorOverlay ||= new RigOverlay(); this.editorOverlay.update(snapshot);
     this.snapshot = snapshot; const rig = snapshot.rig || {};
     const key = rig === this.lastRig ? this.key : structuralKey(rig);
@@ -169,7 +184,7 @@ export class SceneRenderer {
       const spec = (rig.trusses || []).find(t => String(t.id) === entry.id);
       if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
     }
-    this.fog?.setAtmosphere(showIdentity(snapshot), snapshot.output?.atmosphere);
+    this.fog?.setAtmosphere(opticalShow, snapshot.output?.atmosphere);
     this.fog?.setAmount(this.fogAmount);
     this.lighting.accept(snapshot, rig, receivedAt);
     const selection = snapshot.editor?.selection;
@@ -432,7 +447,7 @@ export class SceneRenderer {
     for (const light of this.spots || []) light.dispose();
     this.reflections?.dispose();
     if (this.content) disposeGeometry(this.content);
-    this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
+    this.glass?.dispose(); this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
     this.sceneTarget?.dispose(); this.compositeTarget?.dispose(); this.environmentTarget?.dispose();
     if (this.materials) disposeMaterials(this.materials);
     this.renderer?.dispose(); this.resolveReady?.(false);
