@@ -38,7 +38,7 @@ import TolglowSensorCore
 
     func start(withPulse: Bool) {
         guard !active, !requesting else { return }
-        guard link.ready else {
+        guard link.canStart else {
             if link.route == .pairedPhone { relay.activate(); status = "Join the floor on iPhone, or choose Nearby stage for Watch only." }
             else { status = "Choose a nearby stage before sharing." }
             return
@@ -70,7 +70,16 @@ import TolglowSensorCore
                 }
             }
         } else {
-            beginMotion()
+            requesting = true
+            connectForMotion(token: token)
+        }
+    }
+
+    private func connectForMotion(token: UUID) {
+        status = "Joining the dance floor…"
+        link.begin { [weak self] in
+            guard let self, self.generation == token else { return }
+            self.beginMotion()
         }
     }
 
@@ -91,7 +100,7 @@ import TolglowSensorCore
         live.beginCollection(withStart: now) { [weak self] success, _ in
             Task { @MainActor in
                 guard let self, self.generation == token else { return }
-                if success { self.beginMotion() }
+                if success { self.connectForMotion(token: token) }
                 else { self.stop("Workout collection unavailable. You can join with motion only.") }
             }
         }
@@ -106,7 +115,6 @@ import TolglowSensorCore
         steps = 0
         serial = 0
         lastMotion = ProcessInfo.processInfo.systemUptime
-        link.begin()
         // Skip the last cached observation from any previous conducting session.
         motionUpdates = motion.$values.dropFirst().sink { [weak self] values in
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }

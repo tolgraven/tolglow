@@ -79,7 +79,12 @@ class Contract(unittest.TestCase):
                     "Audience/AudienceClient.swift", "Audience/AudienceRadio.swift"]:
             self.assertIn(key, watch)
         self.assertNotIn("iOS/", watch)
-        self.assertNotIn("import Network", (ROOT / "watchOS/WatchFloorLink.swift").read_text())
+        link = (ROOT / "watchOS/WatchFloorLink.swift").read_text()
+        self.assertNotIn("import Network", link)
+        choose = link.split("func choose(", 1)[1].split("var canStart", 1)[0]
+        self.assertIn("stage.stopBrowsing()", choose)
+        self.assertNotIn("stage.join(", choose)
+        self.assertNotIn("stage.join(", (ROOT / "watchOS/DanceAudienceView.swift").read_text())
 
     def test_native_control_and_webview_share_the_operator_auth_boundary(self):
         access = (ROOT / "iOS/StudioOperatorAccess.swift").read_text()

@@ -33,16 +33,19 @@ struct DanceAudienceView: View {
                 if stage.joined {
                     Label("Connected to stage", systemImage: "checkmark.circle")
                     if !participating { Button("Disconnect") { workout.stop() } }
+                } else if let venue = link.selectedStage {
+                    Label(venue.name, systemImage: "antenna.radiowaves.left.and.right")
+                    if !participating { Button("Choose another stage") { link.discover() } }
                 } else {
                     Text("Watch only. Leave the floor on your iPhone first.").font(.caption)
-                    Button(stage.looking || link.checkingPhone ? "Stop searching" : "Find stages") {
-                        if stage.looking || link.checkingPhone { workout.stop("Stage search stopped.") }
+                    Button(stage.looking ? "Stop searching" : "Find stages") {
+                        if stage.looking { workout.stop("Stage search stopped.") }
                         else { link.discover() }
                     }.disabled(stage.connecting)
                     ForEach(stage.venues) { venue in
-                        Button(venue.name) { stage.join(venue.id) }
+                        Button(venue.name) { link.choose(venue) }
                     }
-                    Text(link.checkingPhone ? "Checking your paired iPhone…" : stage.status).font(.caption2)
+                    Text(stage.status).font(.caption2)
                 }
             } else if !participating {
                 Text(link.phoneJoined ? "Your iPhone is on the floor. Leave on iPhone to join directly." :
@@ -74,7 +77,7 @@ struct DanceAudienceView: View {
                     Button(workout.active ? "Leave floor" : "Cancel", role: .destructive) { workout.stop() }
                 } else {
                     Button(sharePulse ? "Start dance workout" : "Join with motion") { workout.start(withPulse: sharePulse) }
-                        .disabled(link.route == .nearbyStage && !stage.joined)
+                        .disabled(link.route == .nearbyStage && !link.canStart)
                 }
                 Text(workout.status).font(.caption2)
             }.padding(.horizontal, 4)

@@ -9,13 +9,19 @@ import TolglowSensorCore
     @Published private(set) var route = AudienceWatchRoute.pairedPhone
     @Published private(set) var phoneJoined = false
     var interrupted: ((String) -> Void)?
-    @Published private var verifying: UUID?
-    var checkingPhone: Bool { verifying != nil }
+    private var verifying: UUID?
+    @Published private(set) var selectedStage: AudienceClient.Venue?
+    private var whenJoined: (() -> Void)?
     private var phoneDeadline: Task<Void, Never>?
     private var ending = false
 
     init(phone: WatchRelay) {
         self.phone = phone
+        stage.onJoin = { [weak self] in
+            let ready = self?.whenJoined
+            self?.whenJoined = nil
+            ready?()
+        }
         stage.onEnd = { [weak self] in
             guard let self, !self.ending, self.route == .nearbyStage else { return }
             self.interrupted?("Stage disconnected. Find your stage again to rejoin.")
@@ -37,41 +43,60 @@ import TolglowSensorCore
     }
 
     func discover() {
-        guard route == .nearbyStage else { return }
-        if phone.reachable {
-            // Confirm the paired phone has no active membership before opening a second one.
-            let token = UUID()
-            verifying = token
-            phoneDeadline?.cancel()
-            phoneDeadline = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                guard let self, self.verifying == token else { return }
-                self.verifying = nil
-                self.interrupted?("Could not check your iPhone. Try again or choose Paired iPhone.")
-            }
-            phone.checkPhoneFloor { [weak self] active in
-                guard let self, self.verifying == token, self.route == .nearbyStage else { return }
-                self.verifying = nil
-                self.phoneDeadline?.cancel()
-                if active {
-                    self.phoneJoined = true
-                    self.select(.pairedPhone)
-                    self.interrupted?("Your iPhone is already on the floor. Start with Paired iPhone.")
-                } else { self.scan() }
-            }
-        } else { scan() }
-    }
-
-    private func scan() {
+        guard route == .nearbyStage, !phoneJoined else { return }
         ending = true
+        selectedStage = nil
         stage.discover(room: nil)
         ending = false
     }
 
+    func choose(_ venue: AudienceClient.Venue) {
+        guard route == .nearbyStage, stage.looking else { return }
+        stage.stopBrowsing()
+        selectedStage = venue
+    }
+
+    var canStart: Bool { route.ready(phoneReachable: phone.reachable, stageJoined: selectedStage != nil) }
     var ready: Bool { route.ready(phoneReachable: phone.reachable, stageJoined: stage.joined) }
 
-    func begin() {
-        if route == .pairedPhone { phone.beginAudience() }
+    func begin(whenReady: @escaping () -> Void) {
+        switch route {
+        case .pairedPhone:
+            guard phone.reachable else { interrupted?("iPhone connection lost. Rejoin the floor."); return }
+            phone.beginAudience()
+            whenReady()
+        case .nearbyStage:
+            guard let selectedStage else { interrupted?("Choose a nearby stage before sharing."); return }
+            whenJoined = whenReady
+            // The stage handshake has an idle limit. Open it only once permissions are settled.
+            if phone.reachable { checkPhoneBeforeJoining(selectedStage.id) }
+            else { joinStage(selectedStage.id) }
+        }
+    }
+
+    private func checkPhoneBeforeJoining(_ stageID: UUID) {
+        let token = UUID()
+        verifying = token
+        phoneDeadline?.cancel()
+        phoneDeadline = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self, self.verifying == token else { return }
+            self.interrupted?("Could not check your iPhone. Try again or choose Paired iPhone.")
+        }
+        phone.checkPhoneFloor { [weak self] active in
+            guard let self, self.verifying == token, self.route == .nearbyStage else { return }
+            self.verifying = nil
+            self.phoneDeadline?.cancel()
+            self.phoneJoined = active
+            if active {
+                self.select(.pairedPhone)
+                self.interrupted?("Your iPhone is already on the floor. Start with Paired iPhone.")
+            } else { self.joinStage(stageID) }
+        }
+    }
+
+    private func joinStage(_ id: UUID) {
+        if !stage.join(id) { interrupted?("Stage unavailable. Find your stage again to rejoin.") }
     }
 
     func send(_ sample: AudienceSample) {
@@ -88,7 +113,9 @@ import TolglowSensorCore
         phoneDeadline?.cancel()
         phoneDeadline = nil
         phone.endAudience()
-        if stage.looking || stage.connecting || stage.joined { stage.leave() }
+        whenJoined = nil
+        if selectedStage != nil || stage.looking || stage.connecting || stage.joined { stage.leave() }
+        selectedStage = nil
         ending = false
     }
 }
