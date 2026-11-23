@@ -52,3 +52,11 @@ dialog{color:var(--text);background:#1d251a;border:1px solid #536348;border-radi
 .preview-film summary{min-height:44px;display:list-item;align-content:center;cursor:pointer}
 .preview-film[open]{grid-column:1/-1}
 .preview-film label{min-height:44px;display:flex;align-items:center;gap:.65rem}
+
+.preview-fullscreen-tools{display:none}
+#preview-panel:fullscreen .preview-fullscreen-tools{display:inline-flex;align-items:center;min-height:44px}
+#preview-panel:fullscreen .preview-expand-control{display:none}
+#preview-panel:fullscreen:not(:has(.preview-fullscreen-tools[aria-pressed=true]))>.preview-stage{position:absolute;inset:0;width:100%;height:100%!important}
+#preview-panel:fullscreen:not(:has(.preview-fullscreen-tools[aria-pressed=true]))>:not(.panel-top):not(.preview-stage){display:none}
+#preview-panel:fullscreen:not(:has(.preview-fullscreen-tools[aria-pressed=true]))>.panel-top{position:absolute;inset:0 0 auto;z-index:2;background:linear-gradient(to bottom,#101310c9,transparent);pointer-events:none}
+#preview-panel:fullscreen .preview-size-controls{pointer-events:auto}

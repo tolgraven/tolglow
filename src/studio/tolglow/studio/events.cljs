@@ -821,7 +821,10 @@
 (rf/reg-event-fx :studio/preview-expand
   (fn [{:keys [db]} _] {:db (update-in db [:ui :preview-expanded?] not)
                         :dispatch-later [{:ms 30 :dispatch [:studio/preview-resize]}]}))
-(rf/reg-event-fx :studio/preview-fullscreen (fn [_ _] {:studio/preview-fullscreen true}))
+(rf/reg-event-fx :studio/preview-fullscreen
+  (fn [{:keys [db]} _]
+    {:db (assoc-in db [:ui :fullscreen-preview-controls?] false)
+     :studio/preview-fullscreen true}))
 (rf/reg-event-fx :studio/preview-fog
   (fn [{:keys [db]} [_ value]] {:db (assoc-in db [:ui :fog] value) :studio/preview [:fog value]}))
 (rf/reg-event-fx :studio/preview-reset
