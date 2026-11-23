@@ -1,6 +1,7 @@
 (ns tolglow.material-library-test
   (:require [afterglow.control.model :as control]
             [afterglow.runtime :as runtime]
+            [afterglow.reactive :as rx]
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
             [tolglow.effects.block-trace :as trace]
@@ -45,7 +46,6 @@
           (is (= {:tour/copper b} (:imported-prefabs first-v2)))
           (is (= (:registry m) (:registry decoded)))
           (is (= (prefabs/catalog m) (prefabs/catalog decoded)))
-          (is (= "Copper screen" (get-in (trace/library {:db (atom m)} [:runtime/block-library]) [:tour/copper :name])))
           (is (= first-v1 (prefabs/capture {} first-v1)))))
       (finally (show/stop! rt)))))
 
@@ -94,3 +94,16 @@
                          (assoc-in [:settings :prefabs :definitions :lfo/sine] stage))]
       (is (= {} (get-in (prefabs/startup configured) [:registry :effects :one :imported-prefabs]))))
     (is (thrown? Exception (prefabs/validate! {:definitions {:tour/bad (assoc stage :glsl "missing")}})))))
+
+(deftest the-live-picker-updates-only-when-its-material-sources-change
+  (let [model (assoc-in (demo/model) [:settings :prefabs :definitions] {:tour/copper (material 0.8)})
+        graph (trace/register! (rx/create-system model))]
+    (try
+      (let [query (rx/subscribe graph [:runtime/block-library])
+            first-result @query]
+        (is (= "Copper screen" (get-in first-result [:tour/copper :name])))
+        (rx/publish! graph (assoc model :frame-number 12))
+        (is (identical? first-result @query))
+        (rx/publish! graph (assoc-in model [:settings :prefabs :definitions :tour/copper] (material 0.6)))
+        (is (= 0.6 (get-in @query [:tour/copper :inputs :factor]))))
+      (finally (rx/close! graph)))))
