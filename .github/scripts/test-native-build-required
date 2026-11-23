@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+selector="$(cd "$(dirname "$0")" && pwd)/native-build-required"
+repo=$(mktemp -d)
+trap 'rm -rf -- "$repo"' EXIT
+git -C "$repo" init --quiet --initial-branch main
+cd "$repo"
+git config user.name 'Native CI test'
+git config user.email 'ci@example.invalid'
+
+expect() {
+  local description=$1 expected=$2 actual
+  shift 2
+  actual=$("$selector" "$@")
+  if [[ "$actual" != "$expected" ]]; then
+    printf '%s expected %s, got %s\n' "$description" "$expected" "$actual" >&2
+    exit 1
+  fi
+  printf 'PASS    %-5s    %s\n' "$actual" "$description"
+}
+
+mkdir -p native .github/{workflows,scripts}
+touch README native/Fixture.swift .github/workflows/tests.yml .github/scripts/native-build-required
+git add .
+git commit --quiet -m 'Common base'
+base=$(git rev-parse HEAD)
+
+git switch --quiet -c topic
+echo docs > README
+git commit --quiet -am 'Edit documentation on the topic branch'
+topic=$(git rev-parse HEAD)
+
+git switch --quiet main
+echo native > native/Fixture.swift
+git commit --quiet -am 'Advance the base with an Apple change'
+advanced=$(git rev-parse HEAD)
+git merge --quiet --no-ff topic -m 'Synthetic PR merge'
+expect 'Concurrent Apple edit only on the base' false pull_request "$base" "$topic"
+expect 'Topic branch started before the event base' false pull_request "$advanced" "$topic"
+expect 'Direct push to native sources' true push "$base" "$advanced"
+expect 'Documentation push' false push "$base" "$topic"
+expect 'Force push removes a native change' true push "$advanced" "$topic"
+
+git switch --quiet topic
+echo proposed > native/Fixture.swift
+git commit --quiet -am 'Propose an Apple change'
+expect 'Pull request changes an Apple source file' true pull_request "$base" "$(git rev-parse HEAD)"
+git rm --quiet native/Fixture.swift
+git commit --quiet -m 'Delete Apple source'
+expect 'Pull request deletes an Apple source file' true pull_request "$base" "$(git rev-parse HEAD)"
+
+git switch --quiet -c workflow "$topic"
+echo workflow > .github/workflows/tests.yml
+git commit --quiet -am 'Edit the workflow'
+expect 'Pull request changes the build workflow' true pull_request "$base" "$(git rev-parse HEAD)"
+previous=$(git rev-parse HEAD)
+echo selector > .github/scripts/native-build-required
+git commit --quiet -am 'Edit the selector'
+expect 'Pull request changes the selection rule' true pull_request "$previous" "$(git rev-parse HEAD)"
+expect 'Unresolved base requests Apple' true pull_request missing "$topic"
+expect 'Absent head requests Apple' true pull_request "$base" ''
+expect 'New branch push requests Apple' true push 0000000000000000000000000000000000000000 "$topic"
+
+git switch --quiet --orphan independent
+git commit --quiet --allow-empty -m 'Independent history'
+expect 'Histories without a merge base request Apple' true pull_request "$base" "$(git rev-parse HEAD)"

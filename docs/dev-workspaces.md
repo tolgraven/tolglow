@@ -12,6 +12,8 @@ independent Git repositories. Their common parent makes Tolglow's `../afterglow`
 dependency resolve to the paired fork. Each repository root and workspace parent
 is configured by the host, not chosen through arbitrary browser paths.
 
+In Studio, open **Develop** to create or select a paired workspace. **Files** opens the selected repository’s editor with Save and Read disk beside its engine picker. On a phone, **Browse files** brings back the tree while keeping the current buffer. **Diff**, **Checks & preview** and **Terminal** use the selected workspace. **Coding agent** opens the application-task composer and progress feed. A task’s **Review workspace changes** action selects its own workspace and opens its diff.
+
 ## Service API
 
 ```clojure
@@ -154,3 +156,5 @@ ID and mask cross-repository ref lookup. The tests reproduce the original
 isolation, current owned HEAD/staged-index behavior, recovered diffs, check
 fingerprints and temporary-view cleanup.
 The full pure lane on this branch passed **457 tests / 3,610 assertions**.
+
+Run `lein run -m tolglow.qa.workspace-layout` after building Studio to exercise the paired Git workflow, compact layout and bundled Neovim in Chromium. The harness creates two temporary local repositories and uses the preview output sink.
