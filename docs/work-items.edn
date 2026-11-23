@@ -12,6 +12,7 @@
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/native/Packaging" "tolglow/native/iOS/WebStudioView.swift"]
    :depends-on [:native/apple-show-studio]
+   :evidence ["GluonFX compiled through native-image analysis for arm64 iOS in run 45146210884; third-party process initialization and support for loading new user code still need platform-specific work."]
    :acceptance ["Launch the native-compiled Clojure show, read the chosen show folder and render a production Studio frame without a remote host. Preserve supported editing and foreground/suspend behavior on real hardware."]}
   {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil

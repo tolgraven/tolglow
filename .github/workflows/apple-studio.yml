@@ -6,8 +6,6 @@ on:
       - 'native/**'
       - 'src/tolglow/desktop.clj'
       - '.github/workflows/apple-studio.yml'
-  push:
-    branches: [codex/apple-studio-bundle]
 permissions:
   contents: read
 concurrency:
