@@ -1,0 +1,33 @@
+name: Retrieve the measured audience onset timelines
+on:
+  push:
+    branches: [codex/audience-onset-review-media]
+    paths: [.github/workflows/audience-onset-evidence.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/audience-onset-review-media
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: audience-onset-timing
+          path: ${{ runner.temp }}/timing
+          run-id: 45163755705
+          repository: tolgraven/tolglow
+          github-token: ${{ github.token }}
+      - name: Publish the two frame-clock receipts
+        run: |
+          mkdir -p evidence
+          cp "$RUNNER_TEMP/timing/solo.json" evidence/solo.json
+          cp "$RUNNER_TEMP/timing/crowd.json" evidence/crowd.json
+          git config user.name 'Tolglow review media'
+          git config user.email 'review-media@users.noreply.github.com'
+          git add evidence/solo.json evidence/crowd.json
+          git commit -m 'Record the detector to encoded OSC timing traces from Swift CI'
+          git push origin HEAD:refs/heads/codex/audience-onset-review-media
