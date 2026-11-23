@@ -83,9 +83,16 @@ struct AudienceView: View {
             ? AnyLayout(HStackLayout(alignment: .top, spacing: 26))
             : AnyLayout(VStackLayout(alignment: .leading, spacing: 18))
         return layout {
-            Text("Send your steps and movement intensity to the stage lights over Bluetooth.")
-                .font(.title3).fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: wide ? 235 : .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Send your steps and movement intensity to the stage lights over Bluetooth.")
+                    .font(.title3)
+                if room != nil {
+                    Label("Your phone checks the stage against your invitation before sharing.", systemImage: "checkmark.shield")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: wide ? 235 : .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(AudienceInput.allCases.enumerated()), id: \.element) { index, input in
                     if index > 0 { Divider() }
