@@ -13,7 +13,7 @@
 (def ^:private candidates [:wash :steer])
 (defn- op [kind & args] {:op kind :args (vec args)})
 
-(defn- scene [fixtures pixels]
+(defn- scene [fixtures pixels aim]
   (let [beat (op :multiply 0.008 {:op :beat})
         ;; Time is affine. Changing the interval changes cost without intentionally
         ;; changing the scene. These three spatial fields exercise real per-head work.
@@ -25,7 +25,7 @@
         wash {:id :wash :targets (mapv :id (subvec fixtures 1 pixels))
               :outputs {:color (op :vec3 (field :x) (field :y) (field :z))}}
         steer {:id :steer :targets (mapv :id (subvec fixtures pixels))
-               :outputs {:aim (op :vec3 (op :add 1.3 beat) 0.75 (op :add 3.25 beat))}}
+               :outputs {:aim (or aim (op :vec3 (op :add 1.3 beat) 0.75 (op :add 3.25 beat)))}}
         install (fn [m {:keys [id] :as definition}]
                   (let [m (-> m
                               (bench/command [id :publish] {:op :registry/publish :kind :effects
@@ -34,6 +34,15 @@
                     (if (= id :shutter) m (bench/command m [id :start] {:op :cue/launch :cue-id id}))))]
     (reduce install (control/new-show {:show-id :admission :rig {:fixtures fixtures}})
             (into [wash steer] (filter #(#{:shutter :pulse} (:id %)) presets)))))
+
+(defn workload
+  "Patch the shared mixed rig and launch continuous wash, aim and pulse effects.
+  An optional expression replaces the default shared 3D target."
+  ([pixels movers] (workload pixels movers nil))
+  ([pixels movers aim]
+   (let [rig (:fixtures (bench/corpus pixels movers :sculpture))
+         fixtures (into (subvec rig 0 pixels) (map #(assoc-in % [:channels :shutter] 12)) (subvec rig pixels))]
+     {:fixtures fixtures :pixels pixels :model (scene fixtures pixels aim)})))
 
 (defn- force-intervals [begin rates runtime before model]
   (let [intervals (into {} (keep (fn [[id {:keys [effect-id]}]]
@@ -101,11 +110,16 @@
 (defn- capture [runtime sink fixtures pixels warmup frames oracle]
   (letfn [(read-at [j]
             (tick! runtime sink (+ warmup j))
-            (let [frame (quality/read-frame @(:state runtime) fixtures pixels)]
+            (let [state @(:state runtime)
+                  frame (assoc (quality/read-frame state fixtures pixels)
+                               :lifecycle (get-in state [:model :instances])
+                               :intents (get-in state [:status :last-intents]))]
               (if oracle (do (check-frame! fixtures pixels (nth oracle j) frame) nil) frame)))]
     (into [] (keep read-at) (range frames))))
 
-(defn- replay [bean {:keys [model fixtures pixels]} rates warmup frames oracle]
+(defn replay
+  "Capture full-rate reference frames or verify every candidate frame against them."
+  [bean {:keys [model fixtures pixels]} rates warmup frames oracle]
   (let [sink (bench/capture-sink)
         runtime (show/create-runtime {:model model :sink sink :workspace-options nil :workers 2 :batch? true
                                       :worker-timeout-ms 10000 :adaptive-keyframes {:enabled? true :max-stride 1}})
@@ -151,9 +165,7 @@
   (let [bean (ManagementFactory/getThreadMXBean)
         _ (when-not (and (.isCurrentThreadCpuTimeSupported bean) (.isThreadCpuTimeEnabled bean))
             (throw (ex-info "Thread CPU measurement is unavailable" {})))
-        rig (:fixtures (bench/corpus pixels movers :sculpture))
-        fixtures (into (subvec rig 0 pixels) (map #(assoc-in % [:channels :shutter] 12)) (subvec rig pixels))
-        show {:fixtures fixtures :pixels pixels :model (scene fixtures pixels)}
+        show (workload pixels movers)
         schedules {:full {:wash 1 :steer 1} :both {:wash 2 :steer 2}
                    :wash {:wash 2 :steer 1} :steer {:wash 1 :steer 2}}
         run (fn [id reference] (replay bean show (schedules id) warmup frames reference))

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+commit() {
+  [[ -n "$1" ]] && git rev-parse --quiet --verify --end-of-options "$1^{commit}"
+}
+
+case ${1:-} in
+  pull_request) range=... ;;
+  push)         range=.. ;;
+  *)            echo true; exit 0 ;;
+esac
+
+if base=$(commit "${2:-}") && head=$(commit "${3:-}") &&
+   git diff --quiet "$base$range$head" -- native .github/workflows/tests.yml .github/scripts/native-build-required; then
+  echo false
+else
+  echo true
+fi

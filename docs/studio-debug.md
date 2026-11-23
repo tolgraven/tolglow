@@ -6,7 +6,7 @@ Open **Debug** from the workspace or press **8** while the page has focus outsid
 
 Each row shows local wall-clock time with milliseconds, the event type, category, emitter and subscribers. Open a row for its timestamp with time zone, show epoch, frame, musical beat and emitted metadata. The delivery field distinguishes an observed callback, a matching subscriber and an unobserved delivery. **None** means the producer reported an empty subscriber list.
 
-The four selectors combine. **Pause feed** holds the displayed list so that new events cannot move a row while you inspect it. The client continues acknowledging batches. **Resume** displays the most recent events. The browser retains 320 rows and initially shows the latest 50 matching rows. **Show older events** expands that window. A missed-event count indicates the server's retained history was exhausted during a gap.
+Open **Filters** to narrow the journal by event type, category, emitter or subscriber. Selectors combine, and the button shows how many are active while the controls are folded. **Clear filters** restores the full journal. **Pause feed** holds the displayed list so that new events cannot move a row while you inspect it. The client continues acknowledging batches. **Resume** displays the most recent events. The browser retains 320 rows and initially shows the latest 50 matching rows. **Show older events** expands that window. A missed-event count indicates the server's retained history was exhausted during a gap.
 
 The Debug socket connects on entering this page. A reconnect supplies the last acknowledged runtime ID and cursor. A replacement runtime starts a fresh feed. Navigating away closes the socket. The studio show-state socket has its own lifecycle.
 
@@ -21,5 +21,7 @@ An existing registration can be disabled, edited or removed. Editing keeps a loc
 ## DMX output
 
 Select a patched universe to subscribe to the corresponding 512-byte output packet. The frame counter follows the last packet received. Each bank shows 64 numbered channels, their unsigned values from 0 through 255, and a level bar. Leaving the DMX view unsubscribes that universe. The display is also available on a preview-only host.
+
+Run `lein run -m tolglow.qa.studio-browser event-feed-layout` after a production Studio build to exercise the compact journal at phone, iPad and desktop sizes.
 
 The browser regression entry point is [debug_browser.cjs](../test/studio/debug_browser.cjs). Set `STUDIO_URL` to an isolated Studio host that includes the event journal. See the [Studio state stream](state-stream.md) for the show subscription used by the rest of Studio.
