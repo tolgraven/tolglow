@@ -57,7 +57,7 @@ jobs:
             mkdir -p src/slf4j_timbre
             dep="$HOME/.m2/repository/com/fzakaria/slf4j-timbre/0.4.1/slf4j-timbre-0.4.1.jar"
             for name in adapter factory service_provider; do
-              unzip -p "$dep" "slf4j_timbre/$name.clj" | sed 's/(:gen-class/(:gen-class :load-impl-ns false/' > "src/slf4j_timbre/$name.clj"
+              unzip -p "$dep" "slf4j_timbre/$name.clj" | sed -e 's/(:gen-class/(:gen-class :load-impl-ns false/' -e 's/\[org.slf4j.spi.LocationAwareLogger\]/[org.slf4j.spi.LocationAwareLogger org.slf4j.Logger]/' > "src/slf4j_timbre/$name.clj"
             done
           else
             python3 - <<'PY'
@@ -75,7 +75,7 @@ jobs:
           cd probe
           flags=()
           if [[ "$MODE" == compiled-namespaces ]]; then
-            flags+=('-H:IncludeResources=slf4j_timbre/.*__init.class')
+            flags+=('--initialize-at-build-time=com.github.fzakaria.slf4j.timbre' '-H:IncludeResources=slf4j_timbre/.*__init.class')
           fi
           native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses "${flags[@]}" \
             -H:IncludeResources='.*\.clj[cs]?' -jar "$(find target -name '*-standalone.jar' -print -quit)" logger
