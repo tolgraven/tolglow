@@ -5,6 +5,7 @@
             [afterglow.render.chain :as chain]
             [afterglow.render.distributed :as distributed]
             [afterglow.render.presentation :as presentation]
+            [afterglow.render.verified :as verified]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [tolglow.show :as show]
@@ -97,9 +98,9 @@
     {:frames (count complete) :partial-frames (count partial) :packets (count packets)
      :pre-roll-frames (count (take-while #{idle} complete))}))
 
-(defn- prove! [runtime cpu capture root nearby?]
+(defn- prove! [runtime cpu capture root mode]
   (let [phases (atom [])
-        peer-count (if nearby? 1 2)
+        peer-count (if (= mode :operator-phone) 1 2)
         pool #(:pool (stats runtime))
         wait-draws (fn []
                      (let [target (+ 3 (:completed (pool)))]
@@ -118,11 +119,14 @@
                 {:op :param/set :instance-id id :param :aim-x :value -0.75}])
       (advance "expose lower priority with alpha" [{:op :instance/opacity-set :instance-id id :value 0.5}])
       (wait-draws)
-      (when-not nearby?
+      (when-not (= mode :operator-phone)
         (let [misses (:missed (pool))]
           (spit (io/file root "lose-peer") "Drop one in-flight response")
-          (eventually "peer loss during a leased run"
-                      #(let [p (pool)] (and (= 1 (:workers p)) (> (:missed p) misses))))))
+          (if (= mode :audience-phones)
+            (do (println "Stop sharing GPU on exactly one phone; keep the other foregrounded")
+                (eventually "one participant leaves the stage" #(= 1 (:workers (pool)))))
+            (eventually "peer loss during a leased run"
+                        #(let [p (pool)] (and (= 1 (:workers p)) (> (:missed p) misses)))))))
       (advance "promote the next running cue" [{:op :instance/remove :instance-id id}])
       (wait-draws)
       (let [result (merge {:heads 64 :layers 18 :universes 2 :first-completed-ms cold-ms
@@ -131,7 +135,7 @@
         (spit (io/file root "finish") "done")
         result))))
 
-(defn- observe! [runtime cpu capture dir nearby?]
+(defn- observe! [runtime cpu capture dir mode]
   (let [fuse chain/fuse evaluate distributed/evaluate!
         started (System/nanoTime) stages (atom {}) samples (atom [])
         timed-fusion (fn [cache prepare blocks]
@@ -146,12 +150,30 @@
                                                 :duration-ms (/ (- (System/nanoTime) t) 1e6)}))
                          batch))]
     (with-redefs [chain/fuse timed-fusion distributed/evaluate! timed-render]
-      (let [result (prove! runtime cpu capture dir nearby?)]
+      (let [result (prove! runtime cpu capture dir mode)]
         (when-not (and (get @stages [18 1]) (get @stages [17 1]))
           (throw (ex-info "Expected 18 and later 17 native groups to fuse to one" {:shapes @stages})))
         (assoc result
                :fusion (mapv (fn [[[before after] n]] {:input before :output after :frames n}) @stages)
                :remote-samples @samples)))))
+
+(defn- observe-guests! [runtime cpu capture dir mode]
+  (let [full verified/readback pair verified/agree?
+        counts (atom {:full-slices 0 :sentinel-rows 0 :redundant-slices 0})]
+    (with-redefs [verified/readback (fn [group env job bytes]
+                                      (when-let [checked (full group env job bytes)]
+                                        (swap! counts update (if (= 1 (:count job)) :sentinel-rows :full-slices) inc)
+                                        checked))
+                  verified/agree? (fn [group env job first-copy second-copy]
+                                    (when (pair group env job first-copy second-copy)
+                                      (swap! counts update :redundant-slices inc)
+                                      true))]
+      (let [result (observe! runtime cpu capture dir mode)
+            {:keys [full-slices redundant-slices]} @counts]
+        (assert (pos? full-slices) "The single remaining guest must receive full verification")
+        (when (= "redundant" (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION"))
+          (assert (pos? redundant-slices) "Both independently admitted guests must verify a shared slice"))
+        (assoc result :guest-verifications @counts)))))
 
 (defn- listener [nearby?]
   (if-not nearby? {:port 0}
@@ -162,17 +184,24 @@
        :public-origin origin :auth {:token-env "TOLGLOW_STUDIO_TOKEN"}})))
 
 (defn- run-clients! [runtime cpu capture dir target]
-  (let [nearby? (= target "nearby")
-        {:keys [port stop! public-origin]} (studio/listen! runtime (listener nearby?))]
+  (let [options (case target
+                  "nearby" (listener true)
+                  "audience" {:host "127.0.0.1" :port (parse-long (or (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_PORT") "8500"))}
+                  (listener false))
+        {:keys [port stop! public-origin]} (studio/listen! runtime options)]
     (try
-      (if nearby?
-        (do (println "Open" public-origin "in the full app and choose Connections → Contribute this GPU")
-            (observe! runtime cpu capture dir true))
-        (let [browser (ProcessBuilder. ^java.util.List ["node" "dev/compute/capture.cjs" (str "http://127.0.0.1:" port)
+      (case target
+        "nearby" (do (println "Open" public-origin "in the full app and choose Connections → Contribute this GPU")
+                     (observe! runtime cpu capture dir :operator-phone))
+        "audience" (do (println "Start the stage bridge for port" port "and enroll two full-app phones via Share GPU with this stage")
+                       (observe-guests! runtime cpu capture dir :audience-phones))
+        (let [guest? (= target "guest")
+              script (if guest? "dev/compute/guest-process.cjs" "dev/compute/capture.cjs")
+              browser (ProcessBuilder. ^java.util.List ["node" script (str "http://127.0.0.1:" port)
                                                        (.getAbsolutePath dir) target])
               process (.start (.inheritIO browser))]
           (try
-            (let [result (observe! runtime cpu capture dir false)]
+            (let [result (if guest? (observe-guests! runtime cpu capture dir :guest-bundles) (observe! runtime cpu capture dir :operator-browsers))]
               (assert (and (.waitFor process 30 TimeUnit/SECONDS) (zero? (.exitValue process))))
               result)
             (finally
@@ -193,7 +222,9 @@
           (let [result (run-clients! runtime cpu capture dir target)]
             (spit (io/file dir "host.json")
                   (json/write-str (assoc result :target-hz rate :budget-ms budget
-                                         :clients (if (= target "nearby") :operator-enrolled-full-app :two-chromium))))
+                                         :clients (case target "nearby" :operator-enrolled-full-app
+                                                               "audience" :two-stage-admitted-full-app-phones
+                                                               "guest" :two-full-app-bundles-loopback :two-chromium))))
             (println "Verified Art-Net at" (.getAbsolutePath dir) (select-keys result [:frames :packets :partial-frames])))
           (finally (println "Final render counters" (stats runtime)) (show/stop! runtime))))
       (finally (show/stop! cpu) ((:stop! capture)) (shutdown-agents)))))

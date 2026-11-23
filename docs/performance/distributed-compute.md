@@ -65,3 +65,37 @@ A shared Linux host using OpenJDK 21 and Mesa 25.0.7 llvmpipe (LLVM 19.1.7, 256 
 | Native, fused group | 740.50 | 22.27 | 108.20 | 60 | 1 |
 
 The fused session reused its program 59 times. The original session recorded 1,075 hits across five programs. The observed p95 exceeds a 25 ms frame, even on the faster fused path. Hardware GPU throughput requires a separate benchmark.
+
+## Full-app audience GPU verification
+
+Use the `guest` target to reproduce the audience worker shader and host verification path on a single computer. It starts the private Ring listener, two independent Chromium GPU processes with the exact JavaScript bundle shipped in the full iOS app, a stage-side socket per participant, and the same two-universe Art-Net/CPU comparison. Only the stage processes hold the compute credential. Each GPU must pass its bundled calibration shader and receive jobs under the stage's verification policy. During an outstanding job the first guest closes its socket. The remaining guest then receives independently recomputed full verification on the host.
+
+```sh
+export TOLGLOW_AUDIENCE_COMPUTE_TOKEN="$(openssl rand -hex 32)"
+export TOLGLOW_AUDIENCE_VERIFICATION=redundant
+lein run -m tolglow.qa.distributed-render /tmp/lighting-audience guest 40 18
+```
+
+Use Node 24, Chromium and the paired sources described above. If testing before the full-app and host branches are assembled, set `TOLGLOW_GUEST_BUNDLE` to the full path to `native/AudienceCompute/Phone/audience-compute.js` in the native checkout. Set `TOLGLOW_QA_CHROMIUM` for a different Chromium executable. To exercise the default all-rows policy, unset `TOLGLOW_AUDIENCE_VERIFICATION`. The fixture has 64 rows, so the report distinguishes a reference computation on one sentinel row from a full assigned slice. It counts a slice when the host verifies it, even if the deadline expires before publication. The pool's completed count tracks results returned before the deadline.
+
+For a physical Apple radio trial, use the `audience` target on a Mac. It binds the fixed loopback port used by the audience bridge. Give the bridge the same stage compute credential, open the room by QR in the full app on two independently paired phones, and choose **Share GPU with this stage** on each. When the harness prompts, stop GPU sharing on one participant. Keep the other in the foreground through the final swatch. The result records `clients: two-stage-admitted-full-app-phones`, the verification counts, captured output, and shader timing. Record both phone models, OS versions, battery/thermal conditions and the bridge's measured round-trip time and bytes per second alongside it.
+
+```sh
+lein run -m tolglow.qa.distributed-render /tmp/lighting-audience-phones audience 40 18
+```
+
+The Linux bundle harness covers application shaders, admission, independent verification, fallback and output delivery. The Apple trial additionally covers the QR/BLE grant, native encrypted connection, Wi-Fi or peer radio, WebKit, device GPU and sustained availability.
+
+### Captured audience results
+
+Two independent Chromium 156 processes on the shared four-vCPU Linux machine ran the full-app WebGL2 bundle through ANGLE/SwiftShader. Each process received and rendered genuine fused programs for 64 moving heads. The UDP receiver matched every captured byte to its separate CPU show, with zero partial frames in all three runs. The host recorded no rejected fields. Output frame counts include presentations while the renderer reused its last complete result. These counts and the number of computed batches therefore measure different work.
+
+| Host policy | Target Hz / budget ms | Two-universe frames | UDP packets | Completed remote batches | Deadline misses | Local fallbacks | Successful median ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Full | 5 / 170 | 50 | 100 | 11 | 3 | 6 | 35.35 |
+| Redundant | 5 / 170 | 51 | 102 | 14 | 1 | 5 | 61.90 |
+| Redundant | 40 / 18 | 3,723 | 7,446 | 12 | 1,472 | 2,992 | 12.38 |
+
+At 40 Hz the two guests sent 997 and 1,087 result messages. The host verified one paired slice, four independently chosen sentinel rows and 15 full slices, some after the deadline. The host accepted 12 complete batches in time. The intentional departure forced an in-flight fallback and the surviving guest prepared the revised 17-layer shader. This shared CPU-rendered run depended heavily on local rendering. The successful median excludes deadline misses.
+
+[Raw host and guest receipts, screenshot and animation](https://github.com/tolgraven/tolglow/tree/1fce380357a282725c337ebe7c04335373069508)
