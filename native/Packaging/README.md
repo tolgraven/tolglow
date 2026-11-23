@@ -2,6 +2,8 @@
 
 The Apple Silicon Mac application opens the same re-frame Studio and Ring show host used by the browser. The app bundle includes the compiled frontend, Java dependencies, a GraalVM Community JVM and both application source checkouts. Building uses Leiningen, Node and Xcode. Running a packaged show needs macOS 14 or newer on Apple Silicon.
 
+The **Compiled macOS Studio** artifact adds a native Apple Silicon executable to that bundle. The launch window offers **Compiled Clojure** and **Full JVM Clojure**. The compiled engine runs the local show and Room UI with editable interpreted show code. Full JVM Clojure supports arbitrary JVM libraries and runtime compilation. Both engines use the selected show folder, the application workspace manager and the bundled audience bridge. The app remembers the selected engine. [Compiled runtime, folder format and local REPL](../EmbeddedHost/README.md)
+
 ## Open a show
 
 Unzip the **Tolglow-Studio-arm64** artifact from the **Packaged Apple Studio** workflow. It contains a development build with an ad hoc signature. Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
@@ -55,7 +57,7 @@ native/Packaging/bundle-macos target/uberjar/*-standalone.jar "$PWD/build/apps" 
 python3 native/Tests/check_packaged_studio.py "build/apps/Tolglow Studio.app"
 ```
 
-The Mac release executes JVM bytecode using GraalVM's runtime compiler. Native Image can ahead-of-time compile a fixed set of classes. Ordinary Clojure `eval`, requiring user namespaces that have never been compiled, and recompiling arbitrary application code generate new JVM classes. Keeping that capability on iOS requires an interpreter or an external compilation design compatible with iOS. GluonFX provides separate iOS device and simulator static-library targets. A generic macOS ARM64 Native Image targets a different platform ABI.
+The bundled GraalVM JVM executes JVM bytecode, including user namespaces that compile new classes. The compiled Mac host and iOS framework use a fixed Native Image and a separate SCI context for editable show code. GluonFX produces different Mach-O products for the iOS simulator and the iOS device ABI. A physical device requires an appropriately signed app.
 
 - [GraalVM Native Image compatibility](https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/)
 - [GluonFX iOS device and simulator toolchains](https://docs.gluonhq.com/#_platforms)
