@@ -1,4 +1,4 @@
-#if canImport(TolglowRuntime)
+#if TOLGLOW_EMBEDDED_HOST
 import SwiftUI
 import TolglowRuntime
 import UniformTypeIdentifiers
