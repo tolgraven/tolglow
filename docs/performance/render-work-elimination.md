@@ -114,7 +114,7 @@ P95 is the 35th-shortest of 36 measured frames for each renderer. The original 2
 
 In the first version, `(< low value high)` inside the beam loop increased whole-frame median allocation from 56.35 to 73.39 MB. Clojure 1.12 compiled that three-argument call through an `IFn` and boxed each double. The local `inside-slab?` helper uses two binary comparisons on primitive values. Its bytecode calls `Numbers.lt(double, double)` twice. The README and bytecode dumps in the benchmark archive keep this exception to the usual readable chained comparison specific to the measured hot loop. [Evidence archive](https://raw.githubusercontent.com/tolgraven/afterglow/d50dca0cceae0076e217140658caf6ed56eb571d/pr-88/room-cell-evidence.zip)
 
-The [portable Mac benchmark ZIP](https://raw.githubusercontent.com/tolgraven/afterglow/eb1d5ba2cdec73c2637ba08c6af376e4547443e5/pr-88/macbook-air-lighting-benchmark.zip) runs the same comparison locally. In the extracted directory, `./run.sh all` records a JVM-only show run, native OpenGL readback against a scalar oracle, and a complete show using native material rendering. The GPU lanes report the OpenGL renderer, readback traffic and any fallback. The package checksum is `80121cc031b50cc5b3e8fabaea395488dd13c7e38344598b644f44c66bdd79fe`.
+On the physical M4 MacBook Air the optimized CPU show took 62.13 ms median, with zero of 36 frames meeting 25 ms. The standalone hardware shader including readback took 1.91 ms median. Full-show results include the rig, scheduling settings, paired GPU-material timings and a link to the corrected checksum-pinned replay kit. [MacBook Air measurements](https://github.com/tolgraven/tolglow/pull/174)
 
 ### Studio delivery and the next bottleneck
 
