@@ -7,5 +7,10 @@
     "0:7",
     "0:8"
   ],
+  "lostReply": [
+    "0:9",
+    "0:10"
+  ],
+  "stateSockets": 1,
   "errors": []
 }
