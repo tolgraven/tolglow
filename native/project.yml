@@ -44,10 +44,17 @@ targets:
     type: application
     platform: watchOS
     sources: [watchOS, Shared]
+    entitlements:
+      path: watchOS/TolglowWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
     info:
       path: watchOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        WKBackgroundModes: [workout-processing]
+        NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
+        NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
         WKApplication: true
         WKCompanionAppBundleIdentifier: org.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.

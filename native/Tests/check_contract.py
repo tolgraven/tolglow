@@ -54,6 +54,22 @@ class Contract(unittest.TestCase):
         self.assertIn("WKCompanionAppBundleIdentifier: org.tolglow.ios", manifest)
         self.assertTrue((ROOT / "Core/Package.swift").exists())
 
+    def test_optional_watch_workout_discards_health_data(self):
+        manifest = (ROOT / "project.yml").read_text()
+        watch = manifest.split("  TolglowWatch:\n    type: application", 1)[1].split("schemes:")[0]
+        for item in ["com.apple.developer.healthkit: true", "NSHealthShareUsageDescription:",
+                     "NSHealthUpdateUsageDescription:", "WKBackgroundModes: [workout-processing]"]:
+            self.assertIn(item, watch)
+        source = (ROOT / "watchOS/DanceWorkout.swift").read_text()
+        self.assertIn("builder?.discardWorkout()", source)
+        self.assertNotIn("finishWorkout", source)
+        self.assertIn("config.activityType = .socialDance", source)
+        self.assertIn("store.requestAuthorization", source)
+        self.assertNotIn("UserDefaults", source)
+        view = (ROOT / "watchOS/DanceAudienceView.swift").read_text()
+        self.assertIn("private var sharePulse = false", view)
+        self.assertIn("workout.start(withPulse: sharePulse)", view)
+
     def test_native_control_and_webview_share_the_operator_auth_boundary(self):
         access = (ROOT / "iOS/StudioOperatorAccess.swift").read_text()
         self.assertIn("NSURLAuthenticationMethodHTTPBasic", access)
