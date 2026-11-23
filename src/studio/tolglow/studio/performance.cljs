@@ -8,7 +8,8 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.spatial-picker :as spatial]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
@@ -125,10 +126,19 @@
   (fn [db [_ id]] (store db (update-in (state db) [:expanded (wire id)] not))))
 (rf/reg-sub :performance/card-expanded
   (fn [db [_ id]] (boolean (get-in (state db) [:expanded (wire id)]))))
+(defn- value-by-id [m k]
+  (get m k (get m (keyword (wire k)) (get m (wire k)))))
+
+(defn- parameter-overlay [show instance-id parameter]
+  (value-by-id (value-by-id (get-in show [:modulation :overrides]) instance-id) parameter))
+
+(defn xyz-readings [show instance components]
+  (let [base (mapv (fn [[k schema]] (or (value-by-id (:params instance) k) (:default schema))) components)
+        effective (mapv (fn [[k _] v] (or (parameter-overlay show (:id instance) k) v)) components base)]
+    {:base base :effective effective}))
+
 (rf/reg-sub :performance/parameter-overlay
-  (fn [db [_ id parameter]]
-    (let [lookup (fn [m k] (get m k (get m (keyword (wire k)) (get m (wire k)))))]
-      (lookup (lookup (get-in db [:show :modulation :overrides]) id) parameter))))
+  (fn [db [_ id parameter]] (parameter-overlay (:show db) id parameter)))
 (rf/reg-event-db :performance/runtime-change
   (fn [db _] (store db (assoc defaults :generation (inc (:generation (state db))) :group (:group (state db))))))
 (rf/reg-event-fx :performance/action
@@ -309,11 +319,15 @@
       (for [{:keys [parameter schema attribute components]} (if expanded? controls (take 2 controls))]
         ^{:key (pr-str (or parameter [attribute components]))}
         (if components
-          [:div.param-row [:label (widgets/label attribute)]
-           [widgets/axes-control (widgets/label attribute)
-            (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
-            (mapv (fn [[id schema]] (get-in instance [:params id] (:default schema))) components)
-            (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]]
+          (let [{:keys [base effective]} (xyz-readings show instance components)
+                limits (mapv (comp :bounds second) components)
+                schema (cond-> {:type :vector :size 3 :semantic/type attribute}
+                         (apply = limits) (assoc :bounds (first limits)))]
+            [:div.param-row [:label (widgets/label attribute)]
+             [widgets/axes-control (widgets/label attribute)
+              (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
+              base (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]
+             [visualization/studio schema effective]])
           [parameter-control instance parameter schema nil {:compact? (not expanded?)}]))]
      [instance-controls instance {:compact? true}]
      (when expanded?

@@ -8,7 +8,8 @@ import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
-import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {displayTransform, EdgePass, FilmPass} from './film.js';
+import {TIERS, rasterSizes, supportedSamples, sceneSamples, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
@@ -23,12 +24,6 @@ import {DisplayClock} from './display-clock.js';
 import {fixtureSlots} from './fixture-selection.js';
 import {LightingSamples} from './lighting-samples.js';
 
-const TIERS = {
-  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fog: 'phone'},
-  mobile: {dpr: 1, maxPixels: 500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32},
-  desktop: {dpr: 1.5, maxPixels: 1500000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 64},
-  high: {dpr: 1.75, maxPixels: 2800000, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128},
-};
 const DOWN = new THREE.Vector3(0, -1, 0);
 const MAX_LIGHTS = 16;
 
@@ -38,6 +33,7 @@ export class SceneRenderer {
     this.platform = platform; this.displayClock = new DisplayClock(); this.lighting = new LightingSamples();
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.ready = false; this.disposed = false;
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
+    this.filmSettings = {bloom: .28, exposure: .85, grain: .0015};
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.qualityChoice = 'auto';
     this.fogOverride = null; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
     this.lastFrame = 0; this.renderScale = 1; this.scaleChangedAt = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
@@ -77,8 +73,12 @@ export class SceneRenderer {
   }
   setStatus(text) { if (this.status && this.status.textContent !== text) this.status.textContent = text; }
   initialize() {
-    this.renderer = new THREE.WebGLRenderer({canvas: this.canvas, alpha: false, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: false});
+    this.hdrRequested = !this.platform.worker && hdrDisplayAvailable();
+    this.renderer = new THREE.WebGLRenderer({canvas: this.canvas, alpha: this.hdrRequested, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: false});
     const context = this.renderer.getContext(), debug = context.getExtension('WEBGL_debug_renderer_info');
+    this.maxDimension = Math.min(context.getParameter(context.MAX_RENDERBUFFER_SIZE), context.getParameter(context.MAX_TEXTURE_SIZE));
+    this.samples = supportedSamples(context);
+    this.gpuTimer = this.platform.worker ? null : new GpuTimer(context);
     this.deviceRenderer = debug ? context.getParameter(debug.UNMASKED_RENDERER_WEBGL) : context.getParameter(context.RENDERER);
     this.softwareRenderer = /swiftshader|llvmpipe|softpipe|software rasterizer/i.test(this.deviceRenderer || '');
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.frameInterval = 1000 / this.options.fps;
@@ -107,7 +107,9 @@ export class SceneRenderer {
     this.inputPass = new TexturePass(this.compositeTarget.texture); this.composer.addPass(this.inputPass);
     this.glass = new GlassPass(this); this.composer.addPass(this.glass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .28, .4, 1.1); this.composer.addPass(this.bloom);
-    this.outputPass = new OutputPass(); this.composer.addPass(this.outputPass);
+    this.outputPass = displayTransform(); this.composer.addPass(this.outputPass);
+    this.edges = new EdgePass(); this.composer.addPass(this.edges);
+    this.film = new FilmPass(); this.composer.addPass(this.film); this.setFilm(this.filmSettings);
     this.rebuild({room: {width: 12, height: 5, depth: 10}, fixtures: [], trusses: []});
     this.resize();
   }
@@ -116,6 +118,16 @@ export class SceneRenderer {
     const environment = new RoomEnvironment(), generator = new THREE.PMREMGenerator(this.renderer);
     this.environmentTarget = generator.fromScene(environment, .04); this.scene.environment = this.environmentTarget.texture;
     environment.dispose(); generator.dispose();
+  }
+  setFilm(settings) {
+    for (const [key, maximum] of [['bloom', 2], ['exposure', 3], ['grain', .08]]) {
+      if (Number.isFinite(settings?.[key])) this.filmSettings[key] = clamp(settings[key], 0, maximum);
+    }
+    if (!this.film) return;
+    this.renderer.toneMappingExposure = this.filmSettings.exposure;
+    this.bloom.strength = this.filmSettings.bloom;
+    this.bloom.enabled = this.bloom.strength > 0;
+    this.film.uniforms.grain.value = this.filmSettings.grain;
   }
   setWorkLight(value) {
     this.workLight = clamp(Number(value) || 0, 0, 1);
@@ -141,14 +153,18 @@ export class SceneRenderer {
       this.scaleChangedAt = performance.now();
     }
     this.qualityChoice = value; if (!this.visible || !this.renderer) return;
-    const next = value === 'auto' ? this.autoQuality() : value;
+    const next = value === 'auto' ? (choiceChanged ? this.autoQuality() : this.quality) : value;
     if (next === this.quality) {if (choiceChanged) this.resize(); return;}
+    this.applyTier(next);
+  }
+  applyTier(next) {
     const previousFog = this.fog, nextFog = new VolumetricFog(this.renderer, {quality: TIERS[next].fog || next});
     if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.showAtmosphere = previousFog.showAtmosphere; nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
     else nextFog.setRoom(this.room);
     nextFog.setAmount(this.fogAmount);
     this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.options.fps;
     this.fog = nextFog; previousFog?.dispose();
+    if (this.width) nextFog.setSize(this.width, this.height);
     if (this.snapshot) this.update(this.snapshot, true);
     this.resize();
   }
@@ -301,13 +317,24 @@ export class SceneRenderer {
     // Shader compilation is a one-time cost. Use consecutive warm samples and
     // hysteresis so the targets do not resize on every display callback.
     if (this.qualityChoice !== 'auto' || this.draws < 2 || !this.visible) return;
+    this.measuredFrameMs = elapsed;
     const budget = 1000 / this.options.fps;
     this.overBudget = elapsed > budget * 1.35 ? (this.overBudget || 0) + 1 : 0;
     this.underBudget = elapsed < budget * .65 ? (this.underBudget || 0) + 1 : 0;
     if (now - this.scaleChangedAt < 1000) return;
     let scale = this.renderScale;
-    if (this.overBudget >= 2) scale = Math.max(.5, Math.min(scale * .85, scale * Math.sqrt(budget / elapsed)));
+    if (this.overBudget >= 4) scale = Math.max(.5, Math.min(scale * .85, scale * Math.sqrt(budget / elapsed)));
     else if (this.underBudget >= 60) scale = Math.min(1, scale + .1);
+    if (scale === this.renderScale && !this.softwareRenderer) {
+      const direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
+      const next = adjacentQuality(this.quality, direction);
+      if (next !== this.quality) {
+        this.renderScale = direction < 0 ? .65 : .9;
+        this.scaleChangedAt = now; this.overBudget = this.underBudget = 0;
+        this.applyTier(next);
+        return;
+      }
+    }
     if (scale !== this.renderScale) {
       this.renderScale = scale; this.scaleChangedAt = now; this.overBudget = this.underBudget = 0;
       this.resizePending = true;
@@ -319,13 +346,23 @@ export class SceneRenderer {
     const bounds = this.platform.worker ? this.platform.viewport : this.canvas.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     const pixelRatio = this.platform.worker ? bounds.pixelRatio : devicePixelRatio;
-    const dpr = this.renderScale * Math.min(pixelRatio || 1, this.options.dpr, Math.sqrt(this.options.maxPixels / (bounds.width * bounds.height)));
-    const width = Math.max(1, Math.round(bounds.width * dpr)), height = Math.max(1, Math.round(bounds.height * dpr));
+    const {scene: [width, height], display: [displayWidth, displayHeight]} = rasterSizes(
+      bounds.width, bounds.height, pixelRatio, this.options, this.renderScale, this.maxDimension);
     this.camera.aspect = bounds.width / bounds.height; this.camera.updateProjectionMatrix();
-    if (width === this.width && height === this.height) return;
-    this.renderer.setPixelRatio(1); this.renderer.setSize(width, height, false);
+    if (displayWidth !== this.displayWidth || displayHeight !== this.displayHeight) {
+      this.renderer.setSize(displayWidth, displayHeight, false);
+      this.displayWidth = displayWidth; this.displayHeight = displayHeight;
+      this.displayRange = configureDisplayRange(this.renderer.getContext(), displayWidth, displayHeight, this.hdrRequested);
+      this.outputPass.uniforms.extendedDisplay.value = this.displayRange === 'extended';
+    }
+    const samples = sceneSamples(this.quality, width, height, this.samples);
+    if (width === this.width && height === this.height && this.sceneTarget.samples === samples) return;
+    if (samples !== this.sceneTarget.samples) {
+      this.sceneTarget.dispose();
+      this.sceneTarget.samples = samples;
+    }
     this.sceneTarget.setSize(width, height); this.compositeTarget.setSize(width, height);
-    this.composer.setPixelRatio(1); this.composer.setSize(width, height); this.fog.setSize(width, height);
+    this.composer.setSize(width, height); this.fog.setSize(width, height);
     this.width = width; this.height = height;
   }
   setCamera(name) {
@@ -347,7 +384,7 @@ export class SceneRenderer {
   }
   changeActivity(active) {
     this.visible = active; if (!active) this.fog?.showAtmosphere?.suspend(); this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
-    this.displayClock.cancel(); this.navigation?.refreshActivity();
+    this.displayClock.cancel(); if (!active) this.gpuTimer?.dispose(); this.navigation?.refreshActivity();
     if (!active || this.disposed || this.error) return;
     try {
       if (!this.renderer) this.initialize();
@@ -358,7 +395,11 @@ export class SceneRenderer {
     } catch (error) {this.fail(error);}
   }
   restoreContext() {
-    this.restorePending = false; this.refreshEnvironment(); this.fog?.upload();
+    this.restorePending = false;
+    this.displayWidth = this.displayHeight = null;
+    this.gpuTimer?.dispose();
+    if (!this.platform.worker) this.gpuTimer = new GpuTimer(this.renderer.getContext());
+    this.resize(); this.refreshEnvironment(); this.fog?.upload();
     this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…');
   }
   scheduleFrame(delay) {
@@ -366,14 +407,21 @@ export class SceneRenderer {
     this.nextFrameAt = performance.now() + delay;
     this.displayClock.at(this.nextFrameAt, time => this.animate(time));
   }
-  pause() {this.paused = true; this.navigation?.refreshActivity(); this.lighting.previous = null; this.displayClock.cancel();}
+  pause() {this.paused = true; this.gpuTimer?.dispose(); this.navigation?.refreshActivity(); this.lighting.previous = null; this.displayClock.cancel();}
   resume() {if (!this.disposed) {this.paused = false; this.navigation?.refreshActivity(); this.lastFrame = 0; this.scheduleFrame(0);}}
   animate(time) {
     if (this.disposed || this.paused || !this.visible || this.lost) return;
     const dt = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0;
     this.lastFrame = time; this.clock += dt;
     try {
-      this.draw(dt); this.measureLoad(this.lastCPU, performance.now());
+      const gpuMs = this.gpuTimer?.sample();
+      const timed = this.gpuTimer?.begin();
+      try { this.draw(dt); }
+      finally { if (timed) this.gpuTimer.end(); }
+      if (gpuMs != null) {
+        this.lastGpuMs = gpuMs;
+        this.measureLoad(Math.max(this.lastCPU, gpuMs || 0), performance.now());
+      }
       // The idle budget starts at completion, not at the previous RAF timestamp.
       // Even a very slow driver must yield a real input-processing window.
       this.scheduleFrame(Math.max(0, time + this.frameInterval - performance.now()));
@@ -400,6 +448,7 @@ export class SceneRenderer {
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
+    this.film.uniforms.phase.value = this.reducedMotion.matches ? 0 : Math.floor(this.clock * 24) % 1024;
     this.composer.render(dt); this.editorOverlay?.render(this.renderer, this.camera); this.lastCPU = performance.now() - started; this.draws++;
     // Backpressure leaves main-thread time for cue/parameter input when a
     // driver blocks on compilation/submission. Recover gradually after it clears.
@@ -421,7 +470,10 @@ export class SceneRenderer {
   getTelemetry() {
     return {lightingMode: this.lighting.mode, targetRefreshHz: this.options.fps, ready: this.ready, failed: this.error || null, renderer: `Three.js r${THREE.REVISION}`, quality: this.quality,
       deviceRenderer: this.deviceRenderer, softwareRenderer: this.softwareRenderer,
-      pixels: [this.width, this.height], renderScale: this.renderScale, frameCPUms: this.lastCPU, frameIntervalMs: this.frameInterval,
+      pixels: [this.width, this.height], displayPixels: [this.displayWidth, this.displayHeight],
+      sceneSamples: this.sceneTarget?.samples, edgeFilter: 'FXAA', displayRange: this.displayRange, gpuTimeMs: this.lastGpuMs,
+      film: {...this.filmSettings}, measuredFrameMs: this.measuredFrameMs,
+      renderScale: this.renderScale, frameCPUms: this.lastCPU, frameIntervalMs: this.frameInterval,
       idleBudgetMs: Math.max(0, this.frameInterval - this.lastCPU), nextFrameAt: this.nextFrameAt, frames: this.draws,
       geometryCount: this.renderer?.info.memory.geometries || 0, textureCount: this.renderer?.info.memory.textures || 0,
       programCount: this.renderer?.info.programs?.length || 0, activeLights: this.activeLights || 0,
@@ -447,7 +499,7 @@ export class SceneRenderer {
     for (const light of this.spots || []) light.dispose();
     this.reflections?.dispose();
     if (this.content) disposeGeometry(this.content);
-    this.glass?.dispose(); this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.composer?.dispose();
+    this.glass?.dispose(); this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.edges?.dispose(); this.film?.dispose(); this.gpuTimer?.dispose(); this.composer?.dispose();
     this.sceneTarget?.dispose(); this.compositeTarget?.dispose(); this.environmentTarget?.dispose();
     if (this.materials) disposeMaterials(this.materials);
     this.renderer?.dispose(); this.resolveReady?.(false);

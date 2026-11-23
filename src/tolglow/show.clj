@@ -1401,7 +1401,7 @@
     (display/browser-display
      (assoc options :project!
             (fn [view]
-              (let [snapshot @(:state runtime)
+              (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
                     model (:model snapshot)
                     mode (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters)
                     view (assoc view :display-mode mode)

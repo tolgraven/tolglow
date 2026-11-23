@@ -110,6 +110,8 @@ test('actual worker renders while input runs, fences epochs, resizes and safely 
     });
     const scale = resized.telemetry.renderScale;
     assert.ok(scale >= .5 && scale <= 1);
+    assert.deepEqual(resized.telemetry.displayPixels, [480, 300]);
+    assert.equal(resized.telemetry.displayRange, 'sdr');
     assert.deepEqual(resized.telemetry.pixels, [Math.round(360 * scale), Math.round(225 * scale)]);
     assert.ok(resized.disposed && resized.terminated && resized.channelClosed && resized.ownerRemoved);
     assert.equal(resized.drawAfterDispose, false);

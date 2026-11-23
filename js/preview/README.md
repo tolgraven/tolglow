@@ -11,7 +11,7 @@ bundled legal notice.
 
 `RoomPreview(canvas, statusElement)` preserves `update(snapshot)`, `resize()`,
 `setFog(value)`, `burst(options?)`, `resetCamera()`, and `dispose()`. Additional
-controls are `setWorkLight(0..1)`, `setQuality('auto'|'low'|'mobile'|'desktop'|'high')`,
+controls include `setFilm({bloom, exposure, grain})`, `setWorkLight(0..1)`, `setQuality('auto'|'low'|'mobile'|'desktop'|'high')`,
 `setCamera('audience'|'overview')`, `focusFixture(id)`, `ready`, `whenReady`, and
 `getTelemetry()`. The owned canvas exposes `canvas.tolglowPreview` for inspection;
 disposal removes that reference. Re-frame owns UI controls and fullscreen state.
@@ -124,9 +124,12 @@ compile cannot leave later light changes waiting seconds. Neither policy is
 proof of real-device frame rate; worker isolation is the control-responsiveness
 boundary.
 
-Desktop caps DPR1.5, 1.5M pixels, 4×1024 shadow maps and 64 fixture meshes; mobile
-caps DPR1, .5M pixels, 2×512 shadow maps and 32 meshes; high caps DPR1.75, 2.8M
-pixels, 4×2048 maps and 128 meshes. All tiers share up to 16 persistent spotlights. The host projects up to 128
+Desktop allocates up to 3.2 million scene pixels at DPR 2, four 1024px shadow maps and
+64 fixture meshes. Mobile permits 1.5 million at DPR 2, two 512px maps and 32 meshes.
+High permits 3840×2160 at up to DPR 4, four 2048px maps and 128 meshes. Every tier
+presents at the panel's physical resolution up to UHD and the device's texture limit.
+`getTelemetry()` reports `pixels` (scene), `fog.targetSize`, `displayPixels`,
+`sceneSamples` and `displayRange`. All tiers share up to 16 persistent spotlights. The host projects up to 128
 emitting targets across universes, ranked by moving-head channels, peak
 emitted RGB, then stable ID hash. Up to 16 fixed emitters retain coverage when moving
 heads saturate the projection. The scene likewise includes an emitting fixed

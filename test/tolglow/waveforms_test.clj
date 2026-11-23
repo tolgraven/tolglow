@@ -177,6 +177,8 @@
             width (first (filter #(= :width (:param %)) (:parameters changed)))]
         (is (= 0.8 (:value width) (:base-value width) (:effective-value width))))
       (let [stale (waveforms/project-display cache (assoc-in snapshot [:model :epoch] 1) view nil)]
+        (is (nil? (:visualization-clock stale)))
+        (is (every? #(not (contains? % :value)) (:parameters stale)))
         (is (= :stale (:preview-status (first (filter #(= :waveform (:param %)) (:parameters stale)))))))
       (finally ((:close! transport) handle)))))
 
@@ -240,3 +242,16 @@
         (is (= :accepted (:status (apply! :command {:op :param/set :instance-id id :param :width :value 0.8} 100))))
         (is (= [1.0 1.0 1.0 1.0 1.0] (:preview-samples (preview! id)))))
       (finally (show/stop! runtime)))))
+
+(deftest spatial-and-history-view-use-the-committed-frame-and-device-overrides
+  (let [snapshot (-> (fixture)
+                     (assoc-in [:model :time-ms] 2000.0)
+                     (assoc-in [:model :transport :beat] 4.0)
+                     (assoc-in [:model :settings :controllers :push-display]
+                               {:mode :audio :parameter-view :spatial :history-beats 8}))
+        plain (waveforms/project-display (waveforms/create-cache) snapshot {:parameters []} nil)
+        device (waveforms/project-display (waveforms/create-cache) snapshot
+                                          {:parameters [] :display-mode :parameters :parameter-view :history :history-beats 0.5} nil)]
+    (is (= {:beat 4.0 :time-ms 2000.0} (:visualization-clock plain)))
+    (is (= [:audio :spatial 8] ((juxt :display-mode :parameter-view :history-beats) plain)))
+    (is (= [:parameters :history 0.5] ((juxt :display-mode :parameter-view :history-beats) device)))))

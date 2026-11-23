@@ -1,5 +1,6 @@
 (ns tolglow.studio.display-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [thi.ng.color.core :as colors]
             [tolglow.controllers.page-overview :as pages]
@@ -286,3 +287,9 @@
     (is (= 8 (count (:pages (sample show (assoc view :page-bank 0 :page-colors :type))))))
     (is (nil? (sample show (assoc view :display-mode :audio))))
     (is (nil? @cache))))
+
+(deftest frame-requests-retain-qualified-parameter-schema-keys
+  (let [view {:parameters [{:schema {:type :vector :semantic/type :orientation :control/axis :tilt}}]}
+        request (json/read-str (display/frame-request 1 view))]
+    (is (= {"type" "vector" "semantic/type" "orientation" "control/axis" "tilt"}
+           (get-in request ["view" "parameters" 0 "schema"])))))
