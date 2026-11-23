@@ -6,6 +6,8 @@
             [afterglow.time :as musical-time]
             [tolglow.agents.credentials :as credentials]
             [tolglow.integrations.audience-invitation :as stage]
+            [tolglow.sensors.audience :as audience]
+            [tolglow.sensors.audience.zones :as zones]
             [tolglow.sensors.osc :as osc])
   (:import [java.util UUID]
            [java.security MessageDigest]
@@ -189,6 +191,9 @@
      :devices (into {} (map (fn [[id device]] [id (assoc (select-keys device [:session-id :armed? :last-sample-id :received-at-ms])
                                                         :credential-ready? (boolean (:token device)))])) (:devices state))}))
 
+(defn audience-status [manager model]
+  (zones/operator-view model (:devices @(:state manager))))
+
 (defn latest [manager device-id] (get-in (live manager) [:devices device-id :latest]))
 
 (defn arm!
@@ -254,10 +259,12 @@
         now ((:now-ms manager))
         {:keys [devices packets]}
         (locking (:lock manager)
-          (let [state (live manager) n (min (:drain-limit manager) (count (:queue state)))
-                packets (subvec (:queue state) 0 n)]
-            (swap! (:state manager) update :queue #(subvec % n))
-            {:devices (:devices state) :packets packets}))
+          (let [{:keys [queue devices]} (live manager)
+                n (min (:drain-limit manager) (count queue))]
+            ;; A subvec retains the consumed prefix when a busy queue never empties.
+            (when (pos? n)
+              (swap! (:state manager) assoc :queue (into [] (subvec queue n))))
+            {:devices devices :packets (subvec queue 0 n)}))
         initial
         (reduce-kv
          (fn [acc id source]
@@ -305,7 +312,7 @@
                   :when (not (get-in source [:state :armed?]))]
             (when (= (get-in source [:state :session-id]) (get-in @(:state manager) [:devices id :session-id]))
               (swap! (:state manager) assoc-in [:devices id :armed?] false)))))
-      result)))
+      (update result :model audience/project))))
 
 (defn start-osc! [manager options]
   (let [generation (:generation (live manager))

@@ -20,9 +20,9 @@ Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses
 4. Display the generated QR. Full-app visitors can also browse advertised names manually. Scanning pins a particular stage’s public key. Restarting the bridge creates a fresh stage identity and QR.
 5. Guests open **Dance floor**, select the stage, then choose their input. For Watch participation, open the paired iPhone’s Dance floor and join first. On Watch select Dance floor and choose whether to share workout pulse.
 
-The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. Heart rate and motion histories are never written by the bridge.
+The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. The bridge keeps current readings in memory. A saved show can contain the most recent configured aggregate channel, including its BPM when one wearer is participating.
 
-Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host with a locally secured OSC forward. Native Linux BLE hosting and coordinated multiple gateways remain open.
+Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host. The bridge runs on macOS.
 
 To use each admitted step to launch a registered accent cue, add the following entry to the audience sensor’s mapping. The musical cooldown lets a large crowd play one accent per sixteenth note in 4/4. Remove the cooldown to process every detected guest onset.
 
@@ -34,6 +34,21 @@ To use each admitted step to launch a registered accent cue, add the following e
                        :launch {:mode :one-shot :duration {:beats 1/8}}}}]}
 ```
 
+## Cover several areas of a venue
+
+Give each Bluetooth gateway its own enrolled sensor ID, credential and zone QR. Set `TOLGLOW_AUDIENCE_OSC_HOST` on a remote gateway to the lighting host on your encrypted venue network or VPN. The default is loopback. Guests only need Bluetooth. The gateway-to-show OSC link carries its source credential, so keep it on the private link.
+
+Configure each source with `tolglow.sensors.audience/gateway-mapping` and arm its observed session. In the initial show model, select the zones with `(assoc-in model [:variables :audience :gateways] ["front" "balcony"])`. The renderer and Studio subscriptions can read `[:variables :audience :levels]`. The dance-effort mean weights each gateway by its participating dancers. The pulse mean weights only the wearers with fresh, shared readings. Leaving or disarming a zone removes its contribution. Configure step gestures on the individual gateway sensor mappings to retain distinct events. Capacity and handoff across physical radios need a venue test.
+
+A software rehearsal sends the same dance step from 96 people on each beat at 120 BPM. Four zones group steps into packets of at most eight gestures. Over three minutes of show time the host decoded 6,484 OSC observations and emitted 34,560 mapped cue launches. Its queue finished empty, with zero admission rejections or overflows. This measures the host using encoded packets and a deterministic clock. Radio capacity, UDP delivery and physical timing require separate measurements.
+
+Run the rehearsal with the paired Afterglow checkout selected as for the test suite.
+
+```bash
+lein with-profile +test run -m clojure.main -e \
+  "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
+```
+
 ## Publish a scannable Clip
 
 Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
@@ -43,3 +58,11 @@ The QR holds a public fingerprint. A per-connection challenge and ephemeral phon
 ## Qualification
 
 Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
+
+## Operate audience zones in Studio
+
+Open **Connections → Audience**. The list contains enrolled gateway sources whose mappings supply both `audience-count` and `dance-effort`. A source starts at **Waiting for gateway**. When its first observation reaches the show the status changes to **Joined**. **Arm** admits new observations from that gateway session. Use its checkbox to include the zone in the show’s audience mix. A gateway may continue collecting readings while excluded from this mix.
+
+**Dancers** counts the participants in the selected, armed zones. **Dance effort** weights each zone by its dancers. **Pulse sharing** shows how many of those dancers share a fresh pulse measurement. The BPM signal stays in the show model for mappings. On signal expiry the zone drops out of the readings and requires a fresh observation and explicit arming. The operator’s selection survives show save/load. Studio receives this view through the Connections Transit stream. It contains the logical zones and aggregate measurements.
+
+A REPL controller can use the same incremental command as the operator. Submit `:sensor-audience-zone` with `{:device-id "balcony" :included? true}` to the show. Other zones keep their selection. To reproduce the operator flow locally, build the Studio release then run `lein run -m tolglow.qa.audience-zones target/audience-zones`.

@@ -91,8 +91,8 @@
         (watch-bundle! (:bundle @owner) nil)))))
 
 (defn status-at-commit
-  "Capture public connection data once after invalidation. The returned pure
-  projection ages the selected clock and counts admitted events at show time."
+  "Capture sync and audio after invalidation. At each observed commit, project
+  timing and audience levels against the gateway sessions admitted by this host."
   [connections]
   (let [{:keys [bundle model]} (live-state connections)
         epoch (:epoch model)
@@ -112,6 +112,7 @@
                         (assoc :follow-transport? (get-in sync-status [:config :link :follow-transport?])))]
             {:sync (assoc sync-status :clock clock)
              :stage-invitation invitation
+             :audience (sensor-manager/audience-status (:sensors bundle) model)
              :audio (assoc audio-status :received-event-count (get-in model [:variables :audio :event-count] 0))}))))))
 
 (defn- close-bundle! [bundle]
