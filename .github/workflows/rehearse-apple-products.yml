@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
-        with: {ref: 39d66aaacc2759cfeaa2cb75f6b82e0fbce35644}
+        with: {ref: fda3a5fb609010bdf6dce4b9abfd25d9d78afeb8}
       - uses: actions/download-artifact@v4
         with: {repository: tolgraven/tolglow, run-id: 45208752583, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: prior}
       - name: Link this Swift UI against the qualified native iOS simulator library
@@ -29,6 +29,7 @@ jobs:
           path: |
             build/ipad-media/ipad.png
             build/ipad-media/ipad.gif
+            build/ipad-media/studio-chooser.png
             build/ipad-media/attachments/manifest.json
             build/ipad-media/last-start-error.log
       - uses: actions/upload-artifact@v7.0.2
