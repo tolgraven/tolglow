@@ -1,7 +1,8 @@
 (ns tolglow.studio.material-designer
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [tolglow.studio.signal-picker :as signal]))
 
 (def ^:private path [:ui ::designer])
 (def ^:private initial-preset :optics/through-water)
@@ -136,20 +137,29 @@
                          :on-blur #(let [n (parse-double (field-value %))]
                                      (when (and n (js/Number.isFinite n)) (change! n)))}]])
 
+(defn- default-control [field label value]
+  (cond
+    (number? value) [number-field label value #(set-field! field %)]
+    (and (vector? value) (every? number? value))
+    [:fieldset.material-vector [:legend label]
+     (for [[i v] (map-indexed vector value)]
+       ^{:key i} [number-field (str label " " (inc i)) v #(set-field! (conj field i) %)])]
+    (contains? #{:beat :bar :phrase} (:op value))
+    [:label label [:select {:aria-label label :value (name (:op value))
+                            :on-change #(set-field! field (assoc value :op (keyword (field-value %))))}
+                   [:option {:value "beat"} "Beat"] [:option {:value "bar"} "Bar"]
+                   [:option {:value "phrase"} "Phrase"]]]
+    (= :variable (:op value))
+    [:div.signal-fixed [:span label]
+     [:button.text-button {:type "button" :on-click #(set-field! field (signal/fixed-value (:type value)))}
+      "Use fixed value"]]
+    :else [:div [:span label] [:code (pr-str value)]]))
+
 (defn- input-controls [id value]
   (let [field [:draft :inputs id] label (title id)]
-    (cond
-      (number? value) [number-field label value #(set-field! field %)]
-      (and (vector? value) (every? number? value))
-      [:fieldset.material-vector [:legend label]
-       (for [[i v] (map-indexed vector value)]
-         ^{:key i} [number-field (str label " " (inc i)) v #(set-field! (conj field i) %)])]
-      (contains? #{:beat :bar :phrase} (:op value))
-      [:label label [:select {:aria-label label :value (name (:op value))
-                              :on-change #(set-field! field (assoc value :op (keyword (field-value %))))}
-                     [:option {:value "beat"} "Beat"] [:option {:value "bar"} "Bar"]
-                     [:option {:value "phrase"} "Phrase"]]]
-      :else [:div [:span label] [:code (pr-str value)]])))
+    [:div.material-input-source
+     [default-control field label value]
+     [signal/picker label value (signal/value-type value) #(set-field! field %)]]))
 
 (defn- add-input [inputs]
   (r/with-let [id (r/atom "") kind (r/atom "number")]
