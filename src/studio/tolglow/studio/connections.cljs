@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
+            [tolglow.studio.audience-invitation :as invitation]
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.audience :as audience]
@@ -650,6 +651,7 @@
       [:button.button {:type "button" :on-click #(rf/dispatch [:connections/refresh-devices])} "Refresh device lists"]]
      [error-list s]
      [audience/panel]
+     [invitation/panel]
      [clock-panel s (get-in db [:show :transport])]
      (when-let [error (get-in s [:sync :last-error])]
        [:p.connection-error {:role "status"} (or (:message error) (str error))])

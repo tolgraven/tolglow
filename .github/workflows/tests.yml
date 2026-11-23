@@ -203,16 +203,42 @@ jobs:
         run: |
           native=$(.github/scripts/native-build-required "$GITHUB_EVENT_NAME" "$BASE_SHA" "$HEAD_SHA")
           echo "native=$native" >> "$GITHUB_OUTPUT"
-      - name: Run portable sensor and camera analysis tests
+      - name: Exercise audience sensors, camera analysis and gesture timing
         if: steps.paths.outputs.native == 'true'
         env:
           TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
-        run: swift test --package-path native/Core
+          TOLGLOW_AUDIENCE_TIMING_DIR: ${{ runner.temp }}/onset-timing
+          TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
+          TOLGLOW_STAGE_TRACE: ${{ runner.temp }}/stage-heartbeat.json
+        run: |
+          mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR" "$TOLGLOW_AUDIENCE_GATT_DIR"
+          swift test --package-path native/Core
       - uses: actions/upload-artifact@v4
         if: steps.paths.outputs.native == 'true'
         with:
           name: audience-camera-pose-trace
           path: ${{ runner.temp }}/audience-pose.csv
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-onset-timing
+          path: ${{ runner.temp }}/onset-timing/*.json
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-gatt-qualification
+          path: ${{ runner.temp }}/gatt/gatt-traces.json
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-stage-heartbeat
+          path: ${{ runner.temp }}/stage-heartbeat.json
           if-no-files-found: error
           retention-days: 10
   native:

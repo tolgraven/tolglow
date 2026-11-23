@@ -11,6 +11,10 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     @Published private(set) var joined = false
     @Published private(set) var looking = false
     @Published private(set) var connecting = false
+    @Published private(set) var reconnecting = false
+    @Published private(set) var invalidInvitation = false
+    @Published private(set) var room: String?
+    var onSuspend: (() -> Void)?
     var onJoin: (() -> Void)?
     var onEnd: (() -> Void)?
     private var manager: CBCentralManager?
@@ -19,7 +23,12 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     private var identity: CBCharacteristic?
     private var hello: CBCharacteristic?
     private var samples: CBCharacteristic?
-    #if !APPCLIP
+    private var recovery = AudienceRecovery()
+    private var pendingFingerprint: String?
+    private var retryTimer: DispatchWorkItem?
+    private var inForeground = true
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    #if os(iOS) && !APPCLIP
     @Published private(set) var offersCompute = false
     private var grantField: CBCharacteristic?
     private var grantReply: ((Data?) -> Void)?
@@ -29,22 +38,42 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         peer.readValue(for: grantField)
     }
     #endif
-    private var room: String?
     private var key: SymmetricKey?
     private var queued: AudienceSample?
     private var pending = false
     private var timeout: DispatchWorkItem?
 
     func discover(room: String?) {
+        guard !invalidInvitation, self.room == nil || self.room == room else { return }
         leave(); self.room = room
         looking = true; status = "Looking for stages"
         if let manager { centralManagerDidUpdateState(manager) }
         else { manager = CBCentralManager(delegate: self, queue: .main) }
     }
 
+    func receiveInvitation(_ fingerprint: String?) {
+        if !recovery.keepsSession(for: fingerprint, currentInvitation: room) {
+            end(fingerprint == nil ? "Invalid stage invitation" : "Find the invited stage")
+        }
+        room = fingerprint
+        invalidInvitation = fingerprint == nil
+        refreshComputeAvailability()
+    }
+
+    func browseWithoutInvitation() {
+        room = nil
+        invalidInvitation = false
+        discover(room: nil)
+    }
+
+    func setForeground(_ active: Bool) {
+        inForeground = active
+        if !active && reconnecting { leave() }
+    }
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central.state == .poweredOn else {
-            if central.state == .resetting && (connecting || joined) {
+            if central.state == .resetting && (connecting || joined || reconnecting) {
                 leave(); status = "Bluetooth restarted. Find your stage again."
             } else if central.state != .unknown && central.state != .resetting {
                 leave(); status = "Allow Bluetooth and turn it on to join"
@@ -68,55 +97,63 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     @discardableResult func join(_ id: UUID) -> Bool {
-        guard manager?.state == .poweredOn, !connecting, !joined, let device = devices[id] else { return false }
+        guard !invalidInvitation, inForeground, manager?.state == .poweredOn, !connecting, !joined, !reconnecting, let device = devices[id] else { return false }
         stopBrowsing()
-        connecting = true
-        peer = device; device.delegate = self; manager?.connect(device)
         status = "Connecting to stage"
-        deadline()
+        connect(device)
         return true
+    }
+
+    private func connect(_ device: CBPeripheral) {
+        connecting = true
+        peer = device
+        device.delegate = self
+        manager?.connect(device)
+        deadline()
     }
 
     private func deadline() {
         timeout?.cancel()
-        let timer = DispatchWorkItem { [weak self] in self?.failed("Stage timed out. Find it again to reconnect.") }
+        let timer = DispatchWorkItem { [weak self] in self?.interrupted("Stage timed out") }
         timeout = timer
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: timer)
+        let delay = recovery.attempt.map { max(0, $0.end - now) } ?? 8
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: timer)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        if peer === peripheral { peripheral.discoverServices([AudienceRadio.service]) }
+        if peer === peripheral, peripheral.state == .connected { peripheral.discoverServices([AudienceRadio.service]) }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peer === peripheral else { return }
-        guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == AudienceRadio.service })
+        guard check(error, "Stage service unavailable") else { return }
+        guard let service = peripheral.services?.first(where: { $0.uuid == AudienceRadio.service })
         else { failed("Stage service unavailable"); return }
         var ids = [AudienceRadio.identity, AudienceRadio.hello, AudienceRadio.samples]
-        #if !APPCLIP
-        if room != nil { ids.append(AudienceRadio.computeGrant) }
+        #if os(iOS) && !APPCLIP
+        ids.append(AudienceRadio.computeGrant)
         #endif
         peripheral.discoverCharacteristics(ids, for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard peer === peripheral else { return }
+        guard check(error, "Stage characteristics unavailable") else { return }
         let list = service.characteristics ?? []
-        #if !APPCLIP
+        #if os(iOS) && !APPCLIP
         grantField = list.first { $0.uuid == AudienceRadio.computeGrant }
-        offersCompute = grantField != nil && room != nil
         #endif
         identity = list.first { $0.uuid == AudienceRadio.identity }
         hello = list.first { $0.uuid == AudienceRadio.hello }
         samples = list.first { $0.uuid == AudienceRadio.samples }
-        guard error == nil, let identity, hello != nil, samples != nil else { failed("Unsupported stage"); return }
+        guard let identity, hello != nil, samples != nil else { failed("Unsupported stage"); return }
         peripheral.readValue(for: identity)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peer === peripheral else { return }
-        #if !APPCLIP
-        if characteristic.uuid == AudienceRadio.computeGrant {
+        #if os(iOS) && !APPCLIP
+        if characteristic === grantField {
             let callback = grantReply; grantReply = nil
             guard error == nil, let key, let packet = characteristic.value,
                   let sealed = try? AES.GCM.SealedBox(combined: packet),
@@ -125,12 +162,14 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
             callback?(clear); return
         }
         #endif
-        guard characteristic.uuid == AudienceRadio.identity else { return }
-        guard error == nil, let identity = characteristic.value, identity.count == 81, let hello else { failed("Invalid stage identity"); return }
+        guard characteristic === identity else { return }
+        guard check(error, "Invalid stage identity") else { return }
+        guard let identity = characteristic.value, identity.count == 81, let hello else { failed("Invalid stage identity"); return }
         let publicKey = Data(identity.prefix(65))
-        guard
-              room.map({ $0 == AudienceRadio.fingerprint(publicKey) }) ?? true
-        else { failed("This stage does not match the invitation"); return }
+        let fingerprint = AudienceRadio.fingerprint(publicKey)
+        guard recovery.accepts(peripheral: peripheral.identifier, fingerprint: fingerprint, invitation: room)
+        else { failed("Stage identity changed. Check the invitation before rejoining."); return }
+        pendingFingerprint = fingerprint
         do {
             let local = P256.KeyAgreement.PrivateKey()
             key = try AudienceRadio.key(local, publicKey, challenge: Data(identity.suffix(16)))
@@ -139,12 +178,26 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peer === peripheral else { return }
-        guard error == nil else { failed("Stage declined the connection or sample"); return }
+        guard peer === peripheral, characteristic === hello || characteristic === samples else { return }
+        guard check(error, "Stage declined the connection or sample") else { return }
         timeout?.cancel()
-        if characteristic.uuid == AudienceRadio.hello {
+        if characteristic === hello {
+            guard connecting else { return }
+            if let ticket = recovery.attempt, now >= ticket.end { interrupted("Stage timed out"); return }
+            let id = peripheral.identifier
+            let name = venues.first(where: { $0.id == id })?.name ?? "stage"
+            guard let fingerprint = pendingFingerprint,
+                  recovery.joined(id, fingerprint: fingerprint, name: name, invitation: room) else {
+                failed("Stage identity changed. Check the invitation before rejoining.")
+                return
+            }
+            reconnecting = false
             connecting = false; joined = true; status = "Sharing with this stage"
+            refreshComputeAvailability()
+            // Starting input may synchronously write its first sample. Only a
+            // sample acknowledgement can release that write's in-flight slot.
             onJoin?()
+            return
         }
         pending = false
         flush()
@@ -168,28 +221,104 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         } catch { failed("Failed to send sample") }
     }
 
-    func leave() {
-        #if !APPCLIP
-        grantReply?(nil); grantReply = nil; grantField = nil; offersCompute = false
+    private func refreshComputeAvailability() {
+        #if os(iOS) && !APPCLIP
+        offersCompute = joined && room != nil && grantField != nil
         #endif
-        let old = peer
-        peer = nil; joined = false; connecting = false; looking = false
-        old?.delegate = nil
-        if let old { manager?.cancelPeripheralConnection(old) }
-        if manager?.isScanning == true { manager?.stopScan() }
-        timeout?.cancel(); timeout = nil
-        key = nil; hello = nil; samples = nil; identity = nil; queued = nil; pending = false
-        venues.removeAll(); devices.removeAll()
-        onEnd?()
-        status = "Disconnected"
     }
 
-    private func failed(_ text: String) { leave(); status = text }
+    private func closeTransport() {
+        timeout?.cancel(); timeout = nil
+        retryTimer?.cancel(); retryTimer = nil
+        let old = peer
+        peer = nil; joined = false; connecting = false
+        #if os(iOS) && !APPCLIP
+        let complete = grantReply
+        grantReply = nil; grantField = nil; offersCompute = false
+        complete?(nil)
+        #endif
+        old?.delegate = nil
+        if let old, old.state != .disconnected { manager?.cancelPeripheralConnection(old) }
+        key = nil; hello = nil; samples = nil; identity = nil; queued = nil; pending = false
+        pendingFingerprint = nil
+    }
+
+    func leave() { end("Disconnected") }
+
+    private func end(_ message: String) {
+        recovery.cancel()
+        reconnecting = false
+        closeTransport()
+        stopBrowsing()
+        venues.removeAll(); devices.removeAll()
+        status = message
+        onEnd?()
+    }
+
+    private func interrupted(_ message: String) {
+        guard inForeground, manager?.state == .poweredOn, let ticket = recovery.retry(at: now) else {
+            failed(message + ". Choose your stage to join again.")
+            return
+        }
+        let wasJoined = joined
+        reconnecting = true
+        closeTransport()
+        if wasJoined { onSuspend?() }
+        status = ticket.status
+        schedule(ticket, after: max(0, ticket.begin - now))
+    }
+
+    private func schedule(_ ticket: AudienceRecovery.Attempt, after delay: TimeInterval) {
+        let timer = DispatchWorkItem { [weak self] in self?.retry(ticket) }
+        retryTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: timer)
+    }
+
+    private func retry(_ ticket: AudienceRecovery.Attempt) {
+        guard inForeground, recovery.attempt == ticket else { return }
+        guard let device = devices[ticket.peripheral], manager?.state == .poweredOn else { leave(); return }
+        let time = now
+        guard time < ticket.end else { interrupted("Stage unavailable"); return }
+        // A cancelled CBPeripheral may still deliver its disconnect callback.
+        // Start a fresh handshake only after the previous connection has closed.
+        guard recovery.canStart(ticket, at: time), device.state == .disconnected else {
+            schedule(ticket, after: min(0.2, ticket.end - time))
+            return
+        }
+        connect(device)
+    }
+
+    private func failed(_ text: String) { end(text) }
+
+    private func check(_ error: Error?, _ message: String) -> Bool {
+        guard let error else { return true }
+        let e = error as NSError
+        let lost: [CBError.Code] = [.notConnected, .connectionTimeout, .peripheralDisconnected, .connectionFailed]
+        if e.domain == CBErrorDomain && lost.contains(where: { $0.rawValue == e.code }) { interrupted(message) }
+        else { failed(message) }
+        return false
+    }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        if peer === peripheral { failed("Could not connect to stage") }
+        if peer === peripheral, peripheral.state == .disconnected { interrupted("Could not connect to stage") }
     }
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        if peer === peripheral { failed("Stage disconnected. Find it again to reconnect.") }
+        if peer === peripheral, peripheral.state == .disconnected { interrupted("Stage disconnected") }
     }
 }
+
+#if (DEBUG && targetEnvironment(simulator) && os(watchOS)) || AUDIENCE_RECOVERY_FIXTURE
+extension AudienceClient {
+    /// Seeds the Watch UI test with a simulated transport interruption. The
+    /// real recovery policy, status view and user cancellation remain in use.
+    func previewInterruptedStage() -> Venue {
+        let venue = Venue(id: UUID(), name: "West floor")
+        recovery.joined(venue.id, fingerprint: "simulator-fixture", name: venue.name, invitation: nil)
+        if let attempt = recovery.retry(at: now) {
+            reconnecting = true
+            status = attempt.status
+        }
+        return venue
+    }
+}
+#endif
