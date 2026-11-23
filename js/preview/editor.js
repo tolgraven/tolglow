@@ -67,9 +67,13 @@ export function pickEditor(snapshot, camera, bounds, x, y) {
         ? volume.min.map((v, i) => (v + volume.max[i]) / 2) : null);
       if (center) add(center, {kind: 'volumes', id: volume.id}, 32);
     }
-  } else if (editor.tool === 'draw') (editor.points || []).slice(0, 256).forEach((point, index) => add(point, {kind: 'points', index}, 22));
+  } else if (editor.tool === 'pixels' && editor['pixel-mode'] === 'pixel') {
+    const indices = editor['pixel-indices'] || [];
+    (editor['pixel-positions'] || []).forEach((point, i) => add(point, {kind: 'pixels', index: indices[i]}, 22));
+    add(editor['pixel-position'], {kind: 'pixels', index: editor['selected-pixel']}, 22);
+  } else if (editor.tool === 'draw' || editor.tool === 'pixels') (editor.points || []).slice(0, 256).forEach((point, index) => add(point, {kind: 'points', index: editor['point-indices']?.[index] ?? index}, 22));
   else {
-    (snapshot?.rig?.fixtures || []).slice(0, 2048).forEach(f => add(f.position, {kind: 'fixtures', id: String(f.id)}));
+    (snapshot?.rig?.fixtures || []).slice(0, 2048).filter(f => f['pixel-layout-id'] == null).forEach(f => add(f.position, {kind: 'fixtures', id: String(f.id)}));
     (snapshot?.rig?.trusses || []).slice(0, 24).forEach(t => {
       if (!finitePoint(t.position)) return;
       const offset = rotateFixture([Math.min(40, t.length || 1) / 2, 0, 0], t['rotation-deg']);
@@ -99,7 +103,9 @@ export class RigEditorInput {
   }
   update(snapshot) {
     const identity = editorIdentity(snapshot);
-    if (this.identity !== identity || snapshot?.editor?.tool !== this.snapshot?.editor?.tool) this.cancel();
+    const editor = snapshot?.editor, prior = this.snapshot?.editor;
+    if (this.identity !== identity || editor?.tool !== prior?.tool || editor?.['layout-id'] !== prior?.['layout-id']
+      || editor?.['pixel-mode'] !== prior?.['pixel-mode'] || editor?.plane !== prior?.plane) this.cancel();
     this.identity = identity; this.snapshot = snapshot;
     const active = Boolean(snapshot?.editor && snapshot.editor.tool !== 'navigate');
     if (active && !this.interacting) {
@@ -107,7 +113,7 @@ export class RigEditorInput {
       this.engine.setInteractionActive?.(true);
     } else if (!active && this.interacting) this.engine.setInteractionActive?.(this.previousInteraction);
     this.interacting = active;
-    this.canvas.style.cursor = !active ? '' : ['draw', 'aim'].includes(snapshot.editor.tool) ? 'crosshair' : 'grab';
+    this.canvas.style.cursor = !active ? '' : ['draw', 'pixels', 'aim'].includes(snapshot.editor.tool) ? 'crosshair' : 'grab';
   }
   down(event) {
     const e = this.snapshot?.editor;
@@ -134,7 +140,8 @@ export class RigEditorInput {
     }
     const bounds = this.canvas.getBoundingClientRect(), hit = pickEditor(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
     if (e.tool === 'volume-select') {if (hit) this.emit('select-volume', {'volume-id': hit.id}); return;}
-    if (e.tool !== 'draw' && !hit) {this.emit('select', {selection: null}); return;}
+    if (e.tool === 'pixels' && !hit && !e['append?']) return;
+    if (e.tool !== 'draw' && e.tool !== 'pixels' && !hit) {this.emit('select', {selection: null}); return;}
     const value = hit ? hit.position[planeAxis(e.plane)] : e['plane-value'];
     const point = planePoint(this.engine.camera, bounds, event.clientX, event.clientY, e.plane, value, e.snap);
     if (!point) {this.emit('unreachable'); return;}
@@ -152,7 +159,7 @@ export class RigEditorInput {
       return;
     }
     const e = this.snapshot.editor, point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, e.plane, g.value, e.snap);
-    if (point) this.emit('move', {point: g.hit && (g.tool === 'move' || g.tool === 'draw') ? point.map((n, i) => n + g.offset[i]) : point, angle: (event.clientX - g.x) * .5});
+    if (point) this.emit('move', {point: g.hit && ['move', 'draw', 'pixels'].includes(g.tool) ? point.map((n, i) => n + g.offset[i]) : point, angle: (event.clientX - g.x) * .5});
   }
   finish(event, cancelled) {
     if (!this.gesture || event.pointerId !== this.gesture.pointer) return;

@@ -151,3 +151,34 @@ per hour and deposition half-life are visible as a fallback.
 
 Choose **Use manual clearance** to remove the measurement from the draft and
 edit those two inputs. **Save rig** applies the change to the running show.
+
+## Sculpt a pixel layout
+
+On **Rig**, choose **Pixel layouts** in the 3D editor. Enter a layout ID or let
+Studio generate one. **New path** starts an empty strip. Tap or click the scene
+to add anchors in wire order. Drag an anchor, choose another editing plane to
+change its depth, or enter its X, Y and Z in metres. **Close the path** connects
+the last anchor back to the first. The model spaces pixels by distance along
+the complete path.
+
+**New grid** gives you row and column counts and two independent 3D step
+vectors. Enable **Alternate row direction** for serpentine wiring. **New helix**
+uses an origin, radius, height, turns and starting phase around the vertical
+axis. Drag the origin on the canvas to move either shape.
+
+Choose the wiring order, start universe and address. Studio shows the inclusive
+last occupied slot, including pixels that span a universe boundary. A new layout
+starts in the next unused universe after the existing patch. Enter a fixture
+group to target the layout alongside other fixtures.
+
+Choose **Individual pixels** to drag a single sampled pixel, or enter its
+one-based wire number to reach any pixel and edit its three coordinates.
+**Reset pixel to shape** removes the override. Large layouts show up to 2,048
+equally spaced wire indices and highlight the exact pixel you select by number.
+Dots and handles are placement guides. Light output in the scene follows the
+committed rig and running effects.
+
+**Undo** reverses one edit or drag. Cancelling a gesture restores its starting
+position. **Discard draft** restores the running rig. **Save rig layout** commits
+the shared rig draft, including pending edits to other fixtures or the room.
+The saved layout can be reopened from the layout selector.

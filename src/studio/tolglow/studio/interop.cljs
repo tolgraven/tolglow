@@ -74,7 +74,7 @@
 
 (defn preview-rig [rig]
   (preview-data
-   (update rig :fixtures
+   (update (dissoc rig :pixel-layouts) :fixtures
            (fn [fixtures]
              (mapv (fn [fixture]
                      (if (or (:max-watts fixture) (:measured-relative-brightness fixture))
@@ -86,12 +86,19 @@
   ;; Preserve the shared rig across frame updates, including worker transfers.
   (let [rig (:rig show)
         previous-rig (aget this "rig")
-        js-rig (if (identical? rig previous-rig) (aget this "jsRig") (preview-rig rig))
+        js-rig (if (or (identical? rig previous-rig)
+                       (= (dissoc rig :pixel-layouts) (dissoc previous-rig :pixel-layouts)))
+                 (aget this "jsRig") (preview-rig rig))
+        editor (:editor show)
+        js-editor (if (= editor (aget this "editor")) (aget this "jsEditor") (preview-data editor))
         frame (preview-data (select-keys show [:runtime-id :show-id :epoch :revision :frame-number :time-ms
-                                         :blackout? :master :editor :receiver-surfaces :spatial-volumes]))
+                                         :blackout? :master :receiver-surfaces :spatial-volumes]))
         intents (get-in show [:status :last-intents])]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
+    (aset this "editor" editor)
+    (aset this "jsEditor" js-editor)
+    (aset frame "editor" js-editor)
     (aset frame "rig" js-rig)
     (aset frame "output" (preview-output show))
     (aset frame "cut?" (boolean (or (:cut? show)

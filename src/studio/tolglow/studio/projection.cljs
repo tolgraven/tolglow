@@ -93,3 +93,17 @@
            (range) value)
      (set? value) (mapv presentation value)
      :else value)))
+
+(defn rig-request
+  "Send authored layouts and manual fixtures. Keep the original Transit types of untouched spec fields."
+  [rig typed-rig]
+  (if-not (contains? rig :pixel-layouts) rig
+    (let [by-id (into {} (map (juxt (comp presentation :id) identity)) (:pixel-layouts typed-rig))
+          restore (fn [spec]
+                    (reduce-kv (fn [out key typed]
+                                 (if (= (get spec key) (presentation typed))
+                                   (assoc out key typed) out))
+                               spec (get by-id (:id spec) {})))]
+      (-> rig
+          (update :fixtures #(filterv (complement :pixel-layout-id) %))
+          (update :pixel-layouts #(mapv restore %))))))
