@@ -64,6 +64,7 @@
             [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.venue-scan :as venue-scan]
             [tolglow.rig.photometry :as photometry]
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
@@ -405,6 +406,10 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
+    :venue-surface (do
+                     (when (or (:armed? (calibration/current model)) (photometry/current model) (fog-scan/current model))
+                       (throw (ex-info "Finish the active calibration before changing the rig" {})))
+                     (venue-scan/admit model payload))
     :fog-calibration (fog-scan/operation model payload ((:now-ms (:publisher runtime))))
     :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
                                            (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
@@ -1178,7 +1183,7 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
-                        (or (not (#{:photometry :fog-calibration} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
+                        (or (not (#{:photometry :fog-calibration :venue-surface} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))

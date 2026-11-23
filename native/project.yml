@@ -26,7 +26,7 @@ targets:
       properties:
         CFBundleDisplayName: Tolglow
         UILaunchScreen: {}
-        NSCameraUsageDescription: Measure fixture brightness and room fog, or scan fixture lenses and beam targets when you start calibration.
+        NSCameraUsageDescription: Measure fixture brightness and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you conduct lights, preview sensors, or hold a fixed fog measurement sightline.
         NSLocalNetworkUsageDescription: Connect to your chosen Tolglow lighting host and send armed OSC observations.
         NSAppTransportSecurity:
