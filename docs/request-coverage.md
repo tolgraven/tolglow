@@ -1,6 +1,6 @@
 # Conversation request register
 
-Recorded through request **79**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
+Recorded through request **82**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
 
 **Open** is a to-do for the exact behavior or verification in that row. A linked milestone can already have shipped one part. **Verified** includes a source or merge receipt for the whole row. **Standing** is a recurring working agreement. The [work ledger](work-items.edn) owns implementation status, dependencies, ownership and evidence. For working branches and hardware gaps see the [handoff](request-handoff.md).
 
@@ -163,3 +163,6 @@ Recorded through request **79**. Each number follows the original user messages 
 | R77b | Keep an independent perceptual-performance owner throughout the project. Throttle adaptively with interpolation where visually appropriate. Compare with full-rate geometry/effects, including discrete event fidelity, hysteresis and recovery. | `:performance/perceptual-scheduling` | Open |
 | R78 | Let trusted browsers and native clients contribute actual core rendering. Keep a portable Linux/Raspberry Pi host authoritative; shard work across laptops, M4 Mac, M5 iPad and iPhone including GPU, bound network/readback and recover from worker loss. Measure real throughput and crossover. | `:render/distributed-workers` | Open |
 | R79 | JIT compile the ordered active effect chain into one GPU program wherever its data dependencies admit that. Preserve native blend, partial coverage and ownership across barriers. Reuse programs across param changes and avoid per-effect sampling, dispatch and readback. | `:render/active-chain-fusion` | Open |
+| R80 | Format numeric readouts in Studio and Push. Preserve full values for editing, control logic, persistence and output. Cover vectors, ranges, endpoints, tiny values and negative numbers. | `:control/parameter-readouts` | Open |
+| R81 | Use sensible display and fine-encoder granularity for normalized controls driving an 8-bit DMX destination, including indirect bindings. Verify actual Push Shift behavior. | `:control/parameter-readouts` | Open |
+| R82 | Preserve the additional precision of actual coarse/fine pan and tilt or other 16-bit destinations, including mixed-resolution rigs. | `:control/parameter-readouts` | Open |

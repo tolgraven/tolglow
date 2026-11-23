@@ -1,7 +1,11 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :render/distributed-workers :title "Use remote client GPU compute for real fixture output"
+ [{:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
+   :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
+   :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
+   :depends-on [:foundation/tests] :acceptance ["Round unfocused readouts, preserve exact typed edits, distinguish 256 and 65,536 normalized values and verify Shift encoder output to both channel widths."] :evidence []}
+  {:id :render/distributed-workers :title "Use remote client GPU compute for real fixture output"
    :kind :implementation :status :in-progress :owner "Distributed render host and browser compute"
    :paths ["afterglow/src/afterglow/render/distributed.clj" "tolglow/js/compute" "tolglow/src/tolglow/render/workers.clj"]
    :depends-on [:foundation/tests] :acceptance ["Negotiate an opt-in worker. Split real show fields across clients, join by frame, reject stale work, bound memory and preserve local output on deadline or disconnect. Compare Linux/Raspberry Pi host and Apple client costs."] :evidence []}

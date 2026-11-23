@@ -1,6 +1,6 @@
 # Engineering handoff
 
-Snapshot for R79, 23 November 2026 UTC. Branches and PRs are durable resume points. Check their current GitHub state before taking an assignment. The [request register](request-coverage.md) retains each original acceptance condition and the [ledger](work-items.edn) holds implementation evidence.
+Snapshot for R82, 23 November 2026 UTC. Branches and PRs are durable resume points. Check their current GitHub state before taking an assignment. The [request register](request-coverage.md) retains each original acceptance condition and the [ledger](work-items.edn) holds implementation evidence.
 
 | Work | Last verified checkpoint | Remaining acceptance |
 | --- | --- | --- |
