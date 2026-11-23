@@ -66,11 +66,34 @@
     (is (= "cue/launch" (:op (first-command second-down))))
     (is (= "8:1" (get-in holding [:pointers 11 :instance-id])))
     (is (nil? (:db late)))
-    (is (nil? (:db late-failure)))
+    (is (= (:pointers holding) (get-in late-failure [:db :pointers])))
+    (is (true? (get-in late-failure [:db :recover-held?])))
     (is (= {:op "instance/end" :epoch 7 :runtime-id "first-show" :fields {:instance-id "7:10"}}
-           (select-keys (first-command late) [:op :epoch :runtime-id :fields])))
+           (select-keys (update (first-command late) :fields dissoc :command-id) [:op :epoch :runtime-id :fields])))
     (is (= {:epoch 8 :runtime-id "second-show" :fields {:instance-id "8:1"}}
-           (select-keys final-release [:epoch :runtime-id :fields])))))
+           (select-keys (update final-release :fields dissoc :command-id) [:epoch :runtime-id :fields])))))
+
+(deftest uncertain-held-replies-reconcile-only-the-originating-session
+  (let [hold (fn [id gesture session]
+               {:id id :gesture-id gesture :launch-mode "held" :phase "running"
+                :source {:adapter "web" :session-id session}})
+        mine (:session base)
+        db (-> base (assoc-in [:show :instances] [(hold "7:1" "released" mine) (hold "7:2" "pressed" mine)
+                                                  (hold "7:3" "other" "second-ipad")
+                                                  (assoc (hold "7:4" "done" mine) :phase "releasing")])
+               (assoc-in [:pointers 2] {:held? true :press-id "pressed" :epoch 7}))
+        recovered (transition db [:studio/reconcile-held])
+        end-request (first-command recovered)
+        waiting (transition (:db recovered) [:studio/reconcile-held])
+        failed (transition (:db recovered) (conj (:on-failure end-request) "No reply"))
+        retry (transition (:db failed) (get-in failed [:dispatch-later 0 :dispatch]))
+        repeated (transition (:db retry) (:dispatch retry))]
+    (is (= "7:2" (get-in recovered [:db :pointers 2 :instance-id])))
+    (is (= #{"released"} (get-in recovered [:db :ending-holds])))
+    (is (= [{:instance-id "7:1" :command-id "released-end"}] (map (comp :fields second) (:fx recovered))))
+    (is (empty? (:fx waiting)))
+    (is (= (get-in end-request [:fields :command-id]) (get-in (first-command repeated) [:fields :command-id])))
+    (is (empty? (transition (assoc-in db [:connection :connected?] false) [:studio/reconcile-held])))))
 
 (deftest independent-pointers-and-page-exit-release
   (let [db (assoc base :pointers {1 {:held? true :instance-id "7:11" :epoch 7}

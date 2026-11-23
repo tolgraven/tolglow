@@ -197,7 +197,11 @@
                       :else (update-in updated [:ui :rig-draft :room] dissoc :measured-fog)))
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db updated
-     :fx (cond-> [] epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
+     :fx (cond-> []
+           (and (:recover-held? updated)
+                (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))))
+           (conj [:dispatch [:studio/reconcile-held]])
+           epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
            (and (get-in db [:connections :visible?])
@@ -235,6 +239,8 @@
                         (assoc :studio/stream-reply [id {:op :ack :token (:token envelope)}]))
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
+                       (and (:awaiting-full? db) (:recover-held? db))
+                       (assoc :fx [[:dispatch [:studio/reconcile-held]]])
                        (and (:awaiting-full? db) (get-in db [:connections :visible?]))
                        (assoc :dispatch [:connections/pushed]))
           {:db (assoc db :awaiting-full? true)
@@ -335,11 +341,12 @@
 
 (rf/reg-cofx :studio/unique (fn [cofx _] (assoc cofx :unique (str (random-uuid)))))
 
-(defn- launch-held [db {:keys [cue-id pointer-id press-id] :as pointer}]
+(defn- launch-held [db {:keys [cue-id press-id] :as pointer}]
   ;; The command's origin survives pointer release, reuse and show replacement.
   (let [owner (select-keys pointer [:pointer-id :press-id :epoch :runtime-id])]
-    (update (launch-fx db cue-id "held" [:studio/held-launched owner]) 1
-            assoc :on-failure [:studio/held-failed pointer-id press-id])))
+    (-> (launch-fx db cue-id "held" [:studio/held-launched owner])
+        (assoc-in [1 :fields :gesture-id] press-id)
+        (assoc-in [1 :on-failure] [:studio/held-failed]))))
 
 (rf/reg-event-fx :studio/gesture-down [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id] :as input}]]
@@ -354,9 +361,10 @@
           (assoc :dispatch-later [{:ms 500 :dispatch [:studio/gesture-long pointer-id unique]}]))))))
 
 (rf/reg-event-fx :studio/held-failed
-  (fn [{:keys [db]} [_ id press-id error]]
-    (cond-> {:dispatch [:studio/failure error]}
-      (= press-id (get-in db [:pointers id :press-id])) (assoc :db (update db :pointers dissoc id)))))
+  (fn [{:keys [db]} [_ error]]
+    ;; A transport failure cannot tell whether Ring accepted the launch.
+    {:db (assoc db :recover-held? true)
+     :fx [[:dispatch [:studio/failure error]] [:dispatch [:studio/reconcile-held]]]}))
 (rf/reg-event-db :studio/gesture-move
   (fn [db [_ {:keys [pointer-id client-x client-y]}]]
     (if-let [pointer (get-in db [:pointers pointer-id])]
@@ -369,16 +377,52 @@
         {:db (assoc-in db [:pointers id :long?] true)
          :dispatch [:studio/open-actions (select-keys pointer [:page-id :cue-id :x :y])]}))))
 
-(defn- end-held [db owner instance beacon?]
-  (command db "instance/end" {:instance-id instance} nil (:epoch owner) beacon? (:runtime-id owner)))
+(defn- end-held [db {:keys [press-id epoch runtime-id] :as owner} id beacon?]
+  (let [fields (cond-> {:instance-id id} press-id (assoc :command-id (str press-id "-end")))]
+    (assoc-in (command db "instance/end" fields nil epoch beacon? runtime-id)
+              [1 :on-failure] [:studio/held-end-failed owner])))
+
+(defn- live-web-hold? [session {:keys [gesture-id source launch-mode phase]}]
+  (and gesture-id (= "held" launch-mode) (= "running" phase)
+       (= "web" (:adapter source)) (= session (:session-id source))))
+
+(rf/reg-event-fx :studio/reconcile-held
+  (fn [{:keys [db]} _]
+    (let [show (:show db)
+          holds (filter #(live-web-hold? (:session db) %) (:instances show))
+          pressed (into {} (keep (fn [[id pointer]] (when (:held? pointer) [(:press-id pointer) id]))) (:pointers db))
+          orphaned (remove #(contains? pressed (:gesture-id %)) holds)
+          pending (set (map :gesture-id orphaned))
+          ending (or (:ending-holds db) #{})
+          attach (fn [state {:keys [id gesture-id]}]
+                   (if-let [pointer (get pressed gesture-id)]
+                     (assoc-in state [:pointers pointer :instance-id] id)
+                     state))
+          release (fn [{:keys [id gesture-id]}]
+                    (end-held db (assoc (select-keys show [:epoch :runtime-id]) :press-id gesture-id) id false))]
+      (when (get-in db [:connection :connected?])
+        {:db (assoc (reduce attach db holds) :ending-holds pending)
+         :fx (mapv release (remove #(ending (:gesture-id %)) orphaned))}))))
+
+(rf/reg-event-fx :studio/held-end-failed
+  (fn [{:keys [db]} [_ owner _error]]
+    (when (= (select-keys owner [:epoch :runtime-id]) (select-keys (:show db) [:epoch :runtime-id]))
+      {:db (assoc db :recover-held? true)
+       :dispatch-later [{:ms 1000 :dispatch [:studio/retry-held-end (:press-id owner)]}]})))
+
+(rf/reg-event-fx :studio/retry-held-end
+  (fn [{:keys [db]} [_ press-id]]
+    {:db (update db :ending-holds disj press-id)
+     :dispatch [:studio/reconcile-held]}))
 
 (rf/reg-event-fx :studio/held-launched
   (fn [{:keys [db]} [_ {:keys [pointer-id press-id] :as owner} {:keys [instance-id]}]]
-    (when instance-id
-      (if (= press-id (get-in db [:pointers pointer-id :press-id]))
-        {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
-                 (assoc-in [:ui :selected-instance] instance-id))}
-        {:fx [(end-held db owner instance-id false)]}))))
+    (cond
+      (nil? instance-id) {:db (assoc db :recover-held? true) :dispatch [:studio/reconcile-held]}
+      (= press-id (get-in db [:pointers pointer-id :press-id]))
+      {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
+               (assoc-in [:ui :selected-instance] instance-id))}
+      :else {:fx [(end-held db owner instance-id false)]})))
 
 (defn release-pointer [db id beacon?]
   (if-let [pointer (get-in db [:pointers id])]

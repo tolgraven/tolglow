@@ -12,6 +12,8 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({viewport: {width: 1024, height: 768}, hasTouch: true});
 const errors = [];
+let stateSockets = 0;
+page.on('websocket', socket => { if (socket.url().includes('/state')) stateSockets++; });
 page.on('pageerror', error => errors.push(error.message));
 const cdp = await page.context().newCDPSession(page);
 const touch = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', {type, touchPoints});
@@ -72,16 +74,23 @@ async function cancelledDuet() {
   return holding;
 }
 
-async function rapidRetrigger() {
+async function rapidRetrigger(loseReply = false) {
   const target = await center('indigo', 1);
   let awaitingFirst = true;
+  let dropFirstEnd = loseReply;
   const releaseReply = Promise.withResolvers();
   await page.route('**/api/command', async route => {
-    if (!awaitingFirst || !route.request().postData().includes('cue/launch')) return route.continue();
+    const body = route.request().postData();
+    if (dropFirstEnd && body.includes('instance/end')) {
+      dropFirstEnd = false;
+      return route.abort('failed');
+    }
+    if (!awaitingFirst || !body.includes('cue/launch')) return route.continue();
     awaitingFirst = false;
     const reply = await route.fetch();
     await releaseReply.promise;
-    await route.fulfill({response: reply});
+    if (loseReply) await route.abort('failed');
+    else await route.fulfill({response: reply});
   });
   await page.mouse.move(target.x, target.y);
   await page.mouse.down();
@@ -93,7 +102,7 @@ async function rapidRetrigger() {
     assert.ok(second);
     releaseReply.resolve();
     assert.deepEqual(await waitForHeldCount(1), [second]);
-    await capture('03-second-press-playing');
+    await capture(loseReply ? '05-lost-reply-second-press' : '03-second-press-playing');
     return [original, second];
   } finally {
     releaseReply.resolve();
@@ -116,8 +125,11 @@ try {
   const retriggered = await rapidRetrigger();
   await waitForHeldCount(0);
   await capture('04-released');
+  const lostReply = await rapidRetrigger(true);
+  await waitForHeldCount(0);
   assert.deepEqual(errors, []);
-  await writeFile(join(directory, 'gestures.json'), JSON.stringify({cancelled, retriggered, errors}, null, 2) + '\n');
+  assert.equal(stateSockets, 1);
+  await writeFile(join(directory, 'gestures.json'), JSON.stringify({cancelled, retriggered, lostReply, stateSockets, errors}, null, 2) + '\n');
 } finally {
   await browser.close();
 }
