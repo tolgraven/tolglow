@@ -3,7 +3,8 @@
   override. Only the physical publisher can confirm a phase for measurement."
   (:require [afterglow.control.model :as control]
             [afterglow.render.frame :as frame]
-            [tolglow.rig.calibration :as calibration]))
+            [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.reflectance :as reflectance]))
 
 (def session-path [:extensions ::session])
 (defn current [model] (get-in model session-path))
@@ -17,7 +18,7 @@
 (defn- type-key [fixture]
   (if-let [t (:fixture-type-id fixture)] [:type t] [:fixture (:id fixture)]))
 (defn fixtures [model]
-  (mapv (fn [f] {:id (:id f) :name (:name f) :type (second (type-key f))})
+  (mapv (fn [f] {:id (:id f) :name (:name f) :type (second (type-key f)) :reflectance-capable? (boolean (reflectance/eligible-lamp? f))})
         (filter can-light? (get-in model [:rig :fixtures]))))
 (defn- check [ok message] (when-not ok (throw (ex-info message {:component :photometry}))))
 (defn- valid-rig? [model session]
@@ -37,8 +38,11 @@
                                (= (:step-index s) (:step-index calibration)))
                         (let [key [(:fixture-id s) (:phase s)]]
                           (if (and eligible? (zero? (or dropped-before 0)))
-                            (-> s (assoc :presented-at published-at-ms) (update :confirmed conj key))
-                            (-> s (dissoc :presented-at) (update :confirmed disj key))))
+                            (cond-> (-> s (assoc :presented-at published-at-ms) (update :confirmed conj key))
+                              (and (:presented-at s) (> (- published-at-ms (:presented-at s)) 1500))
+                              (update :presentation-generation (fnil inc 0)))
+                            (cond-> (-> s (dissoc :presented-at) (update :confirmed disj key))
+                              (:presented-at s) (update :presentation-generation (fnil inc 0)))))
                         s)) s receipts)]
         (if (identical? s next-session) model (assoc-in model session-path next-session)))
       (disarm model))
@@ -108,11 +112,28 @@
 
 (defn apply-operation [model {:keys [op session-id fixture-id phase] :as payload} now capable?]
   (let [s (current model)
-        _ (when-not (= :start op)
+        _ (when-not (#{:start :start-surface} op)
             (check (and (usable? model s now) (= (:session-id s) session-id))
                    "Calibration lease, rig or session changed"))
         updated (case op
                   :start (start model payload now capable?)
+                  :start-surface
+                  (let [started (start model payload now capable?)
+                        ids (:ids (current started))
+                        fixture (some #(when (= (first ids) (:id %)) %) (get-in model [:rig :fixtures]))]
+                    (check (= 1 (count ids)) "Use one fixed illuminant for the entire measurement")
+                    (assoc-in started (conj session-path :surface-meter)
+                              (reflectance/prepare (:rig model) fixture payload)))
+                  :read-surface
+                  (do (check (and (:surface-meter s) (= (:step-index s) (:step-index payload))
+                                  (= (:presentation-generation s) (:presentation-generation payload)))
+                             "Calibration output changed during exposure. Restart the measurement")
+                      (update-in model (conj session-path :surface-meter) reflectance/record payload (:phase s)
+                                 (latest-phase? s now)))
+                  :apply-surface
+                  (let [{:keys [index fit]} (:surface-meter s)]
+                    (check fit "Complete the two reference readings and the surface reading first")
+                    (-> model disarm (assoc-in [:rig :surfaces index :reflectance] fit)))
                   :cancel (disarm model)
                   :heartbeat (assoc-in model (conj session-path :lease-until) (+ now 15000))
                   :step (let [id (first (calibration/resolve-fixture-ids model [fixture-id]))
@@ -120,12 +141,14 @@
                           (check (and (some #{id} (:ids s)) (#{:dark :white} phase)) "Unknown fixture or phase")
                           (assoc-in model session-path
                                     (-> s (merge (phase-output (:rig model) id phase))
-                                        (assoc :fixture-id id :phase phase :lease-until (+ now 15000))
+                                        (assoc :fixture-id id :phase phase :lease-until (+ now 15000) :presentation-generation 0)
                                         (update :step-index inc) (update :confirmed disj [id phase])
                                         (dissoc :presented-at))))
-                  :apply (apply-readings model s payload)
+                  :apply (do (check (nil? (:surface-meter s)) "Use the surface measurement operation for this session")
+                             (apply-readings model s payload))
                   (throw (ex-info "Unknown photometry operation" {:op op})))
         state (current updated)]
-    {:model (cond-> updated (#{:start :step :apply :cancel} op) (update :revision inc))
+    {:model (cond-> updated (#{:start :start-surface :step :apply :apply-surface :cancel} op) (update :revision inc))
      :ack (merge {:status :accepted :session-id session-id :presented? (boolean (latest-phase? state now))}
-                 (select-keys state [:fixture-id :phase]))}))
+                 (select-keys state [:fixture-id :phase :step-index :presentation-generation])
+                 (when-let [fit (get-in state [:surface-meter :fit])] {:fit (select-keys fit [:relative-to-card :estimate :range :reference-drift])}))}))
