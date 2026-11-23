@@ -175,6 +175,19 @@ In all three cases the wash interpolated with a 200 ms horizon and zero evaluato
 
 Afterglow #92 removes a sort and intermediate vectors from calibrated pan and tilt selection. Two hosts replayed 119 actual clocks and their observed effect intervals. Every ArtDMX byte, all 1,152 preview records, model and effect intents matched. Across 94 warmed pairs, median packing allocation fell from 1,184,312 to 944,696 bytes and packing CPU p95 from 3.68 to 3.29 ms. Whole-tick median was 10.07 and 10.65 ms respectively, with p95 of 51.72 and 41.02 ms. An independent physical comparison of #81 reduced median allocation to prepare an 11-universe packet from 572,192 to 17,568 bytes. The 25 ms guarantee remains open. [Afterglow #92, calibration example and local replay source](https://github.com/tolgraven/afterglow/pull/92)
 
+##### Garbage collection on the physical clock
+
+Four fresh Java 21 processes used the original renderer, a fixed 768 MB heap and the same two-CPU affinity on the shared Linux worker. Every process ran the 1,024-pixel, 128-moving-head show for 120 warmup and 240 measured slots. Switching to generational ZGC reduced the longest recorded stop-the-world pause in both orders. Neither collector delivered every frame.
+
+| Run order | Collector | Longest GC pause | Renders within 25 ms / 240 | Current source delivered / 240 | Slowest render |
+| --- | --- | ---: | ---: | ---: | ---: |
+| First pair, first | G1 | 120.583 ms | 22 | 46 | 220.78 ms |
+| First pair, second | Generational ZGC | 0.022 ms | 17 | 36 | 127.06 ms |
+| Second pair, first | Generational ZGC | 0.019 ms | 0 | 15 | 421.42 ms |
+| Second pair, second | G1 | 264.212 ms | 0 | 4 | 552.14 ms |
+
+The producer can start before a physical slot, so a packet that takes more than 25 ms to compute can still arrive on its assigned deadline. Each slot count above uses all 240 opportunities, including skipped renders. Both ZGC runs recorded zero allocation stalls. The 421.42 ms ZGC frame had zero overlapping GC pause and zero minor or major page faults on the producer. For the 552.14 ms G1 frame, a GC pause consumed 264.21 ms. These results support measuring collector choice on the target hardware with room for concurrent GC. The release configuration remains unchanged. [Physical replay source and validation](https://github.com/tolgraven/afterglow/pull/92)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
