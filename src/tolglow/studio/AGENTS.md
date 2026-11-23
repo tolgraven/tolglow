@@ -35,5 +35,5 @@ Preserve domain identifiers, command results and rejection details at the web bo
   bounded asynchronous logger. Retry uses :instance/retry; active fault identity
   remaps on restore while historical events remain evidence.
 
-Track ownership and evidence in `docs/work-items.edn`. Run `bin/test pure` and
-`bin/test parity`; frontend and browser checks are separate documented gates.
+Track ownership and evidence on the existing GitHub issue. Run `bin/test pure`,
+`bin/test parity` and the documented frontend and browser checks that apply.
