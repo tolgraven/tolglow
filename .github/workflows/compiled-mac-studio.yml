@@ -42,5 +42,10 @@ jobs:
           path: |
             build/Tolglow-compiled-Studio-arm64.zip
             build/native-host/*.log
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: compiled-studio-window
+          path: |
             build/media/compiled-studio.png
             build/media/compiled-studio.gif

@@ -20,6 +20,31 @@ def wait_for_origin(process, ready):
     return f"http://127.0.0.1:{int(ready.read_text())}"
 
 
+def evaluate(origin, request_id, source):
+    request = urllib.request.Request(
+        origin + "/api/repl/eval",
+        data=json.dumps({"request-id": request_id, "source": source}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        events = [json.loads(line[6:]) for line in response if line.startswith(b"data: ")]
+    assert events and events[-1]["status"] == "completed", events
+    return events[-1]["result"]
+
+
+def check_restored_session(origin, folder):
+    assert evaluate(origin, "read-rig", "(require 'rig) (rig/hz)") == "40"
+    with urllib.request.urlopen(origin + "/api/export", timeout=10) as response:
+        saved = response.read()
+        content_type = response.headers.get_content_type()
+    restore = urllib.request.Request(origin + "/api/import", data=saved,
+                                     headers={"Content-Type": content_type})
+    with urllib.request.urlopen(restore, timeout=20) as response:
+        result = json.load(response)
+        assert result.get("ack", result)["status"] == "accepted", result
+    (folder / "swing.clj").write_text("(ns swing) (defn range-at [v] [(- v 6) (+ v 6)])")
+    assert evaluate(origin, "restored-rig", "(require 'swing) (swing/range-at 40)") == "[34 46]"
+
+
 def check(app):
     executable = app.resolve() / "Contents/Helpers/TolglowNativeHost"
     assert os.access(executable, os.X_OK)
@@ -41,6 +66,7 @@ def check(app):
                     with urllib.request.urlopen(origin + "/api/state", timeout=20) as result:
                         state = json.load(result)
                         assert isinstance(state, dict) and state
+                    check_restored_session(origin, root)
                 except BaseException:
                     process.kill()
                     raise
