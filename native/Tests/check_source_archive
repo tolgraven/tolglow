@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Exercise cold install, object integrity and an actual independent worktree.
+set -euo pipefail
+resources="${1:?path to bundled resources}"
+staging="$(mktemp -d)"
+trap 'rm -rf "$staging"' EXIT
+ditto -x -k "$resources/application-sources.zip" "$staging"
+IFS=- read -r t a < "$resources/source-version.txt"
+for repo in tolglow afterglow; do
+  expected="$t"
+  [[ "$repo" != afterglow ]] || expected="$a"
+  git -C "$staging/$repo" checkout-index --all
+  test "$(git -C "$staging/$repo" rev-parse HEAD)" = "$expected"
+  test -z "$(git -C "$staging/$repo" status --porcelain)"
+  git -C "$staging/$repo" worktree add --quiet -b verify "$staging/worktrees/$repo"
+  test -f "$staging/worktrees/$repo/project.clj"
+done

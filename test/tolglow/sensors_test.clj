@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [clojure.edn :as edn]
             [afterglow.control.model :as control]
+            [tolglow.integrations.audience-invitation :as stage]
             [tolglow.sensors :as service]))
 (defn vault []
   (let [secrets (atom {})]
@@ -193,3 +194,59 @@
     (deliver proceed true)
     (is (= :closed (deref pending 1000 ::timeout)))
     (is (= [reference] @deleted))))
+
+(deftest supervised-stage-invitation-follows-sensor-and-receiver-ownership
+  (let [helper (.getCanonicalPath (java.io.File. "dev/qa/fixture-audience-stage"))
+        {:keys [manager pair model]} (fixture {:audience-helper helper})
+        stage (:stage manager)
+        options {:device-id "phone" :stage-name "Floor" :origin "https://lights.example.org"}
+        open-stage (fn []
+                     (let [ready (promise) key (Object.)]
+                       (add-watch (:status stage) key
+                                  (fn [_ _ _ value] (when (= :discoverable (:phase value)) (deliver ready value))))
+                       (try (service/start-stage! manager options)
+                            (deref ready 5000 nil)
+                            (finally (remove-watch (:status stage) key)))))]
+    (try
+      (is (= ["phone"] (:sources (stage/status stage))))
+      (is (thrown? Exception (service/start-stage! manager options)))
+      (service/start-osc! manager {:port 0})
+      (doseq [invalid ["http://lights.example.org" "https://user@lights.example.org"
+                       "https://lights.example.org/?secret=1"]]
+        (is (thrown? Exception (service/start-stage! manager (assoc options :origin invalid)))))
+      (let [{:keys [id url] :as public} (open-stage)]
+        (is (re-matches #"https://lights\.example\.org/audience/[0-9a-f]{64}" url))
+        (is (= 8 (alength ^bytes (stage/png stage id))))
+        (is (not (.contains (pr-str public) (:pairing-token pair))))
+        (is (thrown? Exception (service/start-stage! manager options)))
+        (is (thrown? Exception (stage/stop-current! stage "previous-stage")))
+        (service/stop-osc! manager)
+        (is (nil? (stage/png stage id)))
+        (is (false? (:receiver? (stage/status stage))))
+        (service/start-osc! manager {:port 0})
+        (is (not= url (:url (open-stage))))
+        (service/pair! manager "phone" "Rotated credential")
+        (is (= :idle (:phase (stage/status stage))))
+        (is (:id (open-stage)))
+        (service/restore! manager model)
+        (is (= :idle (:phase (stage/status stage))))
+        (is (false? (:receiver? (stage/status stage)))))
+      (finally (service/close! manager)))))
+
+(deftest a-continuous-sensor-backlog-releases-drained-packets
+  (let [{:keys [manager pair model]} (fixture {:drain-limit 1 :queue-limit 3})
+        backing (fn [queue]
+                  (if (instance? clojure.lang.APersistentVector$SubVector queue)
+                    (.-v ^clojure.lang.APersistentVector$SubVector queue)
+                    queue))]
+    (try
+      (service/ingest! manager (packet pair 0 0 0.0))
+      (loop [model model i 1]
+        (when (<= i 200)
+          (service/ingest! manager (packet pair i i 0.5))
+          (let [result (advance manager model i i)]
+            (recur (:model result) (inc i)))))
+      (let [queue (:queue @(:state manager))]
+        (is (= [200] (mapv #(get-in % [:observation :sample-id]) queue)))
+        (is (<= (count (backing queue)) (:queue-limit manager))))
+      (finally (service/close! manager)))))

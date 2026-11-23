@@ -1,7 +1,10 @@
 import SwiftUI
+import Combine
 import TolglowSensorCore
 
 @MainActor final class PhoneModel: ObservableObject {
+    let audience = AudienceSession()
+    private var audienceMembership: AnyCancellable?
     let motion = MotionSampler(deviceID: persistentDeviceID(prefix: "iphone"))
     let osc = OSCConnection()
     let relay = WatchRelay()
@@ -20,6 +23,19 @@ import TolglowSensorCore
         }
         osc.onFailure = { [weak self] in self?.disarmPhone(); self?.disarmRelay() }
         relay.onFailure = { [weak self] in self?.disarmRelay() }
+        relay.audienceReceive = { [weak self] sample, measured, sent in
+            self?.audience.receiveWatch(sample, motionTime: measured, sent: sent) ?? false
+        }
+        relay.phoneFloorActive = { [weak self] in
+            guard let client = self?.audience.client else { return false }
+            return client.joined || client.reconnecting
+        }
+        audienceMembership = audience.client.$joined.combineLatest(audience.client.$reconnecting).map { $0.0 || $0.1 }
+            .removeDuplicates().sink { [weak self] _ in
+                // @Published sends before mutation. Announce the committed membership.
+                Task { @MainActor in self?.relay.announcePhoneFloor() }
+            }
+        relay.audienceEnded = { [weak self] in self?.audience.endWatch() }
         relay.receive = { [weak self] observation in
             guard let self, self.relayArmed, self.osc.ready,
                   observation.deviceID == self.pairedWatchID,
@@ -58,6 +74,7 @@ import TolglowSensorCore
     func disarmPhone() { motion.disarm(); phoneToken = nil; osc.discardPending() }
     func disarmRelay() { relayArmed = false; watchToken = nil; osc.discardPending() }
     func suspend() {
+        audience.enterBackground()
         rigCalibration.suspend()
         disarmPhone(); disarmRelay(); motion.stop(); relay.cancelPending(); osc.close(); studio.disconnect()
         status = "Backgrounded: disarmed and disconnected"
@@ -66,28 +83,41 @@ import TolglowSensorCore
 
 @main struct TolglowPhoneApp: App {
     @StateObject private var model = PhoneModel()
+    @State private var tab = PhoneTab.perform
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            PhoneRoot(model: model)
+            PhoneRoot(model: model, tab: $tab)
                 .preferredColorScheme(.dark)
-                .onChange(of: scenePhase) { _, phase in if phase == .background { model.suspend() } }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    model.audience.client.receiveInvitation(activity.webpageURL.flatMap(AudienceRadio.room))
+                    tab = .danceFloor
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .background { model.suspend() }
+                    if phase == .active { model.audience.foreground() }
+                }
         }
     }
 }
 
+enum PhoneTab: Hashable { case perform, rig, danceFloor, studio, conduct, connect }
+
 struct PhoneRoot: View {
     @ObservedObject var model: PhoneModel
+    @Binding var tab: PhoneTab
     var body: some View {
-        TabView {
-            PerformView(studio: model.studio).tabItem { Label("Perform", systemImage: "square.grid.3x3.fill") }
+        TabView(selection: $tab) {
+            PerformView(studio: model.studio).tabItem { Label("Perform", systemImage: "square.grid.3x3.fill") }.tag(PhoneTab.perform)
             RigCalibrationView(client: model.rigCalibration, scanner: model.rigCalibration.scanner)
-                .tabItem { Label("Scan rig", systemImage: "viewfinder") }
-            WebStudioView().tabItem { Label("Studio", systemImage: "globe") }
+                .tabItem { Label("Scan rig", systemImage: "viewfinder") }.tag(PhoneTab.rig)
+            AudienceView(session: model.audience).onAppear { model.relay.activate() }
+                .tabItem { Label("Dance floor", systemImage: "figure.dance") }.tag(PhoneTab.danceFloor)
+            WebStudioView().tabItem { Label("Studio", systemImage: "globe") }.tag(PhoneTab.studio)
             PhoneMotionView(model: model, motion: model.motion, osc: model.osc, relay: model.relay)
-                .tabItem { Label("Conduct", systemImage: "hand.wave.fill") }
+                .tabItem { Label("Conduct", systemImage: "hand.wave.fill") }.tag(PhoneTab.conduct)
             PairingView(model: model, osc: model.osc, relay: model.relay)
-                .tabItem { Label("Connect", systemImage: "antenna.radiowaves.left.and.right") }
+                .tabItem { Label("Connect", systemImage: "antenna.radiowaves.left.and.right") }.tag(PhoneTab.connect)
         }.tint(Color(red: 0.94, green: 0.66, blue: 0.28))
     }
 }

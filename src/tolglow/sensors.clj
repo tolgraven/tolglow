@@ -5,6 +5,9 @@
   (:require [afterglow.control.sensors :as core]
             [afterglow.time :as musical-time]
             [tolglow.agents.credentials :as credentials]
+            [tolglow.integrations.audience-invitation :as stage]
+            [tolglow.sensors.audience :as audience]
+            [tolglow.sensors.audience.zones :as zones]
             [tolglow.sensors.osc :as osc])
   (:import [java.util UUID]
            [java.security MessageDigest]
@@ -79,14 +82,14 @@
   physical sources start. :credential-store is the shared lazy local vault.
   Explicit :now-ms is monotonic receipt time, independent of show transport."
   ([] (create-manager {}))
-  ([{:keys [credential-store now-ms token-fn queue-limit drain-limit model]
-     :or {now-ms #(/ (System/nanoTime) 1000000.0) token-fn #(str (UUID/randomUUID)) queue-limit 256 drain-limit 16}}]
+  ([{:keys [credential-store now-ms token-fn queue-limit drain-limit model audience-helper]
+     :or {audience-helper (System/getenv "TOLGLOW_AUDIENCE_BRIDGE") now-ms #(/ (System/nanoTime) 1000000.0) token-fn #(str (UUID/randomUUID)) queue-limit 256 drain-limit 16}}]
    (when-not (and (ifn? now-ms) (ifn? token-fn)
                   (integer? queue-limit) (<= 1 queue-limit 1024)
                   (integer? drain-limit) (<= 1 drain-limit 32))
      (fail! :invalid-options "Sensor manager needs bounded queue/drain options"))
    (let [manager {:lock (Object.) :credential-store credential-store :now-ms now-ms :token-fn token-fn
-                  :queue-limit queue-limit :drain-limit drain-limit
+                  :queue-limit queue-limit :drain-limit drain-limit :stage (stage/create audience-helper)
                   :state (atom {:closed? false :generation 0 :devices {} :queue [] :udp nil
                                 :metrics {:accepted 0 :rejected 0 :overflow 0}})}]
      (when model (restore! manager model)) manager)))
@@ -119,7 +122,10 @@
             (swap! (:state manager)
                    (fn [state] (-> state
                                    (assoc-in [:devices device-id] {:token token :credential-ref reference :armed? false})
-                                   (update :queue #(filterv (fn [entry] (not= device-id (get-in entry [:observation :device-id]))) %)))))))
+                                   (update :queue #(filterv (fn [entry] (not= device-id (get-in entry [:observation :device-id]))) %)))))
+            (let [{:keys [devices udp]} @(:state manager)]
+              (stage/stop! (:stage manager) device-id)
+              (stage/inputs! (:stage manager) devices udp))))
         {:device-id device-id :pairing pairing :pairing-token token}
         (catch Throwable error
           (try ((:delete! store) reference) (catch Throwable cleanup (.addSuppressed error cleanup)))
@@ -138,6 +144,8 @@
         old (locking (:lock manager)
               (live manager)
               (let [udp (:udp @(:state manager))]
+                (stage/stop! (:stage manager))
+                (stage/inputs! (:stage manager) devices nil)
                 (swap! (:state manager) #(-> % (update :generation inc) (assoc :devices devices :queue [] :udp nil))) udp))]
     (when old ((:close! old)))
     {:restored? true :sources (count devices)}))
@@ -182,6 +190,9 @@
      :udp (when-let [udp (:udp state)] {:port (:port udp) :status ((:status udp))})
      :devices (into {} (map (fn [[id device]] [id (assoc (select-keys device [:session-id :armed? :last-sample-id :received-at-ms])
                                                         :credential-ready? (boolean (:token device)))])) (:devices state))}))
+
+(defn audience-status [manager model]
+  (zones/operator-view model (:devices @(:state manager))))
 
 (defn latest [manager device-id] (get-in (live manager) [:devices device-id :latest]))
 
@@ -248,10 +259,12 @@
         now ((:now-ms manager))
         {:keys [devices packets]}
         (locking (:lock manager)
-          (let [state (live manager) n (min (:drain-limit manager) (count (:queue state)))
-                packets (subvec (:queue state) 0 n)]
-            (swap! (:state manager) update :queue #(subvec % n))
-            {:devices (:devices state) :packets packets}))
+          (let [{:keys [queue devices]} (live manager)
+                n (min (:drain-limit manager) (count queue))]
+            ;; A subvec retains the consumed prefix when a busy queue never empties.
+            (when (pos? n)
+              (swap! (:state manager) assoc :queue (into [] (subvec queue n))))
+            {:devices devices :packets (subvec queue 0 n)}))
         initial
         (reduce-kv
          (fn [acc id source]
@@ -299,7 +312,7 @@
                   :when (not (get-in source [:state :armed?]))]
             (when (= (get-in source [:state :session-id]) (get-in @(:state manager) [:devices id :session-id]))
               (swap! (:state manager) assoc-in [:devices id :armed?] false)))))
-      result)))
+      (update result :model audience/project))))
 
 (defn start-osc! [manager options]
   (let [generation (:generation (live manager))
@@ -307,19 +320,34 @@
     (try (locking (:lock manager)
            (let [state (live manager)]
              (when (or (:udp state) (not= generation (:generation state))) (fail! :stale-resource "Receiver ownership changed"))
-             (swap! (:state manager) assoc :udp receiver)))
+             (swap! (:state manager) assoc :udp receiver)
+             (stage/inputs! (:stage manager) (:devices state) receiver)))
          receiver
          (catch Throwable error ((:close! receiver)) (throw error)))))
 
 (defn stop-osc! [manager]
-  (let [receiver (locking (:lock manager) (let [receiver (:udp (live manager))] (swap! (:state manager) assoc :udp nil) receiver))]
+  (let [receiver (locking (:lock manager)
+                   (let [{:keys [udp devices]} (live manager)]
+                     (stage/stop! (:stage manager))
+                     (stage/inputs! (:stage manager) devices nil)
+                     (swap! (:state manager) assoc :udp nil)
+                     udp))]
     (when receiver ((:close! receiver))) {:stopped? true}))
+
+(defn start-stage! [manager options]
+  (locking (:lock manager)
+    (let [{:keys [devices udp]} (live manager)
+          device (get devices (:device-id options))]
+      (when (:armed? device) (fail! :armed "Disarm this sensor before starting its stage."))
+      (stage/start! (:stage manager) options udp (:token device)))))
 
 (defn export-state [model] (validate-state (or (:sensors model) empty-state)))
 (defn close! [manager]
   (let [receiver (locking (:lock manager)
                    (let [state @(:state manager)]
                      (when-not (:closed? state)
+                       (stage/stop! (:stage manager))
+                       (stage/inputs! (:stage manager) {} nil)
                        (swap! (:state manager) #(-> % (update :generation inc) (assoc :closed? true :devices {} :queue [] :udp nil)))
                        (:udp state))))]
     (when receiver ((:close! receiver))) {:closed? true}))

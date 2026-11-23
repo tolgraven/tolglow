@@ -86,6 +86,8 @@ an editable clip event.
 
 ## Record and edit a lighting performance
 
+The [pickup and loop qualification](../../../docs/live-routing.md#record-a-pickup-before-a-repeating-section) includes a playable MIDI clip, its cue and parameter mappings, and a way to inspect edits exported from Live.
+
 1. Select a cue page in Studio. In **Connections → Ableton Live**, enable the
    bridge, choose **Bridge · confirmed clip writes** and pair the track with a
    Session clip slot or an Arrangement clip. Use zero-based indices. Save and

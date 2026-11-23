@@ -29,8 +29,10 @@ on:
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
+      - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'src/tolglow/effects/cadence.clj'
       - 'src/tolglow/effects/sampling_quality.clj'
       - 'bin/profile-*'
@@ -52,8 +54,10 @@ on:
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
+      - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
@@ -86,7 +90,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '68f87b2bd58e67ca695631b05e7258c4bffac89c' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '8fe052eaf56f593ff30a30792f781648ecf97d2e' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
@@ -181,6 +185,19 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein run -m tolglow.perf.sampling-cost ../performance-artifact/sampling-cost.edn
+      - name: Compare decoded pan and tilt against the projected spot footprint
+        if: hashFiles('tolglow/dev/tolglow/perf/beam_fidelity.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein run -m tolglow.perf.beam-fidelity ../performance-artifact/beam-fidelity.edn 0.25
+      - name: Compare independent worker batches with serial lighting output
+        if: hashFiles('tolglow/dev/tolglow/perf/independent_effects.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein run -m tolglow.perf.independent-effects ../performance-artifact/independent-effects.edn 32 80
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:

@@ -54,6 +54,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
 | [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Musical effect keyframes](effect-keyframes.md) | Project effect output, shape transitions and inspect a head while a cue runs |
+| [Distributed rendering](performance/distributed-compute.md) | Enable browser GPU workers and reproduce the two-universe output measurements |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU rendering, Afterglow GPU ownership and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
@@ -101,6 +102,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Development workspace](product/development-workspace.md) | Popup REPL, source/scratch editing, agent branches, reload and Docker terminal |
 | [Show authoring](product/show-authoring.md) | Definitions, sequences, envelopes, randomization and auto show |
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
+| [Local model lab](model-lab/README.md) | Prepared show, Clojure and GLSL corpora, model choices, tokenizer audit, hardware scenarios and release gates |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
 | [Work ledger](work-items.edn) | Authoritative state, exclusive paths and acceptance criteria |
 | [Work log](work-log.md) | Dated evidence and decisions |

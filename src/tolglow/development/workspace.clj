@@ -2,7 +2,8 @@
   "Owned paired Git worktrees for application development. File access is
   confined through secure directory handles; code checks require an explicit
   runner (normally the host's Docker boundary). No automatic merge or deploy."
-  (:require [clojure.string :as str]
+  (:require [tolglow.development.observation :as observation]
+            [clojure.string :as str]
             [clojure.edn :as edn])
   (:import [java.nio.file Files Path Paths LinkOption StandardOpenOption SecureDirectoryStream]
            [java.nio.file.attribute BasicFileAttributeView PosixFileAttributeView PosixFilePermissions FileAttribute]
@@ -164,6 +165,16 @@
 (defn status
   ([manager] {:closed? (:closed? @(:state manager)) :workspaces (mapv public-workspace (sort-by :id (vals (:workspaces @(:state manager)))))})
   ([manager id] (public-workspace (owned manager id))))
+
+(defn status-source
+  "Watch the selected public status. Projection is deferred to the reader.
+  A paused show still wakes on check completion or on a change from the REPL."
+  [manager id]
+  (if-not (and manager (id? id))
+    observation/unavailable
+    (observation/selected (:state manager)
+                          #(when-not (:closed? %) (get-in % [:workspaces id]))
+                          #(when % (public-workspace %)))))
 
 (defn- ensure-parent! [manager]
   (let [parent ^Path (:parent manager)]

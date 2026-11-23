@@ -348,8 +348,8 @@
                       (assoc (select-keys state [:selection :points :selected-point]) :closed? (get-in state [:path :closed?])))
           projection (merge (select-keys state [:tool :plane :plane-value :snap]) tool-data)
           show (assoc (or (:server-presentation db) (:show db)) :rig rig :editor projection)]
-    [:section.panel.rig-editor {:aria-label "Three dimensional rig and movement editor"}
-     [:div.panel-top [:span.section-label "PLACE & CHOREOGRAPH"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
+    [:section.panel.rig-editor {:aria-label "Three dimensional rig and movement editor" :data-tool (:tool state)}
+     [:div.panel-top [:span.section-label "Rig editor"] [:span.small.muted (if (get-in db [:ui :rig-dirty?]) "Unsaved rig draft" "Rig saved")]]
      [:div.rig-editor-toolbar
       [:div.rig-editor-tools {:role "group" :aria-label "3D editor tool"}
        (for [[tool label] [["navigate" "Explore"] ["move" "Move"] ["rotate" "Rotate"] ["draw" "Draw path"] ["pixels" "Pixel layouts"] ["aim" "Aim at surface"] ["volume-select" "Select volume"] ["sculpt-volume" "Sculpt volume"]]]
@@ -379,7 +379,8 @@
         "throw" [:p.small "Drag from the launch point in the selected plane. Release to throw; Escape cancels."]
         "sculpt-volume" [sculpt/panel]
         "volume-select" [:p.small "Tap the centre of a volume to edit it below."]
-        [path-fields db state])]])))
+        "draw" [path-fields db state]
+        nil)]])))
 
 
 (def panel

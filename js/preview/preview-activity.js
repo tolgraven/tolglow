@@ -3,17 +3,21 @@
 export class PreviewActivity {
   constructor(canvas, changed, doc = document, win = window) {
     this.focused = doc.hasFocus(); this.visibleDocument = !doc.hidden;
-    this.inViewport = false; this.pageActive = true; this.active = false;
+    this.external = false; this.inViewport = false; this.pageActive = true; this.active = false;
     this.abort = new AbortController();
     const signal = this.abort.signal;
     const refresh = () => {
-      const active = this.inViewport && this.visibleDocument && this.focused && this.pageActive;
+      const active = this.pageActive && (this.external || (this.inViewport && this.visibleDocument && this.focused));
       if (active === this.active) return;
       this.active = active;
       // The Studio leases server-side fields on exactly the same gates as the GPU.
       canvas.dispatchEvent?.(new CustomEvent('tolglow-preview-activity', {detail: active}));
       changed(active);
     };
+    canvas.addEventListener?.('tolglow-preview-external', event => {
+      this.external = event.detail === true;
+      refresh();
+    }, {signal});
     const focus = value => {this.focused = value; refresh();};
     win.addEventListener('focus', () => focus(true), {signal});
     win.addEventListener('blur', () => focus(false), {signal});

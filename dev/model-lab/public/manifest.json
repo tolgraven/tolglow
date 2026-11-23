@@ -1,0 +1,51 @@
+{
+  "families": {
+    "clojure/control": "train",
+    "clojure/core": "valid",
+    "clojure/effects": "test",
+    "clojure/fixtures": "train",
+    "clojure/output": "train",
+    "clojure/rdm": "test",
+    "clojure/reactive": "test",
+    "clojure/render": "train",
+    "clojure/runtime": "train",
+    "clojure/show": "test",
+    "clojure/sync": "valid",
+    "clojure/web": "train",
+    "glsl/blur": "valid",
+    "glsl/easing": "train",
+    "glsl/noise": "train",
+    "glsl/palette": "test",
+    "glsl/three-r187": "train"
+  },
+  "schema": 1,
+  "scope": "public",
+  "short_answers_shared_across_splits": 0,
+  "splits": {
+    "test": {
+      "jsonl_sha256": "347c88e4a9fd2a9d3c98bd3dcc572194917bb61336073eb4097199e4f3dd7645",
+      "modes": {
+        "code/edit": 23,
+        "shader": 3
+      },
+      "records": 26
+    },
+    "train": {
+      "jsonl_sha256": "4dbb83787655cfad07504bdd7f5c54c6eeb695387c81c12369c8422d5228e0c8",
+      "modes": {
+        "code/edit": 72,
+        "shader": 26,
+        "shader-reference": 136
+      },
+      "records": 234
+    },
+    "valid": {
+      "jsonl_sha256": "a1e4bed0c1b125d9305f45a45606b395e6006886e066b4d1b7ef9dc5d6db8847",
+      "modes": {
+        "code/edit": 5,
+        "shader": 3
+      },
+      "records": 8
+    }
+  }
+}

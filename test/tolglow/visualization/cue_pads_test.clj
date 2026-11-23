@@ -87,28 +87,56 @@
     (is (nil? (::views/pad-colors (render! (assoc local :ready? false)))))
     ((:close! push) handle)))
 
+(deftest push-grid-is-projected-once-per-snapshot-and-viewport
+  (let [service (pads/manager) source (atom (at (rig) 75))
+        feedback (pads/push-feedback service #(deref source))
+        lease ((:open! feedback)) local {:ready? true :page-id :main :origin [0 0]}
+        render! #((:project! feedback) lease % (:model @source))
+        sampled (atom 0) present! pads/present!]
+    (with-redefs [pads/present! (fn [& args] (swap! sampled inc) (apply present! args))]
+      (let [first-pass (render! local)]
+        (is (identical? first-pass (render! local)))
+        (is (= 1 @sampled))
+        (is (empty? (::views/pad-colors (render! (assoc local :origin [8 0])))))
+        (is (contains? (::views/pad-colors (render! (assoc local :page-id :other))) :orchid))
+        (reset! source (at (rig) 100))
+        (is (= [0.2 0.0 0.0] (:ember (::views/pad-colors (render! local)))))
+        (is (= 4 @sampled))
+        (is (nil? (::views/pad-colors (render! (assoc local :target-picker {:rows []})))))
+        (is (= 0 (:clients (pads/status service))))
+        (is (map? (::views/pad-colors (render! local))))
+        (is (= 5 @sampled)))
+      ((:close! feedback) lease)
+      (is (zero? (:clients (pads/status service)))))))
+
 (deftest push-entry-point-previews-without-starting-a-cue-or-lighting-a-fixture
-  (let [runtime (show/create-runtime {:model (rig) :workspace-options nil})
-        input (atom nil) sent (atom [])
-        capture {:open! (fn [receive!] (reset! input receive!) :capture)
-                 :send! (fn [_ messages] (swap! sent into messages)) :close! (fn [_])}]
-    (try
-      (show/tick! runtime 0)
-      (show/tick! runtime 75)
-      (let [snapshot @(:state runtime)
-            device (show/connect-device! runtime :push-2 {:session-id "captured-push" :midi capture
-                                                         :led-batch-size 16 :schedule! nil})
-            service (:cue-pad-previews runtime)]
-        (doseq [index (range 128)]
-          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
-        (is (some #{(codec/palette-write 0 36 [10 0 0 0])} @sent))
-        (is (identical? (:model snapshot) (:model @(:state runtime))))
-        (is (identical? (:output snapshot) (:output @(:state runtime))))
-        (is (pos? (:clients (pads/status service))))
-        (is (empty? (get-in snapshot [:model :instances])))
-        (session/suspend! device)
-        (is (zero? (:clients (pads/status service)))))
-      (finally (show/stop! runtime)))))
+  ;; All 128 palette responses belong to the same captured show frame.
+  (with-redefs [show/now-ms (constantly 75)]
+    (let [runtime (show/create-runtime {:model (rig) :workspace-options nil})
+          input (atom nil) sent (atom [])
+          capture {:open! (fn [receive!] (reset! input receive!) :capture)
+                   :send! (fn [_ messages] (swap! sent into messages)) :close! (fn [_])}]
+      (try
+        (show/tick! runtime 0)
+        (show/tick! runtime 75)
+        (let [snapshot @(:state runtime)
+              device (show/connect-device! runtime :push-2 {:session-id "captured-push" :midi capture
+                                                           :led-batch-size 16 :schedule! nil})
+              service (:cue-pad-previews runtime)]
+          (doseq [index (range 128)]
+            (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+          (is (some #{(codec/palette-write 0 36 [10 0 0 0])} @sent))
+          (is (identical? (:model snapshot) (:model @(:state runtime))))
+          (is (identical? (:output snapshot) (:output @(:state runtime))))
+          (is (pos? (:clients (pads/status service))))
+          (is (empty? (get-in snapshot [:model :instances])))
+          (let [calls (atom 0) project! pads/present!]
+            (with-redefs [pads/present! (fn [& args] (swap! calls inc) (apply project! args))]
+              (@input (codec/sysex 0 [0x09]))
+              (is (zero? @calls) "Draining the palette ACK reuses this committed grid")))
+          (session/suspend! device)
+          (is (zero? (:clients (pads/status service)))))
+        (finally (show/stop! runtime))))))
 
 (deftest idle-previews-follow-the-current-meter-and-hdr-mode
   (let [service (pads/manager)

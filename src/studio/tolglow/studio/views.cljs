@@ -10,6 +10,7 @@
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
+            [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -116,7 +117,7 @@
   [:div.view-heading [:h1 title] action])
 
 (defn- duration-control [id title value unit on-change & [allow-zero?]]
-  [:label title
+  [:label [:span.duration-name title]
    [:span.duration-control {:style {:display "flex" :gap "0.5rem"}}
     [numeric/number-input {:id id :type "number" :min (if allow-zero? 0 0.001) :step "any"
              :value value :aria-label (str title " value")
@@ -286,6 +287,7 @@
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
+     (when (= :perform (get-in db [:ui :view])) [playback/control "preview"])
      [:button.text-button.preview-fullscreen-tools
       {:type "button" :aria-pressed (boolean (get-in db [:ui :fullscreen-preview-controls?]))
        :on-click #(set-ui! [:fullscreen-preview-controls?] (not (get-in db [:ui :fullscreen-preview-controls?])))} "Controls"]
@@ -417,7 +419,7 @@
         definition (find-id (get-in db [:show :effects]) (:effect-id cue))
         instance {:id (str "slot-" index) :params (events/slot-parameters db index)}]
     [:details.slot-parameter-editor
-     [:summary (str "Parameters · " (count (:params slot)) " overrides")]
+     [:summary (str "Parameters" (when (seq (:params slot)) (str " · " (count (:params slot)))))]
      (if (seq (:params definition))
        [:<>
         (for [[parameter schema] (:params definition)]
@@ -429,58 +431,72 @@
         [button nil "Reset to cue defaults" [:studio/slot-params-reset index] "text-button"]]
        [:p.small.muted "This cue has no adjustable parameters."])]))
 
+(defn- composition-catalog [items]
+  (when (seq items)
+    [:div#composition-library.compose-catalog {:role "group" :aria-label "Saved compositions"}
+     (for [item items]
+       ^{:key (:id item)}
+       [:div.list-card {:data-composition-id (:id item)}
+        [:div [:strong (display-name item)]
+         [:p (str (label (:mode item)) " · " (count (:slots item)) " slots" (when (:running? item) " · playing"))]]
+        [button nil "Open" [:studio/composition-open item]]])]))
+
+(defn- composition-settings [composition macro?]
+  [:div.compose-settings
+   [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80
+                                            :on-change #(set-ui! [:composition :name] (input-value %))}]]
+   [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]
+   [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
+                       [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
+   (when-not macro?
+     [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :on-change #(set-ui! [:composition :loop] (input-value %))}
+                         [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]])
+   [layers/opacity-control (:opacity composition)]])
+
+(defn- slot-actions [index last?]
+  [:div.slot-actions
+   (for [[caption title offset] [["↑" "Move earlier" -1] ["↓" "Move later" 1] ["×" "Remove slot" 0]]]
+     ^{:key offset} [:button.icon-button {:aria-label (str title ": step " (inc index)) :title title
+                                          :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) last?))
+                                          :on-click #(send! (if (zero? offset) [:studio/composition-remove index]
+                                                             [:studio/composition-move index offset]))} caption])])
+
+(defn- composition-slot [db index slot macro? last?]
+  (let [[duration-value duration-unit] (slot-duration slot)]
+    [:li.composition-slot {:class (when macro? "macro-slot")}
+     [:span.slot-number (inc index)]
+     [:strong.slot-title (display-name (find-id (get-in db [:show :cues]) (:cue-id slot)))]
+     (when-not macro?
+       [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
+        (fn [value unit] (input! [:studio/slot-duration index value unit]))])
+     [slot-actions index last?]
+     [:div.slot-editors [slot-parameter-editor db index slot] [layers/slot-controls index slot]]]))
+
 (defn- composition-view [db]
   (let [show (:show db) composition (get-in db [:ui :composition]) slots (:slots composition [])
-        selected-cue (or (get-in db [:ui :slot-cue]) (:id (first (:cues show))))]
+        selected-cue (or (get-in db [:ui :slot-cue]) (:id (first (:cues show))))
+        macro? (= "macro" (:mode composition))]
     [:section#view-compose.view {:hidden (not= :compose (get-in db [:ui :view]))}
      [heading "Macros & sequences"]
      [:div.compose-layout
       [:section.panel.composition-editor
-       [:div.panel-top [:span.section-label "COMPOSITION"] [button "new-composition" "New +" [:studio/composition-new] "text-button"]]
+       [:div.panel-top [:span.section-label "Composition"] [button "new-composition" "New +" [:studio/composition-new] "text-button"]]
+       [composition-catalog (:compositions show)]
        [:div.form-body
-        [:div.form-row
-         [:label "Name" [:input#composition-name {:value (:name composition "") :max-length 80 :on-change #(set-ui! [:composition :name] (input-value %))}]]
-         [:label "Identifier" [:input#composition-id {:value (:id composition "") :on-change #(set-ui! [:composition :id] (input-value %))}]]]
-        [:div.form-row
-         [:label "Behavior" [:select#composition-mode {:value (:mode composition "sequence") :on-change #(set-ui! [:composition :mode] (input-value %))}
-                             [:option {:value "sequence"} "Step sequence"] [:option {:value "macro"} "Macro · together"]]]
-         [:label "Playback" [:select#composition-loop {:value (:loop composition "once") :disabled (= "macro" (:mode composition))
-                                                       :on-change #(set-ui! [:composition :loop] (input-value %))}
-                             [:option {:value "once"} "Once"] [:option {:value "loop"} "Loop"] [:option {:value "ping-pong"} "Back and forth"] [:option {:value "random"} "Random"]]]]
-        [layers/opacity-control (:opacity composition)]
-        [:div.slots-heading [:span.section-label "YOUR SLOTS"] [:span.muted.small "Use the cue picker or “Add to composition” on the grid."]]
+        [composition-settings composition macro?]
+        [:div.slots-heading
+         [:h2 (if macro? "Cue slots" "Steps")] [:span.count (count slots)]
+         [:div.form-row.add-slot
+          [:select#slot-cue {:aria-label "Cue to add" :value (or selected-cue "") :on-change #(set-ui! [:slot-cue] (input-value %))}
+           (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (:id cue)} (display-name cue)])]
+          [button "add-slot" "Add cue +" [:studio/composition-add]]]]
         [:ol#composition-slots.composition-slots
          (if (seq slots)
-           (for [[index slot] (map-indexed vector slots)
-                 :let [[duration-value duration-unit] (slot-duration slot)]]
-             ^{:key (str index "/" (:cue-id slot))}
-             [:li.composition-slot
-              [:span.slot-number (.padStart (str (inc index)) 2 "0")]
-              [:div.slot-title (display-name (find-id (:cues show) (:cue-id slot))) [:small "DURATION"]]
-              [duration-control (str "slot-duration-" index) (str "Step " (inc index) " duration") duration-value duration-unit
-               (fn [value unit] (input! [:studio/slot-duration index value unit]))]
-              [:div.slot-actions
-               (for [[caption title offset] [["↑" "Move earlier" -1] ["↓" "Move later" 1] ["×" "Remove slot" 0]]]
-                 ^{:key offset} [:button.icon-button {:aria-label (str title ": step " (inc index)) :title title
-                                                      :disabled (or (and (= offset -1) (zero? index)) (and (= offset 1) (= index (dec (count slots)))))
-                                                      :on-click #(send! (if (zero? offset) [:studio/composition-remove index] [:studio/composition-move index offset]))} caption])]
-              [slot-parameter-editor db index slot]
-              [layers/slot-controls index slot]])
-           [:li.empty-state "An open canvas. Add your first cue below."])]
-        [:div.form-row.add-slot
-         [:select#slot-cue {:aria-label "Cue to add" :value (or selected-cue "") :on-change #(set-ui! [:slot-cue] (input-value %))}
-          (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (:id cue)} (display-name cue)])]
-         [button "add-slot" "Add cue +" [:studio/composition-add]]]
+           (for [[index slot] (map-indexed vector slots)]
+             ^{:key (str index "/" (:cue-id slot))} [composition-slot db index slot macro? (= index (dec (count slots)))])
+           [:li.empty-state "Choose a cue to add the first slot."])]
         [:div.button-row [button "save-composition" "Save composition" [:studio/composition-save false] "button primary"]
-         [button "run-composition" "Save & play ▷" [:studio/composition-save true]] [button "stop-composition" "Stop" [:studio/composition-stop]]]
-        [:p.small.muted "A macro launches its slots together. A sequence releases each step before the next, using the cue’s release envelope."]]]
-      [:section.panel [:div.panel-top [:span.section-label "SAVED COMPOSITIONS"]]
-       [:div#composition-library.list-body
-        (if (seq (:compositions show))
-          (for [item (:compositions show)] ^{:key (:id item)}
-            [:div.list-card [:div [:strong (display-name item)] [:p (str (label (:mode item)) " · " (count (:slots item)) " slots · " (label (:loop item)) (when (:running? item) " · playing"))]]
-             [button nil "Open" [:studio/composition-open item]]])
-          [:p.muted.small "Your saved macros and sequences will appear here."])]]
+         [button "run-composition" "Save & play ▷" [:studio/composition-save true]] [button "stop-composition" "Stop" [:studio/composition-stop]]]]]
       (when (= :compose (get-in db [:ui :view])) [variable-blocks/panel])]]))
 
 (defn- plan-point [svg event width depth]
@@ -650,43 +666,70 @@
       "Create matching cue"]
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
+(defn- registry-results [show search]
+  (let [query (str/lower-case search)
+        matches? (fn [[_ item]] (str/includes? (str/lower-case (str (:name item) " " (:id item))) query))]
+    (->> (concat (map #(vector "effects" %) (:effects show)) (map #(vector "cues" %) (:cues show)))
+         (filter matches?))))
+
+(defn- registry-option [definition kind item]
+  (let [selected? (and (= kind (:kind definition)) (= (:id item) (:loaded-id definition)))]
+    [:button.definition-item {:class (when selected? "selected") :aria-current (when selected? "true")
+                              :style (color-style item) :on-click #(send! [:studio/definition-load kind (:id item)])}
+     [:span.definition-swatch] [:span [:strong (display-name item)]
+                                [:small (str (if (= kind "effects") "Effect" "Cue") " · v" (:version item 1))]]]))
+
+(defn- definition-registry [catalog selected search]
+  (let [results (registry-results catalog search)]
+    [:aside.panel.definition-library {:aria-label "Definition registry"}
+     [:div.registry-toolbar
+      [:label.search-label [:input#definition-search {:type "search" :placeholder "Search registry" :aria-label "Search definitions"
+                                                     :value search :on-change #(set-ui! [:definition-search] (input-value %))}]]
+      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(send! [:studio/definition-new])} "New"]]
+     [:div#definition-list.definition-list
+      (if (seq results)
+        (for [[kind item] results]
+          ^{:key (str kind "/" (:id item))} [registry-option selected kind item])
+        [:p.registry-empty {:role "status"} "No matching definitions."])]]))
+
+(defn- definition-toolbar [definition]
+  [:<>
+   [:div.definition-toolbar
+    [:div#editor-modes.segmented {:role "group" :aria-label "Editing mode"}
+     (for [[mode title] [[:source "EDN source"] [:form "Visual builder"]]]
+       (let [selected? (= mode (:mode definition))]
+         ^{:key mode} [:button {:class (when selected? "selected") :data-editor-mode (name mode) :aria-pressed selected?
+                                :on-click #(set-ui! [:definition :mode] mode)} title]))]
+    [:button#publish-definition.button.primary {:disabled (boolean (:publishing? definition))
+                                                 :on-click #(send! [:studio/definition-publish])} "Validate & publish"]]
+   [:div.definition-settings
+    [:label "Definition type" [:select#definition-kind {:value (:kind definition "effects")
+                                                        :on-change #(set-ui! [:definition :kind] (input-value %))}
+                               [:option {:value "effects"} "Effect"] [:option {:value "cues"} "Cue"]]]
+    [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
+                                             :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
+                      [:option {:value "textarea"} "Text editor"] [:option {:value "neovim"} "Neovim · WASM"]]]
+    [:label.auto-publish [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
+                                                             :on-change #(set-ui! [:definition :auto?] (checked? %))}]
+     "Publish valid edits"]]
+   [:div.definition-feedback
+    [:span#definition-status.small.muted (:status definition "Ready to create")]
+    [:div#validation-result.validation-result {:class (when (:error? definition) "error") :role "status" :aria-live "polite"}
+     (:result definition "")]]])
+
 (defn- definition-view [db]
-  (let [show (:show db) ui (:ui db) definition (:definition ui)
-        query (str/lower-case (:definition-search ui ""))
-        definitions (concat (map #(vector "effects" %) (:effects show)) (map #(vector "cues" %) (:cues show)))
-        filtered (filter (fn [[_ item]] (str/includes? (str/lower-case (str (:name item) " " (:id item))) query)) definitions)]
+  (let [show (:show db) ui (:ui db) definition (:definition ui)]
     [:section#view-library.view {:hidden (not= :library (:view ui))}
      [heading "Effect & cue definitions"
-      [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
+      [button "generate-registry-page" "Build registry page" [:studio/generate-page]]]
      (when (= :library (:view ui))
        ^{:key [(:runtime-id show) (:show-id show) (:epoch show)]} [materials/panel])
      [:div.definition-layout
-      [:aside.panel.definition-library
-       [:div.panel-top [:span.section-label "DEFINITIONS"] [button "new-definition" "New +" [:studio/definition-new] "text-button"]]
-       [:label.search-label [:input#definition-search {:placeholder "Find an effect or cue…" :aria-label "Search definitions"
-                                                      :value (:definition-search ui "")
-                                                      :on-change #(set-ui! [:definition-search] (input-value %))}]]
-       [:div#definition-list.definition-list
-        (for [[kind item] filtered]
-          ^{:key (str kind "/" (:id item))}
-          [:button.definition-item {:class (when (and (= kind (:kind definition)) (= (:id item) (:loaded-id definition))) "selected")
-                                     :style (color-style item) :on-click #(send! [:studio/definition-load kind (:id item)])}
-           [:span.definition-swatch] [:span [:strong (display-name item)] [:small (str (if (= kind "effects") "Effect" "Cue") " · v" (:version item 1))]]])]]
+      [definition-registry (select-keys show [:effects :cues])
+       (select-keys definition [:kind :loaded-id]) (:definition-search ui "")]
       [:section.panel.definition-editor
-       [:div.panel-top
-        [:div#editor-modes.segmented
-         (for [[mode title] [[:source "EDN source"] [:form "Visual builder"]]]
-           ^{:key mode} [:button {:class (when (= mode (:mode definition)) "selected") :data-editor-mode (name mode)
-                                  :on-click #(set-ui! [:definition :mode] mode)} title])]
-        [:span#definition-status.small.muted (:status definition "Ready to create")]]
+       [definition-toolbar definition]
        [:div.form-body
-        [:div.form-row
-         [:label "Definition type" [:select#definition-kind {:value (:kind definition "effects")
-                                                            :on-change #(set-ui! [:definition :kind] (input-value %))}
-                                    [:option {:value "effects"} "Effect"] [:option {:value "cues"} "Cue"]]]
-         [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
-                                                 :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
-                           [:option {:value "textarea"} "Accessible text editor"] [:option {:value "neovim"} "Neovim · WebAssembly"]]]]
         [:div#source-editor {:hidden (= :form (:mode definition))}
          (if (= :neovim (:engine definition))
            [interop/neovim definition]
@@ -699,15 +742,7 @@
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
         (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
           [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
-        [visual-builder db]
-        [:div.button-row
-         [:button#publish-definition.button.primary {:disabled (boolean (:publishing? definition))
-                                                      :on-click #(send! [:studio/definition-publish])} "Validate & publish"]
-         [:label.checkbox-label [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
-                                                      :on-change #(set-ui! [:definition :auto?] (checked? %))}]
-          "Publish valid edits"]]
-        [:div#validation-result.validation-result {:class (when (:error? definition) "error") :role "status" :aria-live "polite"}
-         (:result definition "")]]]]]))
+        [visual-builder db]]]]]))
 
 (defn- dialog [attrs & children]
   (into [:dialog (assoc attrs :ref (fn [node] (when (and node (not (.-open node))) (.showModal node))))] children))

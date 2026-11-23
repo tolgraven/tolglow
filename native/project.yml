@@ -4,16 +4,29 @@ options:
   deploymentTarget:
     iOS: '18.0'
     watchOS: '11.0'
+    macOS: '14.0'
 packages:
   TolglowSensorCore:
     path: Core
 settings:
   base:
+    AUDIENCE_DOMAIN: tolgraven.se
     SWIFT_VERSION: '5.0'
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     # Set your own development team in Xcode; no signing credentials are stored.
 targets:
+  TolglowStudio:
+    type: application
+    platform: macOS
+    sources: [macOS]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.studio
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host an audience stage while its invitation is active.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to lighting equipment configured by the show operator.
   TolglowPhone:
     type: application
     platform: iOS
@@ -21,12 +34,27 @@ targets:
       - path: iOS
         excludes: ["**/AGENTS.md"]
       - Shared
+      - Audience
+      - AudienceCompute/Shared
+      - path: AudienceCompute/Phone
+        excludes: ["audience-compute.js"]
+      - path: AudienceCompute/Phone/audience-compute.js
+        buildPhase: resources
+      - path: AudienceCompute/GPU/TRANSIT-LICENSE
+        buildPhase: resources
+    entitlements:
+      path: iOS/TolglowPhone.entitlements
+      properties:
+        com.apple.developer.associated-domains: ["appclips:$(AUDIENCE_DOMAIN)", "applinks:$(AUDIENCE_DOMAIN)"]
     info:
       path: iOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
-        NSCameraUsageDescription: Measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
+        NSBonjourServices: ["_tolglow-cmp._tcp"]
+        NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.
+        NSCameraUsageDescription: Estimate dance movement locally or measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you conduct lights, preview sensors, or hold a fixed sightline for fog or reflectance measurements.
         NSLocalNetworkUsageDescription: Connect to your chosen Tolglow lighting host and send armed OSC observations.
         NSAppTransportSecurity:
@@ -38,16 +66,72 @@ targets:
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
       - package: TolglowSensorCore
+      - target: TolglowAudienceClip
+        embed: true
       - target: TolglowWatch
         embed: true
+  TolglowAudienceClip:
+    type: application.on-demand-install-capable
+    platform: iOS
+    sources: [AppClip, Audience]
+    info:
+      path: AppClip/Info.plist
+      properties:
+        CFBundleDisplayName: Dance floor
+        UILaunchScreen: {}
+        NSAppClip:
+          NSAppClipRequestEphemeralUserNotification: false
+          NSAppClipRequestLocationConfirmation: false
+        NSCameraUsageDescription: Estimate dance movement on this phone while you choose camera input.
+        NSBluetoothAlwaysUsageDescription: Discover the nearby stage and send movement estimates.
+    entitlements:
+      path: AppClip/TolglowAudienceClip.entitlements
+      properties:
+        com.apple.developer.associated-domains: ["appclips:$(AUDIENCE_DOMAIN)"]
+        com.apple.developer.parent-application-identifiers: ["$(AppIdentifierPrefix)org.tolglow.ios"]
+        com.apple.developer.on-demand-install-capable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.Clip
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) APPCLIP"
+        TARGETED_DEVICE_FAMILY: '1,2'
+    dependencies:
+      - package: TolglowSensorCore
+  TolglowAudienceBridge:
+    type: tool
+    platform: macOS
+    deploymentTarget: '13.0'
+    sources: [AudienceBridge, Audience/AudienceRadio.swift, AudienceCompute/Shared, AudienceCompute/Stage]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host the audience for this show over nearby Bluetooth.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Offer verified shader work to explicitly enrolled local audience devices.
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.audience-bridge
+    dependencies:
+      - package: TolglowSensorCore
   TolglowWatch:
     type: application
     platform: watchOS
-    sources: [watchOS, Shared]
+    sources:
+      - watchOS
+      - Shared
+      - Audience/AudienceRadio.swift
+      - Audience/AudienceClient.swift
+    entitlements:
+      path: watchOS/TolglowWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
     info:
       path: watchOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        WKBackgroundModes: [workout-processing]
+        NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
+        NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
+        NSBluetoothAlwaysUsageDescription: Find and join a nearby lighting stage when you choose to use only your Watch.
+        WKRunsIndependentlyOfCompanionApp: true
         WKApplication: true
         WKCompanionAppBundleIdentifier: org.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
@@ -56,7 +140,30 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
     dependencies:
       - package: TolglowSensorCore
+  WatchAudienceUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources: [Tests/WatchAudienceUI]
+    dependencies:
+      - target: TolglowWatch
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: TolglowWatch
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.watch-audience-ui-tests
 schemes:
+  TolglowAudienceClip:
+    build:
+      targets:
+        TolglowAudienceClip: all
+  TolglowAudienceBridge:
+    build:
+      targets:
+        TolglowAudienceBridge: all
+  TolglowStudio:
+    build:
+      targets:
+        TolglowStudio: all
   TolglowPhone:
     build:
       targets:
@@ -65,3 +172,6 @@ schemes:
     build:
       targets:
         TolglowWatch: all
+    test:
+      targets:
+        - WatchAudienceUITests

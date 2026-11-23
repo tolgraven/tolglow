@@ -160,6 +160,7 @@
 (def operations
   {"/api/event-subscribers" :event-subscriber "/api/photometry" :photometry "/api/calibration" :calibration
    "/api/fog-calibration" :fog-calibration "/api/venue-surface" :venue-surface
+   "/api/sensors/audience-zone" :sensor-audience-zone
    "/api/command" :command "/api/spatial/cues" :spatial-cue "/api/definition" :definition "/api/rig" :rig
    "/api/aim-path" :aim-path "/api/surface-aim" :surface-aim
    "/api/lighting-scene" :lighting-scene "/api/audio/returns/configure" :audio-return-configure
@@ -249,6 +250,12 @@
     "/api/sync" (read-action sync! :status "Synchronization unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
+    "/api/sensors/stage/qr" (available sensor! "Stage invitation unavailable"
+                             (fn [request]
+                               (if-let [png (sensor! :stage-qr (query-fields request {:id nil}))]
+                                 {:status 200 :headers {"Content-Type" "image/png" "Cache-Control" "no-store"}
+                                  :body (java.io.ByteArrayInputStream. ^bytes png)}
+                                 (not-found request))))
     "/api/sensors" (read-action sensor! :status "Sensor inputs unavailable")
     "/api/repl" (read-action repl! :snapshot "REPL unavailable" #(query-fields % {:session-id "main"}))
     "/api/repl/complete" (read-action repl! :complete "REPL unavailable" #(query-fields % {:session-id "main" :prefix ""}))
@@ -278,7 +285,8 @@
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
    (post-actions "/api/sensors/" sensor! acknowledgement
                  {"pair" :pair "configure" :configure "sample" :sample "arm" :arm "calibrate" :calibrate
-                  "osc/start" :osc-start "osc/stop" :osc-stop})
+                  "osc/start" :osc-start "osc/stop" :osc-stop
+                  "stage/start" :stage-start "stage/stop" :stage-stop})
    (post-actions "/api/terminal/" terminal! ok {"open" :open "input" :input "resize" :resize "close" :close})
    (post-actions "/api/workspaces/" workspace! ok {"create" :create "write" :write "check" :check "stage" :stage})
    (post-actions "/api/repl/" repl! ok {"session" :session "scratch" :scratch "interrupt" :interrupt})
@@ -326,6 +334,7 @@
         stream (:state-stream! services)
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
+                                   ["/api/compute/stream" {:get (available (:compute-stream! services) "Compute unavailable" (:compute-stream! services))}]
                                    ["/api/debug/events" {:name :api/debug-events
                                                          :get (available (:debug-stream! services) "Debug stream unavailable" (:debug-stream! services))}]
                                    ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]

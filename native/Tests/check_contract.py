@@ -50,9 +50,41 @@ class Contract(unittest.TestCase):
         self.assertIn("platform: watchOS", manifest)
         self.assertIn("NSMotionUsageDescription:", manifest)
         self.assertIn("NSLocalNetworkUsageDescription:", manifest)
-        self.assertNotIn("UIBackgroundModes", manifest)
+        phone, other_targets = manifest.split("  TolglowAudienceClip:", 1)
+        self.assertIn("UIBackgroundModes: [bluetooth-central]", phone)
+        self.assertNotIn("UIBackgroundModes", other_targets)
         self.assertIn("WKCompanionAppBundleIdentifier: org.tolglow.ios", manifest)
         self.assertTrue((ROOT / "Core/Package.swift").exists())
+
+    def test_optional_watch_workout_discards_health_data(self):
+        manifest = (ROOT / "project.yml").read_text()
+        watch = manifest.split("  TolglowWatch:\n    type: application", 1)[1].split("schemes:")[0]
+        for item in ["com.apple.developer.healthkit: true", "NSHealthShareUsageDescription:",
+                     "NSHealthUpdateUsageDescription:", "WKBackgroundModes: [workout-processing]"]:
+            self.assertIn(item, watch)
+        source = (ROOT / "watchOS/DanceWorkout.swift").read_text()
+        self.assertIn("builder?.discardWorkout()", source)
+        self.assertNotIn("finishWorkout", source)
+        self.assertIn("config.activityType = .socialDance", source)
+        self.assertIn("store.requestAuthorization", source)
+        self.assertNotIn("UserDefaults", source)
+        view = (ROOT / "watchOS/DanceAudienceView.swift").read_text()
+        self.assertIn("private var sharePulse = false", view)
+        self.assertIn("workout.start(withPulse: sharePulse)", view)
+
+    def test_solo_watch_uses_the_shared_stage_central(self):
+        manifest = (ROOT / "project.yml").read_text()
+        watch = manifest.split("  TolglowWatch:\n    type: application", 1)[1].split("  WatchAudienceUITests:", 1)[0]
+        for key in ["WKRunsIndependentlyOfCompanionApp: true", "NSBluetoothAlwaysUsageDescription:",
+                    "Audience/AudienceClient.swift", "Audience/AudienceRadio.swift"]:
+            self.assertIn(key, watch)
+        self.assertNotIn("iOS/", watch)
+        link = (ROOT / "watchOS/WatchFloorLink.swift").read_text()
+        self.assertNotIn("import Network", link)
+        choose = link.split("func choose(", 1)[1].split("var canStart", 1)[0]
+        self.assertIn("stage.stopBrowsing()", choose)
+        self.assertNotIn("stage.join(", choose)
+        self.assertNotIn("stage.join(", (ROOT / "watchOS/DanceAudienceView.swift").read_text())
 
     def test_native_control_and_webview_share_the_operator_auth_boundary(self):
         access = (ROOT / "iOS/StudioOperatorAccess.swift").read_text()

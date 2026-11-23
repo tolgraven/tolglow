@@ -65,8 +65,14 @@ running effect. Macros launch together; sequences use once,
 loop, ping-pong or random traversal. Save, save-and-play, stop and reopening saved
 compositions all invoke the corresponding local API.
 
-Definitions lists effect/cue registry entries and their versions. EDN source is
-loaded from the server, validated, compiled and published. The visual builder
+In **Definitions**, search the registry by effect or cue name or ID. The selected
+entry shows its version. **New** opens an unpublished draft. The same toolbar
+switches between EDN and the visual builder and validates and publishes the
+current editor. Publication feedback appears beside the editor settings.
+On a phone the registry scrolls horizontally and leaves the code below it
+available for editing. The text editor and the Bruvbox Neovim editor share the
+same publication action. EDN source is loaded from the server, validated,
+compiled and published. The visual builder
 creates RGB constant color effects with an adjustable intensity parameter,
 duration and attack/release envelope, optionally with a matching cue. This is a
 small working code-free subset; it is not yet a general visual expression graph.
@@ -265,9 +271,16 @@ one another when space permits. There are no remote fonts or UI/CDN assets.
 
 ## Assistant and provider connection
 
-Assistant offers a streaming conversation and an inline provider form for OpenAI,
-Anthropic, OpenRouter and self-hosted compatible endpoints. Model IDs/endpoints
-are explicit configuration. Credentials are cleared from the form when submitted.
+On the first visit, **Connect a model** puts the provider, model ID and API key
+together. Open **Custom endpoint** to override a hosted provider’s URL. Choosing
+**Self-hosted / compatible** shows the server endpoint immediately and makes the
+API key optional. You can draft a message before saving the connection.
+
+Run `lein run -m tolglow.qa.studio-browser assistant-layout` after building the Studio bundle to exercise first use, connection editing, a loopback model response and restored history in an isolated preview show.
+
+Once the provider is ready, the conversation is the primary workspace. Open
+**Model connection** to edit settings. **Clear saved key** appears when the
+selected provider has a key. Credentials are cleared from the form on submit.
 The server uses its separately configured local credential store when available,
 or session memory otherwise. Only opaque references enter portable show data;
 the actual keys are excluded from public configuration and exports. Saving
@@ -431,6 +444,27 @@ process restart. Existing worktree files remain on disk, but a fresh process doe
 not recover the catalog; saving/restoring a show does not currently repair this.
 This is a known lifecycle gap, not a completed persistent development environment.
 
+## Responsive Studio qualification
+
+The page-by-page results below come from touch-enabled Chromium and desktop Chromium against a release build served by Ring. The layouts used 390 × 844, 1024 × 768 and 1440 × 900 CSS pixels.
+
+| Workspace | Operator interaction exercised | Measured change or result |
+| --- | --- | --- |
+| Perform | Four simultaneous cues, horizontal compact parameters, monitor focus, schema layouts and fallbacks | The iPad focus graph grew from 155 × 68 to 213 × 83 px with all four cue cards visible. [#129](https://github.com/tolgraven/tolglow/pull/129) |
+| Compose | Save and reopen sequence and macro slots with parameter overrides and musical timing | An iPad step row went from 171 to 52 px high. All four steps fit. [#140](https://github.com/tolgraven/tolglow/pull/140) |
+| Rig & space | Explore, switch tools and resume path authoring with its draft intact | On the same eight-fixture show, the iPad Explore canvas grew from 486 to 818 px wide. [#140](https://github.com/tolgraven/tolglow/pull/140) |
+| Connections | Observe live readings, change enrolled zones and explicitly arm the observed session | Three browser sizes received the same gateway updates, expired sessions and opt-in pulse coverage. [#142](https://github.com/tolgraven/tolglow/pull/142) |
+| Assistant | Configure a provider, save and send a message through a loopback provider | The first connection’s Save action moved from y=1,147 to y=407 on phone. [#156](https://github.com/tolgraven/tolglow/pull/156) |
+| Definitions | Find and load a definition, edit its WASM Neovim source and use validation and publishing | Phone Publish moved from y=1,040 to y=333. The editor grew from 332 × 350 to 348 × 456 px. [#161](https://github.com/tolgraven/tolglow/pull/161) |
+| Develop | Edit a real paired workspace, inspect its Git diff and switch between tasks and source without losing a draft | The selected source first appears at y=480 on phone, down from y=2,584. [#168](https://github.com/tolgraven/tolglow/pull/168) |
+| Debug | Filter and inspect events, return keyboard focus and inspect DMX output | Phone shows 10 complete event rows, up from four. The iPad shows nine, up from seven. [#163](https://github.com/tolgraven/tolglow/pull/163) |
+
+Each linked PR includes release screenshots, an interaction recording and a reproducible browser check.
+
+Perform also passed in Playwright’s Linux WebKit with iPhone, iPad and desktop profiles. Its iPad view displayed all four cues, a 213 × 83 px spatial monitor and eight controls on Orbital wash. The tests edited a live value, switched between its time graph and spatial view, paused and resumed the cue, opened the XYZ controls and pressed a cue long enough to open its radial menu. Touchscreen taps and keyboard input used Playwright’s input drivers. The hold used a captured mouse pointer. All three profiles had zero document overflow and zero page errors. Physical iPad Safari remains a separate check.
+
+After `npm ci` and `npm run studio:build`, install WebKit with `npx --no-install playwright-core install --with-deps webkit`. Run `STUDIO_TEST_BROWSER=webkit lein run -m tolglow.qa.performance-layout target/webkit-perform` for the screenshots and measurements.
+
 ## Build, verification and remaining evidence
 
 Install pinned npm dependencies with `npm ci`, then run `npm run studio:build`
@@ -510,3 +544,11 @@ target. If a show variable sets the level, its path appears beside the reading.
 Varying the look preserves that binding. **Set manual target** switches to the
 chosen percentage. **Release group** gives up the scene's fixtures. Active groups have
 disjoint membership.
+
+## Composing on a touch screen
+
+In **Compose**, select a cue and use **Add cue** to append a slot. Each row keeps its move and remove buttons beside its cue name. Open **Parameters** to override inputs or **Layer transforms** to change how this slot affects earlier heads. A sequence exposes each step's duration and musical unit. A macro launches its slots together. Saved compositions appear in a horizontal list when the show has any.
+
+In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
+
+After an optimized build, run `lein run -m tolglow.qa.performance-layout target/authoring-layout authoring` to start a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.
