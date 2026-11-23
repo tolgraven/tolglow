@@ -1,5 +1,12 @@
 import Foundation
 
+private final class LoopbackOnly: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 /// One fixed loopback compute endpoint; guests cannot choose a URL, supply a
 /// header, enter Studio, launch a cue, or forward their BLE credentials.
 final class ComputeUpstream {
@@ -19,8 +26,8 @@ final class ComputeUpstream {
         if let operatorToken { req.setValue("Bearer " + operatorToken, forHTTPHeaderField: "Authorization") }
         let conf = URLSessionConfiguration.ephemeral
         conf.httpShouldSetCookies = false
-        conf.urlCache = nil
-        session = URLSession(configuration: conf)
+        conf.urlCache = nil; conf.urlCredentialStorage = nil
+        session = URLSession(configuration: conf, delegate: LoopbackOnly(), delegateQueue: nil)
         socket = session.webSocketTask(with: req)
         socket.maximumMessageSize = ComputeLink.maximumFrame - 32
         self.token = token

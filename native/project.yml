@@ -24,7 +24,10 @@ targets:
       - Shared
       - Audience
       - AudienceCompute/Shared
-      - AudienceCompute/Phone
+      - path: AudienceCompute/Phone
+        excludes: ["audience-compute.js"]
+      - path: AudienceCompute/Phone/audience-compute.js
+        buildPhase: resources
       - path: AudienceCompute/GPU/TRANSIT-LICENSE
         buildPhase: resources
     entitlements:
@@ -92,6 +95,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host the audience for this show over nearby Bluetooth.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Offer verified shader work to explicitly enrolled local audience devices.
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.audience-bridge
     dependencies:
       - package: TolglowSensorCore
