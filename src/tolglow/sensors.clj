@@ -249,10 +249,12 @@
         now ((:now-ms manager))
         {:keys [devices packets]}
         (locking (:lock manager)
-          (let [state (live manager) n (min (:drain-limit manager) (count (:queue state)))
-                packets (subvec (:queue state) 0 n)]
-            (swap! (:state manager) update :queue #(subvec % n))
-            {:devices (:devices state) :packets packets}))
+          (let [{:keys [queue devices]} (live manager)
+                n (min (:drain-limit manager) (count queue))]
+            ;; A subvec retains the consumed prefix when a busy queue never empties.
+            (when (pos? n)
+              (swap! (:state manager) assoc :queue (into [] (subvec queue n))))
+            {:devices devices :packets (subvec queue 0 n)}))
         initial
         (reduce-kv
          (fn [acc id source]
