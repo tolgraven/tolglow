@@ -9,6 +9,7 @@
             [afterglow.runtime.keyframes :as keyframes]
             [tolglow.effects.keyframes :as effect-keyframes]
             [tolglow.effects.cadence :as cadence]
+            [tolglow.visualization.cue-pads :as cue-pads]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -23,6 +24,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.effects.material-design :as material-design]
@@ -60,6 +62,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
+            [tolglow.show.push-scene :as push-scene]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
@@ -122,6 +125,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
@@ -282,7 +286,7 @@
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
-      :adaptive-keyframes (:adaptive-keyframes options)
+      :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -1158,8 +1162,11 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :variable-observation variables :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :variable-observation variables
+                        :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
+                        :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
                      (catch Exception error
@@ -1211,9 +1218,11 @@
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (doseq [observer (vals @(:observers runtime))]
                ((:frame! observer) @(:state runtime)))
-             (when sampling
-               (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)]
-                 (swap! (:state runtime) assoc :cadence (cadence/finish sampling (:model next-state) elapsed)))))))
+             (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)
+                   defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
+               (when sampling
+                 (swap! (:state runtime) assoc :cadence
+                        (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
@@ -1395,13 +1404,28 @@
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)]
+  (let [cache (waveforms/create-cache)
+        pages (volatile! nil)
+        scene-cache (push-scene/create-cache)]
     (display/browser-display
-     (assoc options :project! (fn [view]
-                                (let [snapshot @(:state runtime)
-                                      audio (audio/waveform (connections/audio (:connections runtime)))]
-                                  (->> (waveforms/project-display cache (assoc snapshot :runtime-id (:id runtime)) view audio)
-                                       (block-trace/project-display (:id runtime) (:model snapshot)))))))))
+     (assoc options :project!
+            (fn [view]
+              (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
+                    model (:model snapshot)
+                    mode (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters)
+                    view (cond-> (assoc view :display-mode mode)
+                           (#{:parameters :audio} mode)
+                           (assoc-in [:visualization-clock :sample-period-ms]
+                                     (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
+                    visual (case mode
+                             :parameters (waveforms/project-display cache snapshot view nil)
+                             :audio (waveforms/project-display cache snapshot view
+                                          (audio/waveform (connections/audio (:connections runtime))))
+                             :block-trace (block-trace/project-display (:id runtime) model view)
+                             (:simulator :rig) (push-scene/project-display scene-cache snapshot
+                                                     (assoc view :runtime-id (:id runtime)))
+                             view)]
+                (page-overview/project-display pages model visual)))))))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
@@ -1417,7 +1441,10 @@
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
-            options (cond-> options (#{:push-2 :push-3} kind) (assoc :target-search targets/search))
+            options (cond-> options
+                      (#{:push-2 :push-3} kind) (assoc :target-search targets/search)
+                      (and (= kind :push-2) (not (contains? options :feedback-source)))
+                      (assoc :feedback-source (cue-pads/push-feedback (:cue-pad-previews runtime) #(deref (:state runtime)))))
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
                                                       (when-not (= epoch (:epoch model))
                                                         (throw (ex-info "Device belongs to a previous show epoch" {})))

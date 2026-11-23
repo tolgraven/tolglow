@@ -60,6 +60,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |
 | [Controls and web](architecture/control-and-web.md) | Shared semantics, devices, touch UI and editors |
 | [Preview navigation](preview-navigation.md) | WASD, drag look, touch movement and active-fixture camera tours |
+| [Push venue display](push-display-packaging.md#venue-and-rig-views) | Full-rig framing, cylindrical panorama and fixture aim on the 960 × 160 display |
 | [Output deadlines](output-presentation.md) | Immutable completed frames, fixture-aware fade/interpolation and measured policy costs |
 | [Phone and Watch sensors](sensors.md) | Maintained browser library, supported Apple APIs, pure middleware and owned OSC service |
 | [Web REPL](web-repl.md) | Actual JVM sessions, streaming completion and captured locals |
@@ -88,6 +89,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Shared variable chains](global-variable-blocks.md) | Authoring and tracing global material chains in Studio, the REPL and Ring |
 | [Effect building blocks](effect-blocks.md) | Shader materials, parameter and variable bindings, stage inspection |
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
+| [Push page overview](push-page-overview.md) | Browse cue layouts, authored swatches and type colors |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |
 | [Dependency upgrades](dependency-upgrades.md) | Registry-verified versions, migrations and updated build/test evidence |
 | [X-Touch](xtouch.md) | Verified MCU/extender protocol, adapter and color research |

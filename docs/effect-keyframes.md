@@ -21,3 +21,35 @@ Expand the active cue's keyframe inspector and select a head and attribute to co
 A Transit show save includes the active endpoints and current progress. This also works for typed batch effects. Loading assigns fresh instance IDs and reconnects their captured windows. A discrete effect such as a shutter program runs each live frame. A failed future prediction leaves real-frame evaluation active for the rest of that segment.
 
 See [Afterglow's scheduling and native output contract](https://github.com/tolgraven/afterglow/blob/40ff676cfa686685dc7e955934db92b379238a63/doc/architecture/effect-keyframes.md).
+
+## Automatic sampling of timed edges
+
+The cost-ranked scheduler leaves clock-driven floor and fractional wraps and
+stepped output tweens at source rate. Sampling on opposite sides of a wrap can
+miss a short dimmer pulse entirely or produce a flash on a dark frame. An
+independent floor of a fixed fixture coordinate leaves a smooth time-varying
+term eligible. This conservative check applies to portable output expressions.
+The timing of opaque external generators cannot be inferred from this syntax.
+Explicitly authored `:keyframes` remain available for deliberately stepped or
+interpolated looks.
+
+The host inspects each captured live definition revision as it enters the
+active set and reuses that result across instances. A stable active/version set
+does no further expression traversal. Removed and hot-reloaded revisions leave
+the cache with their final instance. Real worker costs are still measured and
+reported for protected effects.
+
+### Reproduce the transient and recovery test
+
+```sh
+lein run -m tolglow.perf.transient-scheduling target/quality/transients.edn
+```
+
+The replay records 320 frames of real flash and wash DMX from the normal show
+tick. It injects identical measurements for worker costs and frame lateness in
+each test lane. Frames 17 through 112 report a 32 ms tick against a 25 ms budget.
+The cost-only comparison changes flash bytes on 80 frames. The protected lane
+matches the full-rate reference on all 320 frames. The smooth wash reaches a
+stride of eight frames and returns to one during recovery. Only two definitions
+are inspected over the entire run. This test isolates scheduling decisions. The
+large-rig benchmark measures actual throughput and output error separately.
