@@ -107,3 +107,23 @@
         (session/suspend! device)
         (is (zero? (:clients (pads/status service)))))
       (finally (show/stop! runtime)))))
+
+(deftest idle-previews-follow-the-current-meter-and-hdr-mode
+  (let [service (pads/manager)
+        model (-> (rig)
+                  (assoc-in [:transport :meter] {:beats-per-bar 3 :bars-per-phrase 2})
+                  (assoc-in [:registry :effects :ember :outputs :dimmer] {:op :bar}))
+        frame (at model 750)]
+    (is (= [0.5 0.0 0.0] (:ember (pads/present! service :grid frame main))))
+    (let [hdr-model (assoc-in model [:registry :effects :ember :outputs :dimmer] (demo/constant 1.4))
+          sample (at hdr-model 750)]
+      (is (empty? (pads/present! service :grid sample main)))
+      (is (= [1.0 0.0 0.0] (:ember (pads/present! service :grid (assoc sample :preview-hdr {:white-mix 0}) main)))))))
+
+(deftest cue-targets-constrain-the-representative-head
+  (let [service (pads/manager)
+        model (-> (rig) (assoc-in [:registry :cues :ember :selector] {:fixture-ids [:head-4]}))
+        see! (fn [m] (pads/present! service :grid (at m 75) main))]
+    (is (contains? (see! model) :ember))
+    (is (= :head-4 (get-in @(:cache service) [:ember :plan :rig 0 :id])))
+    (is (empty? (see! (assoc-in model [:registry :cues :ember :pad-preview :fixture-id] :head-1))))))

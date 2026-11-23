@@ -8,9 +8,11 @@ sample to 25% for an inactive cue, 100% for an active cue and 45% for a cue in
 release. The Web grid keeps the active and releasing styles and category tag.
 
 By default the sampler chooses one patched fixture targeted by the effect. It
-uses its actual position, emitter mix, authored and saved parameters, frozen
+honors cue and launch target selections. It uses the head’s actual position,
+emitter mix, transport meter, authored and saved parameters, frozen
 show variables, and the effect's captured definitions. For a launched instance
-it uses its parameter overrides and release state. An intensity-only effect
+it uses its parameter overrides, private clock, opacity and release state. HDR
+previews use the committed emitter gain and white-mix settings on that head. An intensity-only effect
 uses its authored swatch as the color to dim. Movement-only and control cues
 retain their authored swatches. This preview represents a single cue in
 isolation. The room preview continues to show the final mixed fixture output.

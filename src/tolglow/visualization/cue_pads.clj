@@ -2,11 +2,13 @@
   "Sample the visible cue grid on presentation workers. All previews are
   private scalar evaluations over a single representative head."
   (:require [afterglow.control.views :as views]
+            [afterglow.time :as time]
             [afterglow.control.system :as system]
             [afterglow.render.frame :as frame]
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.registry :as registry]
+            [tolglow.spatial.targets :as targets]
             [tolglow.waveforms :as waveforms]))
 
 (def query-id :visualization/cue-pads)
@@ -72,7 +74,7 @@
   (reduce (fn [out inst] (if (ids (:cue-id inst)) (assoc out (:cue-id inst) inst) out))
           {} (views/active-instances model)))
 
-(defn- fixture-for [model definition cue]
+(defn- fixture-for [model definition cue selected]
   (let [rig (get-in model [:rig :fixtures])
         explicitly (set (:targets definition))
         requested (get-in cue [:pad-preview :fixture-id])
@@ -80,10 +82,10 @@
                                                      (= :color (:attribute %))
                                                      (registry/emitter-attributes (:attribute %)))
                                                  (registry/output-entries (:outputs definition))))]
-    (if (and (nil? requested) (empty? explicitly) (empty? targets))
+    (if (and (nil? selected) (nil? requested) (empty? explicitly) (empty? targets))
       (first rig)
       (some (fn [{:keys [id] :as fixture}]
-              (when (and (or (nil? requested) (= id requested))
+              (when (and (or (nil? selected) (selected id)) (or (nil? requested) (= id requested))
                          (or (empty? explicitly) (explicitly id))
                          (or requested (empty? targets) (targets id))) fixture)) rig))))
 
@@ -91,7 +93,7 @@
   (or (:definition instance)
       (registry/cue-effect (:registry model) cue)))
 
-(defn- build-plan [model cue definition]
+(defn- build-plan [model cue definition selected]
   (when (and definition (not= false (:pad-preview cue)))
     (let [custom (:pad-preview cue)
           overrides (when (map? custom) (select-keys custom [:color :dimmer]))
@@ -100,7 +102,7 @@
                        definition)
           attrs (map :attribute (registry/output-entries (:outputs definition)))]
       (when (some (into registry/emitter-attributes #{:color :dimmer}) attrs)
-        (when-let [fixture (fixture-for model definition cue)]
+        (when-let [fixture (fixture-for model definition cue selected)]
           (let [rig [fixture]]
             {:rig rig :patch (frame/compile-patch rig)
              :dimmer-tint (when (and (some #{:dimmer} attrs)
@@ -111,15 +113,15 @@
 (defn- interpolate [a b fraction]
   (mapv (fn [x y] (+ x (* fraction (- y x)))) a b))
 
-(defn- virtual-instance [cue]
+(defn- virtual-instance [cue meter]
   {:id ::audition :cue-id (:id cue) :phase :running :started-at-beat 0 :started-at-ms 0
-   :params (merge (:params cue) (:saved-params cue))})
+   :timing-meter (time/normalize-meter meter) :params (merge (:params cue) (:saved-params cue))})
 
 (defn- sample [snapshot plan inst t beat]
   (let [model (:model snapshot)
         transport (assoc (:transport model) :beat beat)
         clock (system/private-clock inst {:time-ms t :transport transport})
-        input {:time-ms (:time-ms clock) :fixtures (:rig plan) :variables (:variables model)
+        input {:hdr? (boolean (:preview-hdr snapshot)) :time-ms (:time-ms clock) :fixtures (:rig plan) :variables (:variables model)
                :transport (merge transport clock)}
         context {:frame input :instance inst :state (:state inst {}) :assignments [] :intents []}
         rows (:assignments ((:step plan) context))
@@ -128,16 +130,31 @@
                               :target-id (:id (first (:rig plan)))}))
         opacity (* (get-in inst [:system :opacity] 1.0) (system/gain inst clock))
         weighted (if (== opacity 1.0) preview-rows (mapv #(assoc % :opacity opacity) preview-rows))
-        values (get-in (frame/resolve-frame (:patch plan) weighted)
+        gain (get-in inst [:system :gain] 1.0)
+        block (cond-> {:kind :assignments :assignments weighted :source {:instance-id (:id inst) :cue-id (:cue-id inst)}}
+                (not (== gain 1.0)) (assoc :emission-gain gain))
+        options (when-let [hdr (:preview-hdr snapshot)] {:hdr hdr})
+        values (get-in (frame/resolve-contributions (:patch plan) [block] options)
                        [:values (:id (first (:rig plan)))])]
     (when (seq rows) (:emitted-color values))))
 
-(defn- plan-for [cached model cue definition]
-  (if (and (identical? definition (:definition cached)) (identical? cue (:cue cached))
-           (identical? (:rig model) (:rig-model cached)))
-    cached
-    {:cue cue :definition definition :rig-model (:rig model)
-     :plan (try (build-plan model cue definition) (catch Exception _ nil))}))
+(defn- plan-for [cached model cue definition instance]
+  (let [launch-targets (:targets instance)
+        selector (when-not launch-targets (:selector cue))
+        groups (when (:group-id selector) (get-in model [:extensions :tolglow.lighting-scenes/control :groups]))
+        members (when (:volume-id selector) (get-in model [:variables :spatial :members]))
+        volume (when-let [id (:volume-id selector)]
+                 (targets/volume-id (get-in model [:settings :spatial :volumes] members) id))
+        scope [launch-targets groups volume (get members volume)]]
+    (if (and (identical? definition (:definition cached)) (identical? cue (:cue cached))
+             (identical? (:rig model) (:rig-model cached)) (= scope (:scope cached)))
+      cached
+      {:cue cue :definition definition :rig-model (:rig model) :scope scope
+       :plan (try
+               (let [selected (cond launch-targets (set launch-targets)
+                                    selector (set (targets/resolve-ids model selector)))]
+                 (build-plan model cue definition selected))
+               (catch Exception _ nil))})))
 
 (defn- predict [snapshot plan instance t beat]
   (try (sample snapshot plan instance t beat)
@@ -151,7 +168,7 @@
 
 (defn- next-window [snapshot plan cue instance previous signature t beat rate interval]
   (let [inst (if instance (assoc instance :params (waveforms/effective-params snapshot instance))
-                 (virtual-instance cue))
+                 (virtual-instance cue (get-in snapshot [:model :transport :meter])))
         consecutive? (and (= signature (:signature previous)) (= t (:until previous)))
         from (if consecutive? (:to previous) (predict snapshot plan inst t beat))
         until (+ t interval)]
@@ -161,14 +178,15 @@
 (defn- advance-cue [cached snapshot cue-id instance level]
   (let [model (:model snapshot) cue (get-in model [:registry :cues cue-id])
         definition (when cue (definition-for model cue instance))
-        cached (plan-for cached model cue definition)]
+        cached (plan-for cached model cue definition instance)]
     (if-not (:plan cached) cached
       (let [{:keys [beat bpm playing?] :or {beat 0.0 bpm 120.0}} (:transport model)
             t (double (or (:last-frame-time-ms model) (:time-ms model) 0))
             rate (if playing? (/ bpm 60000.0) 0)
             previous (:window cached)
             signature [(:epoch model) (:id instance) (:phase instance) (get-in instance [:system :paused?])
-                       (:started-at-ms instance) (:release-at-ms instance) bpm playing?]]
+                       (:started-at-ms instance) (:release-at-ms instance) bpm playing?
+                       (get-in model [:transport :meter]) (:preview-hdr snapshot)]]
         (if (window-valid? previous signature t beat rate) cached
           (let [interval (* (bit-shift-left 1 level) (max 60.0 (min 250.0 (/ 15000.0 bpm))))]
             (assoc cached :window (next-window snapshot (:plan cached) cue instance previous
@@ -212,12 +230,12 @@
   {:open! #(Object.)
    :project!
    (fn [lease local model]
-     (let [touch (get (:touches local) (peek (:touch-order local)))
-           type (get-in model [:instances (:instance-id touch) :definition :params (:param touch) :type])
-           snapshot (snapshot!)]
+     (let [snapshot (snapshot!) latest (:model snapshot)
+           touch (get (:touches local) (peek (:touch-order local)))
+           type (get-in latest [:instances (:instance-id touch) :definition :params (:param touch) :type])]
        (if (and (:ready? local) (not (:target-picker local)) (not (#{:color :enum} type))
-                (= [(:show-id model) (:epoch model)] ((juxt :show-id :epoch) (:model snapshot))))
-         (assoc model ::views/pad-colors
-                (present! service lease (assoc snapshot :model model) [query-id (:page-id local) (:origin local) 8]))
+                (= [(:show-id model) (:epoch model)] [(:show-id latest) (:epoch latest)]))
+         (assoc latest ::views/pad-colors
+                (present! service lease snapshot [query-id (:page-id local) (:origin local) 8]))
          (do (release! service lease) model))))
    :close! #(release! service %)})
