@@ -5,10 +5,11 @@
             [reagent.core :as r]
             ["@xterm/xterm" :refer [Terminal]]
             ["@xterm/addon-fit" :refer [FitAddon]]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.output-reader :as output]))
 
 (def defaults {:generation 0 :session-id nil :status "closed" :cursor 0
-               :input "" :sending? false :polling? false :mounted? false})
+               :input "" :sending? false :mounted? false})
 (defonce resources (atom {}))
 (defn state [db key] (merge defaults (get-in db [:terminals key])))
 (defn token [db key] [(get-in db [:show :runtime-id]) key (:generation (state db key)) (:session-id (state db key))])
@@ -48,12 +49,11 @@
     (when-let [{:keys [terminal fit]} (get @resources key)]
       (js-invoke fit "fit")
       (rf/dispatch [:terminal/resize key (.-rows terminal) (.-cols terminal)]))))
-(rf/reg-event-fx :terminal/mount
-  (fn [{:keys [db]} [_ key]]
-    {:db (assoc-in db [:terminals key] (-> (state db key) (assoc :mounted? true :cursor 0 :polling? false :draining? true) (update :generation inc)))
-     :dispatch [:terminal/poll key]}))
+(rf/reg-event-db :terminal/mount
+  (fn [db [_ key]]
+    (assoc-in db [:terminals key] (-> (state db key) (assoc :mounted? true :cursor 0 :draining? true) (update :generation inc)))))
 (rf/reg-event-db :terminal/unmount
-  (fn [db [_ key]] (update-in db [:terminals key] #(-> (merge defaults %) (assoc :mounted? false :polling? false :input "" :sending? false) (update :generation inc)))))
+  (fn [db [_ key]] (update-in db [:terminals key] #(-> (merge defaults %) (assoc :mounted? false :input "" :sending? false) (update :generation inc)))))
 (rf/reg-event-fx :terminal/runtime-change
   (fn [{:keys [db]} _]
     {:db (update db :terminals #(into {} (map (fn [[key s]]
@@ -67,25 +67,25 @@
                                                               :status "opening" :workspace-id workspace-id :repo repo}))]
           {:db db :studio/http (request db key :open {:workspace-id workspace-id :repo (events/wire-id repo)
                                                      :rows 24 :cols 80})})))))
-(rf/reg-event-fx :terminal/poll
-  (fn [{:keys [db]} [_ key]]
-    (let [s (state db key)]
-      (when (and (:mounted? s) (:session-id s) (or (= "running" (:status s)) (:draining? s)) (not (:polling? s)))
-        {:db (assoc-in db [:terminals key :polling?] true)
-         :studio/http {:path (str "/api/terminal?session-id=" (js/encodeURIComponent (:session-id s)) "&cursor=" (:cursor s))
-                       :on-success [:terminal/output key (token db key)]
-                       :on-failure [:terminal/failed key (token db key) :poll]}}))))
+(defn output-query [s]
+  (when (and (:mounted? s) (:session-id s) (or (= "running" (:status s)) (:draining? s)))
+    [:development/terminal-output (:workspace-id s) (keyword (:repo s)) (:session-id s) (:cursor s)]))
+
+(rf/reg-sub :terminal/token (fn [db [_ key]] (token db key)))
 (rf/reg-event-fx :terminal/output
-  (fn [{:keys [db]} [_ key captured response]]
-    (when (current? db key captured)
-      (let [s (state db key) newer? (> (:cursor response 0) (:cursor s))
-            s (assoc s :cursor (max (:cursor s) (:cursor response 0)) :polling? false
-                       :status (:state response (:status s)) :exit-code (:exit-code response)
-                       :draining? (< (:cursor response 0) (:available-cursor response 0)))]
-        {:db (assoc-in db [:terminals key] s)
-         :terminal/write {:key key :data (when newer? (:data response)) :dropped? (and newer? (:dropped? response))}
-         :dispatch-later (when (and (:mounted? s) (or (= "running" (:status s)) (< (:cursor s) (:available-cursor response (:cursor s)))))
-                           [{:ms 80 :dispatch [:terminal/poll key]}])}))))
+  (fn [{:keys [db]} [_ key captured cursor {:keys [value error]}]]
+    (let [s (state db key)]
+      (when (and (:mounted? s) (current? db key captured) (= cursor (:cursor s)))
+        (cond
+          error {:db (assoc-in db [:terminals key :error] "Terminal output is unavailable.")}
+          (= (:session-id s) (:session-id value))
+          (let [advanced? (> (:cursor value) cursor)
+                more? (< (:cursor value) (:available-cursor value))
+                next (assoc s :cursor (:cursor value) :status (:state value)
+                              :exit-code (:exit-code value) :draining? more? :error nil)]
+            (cond-> {:db (assoc-in db [:terminals key] next)}
+              advanced? (assoc :terminal/write {:key key :data (:data value) :dropped? (:dropped? value)}))))))))
+
 (rf/reg-event-fx :terminal/input
   (fn [{:keys [db]} [_ key text]]
     (let [s (state db key)]
@@ -125,23 +125,19 @@
       (let [s (state db key)]
         (case operation
           :open {:db (assoc-in db [:terminals key] (merge s (select-keys response [:session-id]) {:status (:state response) :error nil}))
-                 :fx [[:terminal/fit key] [:terminal/focus key] [:dispatch [:terminal/poll key]]]}
+                 :fx [[:terminal/fit key] [:terminal/focus key]]}
           :input {:db (assoc-in db [:terminals key :sending?] false) :dispatch [:terminal/send key]}
-          :close {:db (assoc-in db [:terminals key] (assoc s :status "closed" :session-id nil :input "" :polling? false :sending? false))}
+          :close {:db (assoc-in db [:terminals key] (assoc s :status "closed" :draining? true :input "" :sending? false))}
           :resize {} {})))))
 (rf/reg-event-fx :terminal/failed
   (fn [{:keys [db]} [_ key captured operation error]]
     (when (current? db key captured)
       (let [s (state db key)]
+        ;; An input may have arrived before an acknowledgement was lost.
         {:db (assoc-in db [:terminals key]
-                       (cond-> (assoc s :error (response-error error) :polling? false)
+                       (cond-> (assoc s :error (response-error error))
                          (= operation :open) (assoc :status "closed")
-                         (= operation :input) (assoc :input "" :sending? false)))
-         ;; Input is never replayed automatically: delivery may have succeeded
-         ;; before its acknowledgement was lost.
-         :dispatch-later (when (and (= operation :poll) (:mounted? s) (= "running" (:status s)))
-                           [{:ms 1500 :dispatch [:terminal/poll key]}])}))))
-
+                         (= operation :input) (assoc :input "" :sending? false)))}))))
 (defn viewport [key]
   (let [node (atom nil)]
     (r/create-class
@@ -179,6 +175,8 @@
   (let [key (str (events/wire-id workspace-id) "/" (events/wire-id repo))
         s @(rf/subscribe [:terminal/state key])]
     [:section.docker-terminal
+     (when-let [query (output-query s)]
+       (output/at query [:terminal/output key @(rf/subscribe [:terminal/token key]) (:cursor s)]))
      [:div.docker-terminal-toolbar
       [:div [:strong "Terminal"] [:span.status-pill (:status s)]]
       [:div

@@ -2,7 +2,8 @@
   "Explicit Docker development boundary. Construction is inert. Only a trusted
   workspace resolver supplies host mounts; browser input never chooses mounts,
   image, Docker flags or a host executable. PTYs, output and cleanup are owned."
-  (:require [clojure.data.json :as json]
+  (:require [tolglow.development.observation :as observation]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [tolglow.development.workspace :as workspace])
@@ -437,21 +438,35 @@
     (swap! (:state manager) update-in [:sessions id] assoc :rows rows :cols cols)
     (public-session (session manager id))))
 
+(defn- output-page [s cursor]
+  (when-not (and (integer? cursor) (<= 0 cursor (:cursor s))) (fail! :invalid-cursor "Cursor is outside this terminal's byte history"))
+  (let [start (max cursor (:first-cursor s)) end (min (:cursor s) (+ start 65536))
+        out (java.io.ByteArrayOutputStream.)]
+    (doseq [{:keys [start bytes] :as chunk} (:chunks s)
+            :let [left (max 0 (- (max cursor (:first-cursor s)) start)) right (min (alength ^bytes bytes) (- end start))]
+            :when (> right left)]
+      (.write out ^bytes bytes (int left) (int (- right left))))
+    (assoc (public-session s) :data (encode (.toByteArray out)) :cursor end :available-cursor (:cursor s)
+           :dropped? (< cursor (:first-cursor s)))))
+
 (defn read-output
   "Read at most 64 KiB from an absolute byte cursor. dropped? reports overwritten
   history; cursor is the next read position. Bytes may split UTF-8/ANSI sequences,
   which xterm's streaming byte input handles. Calls never consume another reader."
   [manager id cursor]
-  (let [s (session manager id)]
-    (when-not (and (integer? cursor) (<= 0 cursor (:cursor s))) (fail! :invalid-cursor "Cursor is outside this terminal's byte history"))
-    (let [start (max cursor (:first-cursor s)) end (min (:cursor s) (+ start 65536))
-          out (java.io.ByteArrayOutputStream.)]
-      (doseq [{:keys [start bytes] :as chunk} (:chunks s)
-              :let [left (max 0 (- (max cursor (:first-cursor s)) start)) right (min (alength ^bytes bytes) (- end start))]
-              :when (> right left)]
-        (.write out ^bytes bytes (int left) (int (- right left))))
-      (assoc (public-session s) :data (encode (.toByteArray out)) :cursor end :available-cursor (:cursor s)
-             :dropped? (< cursor (:first-cursor s))))))
+  (output-page (session manager id) cursor))
+
+(defn output-source [manager [_ workspace repo id cursor :as query]]
+  (if (and manager (= 5 (count query)) (string? workspace) (<= 1 (count workspace) 64)
+           (#{:tolglow :afterglow} repo) (string? id) (<= 1 (count id) 128)
+           (integer? cursor) (<= 0 cursor Long/MAX_VALUE))
+    (let [select (fn [state]
+                   (let [session (get-in state [:sessions id])]
+                     (when (and (= workspace (:workspace-id session)) (= repo (:repo session))) session)))]
+      (if (select @(:state manager))
+        (observation/selected (:state manager) select #(when % (output-page % cursor)))
+        observation/unavailable))
+    observation/unavailable))
 
 (defn close-session! [manager id]
   (let [s (session manager id)]

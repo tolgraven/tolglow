@@ -2,7 +2,8 @@
   "Owned paired Git worktrees for application development. File access is
   confined through secure directory handles; code checks require an explicit
   runner (normally the host's Docker boundary). No automatic merge or deploy."
-  (:require [clojure.string :as str]
+  (:require [tolglow.development.observation :as observation]
+            [clojure.string :as str]
             [clojure.edn :as edn])
   (:import [java.nio.file Files Path Paths LinkOption StandardOpenOption SecureDirectoryStream]
            [java.nio.file.attribute BasicFileAttributeView PosixFileAttributeView PosixFilePermissions FileAttribute]
@@ -170,17 +171,10 @@
   A paused show still wakes on check completion or on a change from the REPL."
   [manager id]
   (if-not (and manager (id? id))
-    {:result (delay {:error :unavailable})}
-    (let [state (:state manager)
-          token (Object.)
-          select (fn [state] (when-not (:closed? state) (get-in state [:workspaces id])))
-          latest (fn [] (select @state))]
-      {:source! latest
-       :sample! #(when % (public-workspace %))
-       :observe! (fn [wake!]
-                   (add-watch state token (fn [_ _ old new]
-                                            (when-not (identical? (select old) (select new)) (wake!))))
-                   #(remove-watch state token))})))
+    observation/unavailable
+    (observation/selected (:state manager)
+                          #(when-not (:closed? %) (get-in % [:workspaces id]))
+                          #(when % (public-workspace %)))))
 
 (defn- ensure-parent! [manager]
   (let [parent ^Path (:parent manager)]

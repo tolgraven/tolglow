@@ -205,6 +205,8 @@
                                      (get-in db [:server-presentation :connection-status])))))
            (conj [:dispatch [:connections/pushed]])
            runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
+           (and (nil? (:show db)) (get-in updated [:application-agents :open?]))
+           (conj [:dispatch [:application-agents/list]])
            (and (nil? (:show db)) (get-in updated [:ui :workspace :open?]))
            (conj [:dispatch [:workspace/list]])
            (or epoch-changed? (not (:settings-loaded? db)))
