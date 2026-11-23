@@ -114,6 +114,10 @@
             loaded (persistence/thaw model (persistence/read-string (persistence/write-string selected)))
             view (sensors/audience-status mgr loaded)]
         (is (= ["front" "balcony"] (:gateways view)))
+        (doseq [invalid [:bad-format ["front" 42] (vec (repeat 17 "front"))]]
+          (let [changed (assoc-in enrolled [:variables :audience :gateways] invalid)]
+            (is (= [] (:gateways (sensors/audience-status mgr changed))))
+            (is (= ["front"] (get-in (zones/select-zone changed "front" true) [:variables :audience :gateways])))))
         (is (= [{:id "balcony" :label "Balcony" :status :waiting}
                 {:id "front" :label "Dance floor" :status :waiting}]
                (:zones view)))

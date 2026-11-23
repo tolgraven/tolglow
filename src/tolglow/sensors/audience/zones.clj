@@ -6,12 +6,21 @@
   (let [channels (into #{} (map :id) (get-in source [:config :channels]))]
     (every? channels [:audience-count :dance-effort])))
 
+(defn- zone-id? [id]
+  (and (string? id) (<= 1 (count id) 128)))
+
+(defn- selected-ids [model]
+  (let [ids (get-in model [:variables :audience :gateways])]
+    (if (and (vector? ids) (<= (count ids) 16) (every? zone-id? ids))
+      (vec (distinct ids))
+      [])))
+
 (defn select-zone
   "Change one zone in the ordered selection. Concurrent edits to other zones survive."
   [model id included?]
-  (when-not (and (string? id) (<= 1 (count id) 128) (boolean? included?))
+  (when-not (and (zone-id? id) (boolean? included?))
     (throw (ex-info "Select a zone by its enrolled identifier and a boolean" {})))
-  (let [ids (get-in model [:variables :audience :gateways] [])
+  (let [ids (selected-ids model)
         included (set ids)]
     (when (and included? (not (gateway? (get-in model [:sensors :sources id]))))
       (throw (ex-info "Enroll and configure this audience gateway before including it" {})))
@@ -40,7 +49,7 @@
   The session token here identifies the gateway session observed when pressing Arm."
   [model devices]
   (let [configured (get-in model [:variables :audience])
-        ids (vec (:gateways configured))
+        ids (selected-ids model)
         sources (get-in model [:sensors :sources])
         zones (into (sorted-map)
                     (keep (fn [[id source :as entry]]
