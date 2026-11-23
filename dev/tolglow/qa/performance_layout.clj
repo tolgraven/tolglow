@@ -12,6 +12,7 @@
 (defn -main [& [directory scenario]]
   (let [script (case scenario
                  nil "dev/studio/performance-layout-qa.mjs"
+                 "gestures" "dev/studio/cue-gesture-qa.mjs"
                  "authoring" "dev/studio/compose-rig-layout-qa.mjs"
                  (throw (ex-info "Unknown Studio browser scenario" {:scenario scenario})))
         model (-> (demo/model)
