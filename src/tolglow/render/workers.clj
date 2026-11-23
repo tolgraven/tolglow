@@ -14,14 +14,38 @@
 (def max-result-floats 8192)
 (def ^:private max-clients 16)
 
-(defn create [pool token]
-  (when (and pool (string? token) (<= 24 (count token) 1024))
-    {:pool pool :token (.getBytes ^String token StandardCharsets/UTF_8)
-     :clients (atom {}) :closed? (atom false)
-     :io (doto (ScheduledThreadPoolExecutor. 1
-                 ^ThreadFactory (reify ThreadFactory
-                                  (newThread [_ f] (doto (Thread. f "tolglow-compute-socket-io") (.setDaemon true)))))
-           (.setRemoveOnCancelPolicy true))}))
+(defn- credential [value]
+  (when (and (string? value) (<= 24 (count value) 1024)) (.getBytes ^String value StandardCharsets/UTF_8)))
+
+(defn create
+  ([pool operator] (create pool operator {}))
+  ([pool operator {:keys [guest-bridge verification] :or {verification :full}}]
+   (when (and pool (or (credential operator) guest-bridge))
+     (let [operator-bytes (credential operator) bridge (credential guest-bridge)]
+       (when (or (and guest-bridge (not bridge)) (and operator (not operator-bytes))
+                 (and bridge operator-bytes (MessageDigest/isEqual bridge operator-bytes))
+                 (and bridge (not (contains? pool/verification-policies verification))))
+         (throw (ex-info "Invalid compute credentials or guest verification mode" {})))
+       {:pool pool :token operator-bytes :bridge-token bridge :verification verification
+        :clients (atom {}) :closed? (atom false)
+        :io (doto (ScheduledThreadPoolExecutor. 1
+                    ^ThreadFactory (reify ThreadFactory
+                                     (newThread [_ f] (doto (Thread. f "tolglow-compute-socket-io") (.setDaemon true)))))
+              (.setRemoveOnCancelPolicy true))}))))
+
+(defn admission
+  "Validate credentials held by the Studio worker or stage bridge. The host
+  chooses guest verification. A guest never receives either credential."
+  [hub direct-stage? {:keys [op token caps]}]
+  (let [bytes (credential token) limit (:max-result-floats caps)
+        matches? #(and bytes % (MessageDigest/isEqual bytes %))]
+    (when (and (= :hello op) (pos-int? limit))
+      (let [base {:max-result-floats (min limit max-result-floats)}]
+        (cond
+          (matches? (:bridge-token hub))
+          (when (and direct-stage? (= true (:guest? caps)) (string? (:subject caps)) (<= 1 (count (:subject caps)) 128))
+            (assoc base :verification (:verification hub) :subject (:subject caps)))
+          (and (matches? (:token hub)) (not (contains? caps :guest?))) base)))))
 
 (defn- retire! [{:keys [clients pool]} socket code reason]
   (when-let [client (get (first (swap-vals! clients dissoc socket)) socket)]
@@ -60,11 +84,11 @@
     (when @(:id client) (schedule-send! hub socket client))
     (throw (ex-info "Compute peer unavailable" {}))))
 
-(defn- open! [hub socket]
+(defn- open! [hub direct-stage? socket]
   (locking hub
     (if (or @(:closed? hub) (>= (count @(:clients hub)) max-clients))
       (ws/close socket 1013 "Compute unavailable")
-      (let [client {:id (atom nil) :closed? (atom false) :sending? (atom false)
+      (let [client {:direct-stage? direct-stage? :id (atom nil) :closed? (atom false) :sending? (atom false)
                     :timer (atom nil) :out (ArrayBlockingQueue. 4)}]
         (swap! (:clients hub) assoc socket client)
         (reset! (:timer client)
@@ -74,16 +98,12 @@
                                           (retire! hub socket 1008 "Compute handshake expired")))
                            5 TimeUnit/SECONDS))))))
 
-(defn- admit! [hub socket client {:keys [op token caps]}]
-  (let [limit (:max-result-floats caps)]
-    (when-not (and (= :hello op) (string? token) (<= 24 (count token) 1024)
-                   (pos-int? limit)
-                   (MessageDigest/isEqual (:token hub) (.getBytes ^String token StandardCharsets/UTF_8)))
-      (throw (ex-info "Compute admission denied" {})))
-    ;; Put the welcome before any leased work, and hold writes until the pool has admitted the peer.
-    (.add ^ArrayBlockingQueue (:out client) {:op :welcome})
-    (let [id (pool/connect! (:pool hub) {:max-result-floats (min limit max-result-floats)}
-                            (partial offer! hub socket client))]
+(defn- admit! [hub socket client hello]
+  (let [caps (or (admission hub (:direct-stage? client) hello) (throw (ex-info "Compute admission denied" {})))]
+    ;; Queue welcome before work, release the writer only after successful pool membership.
+    (.add ^ArrayBlockingQueue (:out client)
+          (cond-> {:op :welcome} (:verification caps) (assoc :verification (:verification caps))))
+    (let [id (pool/connect! (:pool hub) caps (partial offer! hub socket client))]
       (reset! (:id client) id)
       (schedule-send! hub socket client)
       (when-let [timer @(:timer client)] (.cancel ^java.util.concurrent.Future timer false)))))
@@ -111,18 +131,27 @@
                 (admit! hub socket client packet))))))
       (catch Exception _ (retire! hub socket 1008 "Compute session rejected")))))
 
-(defn response [hub {:keys [scheme remote-addr headers] :as request}]
+(defn- local-origin? [{:keys [remote-addr headers]}]
+  (and (string? remote-addr) (origin/loopback-host? remote-addr)
+       (origin/loopback-host? (.getHost (java.net.URI. (get headers "origin"))))))
+
+(defn- stage-transport? [request]
+  (and (local-origin? request) (not (::origin/proxied? request))
+       (not-any? (:headers request)
+                 ["forwarded" "via" "x-real-ip" "x-forwarded-for" "x-forwarded-host" "x-forwarded-proto"])))
+
+(defn response [hub {:keys [scheme headers] :as request}]
   (cond
     (nil? hub) {:status 503 :body "Distributed rendering unavailable"}
     (not (and (seq (get headers "origin")) (origin/same-origin? request)))
     {:status 403 :body "Same-origin Studio session required"}
-    (not (or (and (origin/loopback-host? remote-addr)
-                  (origin/loopback-host? (.getHost (java.net.URI. (get headers "origin")))))
+    (not (or (local-origin? request)
              (and (= :https scheme) (::access/operator? request))))
     {:status 403 :body "Authenticated HTTPS Studio session required"}
     (not (ws/upgrade-request? request)) {:status 426 :headers {"Upgrade" "websocket"} :body "WebSocket required"}
     :else
-    {::ws/listener {:on-open #(open! hub %)
-                    :on-message #(receive! hub %1 %2)
-                    :on-close (fn [socket _ _] (retire! hub socket 1000 "Compute disconnected"))
-                    :on-error (fn [socket _] (retire! hub socket 1011 "Compute disconnected"))}}))
+    (let [direct-stage? (stage-transport? request)]
+      {::ws/listener {:on-open #(open! hub direct-stage? %)
+                      :on-message #(receive! hub %1 %2)
+                      :on-close (fn [socket _ _] (retire! hub socket 1000 "Compute disconnected"))
+                      :on-error (fn [socket _] (retire! hub socket 1011 "Compute disconnected"))}})))

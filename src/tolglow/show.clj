@@ -25,6 +25,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -120,8 +121,11 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
-(defn project-snapshot [runtime {:keys [model output status modulation-view]}]
-  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+(defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
+  (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
+        responses? (some #(not= false (:enabled? %)) (:responses model))
+        resolve-inputs (waveforms/resolved-inputs snapshot response/monitor-middleware)
+        optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
         definitions (precision/model-definitions (:parameter-precision runtime) model)
@@ -140,6 +144,7 @@
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
+            :parameter-waveforms (parameter-sources/waveform-options model)
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
@@ -147,9 +152,10 @@
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
-            :instances (mapv #(-> % (dissoc :state)
-                                  (assoc :definition (get definitions [(:definition %) (:targets %)]))
-                                  (assoc :categories (registry/definition-categories (:definition %)))
+            :instances (mapv #(-> % (dissoc :state :parameter-bindings)
+                                  (assoc :definition (get definitions [(:definition %) (:targets %)])
+                                         :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
+                                         :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
@@ -388,10 +394,11 @@
                                                         (:events result))))))
                    result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (seq (get-in model [:modulation :controllers]))
+               (or (seq (get-in model [:modulation :controllers]))
+                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
                (not= :patch (get-in payload [:source :type]))
                (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation modulation/hold
+        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
                 {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
         result))))
 
@@ -573,6 +580,10 @@
       {:model (-> model (assoc :registry (:registry result)) (assoc-in [:pages id] (:page result))
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
+    (:modulation-bind :modulation-unbind)
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
+      {:model (update (edit model payload) :revision inc)
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -1043,26 +1054,36 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:keyframes (effect-keyframes/restored model)
-                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
-                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
-                    :output (if restored-output
-                              (update restored-output :universes
-                                      #(fog-deadline/restore-packet
-                                         (patch! runtime (get-in model [:rig :fixtures]))
-                                         (get-in model fog-deadline/saved-ids-path)
-                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
-                              (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
-                    :status {:restored? true :frame-ms 0}}
+                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})
+                         random (modulation/captured-overrides model)]
+                     {:parameter-samples params :modulation-view {:overrides random}
+                      :resolved-param-overrides (merge-with merge random (:overrides params))
+                      :keyframes (effect-keyframes/restored model)
+                      :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
+                               (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
+                      :output (if restored-output
+                                (update restored-output :universes
+                                        #(fog-deadline/restore-packet
+                                           (patch! runtime (get-in model [:rig :fixtures]))
+                                           (get-in model fog-deadline/saved-ids-path)
+                                           (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
+                                (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
+                      :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
+                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                                      (get-in before [:parameter-samples :plans]))
+                           control-view (if (seq (:overrides parameter-samples))
+                                          (update (:modulation-view before) :overrides
+                                                  #(merge-with merge % (:overrides parameter-samples)))
+                                          (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model before time-ms (reactions runtime) command))
+                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1079,16 +1100,17 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 prior-output)) command (:modulation-view before) prior-output))
+                                                 prior-output)) command control-view prior-output))
                            model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
                            hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
                            hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
-                                                                              (:modulation-view before) hdr-scope) {}))
+                                                                              control-view hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
+                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                                                       (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
@@ -1182,6 +1204,8 @@
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+                                                  :live-routing (live-sync/parameter-routing (connections/sync (:connections runtime))))
                         :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))

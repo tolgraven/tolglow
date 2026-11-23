@@ -25,6 +25,12 @@ async function response(command) {
 function trackReadbacks(mode) {
   if (mode === 'main') Object.defineProperty(window, 'OffscreenCanvas', {value:undefined});
   const bitmap = window.createImageBitmap.bind(window);
+  const read = CanvasRenderingContext2D.prototype.getImageData;
+  window.pixelReads = 0;
+  CanvasRenderingContext2D.prototype.getImageData = function(...args) {
+    if (this.canvas.width === 1 && this.canvas.height === 1) window.pixelReads++;
+    return read.apply(this, args);
+  };
   window.observedPixels = [];
   window.createImageBitmap = (canvas, ...region) => {
     if (canvas?.id === 'preview' && region[2] === 1 && region[3] === 1) {
@@ -33,6 +39,13 @@ function trackReadbacks(mode) {
       const ctx = sample.getContext('2d');
       ctx.drawImage(canvas, ...region, 0, 0, 1, 1);
       window.observedPixels.push(Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3));
+      if (window.holdNextRead) {
+        window.holdNextRead = false;
+        return bitmap(canvas, ...region).then(image => new Promise(resolve => {
+          window.heldImage = image;
+          window.finishRead = () => resolve(image);
+        }));
+      }
     }
     return bitmap(canvas, ...region);
   };
@@ -98,13 +111,22 @@ try {
         await canvas.screenshot({path:target + '/frame-' + String(frame).padStart(2,'0') + '.png'});
       }
     }
+    await page.evaluate(() => { window.holdNextRead = true; });
+    await page.waitForFunction(() => typeof window.finishRead === 'function');
     await response('release');
     await page.waitForFunction(() => !document.querySelector('#preview').tolglowPreview.observedFrame);
     const released = await page.evaluate(() => window.observedPixels.length);
+    const reads = await page.evaluate(() => {
+      const count = window.pixelReads;
+      window.finishRead();
+      return count;
+    });
+    await page.waitForFunction(() => window.heldImage.width === 0 && window.heldImage.height === 0);
+    assert.equal(await page.evaluate(() => window.pixelReads), reads);
     await delay(600);
     assert.equal(await page.evaluate(() => window.observedPixels.length), released);
     assert.deepEqual(faults, []);
-    report.push({renderer:mode,measurements,readsBeforeDemand:0,readsAfterRelease:0});
+    report.push({renderer:mode,measurements,readsBeforeDemand:0,readsAfterRelease:0,abandonedBitmapClosed:true,expiredPixelReadbacks:0});
     await context.close();
   }
   await writeFile(target + '/observations.json', JSON.stringify(report,null,2)+'\n');
