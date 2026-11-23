@@ -110,7 +110,10 @@ import Foundation
         payload["surface-name"] = name
         payload["expected-surface-revision"] = surfaceRevisions[name]
         perform {
-            _ = try await self.request(payload, path: "api/venue-surface")
+            let receipt = try await self.request(payload, path: "api/venue-surface")
+            guard receipt["status"] as? String == "accepted" else {
+                throw HostRejection(message: "Host has not confirmed this measurement. Reconnect to check the saved surfaces.")
+            }
             self.scanner.clearSurface()
             try await self.refresh()
             self.status = "Saved scan-\(name) to the show rig."
