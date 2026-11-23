@@ -54,12 +54,15 @@
 
 (defn- identity-of [model] (select-keys model [:show-id :epoch]))
 
+(defn latest-observation [context [_ id]]
+  (let [sample ((:cofx context) id)]
+    (when (and sample (= (:show sample) (identity-of @(:db context)))) sample)))
+
 (defn register! [system manager]
   (doseq [[id {:keys [ref]}] (:sources manager)] (graph/reg-cofx! system id {:ref ref}))
-  (graph/reg-sub! system :browser/observation
-    (fn [context [_ id]]
-      (let [sample ((:cofx context) id)]
-        (when (and sample (= (:show sample) (identity-of @(:db context)))) sample))))
+  (graph/reg-sub! system :browser/observation latest-observation
+    {:kind :sub :id :browser/observation
+     :implementation {:type :var :symbol (str (symbol #'latest-observation))}})
   system)
 
 (defn scope-query

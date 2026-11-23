@@ -23,6 +23,8 @@
                                               :sampled-ms (- ms 1) :completed-ms ms :value v}))]
     (try
       (is (nil? (grant a scene)))
+      (is (= "tolglow.observations/latest-observation"
+             (get-in (rx/export-registry system) [:registrations 0 :implementation :symbol])))
       (let [one (rx/acquire! system query #(swap! changes conj %))
             two (rx/acquire! system query identity)
             spec (grant a scene)
