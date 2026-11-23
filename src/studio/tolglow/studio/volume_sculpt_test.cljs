@@ -32,6 +32,25 @@
     (is (= (:bounds (shape/prepare spec)) (:bounds (shape/prepare ball)) (:bounds (shape/prepare unwrapped))))
     (is (= [2 3 1] (:position ball)))))
 
+(deftest disabling-motion-retains-the-world-boundary-and-feather-distances
+  (let [child {:shape :difference :scale [1 3 1] :translation [0.3 -0.1 0.5]
+               :parts [{:shape :rounded-box :position [0.5 0 0] :size [2 1 3] :rounding 0.4}
+                       {:shape :sphere :position [0.4 0.1 0] :radius 0.35}]}
+        base {:shape :ball :position [2 3 -1] :radius 2 :scale [2 1 1.5]
+              :translation [-1 0.5 0.25] :falloff {:outer-m 1.1} :strength 0.8}
+        points [[1 3.5 -0.75] [0 0 0] [0.6 2.7 0.1] [2 3.1 1] [2.4 3.5 2.6] [4 5 3]]]
+    (doseq [ball [base (assoc base :geometry child)]]
+      (let [still (geo/moving ball false)
+            before (shape/prepare ball)
+            after (shape/prepare still)]
+        (is (= (:falloff ball) (:falloff still)))
+        (is (= (:strength ball) (:strength still)))
+        (doseq [edge [:min :max]]
+          (is (every? #(< (abs %) 1e-10) (map - (get-in before [:bounds edge]) (get-in after [:bounds edge])))))
+        (doseq [p points]
+          (is (= ((:inside? before) p) ((:inside? after) p)))
+          (is (< (abs (- ((:distance before) p) ((:distance after) p))) 1e-10)))))))
+
 (deftest drag-and-undo-stage-once-and-cancel-restores-the-original
   (let [start (sculpt/gesture db {:type "sculpt-begin" :token 7 :point [0 1 0]})
         move (sculpt/gesture start {:type "sculpt-move" :token 7 :point [2 1 1]})

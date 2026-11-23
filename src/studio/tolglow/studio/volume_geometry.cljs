@@ -74,6 +74,18 @@
 (defn translate [spec delta]
   (update spec :translation #(mapv + (or % [0 0 0]) delta)))
 
+(defn- stationary [{:keys [geometry position radius scale translation]}]
+  (if geometry
+    (let [world (mapv + position (or translation [0 0 0]))]
+      (if (and scale (not= [1 1 1] scale))
+        ;; The body's pivot is its physical centre. Its scale and the child's
+        ;; scale each change the signed distance used for feathered membership.
+        {:shape :union :parts [geometry] :position [0 0 0] :scale scale :translation world}
+        (translate geometry world)))
+    (cond-> {:shape :sphere :position position :radius radius}
+      scale (assoc :scale scale)
+      translation (assoc :translation translation))))
+
 (defn moving [spec enabled?]
   (let [controls (select-keys spec control-fields)
         body (apply dissoc spec control-fields)]
@@ -83,8 +95,7 @@
             radius (* 0.5 (apply clojure.core/max (mapv - max min)))]
         (merge controls {:shape :ball :position center :radius radius :velocity [1 0 0] :restitution 0.85
                          :geometry (translate body (mapv - center))}))
-      (merge controls (translate (or (:geometry body) {:shape :sphere :position [0 0 0] :radius (:radius body)})
-                                 (:position body))))))
+      (merge controls (stationary body)))))
 
 (defn stretch [spec axis delta half-extent]
   (let [scale (:scale spec [1 1 1])
