@@ -5,7 +5,7 @@ const {join} = require('node:path');
 const {chromium} = require('playwright-core');
 
 async function verify(directory, executablePath) {
-  const rows = [], families = new Map(), upstreams = new Map();
+  const rows = [], references = [], families = new Map(), upstreams = new Map();
   for (const split of ['train', 'valid', 'test']) {
     for (const line of readFileSync(join(directory, split + '.jsonl'), 'utf8').trim().split('\n')) {
       const row = JSON.parse(line);
@@ -14,10 +14,21 @@ async function verify(directory, executablePath) {
         assert(!index.has(key) || index.get(key) === split, 'upstream or family leaked between splits');
         index.set(key, split);
       }
-      rows.push(row);
+      if (row.mode === 'shader-reference') {
+        assert.equal(split, 'train');
+        assert(row.context.requires_renderer_bindings && row.source.git_blob.length === 40);
+        assert(row.messages[2].content.includes(row.source.path) && row.messages[2].content.includes(row.source.notice));
+        references.push(row.id);
+      } else {assert.equal(row.mode, 'shader'); rows.push(row);}
+
     }
   }
-  assert.equal(new Set(rows.map(r => r.id)).size, rows.length);
+  const allIds = [...references, ...rows.map(r => r.id)];
+  assert.equal(new Set(allIds).size, allIds.length);
+  if (references.length) {
+    const index = readFileSync(join(directory, 'shader-reference.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).id);
+    assert.deepEqual(index, references);
+  }
   const browser = await chromium.launch({executablePath, args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
   try {
     const page = await browser.newPage();
@@ -44,7 +55,7 @@ async function verify(directory, executablePath) {
       const vertex = shader(g.VERTEX_SHADER, '#version 300 es\nout vec2 vUv; void main(){vUv=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(vUv*2.0-1.0,0.,1.);}');
       const checked = [];
       for (const row of rows) {
-        const key = row.id.split('/').at(-1), kind = row.family.split('/').at(-1);
+        const key = row.id.split('/').at(-1), kind = row.id.split('/')[1];
         const fragment = shader(g.FRAGMENT_SHADER, row.messages[2].content);
         const program = g.createProgram(); g.attachShader(program, vertex); g.attachShader(program, fragment); g.linkProgram(program);
         if (!g.getProgramParameter(program,g.LINK_STATUS)) throw Error(row.id+': '+g.getProgramInfoLog(program));
@@ -90,7 +101,7 @@ async function verify(directory, executablePath) {
       }
       return checked;
     }, rows);
-    console.log(checked.length+' WebGL2 programs compiled, linked and sampled; '+families.size+' split-isolated upstreams.');
+    console.log(checked.length+' WebGL2 programs compiled, linked and sampled; '+families.size+' split-isolated upstreams; '+references.length+' render-stage references.');
   } finally {await browser.close();}
 }
 verify(...process.argv.slice(2)).catch(error => {console.error(error);process.exitCode=1;});

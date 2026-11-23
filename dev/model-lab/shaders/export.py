@@ -88,7 +88,7 @@ def records():
                 shader = (f"{HEADER}\n{uniforms}\n/* Upstream: {base}{path}\n{src['attribution']}\n{notice.strip()}\n*/\n"
                           f"{body(raw)}\n\nvoid main() {{\n  {main}\n}}\n")
                 request = f"{task}\nInputs for the pass: {uniforms}\nExample: {json.dumps(fixture, sort_keys=True)}"
-                yield src["split"], {"id": f"glsl/{family}/{key}", "family": f"glsl/{family}", "mode": "shader",
+                yield src["split"], {"id": f"glsl/{family}/{key}", "family": "glsl/three-r187" if family == "transfer" else f"glsl/{family}", "mode": "shader",
                                      "source": provenance, "fixture": fixture,
                                      "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": request},
                                                   {"role": "assistant", "content": shader}]}
@@ -97,11 +97,19 @@ def records():
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("output", type=Path)
-    out = cli.parse_args().output
+    cli.add_argument("--with-references", action="store_true", help="also emit the Three.js retrieval index and include it in training")
+    cli.add_argument("--three-root", type=Path, default=ROOT.parents[2] / "node_modules/three")
+    args = cli.parse_args()
+    out = args.output
     out.mkdir(parents=True, exist_ok=True)
     splits = {split: [] for split in ["train", "valid", "test"]}
     for split, row in records():
         splits[split].append(row)
+    if args.with_references:
+        from reference import reference_rows
+        references = list(reference_rows(args.three_root))
+        splits["train"].extend(references)
+        splits["shader-reference"] = references
     for split, rows in splits.items():
         payload = "".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in rows)
         (out / f"{split}.jsonl").write_bytes(payload.encode("utf-8"))

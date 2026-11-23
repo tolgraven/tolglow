@@ -48,3 +48,42 @@ built-in. The generated wrapper supplies a fragment output and concrete lighting
 Curves with undefined negative-base powers or incorrect endpoints were omitted.
 
 [Source manifest](../../dev/model-lab/shaders/sources.json) · [Reproducible exporter](../../dev/model-lab/shaders/export.py) · [GPU checks](../../dev/model-lab/shaders/check.cjs)
+
+## Three.js renderer source index
+
+For the combined assembly, install the dependencies in the root
+`package-lock.json` and add `--with-references`. The exporter reads the existing
+`three@0.187.0` package. You can also point `--three-root` at an installation of
+that exact release. Each of 127 upstream ES modules is matched against its official
+Git blob ID at the pinned r187 commit before the exporter unwraps its GLSL strings.
+
+```sh
+python3 dev/model-lab/shaders/export.py target/model-lab/shaders --with-references
+node dev/model-lab/shaders/check.cjs target/model-lab/shaders /usr/bin/chromium
+```
+
+The combined export produces **162 training rows**, **three validation rows** and
+**three test rows**. Training includes the 26 numeric training examples above
+and **136 retrieved source units**. The independent `shader-reference.jsonl`
+contains just those 136 units, with `mode: shader-reference`. This is an index
+of 101 distinct GLSL chunks and 35 distinct material vertex or fragment stages.
+Each body appears once. Stages sharing identical GLSL were deduplicated. Three.js
+source and the two color-transfer anchor tasks share the same training family.
+The separate blur and palette holdouts retain their original membership.
+
+Each source record lists the include names, preprocessor feature symbols, shader stage,
+lighting topic and consuming material programs. The exporter follows the transitive
+include graph through the pinned material library. For instance, the shadow shader
+records identify the relevant material stages and renderer macros, and the environment
+and fog records can be retrieved alongside their consuming shaders. Source links,
+digests, upstream MIT terms and per-file comments accompany the records. The exporter omits standalone retrieval of chunks already covered by the anchors and
+selected snippets pointing to separately authored implementations.
+
+The associated chat records use a small set of source-retrieval templates. One theme
+asks for a material pass, one for a guarded include and another for an include at a
+particular consumption site. This measures retrieval coverage. The numeric WebGL2
+checks apply to the 32 standalone anchor tasks. Renderer snippets rely on Three.js
+for bound attributes, uniforms, feature flags, varying declarations and include
+expansion. No standalone compile or numerical claim is made for those 136 snippets.
+
+[Verified Three.js Git blobs](../../dev/model-lab/shaders/three-r187.json) · [Renderer source extraction](../../dev/model-lab/shaders/reference.py)
