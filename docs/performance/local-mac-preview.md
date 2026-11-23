@@ -11,6 +11,22 @@ Current work is tracked in [preview cadence #307](https://github.com/tolgraven/t
 The timings below identify earlier measured revisions; they are not measurements
 of every later shader correction.
 
+**Unlocked desktop qualification now passes; the 60 Hz cadence target does not.**
+The first OS-guarded production repeat at `dab5960` measured 50.299 Hz fixed,
+44.499 Hz moving and 34.947 Hz with active plumes. All 72 OS checks reported
+unlocked. This is an observation of that run, not proof that locking caused the
+earlier rates. The separate display callback rate remained approximately 60 Hz.
+
+During follow-up on 2026-11-23,
+computer-use inventory reported the Mac locked; an independent read-only
+IORegistry check confirmed the console session's locked flag. The lock onset is
+unknown. The older harness checked browser visibility/focus and RAF cadence but
+did not record OS lock state, so its `qualified: true` does not establish an
+unlocked interactive desktop. The raw results below are preserved with that
+qualification limit; they do not establish a shader regression. Shader
+compilation, numeric/image checks and separate native
+correctness tests remain evidence of their respective behavior.
+
 On 2026-11-23 the eight-head Ember/Sweep demo's actual scheduled runtime published
 401 captured frames over 10.005 seconds (40.080 Hz). Computation also completed at
 40.080 Hz, with work p50/p95/max 1.567/2.885/5.919 ms. There were no runtime errors,
@@ -181,8 +197,8 @@ this also fixes the separate zoom-dependent CSS screenshot clipping artifact.
 Reproduce with `SHADOW_MEDIA_DIR=target/shadow-cache-visual` and the CDP shadow
 browser test below; the fixture owns and closes its page, renderer and server.
 
-The first integrated timing after these corrections, at `2142480`, is valid but
-fails the 60 Hz target. With controls and camera unchanged, the actual worker
+The first integrated timing after these corrections, at `2142480`, passed its
+browser checks but failed the 60 Hz target. With controls and camera unchanged, the worker
 presented 36.647 Hz fixed, 43.300 Hz moving, and 37.097 Hz with repeated active
 plumes. Their p95 presentation intervals were 37.000, 36.155 and 36.735 ms; browser
 callbacks remained approximately 60 Hz. All used the same 914 × 410 scene,
@@ -192,7 +208,71 @@ density between 3.039 and 5.318. The ordinary moving sample had dispersed below
 the procedural-detail threshold, so extra dense-plume samples alone cannot
 explain that case's cost. There were no active CI guests or concurrent native
 GPU tests. Further shader/presentation isolation is required; the report's
-`qualified: true` means valid measurement conditions, not target-rate acceptance.
+`qualified: true` refers to its browser checks, not OS-session or target-rate acceptance.
+
+A private full/fixed-loop/full comparison at `dab5960` isolated adaptive traversal
+in both fog materials while preserving every graphics stage and the settled Auto
+raster. Frozen-field volume and composite pixels were bit-identical; every
+accepted frame had empty refinement bounds. It measured 29.997 / 30.148 / 30.040 Hz,
+with median completed worker frames of 23.715 / 23.885 / 23.910 ms. Removing
+adaptive traversal did not recover cadence in this experiment. Its GPU timer
+queries are additional operations absent from the production worker, so these
+rates do not establish a further production regression. The extension worked in
+the private probe; null GPU timer telemetry in the production worker means that
+duration was not measured, not that the extension was unavailable. A subsequent
+full-graphics query-on/off/on control measured 30.198 / 30.146 / 30.349 Hz. Every
+one of the 603 accepted off-phase frames made zero diagnostic timer API calls;
+median worker time remained 23.760 ms, previous-frame readiness 24.230 ms and
+current-frame RAF delivery 0.190 ms. Query calls did not explain the gap. The
+extension stayed enabled in that context. A fresh, unmodified production-worker
+repeat then measured 30.147 Hz fixed, 30.597 Hz moving and 30.098 Hz with active
+plumes, with unchanged controls and release hashes. The earlier 36–43 Hz result
+was not stable across this repeat, which also lacked OS-session verification.
+The scene-resolution compositor's full ray-integration fallback was separately
+isolated with unchanged volume rendering and no timer-extension requests:
+full/no-fallback/full measured 30.050 / 30.348 / 30.399 Hz and median worker times
+23.880 / 23.660 / 23.420 ms. The candidate fell between its full controls, so this
+does not support a performance refactor. One frozen frame needed fallback at
+709 of 374,740 pixels (0.189%); that is not a temporal occupancy average.
+Those private reports also collected one or two diagnostic frames beyond their
+cadence windows; pass-level statistics and cadence therefore cover slightly
+different intervals. Future comparisons align collection with the browser-side
+cadence boundaries. The production repeat above did not use that collector.
+
+The correctness-preserving fallback remains unchanged. A prepared larger-pass
+comparison (full, cached-image presentation, fog omitted, cached shadows, full)
+was stopped before launch when the OS lock was discovered. The separate
+`room-performance-environment-audit.json` preserves that observation and the
+unknown lock onset without rewriting earlier raw reports.
+
+After manual unlock, the unmodified production worker completed all three
+20-second samples with the OS guard enabled (`target/room-unlocked-production`).
+There were 21 lock checks during each sample, plus nine boundary checks. Every
+check reported an unlocked root and a single active console session. The guard
+rejects locked, missing or ambiguous OS evidence before starting external work
+and stops an in-progress sample if that evidence changes. It records only flags,
+timestamps and read durations, not private console-session fields. It is macOS
+specific; other platforms are explicitly unverified and rejected.
+
+| Scenario | Presented Hz | Interval p95, ms | Worker median, ms | Fence median, ms |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed haze | 50.299 | 34.125 | 12.290 | 10.425 |
+| Moving haze | 44.499 | 36.110 | 10.935 | 8.595 |
+| Repeated active plumes | 34.947 | 38.105 | 23.470 | 20.070 |
+
+Worker and fence medians come from 22 policy snapshots per scenario, rather than
+every accepted frame. All scenarios retained Auto low at scale 0.5, the 914 × 410
+scene, 301 × 135 fog target, 2806 × 1260 display, eight lights and one shadow.
+Controls and camera stayed unchanged within each sample. The plume sample
+accepted five bursts, rejected none, and retained maximum density 3.081–5.466.
+There was no private shader overlay and production asset hashes were unchanged.
+The independent read-only OS checks ran asynchronously, approximately once per
+second; their wall duration median/p95/max was 18.473/27.276/84.835 ms. This cost
+is recorded, not assumed to be zero or subtracted from the measured cadence.
+The run has `qualified: true` and `cadenceQualified: false`; a successful harness
+exit does not mean the target rate passed. The owned host stopped and the reused
+tab returned to a blank page with zero workers. No CI guest or native GPU test
+overlapped these samples.
 
 ## Native Metal translation
 

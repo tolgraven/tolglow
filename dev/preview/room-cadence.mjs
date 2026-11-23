@@ -4,12 +4,15 @@
 export async function measureRoom(durationMs) {
   const canvas = document.querySelector('#preview');
   const engine = canvas?.tolglowPreview;
-  if (!engine?.ready || !document.hasFocus() || document.hidden) throw new Error('Room must be ready and in the foreground.');
+  if (!engine?.ready || !document.hasFocus() || document.hidden) {
+    window.finishRoomPassSample?.();
+    throw new Error('Room must be ready and in the foreground.');
+  }
   const initial = engine.getTelemetry();
   const worker = initial.thread === 'worker' ? engine.worker : null;
   const renderer = engine.fallback || engine;
   const frames = [], display = [], qualities = new Set(), sizes = new Set(), scales = new Set(), samples = [];
-  let raf, qualityTimer;
+  let raf, qualityTimer, passDiagnostic, ended;
   const inspect = () => {
     const t = engine.getTelemetry();
     qualities.add(t.quality);
@@ -45,16 +48,21 @@ export async function measureRoom(durationMs) {
   document.addEventListener('visibilitychange', focusChange);
   window.addEventListener('blur', focusChange);
   try {
+    // Prepared diagnostic collection shares this synchronous browser boundary.
+    // Node-side API reads and OS qualification before/after cannot add frames.
+    window.startRoomPassSample?.();
     inspect(); raf = requestAnimationFrame(observeRaf); qualityTimer = setInterval(inspect, 1000);
     await new Promise(resolve => setTimeout(resolve, durationMs));
   } finally {
+    ended = performance.now();
     if (worker) worker.removeEventListener('message', onBitmap);
     else renderer.draw = original;
     window.removeEventListener('blur', focusChange);
     document.removeEventListener('visibilitychange', focusChange);
     cancelAnimationFrame(raf); clearInterval(qualityTimer);
+    passDiagnostic = window.finishRoomPassSample?.();
   }
-  const elapsedMs = performance.now() - boundary;
+  const elapsedMs = ended - boundary;
   const describe = times => {
     const gaps = times.slice(1).map((time, i) => time - times[i]).sort((a, b) => a - b);
     const quantile = p => gaps.length ? gaps[Math.ceil(gaps.length * p) - 1] : null;
@@ -83,5 +91,5 @@ export async function measureRoom(durationMs) {
     presented, windowRaf, cadence, policySamples: samples, scales: [...scales], frameOffsetsMs: frames.map(t => t - boundary),
     qualities: [...qualities], sceneSizes: [...sizes].map(s => JSON.parse(s)), backing: [canvas.width, canvas.height],
     css: [rect.width, rect.height], dpr: devicePixelRatio, displayPixels: end.displayPixels,
-    browser: navigator.userAgent, start: project(initial), end: project(end)};
+    browser: navigator.userAgent, start: project(initial), end: project(end), passDiagnostic};
 }
