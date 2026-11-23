@@ -8,6 +8,7 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.keyframes :as keyframes]
             [tolglow.effects.keyframes :as effect-keyframes]
+            [tolglow.effects.cadence :as cadence]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -217,6 +218,8 @@
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
+         _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
+             (cadence/settings config))
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
          _ (rig/validate-rig (:rig model))
@@ -268,6 +271,7 @@
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
+      :adaptive-keyframes (:adaptive-keyframes options)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -615,6 +619,7 @@
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
             settings (edit-scoped-settings model scope values (:device-id payload))
+            _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -1000,6 +1005,7 @@
                                                                  (or (pause-look/blackout? model) (zero? (:master model)))))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
+                 sampling (when-not restored? (cadence/begin runtime before model))
                  started (System/nanoTime)
                  next-state
                  (if restored?
@@ -1050,10 +1056,11 @@
                            model (assoc model :modulation (:state modulation-result))
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
-                           result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
+                           result (engine/advance model (merge {:time-ms time-ms :epoch (:epoch model)
                                                          :keyframes (:keyframes before) :keyframe-params (:overrides modulation-result)
                                                          :keyframe-generation (:responses model)
                                                          :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                                              (:inputs sampling))
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (keyframes/with-inputs ((:compile runtime) definition)
                                                                                    (comp middleware modulation-middleware))))
@@ -1178,7 +1185,10 @@
              (when @reactive-error
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (doseq [observer (vals @(:observers runtime))]
-               ((:frame! observer) @(:state runtime))))))
+               ((:frame! observer) @(:state runtime)))
+             (when sampling
+               (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)]
+                 (swap! (:state runtime) assoc :cadence (cadence/finish sampling (:model next-state) elapsed)))))))
        (finally
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
@@ -1675,7 +1685,8 @@
   ([{:keys [frame-rate] :or {frame-rate 40} :as options}]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [sink (output/open-sink! options)
-         runtime (try (create-runtime (assoc options :sink sink :independent-output? true))
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
+                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))

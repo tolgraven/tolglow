@@ -3,6 +3,7 @@
             [afterglow.runtime.keyframes :as keyframes]
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
+            [tolglow.effects.cadence :as cadence]
             [tolglow.persistence :as persistence]
             [tolglow.registry :as registry]
             [tolglow.show :as show]))
@@ -79,3 +80,23 @@
             (is (= (:target-clock initial) (:target-clock window)))
             (is (= [(* 0.25 sample)] (:result window))))))
       (finally (show/stop! runtime)))))
+
+(deftest adaptive-policy-observes-real-instances-and-turns-off-on-command
+  (let [model (-> (model)
+                  (assoc-in [:registry :effects :switch] {:id :switch :version 1 :outputs {:strobe 0.25}})
+                  (assoc-in [:registry :cues :switch] {:id :switch :effect-id :switch}))
+        rt (show/create-runtime {:model model :adaptive-keyframes {:enabled? true}
+                                 :workspace-options nil :workers 2})]
+    (try
+      (let [s (apply-at! rt :command {:op :cue/launch :cue-id :sampled} 0)
+            d (apply-at! rt :command {:op :cue/launch :cue-id :switch} 25)
+            status (cadence/status rt)
+            entries (into {} (map (juxt :instance-id identity)) (:effects status))]
+        (is (= :accepted (:status s) (:status d)))
+        (is (true? (:predictive? (entries (:instance-id s)))))
+        (is (false? (:predictive? (entries (:instance-id d)))))
+        (is (every? #(pos? (:evaluations %)) (vals entries)))
+        (is (= :rejected (:status (apply-at! rt :settings {:scope :adaptive-keyframes :values {:headroom 3}} 50))))
+        (is (= :accepted (:status (apply-at! rt :settings {:scope :adaptive-keyframes :values {:enabled? false}} 75))))
+        (is (nil? (cadence/status rt))))
+      (finally (show/stop! rt)))))
