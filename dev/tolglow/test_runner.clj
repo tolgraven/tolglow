@@ -3,7 +3,7 @@
 
 (def pure-tests
   '[tolglow.visualization.cue-pads-test tolglow.effects.sampling-quality-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
-    tolglow.clock-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
+    tolglow.clock-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test

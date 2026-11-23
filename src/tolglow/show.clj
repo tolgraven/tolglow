@@ -46,6 +46,7 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
+            [tolglow.observations :as observations]
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.cues :as spatial-cues]
@@ -248,6 +249,7 @@
          compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
+         browser-inputs (observations/create (get options :browser-observations observations/defaults))
          rdm-state (rdm/session-state)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
@@ -256,6 +258,7 @@
                                              (assoc :reactive-options (:reactive-options options)
                                                     :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
                                                                              effect-keyframes/register! block-trace/register!
+                                                                             (observations/register! browser-inputs)
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
@@ -289,6 +292,7 @@
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
+      :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
