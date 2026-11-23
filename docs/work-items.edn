@@ -29,10 +29,17 @@
    :evidence ["Existing production baselines and candidate experiments are indexed in docs/performance/render-work-elimination.md."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
-   :paths ["tolglow/docs/performance/perceptual-scheduling.md"]
+   :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
+           "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
+           "tolglow/dev/tolglow/perf/sampling_cost.clj"
+           "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
-   :evidence ["The current cue-visualization and keyframe implementations are cross-referenced in docs/performance/perceptual-scheduling.md."]}
+   :evidence ["Merged Tolglow #117 and Afterglow #71 lease presentation work to visible Studio cells and Push 2 pads and reduce visual keyframe frequency before slowing live effects."
+              "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
+              "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
+              "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
+              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."]}
   {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
    :kind :documentation :status :planned :owner nil
    :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
