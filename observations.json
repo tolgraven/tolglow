@@ -5,18 +5,18 @@
       {
         "camera": "audience",
         "sample": {
-          "received-ns": 180662476526205,
-          "producer": "e7a596d1-9432-4b56-910e-ae2bf7ace7c1",
+          "received-ns": 183139116163230,
+          "producer": "66476aa8-e31e-4bcb-b4a7-1ea02ea92ee5",
           "value": [
-            91,
-            68,
-            74
+            122,
+            95,
+            103
           ],
           "source": "center-rgb",
-          "frame-number": 761,
+          "frame-number": 1611,
           "sequence": 3,
-          "completed-ms": 18746.580000013113,
-          "sampled-ms": 18738.680000007153,
+          "completed-ms": 40533.62999999523,
+          "sampled-ms": 40479.27500000596,
           "show": {
             "show-id": "main",
             "epoch": 0
@@ -27,18 +27,18 @@
       {
         "camera": "overview",
         "sample": {
-          "received-ns": 180663564104088,
-          "producer": "e7a596d1-9432-4b56-910e-ae2bf7ace7c1",
+          "received-ns": 183143983039563,
+          "producer": "66476aa8-e31e-4bcb-b4a7-1ea02ea92ee5",
           "value": [
-            82,
-            70,
-            79
+            131,
+            99,
+            103
           ],
           "source": "center-rgb",
-          "frame-number": 859,
+          "frame-number": 1752,
           "sequence": 4,
-          "completed-ms": 19820.659999996424,
-          "sampled-ms": 19807.37999999523,
+          "completed-ms": 45421.39499998093,
+          "sampled-ms": 45267.62000000477,
           "show": {
             "show-id": "main",
             "epoch": 0
@@ -58,18 +58,18 @@
       {
         "camera": "audience",
         "sample": {
-          "received-ns": 180704813390601,
-          "producer": "40d1a2a4-bd20-49e3-b76f-598b48a3e3dc",
+          "received-ns": 183230478872249,
+          "producer": "c95752ec-a4ef-47f3-a84d-a40df9eb2fe4",
           "value": [
-            139,
-            104,
-            105
+            132,
+            109,
+            118
           ],
           "source": "center-rgb",
-          "frame-number": 2488,
+          "frame-number": 5282,
           "sequence": 2,
-          "completed-ms": 27926.864999979734,
-          "sampled-ms": 26732.819999992847,
+          "completed-ms": 53027.75499999523,
+          "sampled-ms": 50427.14500001073,
           "show": {
             "show-id": "main",
             "epoch": 0
@@ -80,18 +80,18 @@
       {
         "camera": "overview",
         "sample": {
-          "received-ns": 180737022723235,
-          "producer": "40d1a2a4-bd20-49e3-b76f-598b48a3e3dc",
+          "received-ns": 183270005777415,
+          "producer": "c95752ec-a4ef-47f3-a84d-a40df9eb2fe4",
           "value": [
-            113,
-            102,
-            114
+            108,
+            99,
+            109
           ],
           "source": "center-rgb",
-          "frame-number": 3796,
-          "sequence": 5,
-          "completed-ms": 60136.44499999285,
-          "sampled-ms": 59847.50999999046,
+          "frame-number": 6951,
+          "sequence": 4,
+          "completed-ms": 92556.38500002027,
+          "sampled-ms": 92093.99500000477,
           "show": {
             "show-id": "main",
             "epoch": 0
