@@ -20,6 +20,8 @@
             [tolglow.studio.debug-stream :as debug-stream]
             [tolglow.development :as development]
             [tolglow.development.workspace :as workspace]
+            [tolglow.development.agents :as app-agents]
+            [tolglow.development.terminal :as terminal]
             [tolglow.expressive :as expressive]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.studio.projection :as projection]
@@ -48,6 +50,8 @@
                                                             producer message))
                       :surfaces {observations/demand-query
                                  (partial observations/provider-lease (:browser-observations runtime) #(:model @(:state runtime)))
+                                 :development/task-events #(app-agents/event-source (get-in runtime [:development :app-agents]) %)
+                                 :development/terminal-output #(terminal/output-source (get-in runtime [:development :terminal]) %)
                                  :development/workspace
                                  (fn [[_ id & extra]]
                                    (workspace/status-source (get-in runtime [:development :workspaces])
