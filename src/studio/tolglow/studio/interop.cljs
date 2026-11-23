@@ -179,7 +179,7 @@
      (fn [show & [owner _activity-changed]]
        (let [this (r/current-component)]
        [:div.preview-stage {:ref #(aset this "root" %)}
-        [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
+        [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. Move with WASD, HJKL or arrow keys. Drag to orbit or look. Home resets the view."}]
         [:div.preview-overlay
          [:span.preview-status {:id (if (= :rig owner) "rig-preview-status" "preview-status")} "Preparing preview"]
          (when-let [limit (:visible-spatial-limit show)] [:span (str "Showing " limit " spatial volumes")])
