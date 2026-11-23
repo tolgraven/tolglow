@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 482faf3040292d44af7c8eb2f875f204797646bd
+          ref: 5a4ff8cf9695c0b61ba0ccd65cb209c854d63f9d
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -67,10 +67,10 @@ jobs:
             git show "$BASE_COMMIT:docs/request-coverage.md" > "$RUNNER_TEMP/previous-requests.md"
             echo "TOLGLOW_PREVIOUS_REQUESTS=$RUNNER_TEMP/previous-requests.md" >> "$GITHUB_ENV"
           fi
-      - name: Validate work tracking
-        if: matrix.suite == 'pure'
+      - name: Check archived requests and GitHub Issue links
+        if: matrix.suite == 'pure' && matrix.java == '17'
         working-directory: tolglow
-        run: lein check-roadmap
+        run: lein check-requests
   studio:
     runs-on: ubuntu-latest
     steps:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 482faf3040292d44af7c8eb2f875f204797646bd
+          ref: 5a4ff8cf9695c0b61ba0ccd65cb209c854d63f9d
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 482faf3040292d44af7c8eb2f875f204797646bd
+          ref: 5a4ff8cf9695c0b61ba0ccd65cb209c854d63f9d
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:

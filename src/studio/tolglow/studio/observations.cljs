@@ -117,13 +117,19 @@
                          (>= (- sampled last-at) (:interval-ms spec)))]
         (sample! control id slot canvas sampled frame)))))
 
-(defn bind! [component engine request]
-  (let [current (aget component "observationControl")]
-    (when (or current (seq (:sources request)))
-      (let [active? #(let [renderer (or (aget engine "fallback") engine)]
-                       (and (not (.-hidden js/document)) (aget renderer "visible")
-                            (not (or (aget renderer "disposed") (aget renderer "lost") (aget renderer "paused")))))
-            control (or current (assoc (controller) :visible? active?))]
-        (aset component "observationControl" (when request control))
-        (aset engine "observedFrame" (when (seq (:sources request)) #(present! control %1 %2 %3 %4)))
-        (configure! control request)))))
+(defn bind! [component engine request & [on-frame]]
+  (let [current (aget component "observationControl")
+        reads? (seq (:sources request))
+        control (when (or current reads?)
+                  (or current
+                      (assoc (controller) :visible?
+                             #(let [renderer (or (aget engine "fallback") engine)]
+                                (and (not (.-hidden js/document)) (aget renderer "visible")
+                                     (not (or (aget renderer "disposed") (aget renderer "lost") (aget renderer "paused"))))))))]
+    (aset component "observationControl" (when request control))
+    (aset engine "observedFrame"
+          (when (or on-frame reads?)
+            (fn [canvas show-id epoch frame]
+              (when on-frame (on-frame show-id epoch))
+              (when reads? (present! control canvas show-id epoch frame)))))
+    (when control (configure! control request))))

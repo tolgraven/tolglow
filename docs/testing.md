@@ -27,7 +27,7 @@ cd /path/to/afterglow
 cd /path/to/tolglow
 ./bin/test pure
 ./bin/test parity
-lein check-roadmap
+lein check-requests
 ```
 
 `bin/test` fails on invalid suite names, dependency/loading errors and test
@@ -111,7 +111,7 @@ workspace changes still need their selected runs; pending results must not be in
 | Tolglow pure and parity | Parity411 /3294 passed after restart; subsequent host/sensor/deadline changes require final combined gate |
 | Frontend production build | Re-frame release142 files /0 warnings and source100 /538 passed; newer sensor/scene widgets have separate gates |
 | Browser interaction | Actual9 session+6 authoring,6 Connections,6 modulation,9 REPL,4 patchbay,3 waveform flows passed; physical Safari remains separate |
-| Work ledger and documentation links | 94 items validated:58done,29planned,7active; rerun after further changes |
+| Historical request index | `lein check-requests` checks the archived request IDs and the format of their issue links offline. |
 
 CI defines Java 17/21 lanes, but hosted CI and local Java 17 execution have not
 been observed here. Cross-repository CI must check out the reviewed new

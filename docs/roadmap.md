@@ -2,12 +2,7 @@
 
 [Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
 
-`work-items.edn` is authoritative. `:done` means the named milestone's acceptance
-criteria have evidence, not that every related product requirement is finished.
-Broad roadmap items stay open when a smaller v1 module is delivered. Active
-items need an owner, finished prerequisites and disjoint repository-prefixed
-paths. The validator checks dependency cycles, missing evidence and overlapping
-active claims; directory claims include all descendants and globs are forbidden.
+Use [GitHub Issues](https://github.com/tolgraven/tolglow/issues) to find work across Tolglow and Afterglow. Each issue records its scope and verification. Closed issues retain the delivery history.
 
 ## Delivered v1 modules
 
@@ -86,9 +81,7 @@ passing suites; final combined source/manifest counts remain the root's gate.
 | `development_terminal_reliability_feature_parity` | Docker lifecycle, workspace recovery and control parity audit | Delayed-create cleanup, durable catalog and identified original feature gaps |
 | `dependency_upgrades_clojure_jvm_frontend` | Verified dependency pins and migration changes | Current stable Clojure/JVM/frontend versions, paired tests and production build |
 
-The ledger contains exact paths and current owners. Completed agents are not
-background services; update the ledger when assigning further work. Coordinate
-schema changes across owners before editing shared boundaries.
+Coordinate shared schema changes with contributors on the relevant issue or pull request.
 
 ## Remaining functional migration and performance gates
 
