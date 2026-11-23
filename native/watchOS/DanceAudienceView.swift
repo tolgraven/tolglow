@@ -22,7 +22,7 @@ struct DanceAudienceView: View {
         }
         .accessibilityIdentifier(id)
         .accessibilityAddTraits(link.route == route ? .isSelected : [])
-        .disabled(participating)
+        .disabled(participating || !route.available(phoneJoined: link.phoneJoined))
     }
 
     private var destination: some View {
@@ -44,7 +44,8 @@ struct DanceAudienceView: View {
                     Text(stage.status).font(.caption2)
                 }
             } else if !participating {
-                Text("Your Watch and iPhone share one place on the floor.").font(.caption)
+                Text(link.phoneJoined ? "Your iPhone is on the floor. Leave on iPhone to join directly." :
+                     "Your Watch and iPhone share one place on the floor.").font(.caption)
             }
         }
     }

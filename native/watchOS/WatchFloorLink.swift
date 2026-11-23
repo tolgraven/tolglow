@@ -22,7 +22,7 @@ import TolglowSensorCore
         phone.phoneFloorChanged = { [weak self] active in
             guard let self else { return }
             self.phoneJoined = active
-            if active && self.route == .nearbyStage {
+            if !self.route.available(phoneJoined: active) {
                 self.select(.pairedPhone)
                 self.interrupted?("Your iPhone joined the floor. Use Paired iPhone to share once.")
             }
@@ -30,7 +30,7 @@ import TolglowSensorCore
     }
 
     func select(_ next: AudienceWatchRoute) {
-        guard next != route else { return }
+        guard next != route, next.available(phoneJoined: phoneJoined) else { return }
         end()
         route = next
     }

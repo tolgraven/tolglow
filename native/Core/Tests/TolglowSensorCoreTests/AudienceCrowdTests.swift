@@ -51,6 +51,9 @@ final class AudienceCrowdTests: XCTestCase {
     }
 
     func testWatchChoosesExactlyOneAvailableRoute() {
+        XCTAssertTrue(AudienceWatchRoute.pairedPhone.available(phoneJoined: true))
+        XCTAssertFalse(AudienceWatchRoute.nearbyStage.available(phoneJoined: true))
+        XCTAssertTrue(AudienceWatchRoute.nearbyStage.available(phoneJoined: false))
         for phone in [false, true] {
             for stage in [false, true] {
                 XCTAssertEqual(AudienceWatchRoute.pairedPhone.ready(phoneReachable: phone, stageJoined: stage), phone)
