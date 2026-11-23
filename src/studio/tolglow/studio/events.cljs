@@ -183,6 +183,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  epoch-changed? (dissoc :ending-holds)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
@@ -198,7 +199,7 @@
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db updated
      :fx (cond-> []
-           (and (:recover-held? updated)
+           (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
                 (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))))
            (conj [:dispatch [:studio/reconcile-held]])
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
@@ -386,11 +387,16 @@
   (and gesture-id (= "held" launch-mode) (= "running" phase)
        (= "web" (:adapter source)) (= session (:session-id source))))
 
+(defn- current-show? [show owner]
+  (and (= (:epoch owner) (:epoch show)) (= (:runtime-id owner) (:runtime-id show))))
+
 (rf/reg-event-fx :studio/reconcile-held
   (fn [{:keys [db]} _]
     (let [show (:show db)
           holds (filter #(live-web-hold? (:session db) %) (:instances show))
-          pressed (into {} (keep (fn [[id pointer]] (when (:held? pointer) [(:press-id pointer) id]))) (:pointers db))
+          pressed (into {} (keep (fn [[id pointer]]
+                                   (when (and (:held? pointer) (current-show? show pointer))
+                                     [(:press-id pointer) id]))) (:pointers db))
           orphaned (remove #(contains? pressed (:gesture-id %)) holds)
           pending (set (map :gesture-id orphaned))
           ending (or (:ending-holds db) #{})
@@ -406,20 +412,21 @@
 
 (rf/reg-event-fx :studio/held-end-failed
   (fn [{:keys [db]} [_ owner _error]]
-    (when (= (select-keys owner [:epoch :runtime-id]) (select-keys (:show db) [:epoch :runtime-id]))
+    (when (current-show? (:show db) owner)
       {:db (assoc db :recover-held? true)
-       :dispatch-later [{:ms 1000 :dispatch [:studio/retry-held-end (:press-id owner)]}]})))
+       :dispatch-later [{:ms 1000 :dispatch [:studio/retry-held-end owner]}]})))
 
 (rf/reg-event-fx :studio/retry-held-end
-  (fn [{:keys [db]} [_ press-id]]
-    {:db (update db :ending-holds disj press-id)
-     :dispatch [:studio/reconcile-held]}))
+  (fn [{:keys [db]} [_ owner]]
+    (when (current-show? (:show db) owner)
+      {:db (update db :ending-holds disj (:press-id owner))
+       :dispatch [:studio/reconcile-held]})))
 
 (rf/reg-event-fx :studio/held-launched
   (fn [{:keys [db]} [_ {:keys [pointer-id press-id] :as owner} {:keys [instance-id]}]]
     (cond
       (nil? instance-id) {:db (assoc db :recover-held? true) :dispatch [:studio/reconcile-held]}
-      (= press-id (get-in db [:pointers pointer-id :press-id]))
+      (and (current-show? (:show db) owner) (= press-id (get-in db [:pointers pointer-id :press-id])))
       {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
                (assoc-in [:ui :selected-instance] instance-id))}
       :else {:fx [(end-held db owner instance-id false)]})))

@@ -95,6 +95,22 @@
     (is (= (get-in end-request [:fields :command-id]) (get-in (first-command repeated) [:fields :command-id])))
     (is (empty? (transition (assoc-in db [:connection :connected?] false) [:studio/reconcile-held])))))
 
+(deftest restored-gesture-with-the-same-id-belongs-to-the-replacement-show
+  (let [owner {:press-id "saved" :epoch 7 :runtime-id "host" :held? true}
+        db (-> base (assoc-in [:show :runtime-id] "host")
+               (assoc :pointers {3 owner} :ending-holds #{"saved"}))
+        restored (assoc (:show db) :epoch 8 :show-id :main :instances
+                        [{:id "8:5" :gesture-id "saved" :launch-mode :held :phase :running
+                          :source {:adapter :web :session-id (:session db)}}])
+        installed (full-frame db restored)
+        recovered (transition (:db installed) [:studio/reconcile-held])
+        end (first-command recovered)]
+    (is (some #{[:dispatch [:studio/reconcile-held]]} (:fx installed)))
+    (is (nil? (get-in installed [:db :ending-holds])))
+    (is (nil? (get-in recovered [:db :pointers 3 :instance-id])))
+    (is (= [8 "8:5" "saved-end"] [(:epoch end) (get-in end [:fields :instance-id]) (get-in end [:fields :command-id])]))
+    (is (empty? (transition (:db recovered) [:studio/retry-held-end owner])))))
+
 (deftest independent-pointers-and-page-exit-release
   (let [db (assoc base :pointers {1 {:held? true :instance-id "7:11" :epoch 7}
                                  2 {:held? true :instance-id "7:12" :epoch 7}})
