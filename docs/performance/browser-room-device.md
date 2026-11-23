@@ -48,6 +48,8 @@ The local operator measured Chrome 158, ANGLE Metal, with a 16 GB M4 Air (10 CPU
 
 Desktop presented 248 and 229 frames. Mobile presented 469 and 478. The worker's completed-frame time, including scheduling, was about 40–52 ms on desktop and 21–30 ms on mobile. Direct GPU timer data was unavailable. These aggregates came from the local operator using sampler revision c5447c9b. The device owner retains the raw recordings.
 
+On the same M4 Air, the revised Auto policy at `3df8c9c` presented 28.7481 frames/s with fixed heads and 34.5978 with the moving sweep. Previous Auto measured 9.55 and 10.35. The backing stayed at 2806 × 1260 and the foreground callback clock measured 59.996 Hz. Both scenes remained below 40 fresh Room presentations/s. A separate desktop comparison with fog off and on measured 21.399 and 14.399 frames/s for fixed heads, and 20.699 and 13.999 frames/s for moving heads. The local operator supplied the aggregates. [Measurement and source](https://github.com/tolgraven/tolglow/pull/176)
+
 ## Attribute presentation and shader costs on one GPU
 
 Use the same release build, browser window, fixed camera, display scale and power supply for every sample. This command opens a dedicated localhost show with eight lit moving heads in dense fog. The first and last full-render samples help detect thermal or clock drift.
