@@ -5,7 +5,7 @@ on:
 permissions: {contents: read, actions: read}
 jobs:
   inspect:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -13,8 +13,22 @@ jobs:
           repository: tolgraven/tolglow
           run-id: 45157631334
           github-token: ${{ github.token }}
-      - name: Read startup training and native compilation diagnostics
+      - name: Reproduce the API and classpath asset responses from the compiled binary
+        shell: bash
         run: |
-          for log in native-start.log; do
-            if test -f "$log"; then echo "$log"; tail -80 "$log"; fi
+          chmod +x studio-native
+          ./studio-native --port 0 >inspect-start.log 2>&1 &
+          child=$!
+          trap 'kill "$child" 2>/dev/null || true' EXIT
+          for ((i=0; i<60; i++)); do
+            if grep -q 'Studio listening on' inspect-start.log; then break; fi
+            sleep 1
           done
+          origin="$(sed -n 's/Tolglow Studio listening on //p' inspect-start.log)"
+          for resource in / /api/state /studio/js/main.js; do
+            echo "$resource"
+            code="$(curl -sS -D headers.txt -o response "$origin$resource" -w '%{http_code}')"
+            echo "HTTP $code, $(wc -c < response) bytes"
+            if test "$code" != 200; then head -c 8192 response; fi
+          done
+          cat inspect-start.log
