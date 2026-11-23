@@ -7,6 +7,7 @@
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
     tolglow.effects.material-design-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.perf.effect-samples-test
     tolglow.spatial.actions-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test

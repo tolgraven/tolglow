@@ -1094,7 +1094,7 @@
                  presentation-token (when (:independent-output? runtime) (begin-presentation! runtime model output-slot))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
-                 sampling (when-not restored? (cadence/begin runtime before model))
+                 sampling-session (volatile! nil)
                  started (System/nanoTime)
                  next-state
                  (if restored?
@@ -1161,6 +1161,7 @@
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
+                           sampling (vreset! sampling-session (cadence/begin runtime before model))
                            frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
@@ -1309,7 +1310,7 @@
                ((:frame! observer) @(:state runtime)))
              (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)
                    defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
-               (when sampling
+               (when-let [sampling @sampling-session]
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally

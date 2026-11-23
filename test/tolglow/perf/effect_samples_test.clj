@@ -1,5 +1,6 @@
 (ns tolglow.perf.effect-samples-test
   (:require [clojure.test :refer [deftest is]]
+            [tolglow.composition :as composition]
             [tolglow.demo :as demo]
             [tolglow.perf.effect-samples :as samples]
             [tolglow.show :as show]))
@@ -52,6 +53,39 @@
         (is (= (:evaluations start) (:evaluations tween)))
         (is (< dark brighter)))
       (finally (show/stop! host)))))
+
+(deftest a-sequence-can-launch-and-retire-an-effect-in-one-render
+  (doseq [another-effect? [false true]]
+    (let [effect {:id :flash-sample :version 1 :outputs {:color [1 1 1] :dimmer 1}}
+          model (-> (demo/model)
+                    (assoc-in [:registry :effects :flash-sample] effect)
+                    (assoc-in [:registry :cues :flash-sample] {:id :flash-sample :effect-id :flash-sample})
+                    (composition/save {:id :capture :mode :sequence :timebase :ms
+                                       :slots [{:cue-id :flash-sample :duration {:ms 100}}]})
+                    (composition/start :capture 0))
+          runtime (show/create-runtime {:model model :workers 2 :workspace-options nil
+                                        :adaptive-keyframes {:enabled? true}})
+          measured (-> runtime
+                       (assoc :capture-effect-samples? true)
+                       (update :compile
+                               (fn [compile-step]
+                                 (fn [definition]
+                                   (let [step (compile-step definition)]
+                                     (if (= :flash-sample (:id definition))
+                                       (fn [context] (assoc (step context) :done? true))
+                                       step))))))]
+      (try
+        (is (empty? (:instances model)))
+        (when another-effect?
+          (show/submit! measured {:op :cue/launch :cue-id :ember}))
+        (show/tick! measured 0)
+        (let [state @(:state measured)
+              frame (samples/capture {:ready-at-ms 0} state)
+              observed (vals (:effect-sampling frame))]
+          (is (= [{:effect-id :flash-sample :outcome :retired-sampled :calls-this-render 1}]
+                 (filterv #(= :retired-sampled (:outcome %)) observed)))
+          (is (not-any? #(= :flash-sample (:effect-id %)) (vals (get-in state [:model :instances])))))
+        (finally (show/stop! runtime))))))
 
 (deftest final-worker-call-survives-in-the-frame-report
   (let [effect {:id :one-shot :version 1 :outputs {:color [1 1 1] :dimmer 1}}
