@@ -29,6 +29,7 @@ on:
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
+      - 'dev/tolglow/perf/beam_fidelity.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'src/tolglow/effects/cadence.clj'
@@ -52,6 +53,7 @@ on:
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
+      - 'dev/tolglow/perf/beam_fidelity.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-master'
@@ -181,6 +183,12 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein run -m tolglow.perf.sampling-cost ../performance-artifact/sampling-cost.edn
+      - name: Compare decoded pan and tilt against the projected spot footprint
+        if: hashFiles('tolglow/dev/tolglow/perf/beam_fidelity.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein run -m tolglow.perf.beam-fidelity ../performance-artifact/beam-fidelity.edn 0.25
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:
