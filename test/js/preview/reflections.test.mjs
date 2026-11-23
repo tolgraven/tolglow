@@ -93,10 +93,13 @@ test('a close floor patch casts colored spill onto a nearby panel; a nearer bloc
           render(2,[1,0,0],[panel,blocker]); const occluded = engine.getTelemetry().reflectedPatches;
           render(0,[1,0,0]); const disabled = engine.reflections.lights[0].intensity;
           render(2,[0,0,0]); const blackout = engine.getTelemetry().reflectedPatches;
-          return {patch,clearPower,fogPower,rgb,directIntensity,angle,litPanel,darkPanel,shadowedPanel,stillReflecting,occluded,disabled,blackout,error:engine.error};
+          return {quality:engine.getTelemetry(), glError:engine.renderer.getContext().getError(),patch,clearPower,fogPower,rgb,directIntensity,angle,litPanel,darkPanel,shadowedPanel,stillReflecting,occluded,disabled,blackout,error:engine.error};
         } finally {engine.dispose();}
       });
       assert.equal(observations.error,undefined);
+      assert.equal(observations.glError, 0);
+      assert.equal(observations.quality.sceneSamples, 4);
+      assert.deepEqual(observations.quality.pixels, observations.quality.displayPixels);
       assert.equal(observations.patch[0]?.surface,'floor',JSON.stringify(observations));
       assert.deepEqual(observations.patch[0].center,[0,0,0]);
       assert.equal(observations.directIntensity,290);
