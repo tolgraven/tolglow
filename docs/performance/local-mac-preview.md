@@ -178,6 +178,27 @@ light and camera position remained unchanged. The moving scene remains below
 the 60 Hz target. Its worker bundle SHA-256 is
 `cd489595ef288030f87d92722a2893c6d7c758fa590cf65b7d40d30fb2123685`.
 
+A final experiment registered the next hardware display callback immediately after
+GPU submission and retained it through bitmap acknowledgement. It preserved the
+single-frame guards and passed 17 focused lifecycle tests, but measured 55.346 Hz
+fixed / 58.147 Hz moving at the same raster with valid controls. The mixed result
+does not establish an improvement over the integrated baseline, so the additional
+recurring wakeup was reverted. Its patch and raw report are retained locally.
+
+The remaining smooth dispersed appearance also has a specific source: procedural
+billows operate only on density above the mixed background. Their branch starts
+around total density 0.261 for the manual 0.15 background; the controlled moving
+sample's maximum density fell from 0.20346 to 0.18346. Consequently that entire
+sample skipped procedural billow detail. The uniform background cannot acquire
+wisps through uniform transport alone. This is separate from forward scattering,
+exposure and resolution, and is not corrected by increasing ambient light.
+
+Halving the procedural spatial frequency was also tested on the actual M4 with
+the same deterministic fresh/dispersed capture fixture. All three GPU checks
+passed, but the resulting plume had softer bright blobs and less internal
+definition at both Desktop and Auto resolutions. That visual candidate was
+rejected and reverted; it did not address the absent dispersed-haze structure.
+
 To reproduce the corrected dark-show configuration using the built release:
 
 ```sh
