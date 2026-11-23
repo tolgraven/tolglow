@@ -1,0 +1,23 @@
+# When to sample inputs for a lighting frame
+
+An operator moves an XY pad at 18 ms. The next physical output slot is at 25 ms. An effect that sampled the pad at 0 ms misses the gesture for that slot. An effect that samples at 15 ms also misses it. The next eligible slot will capture it. Delaying the sample improves freshness up to the point where doing so risks missing publication.
+
+At 40 Hz there are 25 ms between output slots. If recent *whole frames* need 8 ms and the scheduler reserves another 2 ms for variation and handoff, it can wake around 15 ms into the interval. Those figures illustrate the policy. The mixed-rig stress benchmark missed every 25 ms deadline on its shared host. A scheduler can only spend spare time that the workload actually has. [Measured frames](https://github.com/tolgraven/afterglow/pull/88)
+
+## Frame context
+
+The physical output deadline uses a monotonic clock. Map that instant to show time and its beat, bar and phrase using the same transport snapshot for every effect in the frame. Keep render start, input sample times, completion, and actual send time separately observable. A seek, show replacement or clock discontinuity invalidates work for the old timeline.
+
+Snapshot the latest completed sensor or simulation samples once at render entry. A bouncing ball can contribute its position, velocity, sample time and sequence. A pure effect receives that snapshot and its previous committed state and returns new state and lighting values. A worker never blocks the output thread waiting for a WebGL readback. If the latest observation is old, its age is visible to the resolver.
+
+Two workers can process disjoint head and channel sets from the same snapshot. Shared variable reads and writes, previous-layer reads, native blends, and ordered effects introduce dependencies even when final DMX addresses differ. Validate parallel results against a serial replay, including state and event order. Commit the next state once.
+
+The browser can advance fog, the camera, and presentation-only motion at display refresh. When a show subscribes to a browser-generated value, deliver timestamped changes at the requested sampling rate. Local events can update app-db and let re-frame reactions feed the affected components. Releasing the last consumer should stop any dedicated sampling or readback. A browser paint never establishes the physical publication clock.
+
+## Measuring the scheduler
+
+Start with an explicit reserve on a cold show. Adjust it using observed completion costs, worker and packing time, and wake-up jitter. Take more lead after a miss and recover gradually. If the work cannot fit, skip expired scheduling slots and apply the configured late-frame policy. Prevent a late completion or an old show epoch from overwriting newer output.
+
+Record input age at publication, slack at completion, deadline misses and actual send jitter. Check tempo changes, seek, pause, restart, clock discontinuities, slow workers and sudden changes in input cost with an injected clock. Compare against immediate-start scheduling on the same physical machine and timeline.
+
+The MacBook Air qualification runs CPU geometry, completed native GPU shader readback, and the complete show with native materials as three independent workloads. The returning reports identify the machine, workload, output equivalence and missed deadlines. A Studio venue preview measures a fourth workload in its own browser context. [Pinned qualification kit](https://raw.githubusercontent.com/tolgraven/afterglow/eb1d5ba2cdec73c2637ba08c6af376e4547443e5/pr-88/macbook-air-lighting-benchmark.zip)

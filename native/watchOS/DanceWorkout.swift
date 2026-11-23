@@ -11,6 +11,9 @@ import TolglowSensorCore
     @Published private(set) var bpm: Int?
     @Published private(set) var status = "Choose where to share your wrist motion."
 
+    @Published var shareMotionAxes = false
+    private var axes: AudienceMotion?
+
     private let store = HKHealthStore()
     private let motion: MotionSampler
     let link: WatchFloorLink
@@ -119,9 +122,14 @@ import TolglowSensorCore
         motionUpdates = motion.$values.dropFirst().sink { [weak self] values in
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }
             let now = ProcessInfo.processInfo.systemUptime
+            let previous = self.meter.steps
             self.meter.observe(strength: sqrt(x*x + y*y + z*z) / 9.80665, at: now)
+            self.axes = self.shareMotionAxes ? AudienceMotion(values: values) : nil
             self.lastMotion = now
+            if self.meter.steps != previous { self.publish(refreshLevels: false) }
         }
+        // Establish the zero counter before the first onset, including on a fast rejoin.
+        publish()
         motion.preview()
         status = session == nil ? "Sharing motion with the floor." : "Dance workout active. Sharing available pulse and motion."
         ticker = Task { [weak self] in
@@ -132,19 +140,20 @@ import TolglowSensorCore
         }
     }
 
-    private func publish() {
+    private func publish(refreshLevels: Bool = true) {
         guard ProcessInfo.processInfo.systemUptime - lastMotion < 2.5 else { stop("Wrist motion unavailable. Dance sharing stopped."); return }
-        effort = meter.effort
+        if refreshLevels { effort = meter.effort }
         steps = meter.steps
         let now = Date()
         if pulse?.interrupted(at: now) == true {
             stop("No heart rate available. Check permission and watch fit, or join with motion only.")
             return
         }
-        bpm = pulse?.bpm(at: now)
-        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm) else { return }
+        if refreshLevels { bpm = pulse?.bpm(at: now) }
+        let freshAxes = shareMotionAxes && ProcessInfo.processInfo.systemUptime - lastMotion <= 0.6 ? axes : nil
+        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm, motion: freshAxes) else { return }
         serial &+= 1
-        link.send(sample)
+        link.send(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {
@@ -153,6 +162,7 @@ import TolglowSensorCore
         ticker = nil
         motionUpdates?.cancel()
         motionUpdates = nil
+        axes = nil; shareMotionAxes = false
         link.end()
         if active || requesting {
             motion.stop()

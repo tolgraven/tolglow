@@ -36,6 +36,14 @@ To use each admitted step to launch a registered accent cue, add the following e
 
 The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
 
+### Motion channels
+
+In the App Clip, **Use iPhone or Watch motion in Tolglow** opens the system offer for its parent app. After installation, scan the same stage QR to continue.
+
+Choose **Phone motion → Share phone acceleration and rotation** on iPhone, or **Share wrist axes** in the Watch dance view. The guest can turn sharing off during a song. Every 200 ms the bridge sends the mean signed, gravity-removed acceleration in m/s² (`accel-x`, `accel-y`, `accel-z`) and angular velocity in rad/s (`rotation-x`, `rotation-y`, `rotation-z`) from the guests currently supplying all six channels. The watch takes precedence when both devices send fresh axes. `motion-count` gives the number of contributing dancers across the selected zones. With one participant the means equal that device’s readings. With differently oriented devices, signed values can cancel. `dance-effort` gives an orientation-independent intensity for the crowd.
+
+Map the resulting channels to effect parameters through normal sensor mappings. Each source uses device-local axes. The mixer removes the six channels when the final contributor withdraws or expires. Tap and camera participation still send the estimated effort and steps.
+
 ## Cover several areas of a venue
 
 Give each Bluetooth gateway its own enrolled sensor ID, credential and zone QR. Set `TOLGLOW_AUDIENCE_OSC_HOST` on a remote gateway to the lighting host on your encrypted venue network or VPN. The default is loopback. Guests only need Bluetooth. The gateway-to-show OSC link carries its source credential, so keep it on the private link.
@@ -51,9 +59,19 @@ lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
 
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
+## Dance-step timing
+
+Tap, camera, phone and wrist motion send their cumulative step count as soon as the input detects an onset. Periodic readings recover a missed counter change. The paired iPhone uses the wrist counter while it is fresh and carries one vote for the person. The Watch relay keeps one acknowledged message in flight and one replaceable sample with its original measurement time.
+
+The bridge takes a fresh effort and pulse snapshot five times per second. It submits onsets on the next 40 Hz show frame. Each OSC observation carries up to eight gestures and one frame admits up to four observations, allowing additional simultaneous steps to spill into the following frames. The bounded backlog reports overflow to the operator. A heartbeat can carry a due onset, and subsequent heartbeats carry zero until another step arrives.
+
+Run `swift test --package-path native/Core --filter AudienceLatencyTests` to exercise detection, bounded host aggregation and the OSC encoder using a deterministic clock. Set `TOLGLOW_AUDIENCE_TIMING_DIR` to an existing directory to save the observed packet times. CI publishes them as `audience-onset-timing`. These measurements end at the encoded datagram. Qualifying physical latency also requires timing the guest’s sensor, WatchConnectivity, BLE, OSC delivery and the receiving show.
+
 ## Publish a scannable Clip
 
-Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
+For pre-alpha testing, run the Clip in the iPhone simulator. On a development-signed iPhone, a registered Local Experience can open the **stage QR** directly from an HTTPS URL on a test host. Publishing a custom domain and an App Store experience belongs to the later public distribution test. [Simulator, local iPhone and public invitation instructions](nearby-audience-qualification.md#test-the-clip-before-distribution)
 
 The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work has a separate full-app consent control and uses a measured peer connection for its GPU buffers. The Clip only participates in sensing. [Configure and qualify guest GPUs](../native/AudienceCompute/README.md)
 

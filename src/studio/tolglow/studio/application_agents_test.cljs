@@ -50,16 +50,23 @@
     (is (= 100 (count (:order many))))
     (is (= 300 (:cursor many)))))
 
-(deftest one-cursor-poll-at-a-time-and-view-close-does-not-cancel-the-task
-  (let [selected (:db (transition (assoc base :application-agents (assoc agents/defaults :open? true)) [:application-agents/select "task-a"]))
-        sent (transition selected [:application-agents/poll "task-a"])
-        duplicate (transition (:db sent) [:application-agents/poll "task-a"])
-        closed (transition (:db sent) [:application-agents/close])
-        stale (transition (:db closed) (conj (get-in sent [:studio/http :on-success]) {:task-id "task-a" :cursor 1 :events [] :status "running"}))]
-    (is (nil? (:studio/http duplicate)))
+(deftest a-final-task-drains-retained-pages-and-closing-drops-in-flight-results
+  (let [selected (:db (transition (assoc base :application-agents (assoc agents/defaults :open? true))
+                                  [:application-agents/select "task-a"]))
+        page (fn [cursor next available] [:application-agents/progress (agents/token selected) "task-a" cursor
+                                          {:value {:task-id "task-a" :status "completed" :events []
+                                                   :cursor next :available-cursor available}}])
+        partial (transition selected (page 0 2 3))
+        final (transition (:db partial) (page 2 3 3))
+        duplicate (transition (:db final) (page 2 3 3))
+        closed (transition selected [:application-agents/close])
+        stale (transition (:db closed) (page 0 2 3))]
+    (is (false? (get-in partial [:db :application-agents :stream-complete?])))
+    (is (true? (get-in final [:db :application-agents :stream-complete?])))
+    (is (= [:application-agents/status "task-a"] (:dispatch final)))
+    (is (nil? (:db duplicate)))
     (is (= #{:db} (set (keys closed))))
-    (is (nil? (:db stale)))
-    (is (nil? (get-in closed [:studio/http :body :id])))))
+    (is (nil? (:db stale)))))
 
 (deftest check-results-arrive-before-task-completion-and-only-explicit-ready-candidates-are-described-as-ready
   (let [selected (assoc agents/defaults :selected "task-a" :tasks [{:id "task-a" :status "checking"}])
@@ -83,3 +90,22 @@
     (is (= "new-workspace" (get-in reviewed [:db :ui :workspace :selected-id])))
     (is (= :diff (get-in reviewed [:db :ui :workspace :pane])))
     (is (= "unsaved" (get-in reviewed [:db :ui :workspace :files file-key :source])))))
+
+(deftest a-starting-task-belongs-to-the-runtime-while-its-pane-is-closed
+  (let [opened (:db (transition base [:application-agents/open]))
+        draft (:db (transition opened [:application-agents/edit :prompt "Review the fixtures."]))
+        start (transition draft [:application-agents/start])
+        ack (conj (get-in start [:studio/http :on-success]) {:id "task-a" :status "running"})
+        close (:db (transition (:db start) [:application-agents/close]))
+        reopened (:db (transition close [:application-agents/open]))
+        edited (:db (transition reopened [:application-agents/edit :prompt "A second change."]))
+        accepted (transition close ack)
+        selected (transition (:db accepted) [:application-agents/select "task-a"])
+        replaced (:db (transition (assoc-in edited [:show :runtime-id] "server-b") [:application-agents/runtime-change]))]
+    (is (nil? (:studio/http (transition reopened [:application-agents/start]))))
+    (is (= "" (get-in accepted [:db :application-agents :form :prompt])))
+    (is (= "A second change." (get-in (transition edited ack) [:db :application-agents :form :prompt])))
+    (is (= "task-a" (get-in selected [:db :application-agents :selected])))
+    (is (nil? (:fx selected)))
+    (is (nil? (:db (transition replaced ack))))
+    (is (nil? (:db (transition (:db accepted) ack))))))
