@@ -1,0 +1,33 @@
+name: Capture nearby audience review media
+on:
+  push:
+    branches: [codex/push-page-review-media]
+    paths: [.github/workflows/audience-simulator-evidence.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: codex/push-page-review-media
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: audience-clip-simulator
+          path: ${{ runner.temp }}/clip
+          run-id: 45161248176
+          repository: tolgraven/tolglow
+          github-token: ${{ github.token }}
+      - name: Publish the two simulator captures
+        run: |
+          mkdir -p audience/apple
+          cp "$RUNNER_TEMP/clip/audience-clip.png" audience/apple/full-motion-invitation.png
+          cp "$RUNNER_TEMP/clip/audience-clip.mp4" audience/apple/full-motion-invitation.mp4
+          git config user.name 'Tolglow review media'
+          git config user.email 'review-media@users.noreply.github.com'
+          git add audience/apple/full-motion-invitation.png audience/apple/full-motion-invitation.mp4
+          git commit -m 'Publish the actual Apple simulator App Clip and installation offer'
+          git push origin HEAD:refs/heads/codex/push-page-review-media
