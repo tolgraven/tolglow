@@ -4,6 +4,7 @@ import {existsSync} from 'node:fs';
 import {createServer} from 'node:http';
 import {build} from 'esbuild';
 import {chromium} from 'playwright-core';
+import {fogTransmission, fogAbsorptance} from '../../../js/preview/fog-optics.generated.js';
 
 test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and PCF depth shadows', async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
@@ -50,6 +51,10 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.equal(result.dryHostDifference,0);
     assert.ok(result.jetDarkest < .85 && result.jetClearest > .98, JSON.stringify(result));
     assert.ok(result.roomTransmission < .9 && result.roomTransmission > 0);
+    // The central camera ray crosses eight metres of uniform 10% haze.
+    // Half-float rendering/texture sampling is less precise than the CPU material.
+    assert.ok(Math.abs(result.roomTransmission - fogTransmission(1.25, .1, 8)) < .002);
+    assert.ok(Math.abs(result.calibratedTransmission - fogTransmission(2.5, .1, 8)) < .002);
     assert.ok(Math.abs(result.calibratedTransmission-result.roomTransmission**2)<.001);
     assert.ok(Math.abs(result.calibratedMass-25.6)<.00001);
     assert.ok(result.opticalCore > result.halo && result.halo > 0);
@@ -58,4 +63,13 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.equal(result.dryHalo,0);
     assert.equal(result.glError, 0);
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('the emitted material preserves transparent boundaries and trace attenuation', () => {
+  for (const args of [[0, .3, 4], [1, -.3, 4], [1, .3, -4]]) {
+    assert.equal(fogTransmission(...args), 1);
+    assert.equal(Math.abs(fogAbsorptance(...args)), 0);
+  }
+  assert.equal(fogAbsorptance(1, 1e-19, 1), 1e-19);
+  assert.equal(fogTransmission(1, .3, 10000), 0);
 });

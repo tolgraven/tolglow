@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {fogTransmissionGLSL} from './fog-optics.generated.js';
 import {DEFAULT_EXTINCTION_PER_M, ShowAtmosphere} from './show-atmosphere.js';
 import { FogField, FOG_QUALITY } from './fog-field.js';
 
@@ -8,6 +9,7 @@ void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}`;
 export const FOG_FRAGMENT = `precision highp float;
 precision highp sampler3D;
 #include <packing>
+${fogTransmissionGLSL}
 in vec2 vUv;
 out vec4 volumeOutput;
 uniform sampler2D sceneDepth;
@@ -72,7 +74,7 @@ vec2 coneHit(int i,float angleCos,vec3 ro,vec3 rd,float lo,float hi){
    if(a<0.){lo=max(lo,first);hi=min(hi,last);}else if(slope>0.)lo=max(lo,last);else hi=min(hi,first);}}
  return vec2(lo,hi);
 }
-vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
+vec3 incident(int i,vec3 position,vec3 toEye,float density,bool halo){
   vec3 delta=position-lightPosition[i];float distance=length(delta);vec3 travel=delta/max(distance,.001);
   float cosine=dot(travel,lightDirection[i]);float outer=lightShape[i].x;
   float inner=lightProfile[i].x;
@@ -88,7 +90,7 @@ vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
    float width=path*lightProfile[i].z;
    float radial=length(lateral), outside=radial-coreRadius;
    if(width<=0.||outside>=width)return vec3(0.);
-   spot=.26*(1.-exp(-min(20.,path*extinction)))*(1.-smoothstep(0.,width,outside));
+   spot=.26*(1.-fogTransmission(extinctionPerM,density,path))*(1.-smoothstep(0.,width,outside));
    // Sample the shadow on the illuminated edge that feeds this halo.
    shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*min(1.,.98*coreRadius/max(radial,.001));
   }
@@ -101,10 +103,11 @@ vec3 incident(int i,vec3 position,vec3 toEye,float extinction,bool halo){
   vec3 optical=lightPosition[i]+lightStart[i]*lightDirection[i];
   vec3 midpoint=mix(optical,shadowPoint,.5);
   vec3 uvw=vec3(midpoint.x/room.x+.5,midpoint.y/room.y,midpoint.z/room.z+.5);
-  float opticalDepth=extinctionPerM*amount*path*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
-  return lightColor[i]*lightShape[i].y*spot*attenuation*exp(-opticalDepth)*phase(dot(travel,toEye))*visibility(lightShadow[i],shadowPoint);
+  float incidentDensity=amount*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
+  float transmission=fogTransmission(extinctionPerM,incidentDensity,length(shadowPoint-optical));
+  return lightColor[i]*lightShape[i].y*spot*attenuation*transmission*phase(dot(travel,toEye))*visibility(lightShadow[i],shadowPoint);
 }
-float extinctionAt(vec3 position){
+float densityAt(vec3 position){
  vec3 coordinate=vec3(position.x/room.x+.5,position.y/room.y,position.z/room.z+.5);
  float density=texture(densityTexture,clamp(coordinate,vec3(0.),vec3(1.))).r;
  // Resolved density owns the plume. Coherent advected detail erodes dense jet
@@ -119,7 +122,7 @@ float extinctionAt(vec3 position){
   float folds=smoothstep(.36,.64,billow);
   structure=mix(1.,.08+2.6*folds*folds,detailWeight);
  }
- return (density+(structure-1.)*localDensity)*amount*extinctionPerM;
+ return (density+(structure-1.)*localDensity)*amount;
 }
 void main(){
  if(amount<=0.){volumeOutput=vec4(0.,0.,0.,1.);return;}
@@ -145,14 +148,14 @@ void main(){
   if(n>=raySteps||transmission<.002)break;
   float begin=start+float(n)*stepSize;
   float distance=begin+(.2+.6*jitter)*stepSize;vec3 position=eye+ray*distance;
-  float extinction=extinctionAt(position);
-  float segment=exp(-extinction*stepSize);
+  float density=densityAt(position);
+  float segment=fogTransmission(extinctionPerM,density,stepSize);
   // A bounded hemisphere approximation makes illuminated plumes visible outside
   // direct spots. Caller owns worklight/bounce estimates; this is not GI.
   // Sky irradiance also reaches material near the floor. A height-only mix
   // incorrectly made a warm white plume look like black smoke at its source.
   vec3 ambient=mix(ambientGround,ambientSky,.65+.15*clamp(position.y/room.y,0.,1.));
-  if(extinction>.12){
+  if(density*extinctionPerM>.12){
    // Three coarse canopy samples approximate environment occlusion inside a
    // dense plume. Multiple scattering retains a bright floor, unlike opaque
    // smoke. This is a local lighting estimate, not a second fluid simulation.
@@ -161,7 +164,7 @@ void main(){
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.15,.3,.05)/room,vec3(0.),vec3(1.))).r*.3;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.32,.7,.12)/room,vec3(0.),vec3(1.))).r*.4;
    canopy+=texture(densityTexture,clamp(coordinate+vec3(.55,1.3,.2)/room,vec3(0.),vec3(1.))).r*.6;
-   ambient*=.78+.22*exp(-canopy*extinctionPerM*amount*.56);
+   ambient*=.78+.22*fogTransmission(extinctionPerM,canopy*amount,.56);
   }
   radiance+=transmission*(1.-segment)*.92*ambient;
   for(int i=0;i<16;i++){
@@ -172,11 +175,11 @@ void main(){
     float lo=max(begin,span.x),hi=min(begin+stepSize,span.y);
     if(hi<=lo)continue;
     vec3 samplePosition=eye+ray*((lo+hi)*.5);
-    float localExtinction=extinctionAt(samplePosition);
-    if(localExtinction<=0.)continue;
-    float foreground=exp(-extinction*(lo-begin));
-    radiance+=transmission*foreground*(1.-exp(-localExtinction*(hi-lo)))*.92*
-       incident(i,samplePosition,-ray,localExtinction,halo);
+    float localDensity=densityAt(samplePosition);
+    if(localDensity<=0.)continue;
+    float foreground=fogTransmission(extinctionPerM,density,lo-begin);
+    radiance+=transmission*foreground*(1.-fogTransmission(extinctionPerM,localDensity,hi-lo))*.92*
+       incident(i,samplePosition,-ray,localDensity,halo);
    }
   }
   transmission*=segment;

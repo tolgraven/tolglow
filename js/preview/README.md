@@ -222,3 +222,23 @@ than the analytic box prototype, but thick plume billow detail, current mobile/
 iPad layouts and expanded/fullscreen interaction still require direct review.
 No AAA, physical photometry, real GPU frame-rate, Safari or device claim follows
 from compilation or these controlled captures.
+
+### Calibrated fog material
+
+The ray march, incident beams and reflected-light samples use Afterglow's
+`:optics/fog-transmission` material. Distances are metres. A spatially varying
+plume is integrated in short segments. Each segment consumes the locally
+sampled density and the room's calibrated extinction. Direct illumination on
+an off-axis sample travels the distance from the optical plane to that point.
+
+After changing the Afterglow material, refresh the static module and bundles
+from the Tolglow root:
+
+```sh
+lein run -m afterglow.render.fog-optics js/preview/fog-optics.generated.js
+npm run preview:build
+```
+
+`lein test tolglow.fog-optics-test` detects stale source. The browser fog test
+renders a uniform eight-metre sightline at two calibrated extinction values
+and compares the readback to the scalar material.
