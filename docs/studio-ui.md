@@ -510,3 +510,11 @@ target. If a show variable sets the level, its path appears beside the reading.
 Varying the look preserves that binding. **Set manual target** switches to the
 chosen percentage. **Release group** gives up the scene's fixtures. Active groups have
 disjoint membership.
+
+## Composing on a touch screen
+
+In **Compose**, select a cue and use **Add cue** to append a slot. Each row keeps its move and remove buttons beside its cue name. Open **Parameters** to override inputs or **Layer transforms** to change how this slot affects earlier heads. A sequence exposes each step's duration and musical unit. A macro launches its slots together. Saved compositions appear in a horizontal list when the show has any.
+
+In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
+
+After an optimized build, run `node dev/studio/compose-rig-layout-qa.mjs ORIGIN OUTPUT` against a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.

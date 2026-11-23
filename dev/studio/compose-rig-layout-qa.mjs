@@ -1,0 +1,67 @@
+// A disposable Studio is required because the browser creates and saves a macro.
+import assert from 'node:assert/strict';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {chromium} from 'playwright-core';
+
+const [origin,directory] = process.argv.slice(2);
+const state = await (await fetch(origin+'/api/state',{headers:{Accept:'application/json'}})).json();
+assert.equal(state.status.output.type,'preview','Use a disposable preview-only show');
+await mkdir(directory,{recursive:true});
+const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+  args:['--disable-dev-shm-usage','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const results = {};
+async function measure(page,selector) {
+  return page.locator(selector).evaluateAll(nodes=>nodes.map(n=>{
+    const {top,width,height}=n.getBoundingClientRect(); return [top,width,height].map(Math.round);
+  }));
+}
+try {
+  for (const [label,width,height,touch] of [['phone',390,844,true],['ipad',1024,768,true],['desktop',1440,900,false]]) {
+    const page=await browser.newPage({viewport:{width,height},hasTouch:touch});
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    await page.goto(origin+'/compose');
+    await page.locator('#new-composition').click();
+    const name='Evening drift · '+label;
+    await page.locator('#composition-name').fill(name);
+    await page.locator('#composition-id').fill('layout-'+label);
+    for(const id of ['ember','sweep','breathe','orbital']) {
+      await page.locator('#slot-cue').selectOption(id);
+      await page.locator('#add-slot').click();
+    }
+    const slots=page.locator('.composition-slot');
+    assert.equal(await slots.count(),4);
+    await page.getByLabel('Step 1 duration value').fill('2');
+    await page.getByLabel('Step 1 duration unit').selectOption('bars');
+    await page.evaluate(()=>scrollTo(0,0));
+    await page.screenshot({path:join(directory,label+'-compose.png')});
+    results[label]={steps:await measure(page,'.composition-slot')};
+    await page.locator('#composition-mode').selectOption('macro');
+    assert.equal(await slots.locator('.duration-control').count(),0);
+    await slots.nth(1).getByRole('button',{name:'Move earlier: step 2'}).click();
+    assert.equal(await slots.first().locator('.slot-title').innerText(),'Slow sweep');
+    await page.locator('#save-composition').click();
+    const saved=page.locator('#composition-library .list-card').filter({hasText:name});
+    await saved.getByRole('button',{name:'Open'}).click();
+    assert.equal(await page.locator('#composition-mode').inputValue(),'macro');
+    await page.locator('#composition-mode').selectOption('sequence');
+    assert.equal(await page.getByLabel('Step 2 duration value').inputValue(),'2');
+    assert.equal(await page.getByLabel('Step 2 duration unit').inputValue(),'bars');
+    await page.locator('a[data-view=rig]').click();
+    const rig=page.locator('.rig-editor');
+    await rig.getByRole('button',{name:'Explore',exact:true}).click();
+    assert.equal(await rig.locator('.rig-path-form').count(),0);
+    const canvas=rig.locator('canvas');
+    await canvas.scrollIntoViewIfNeeded();
+    results[label].explore=await measure(page,'.rig-editor canvas');
+    await rig.getByRole('button',{name:'Draw path',exact:true}).click();
+    await rig.getByLabel('Duration',{exact:true}).waitFor();
+    results[label].draw=await measure(page,'.rig-editor canvas');
+    await rig.getByRole('button',{name:'Explore',exact:true}).click();
+    assert.equal(await rig.locator('.rig-path-form').count(),0);
+    assert.deepEqual(errors,[]);
+    await page.close();
+  }
+  await writeFile(join(directory,'metrics.json'),JSON.stringify(results,null,2)+'\n');
+  console.log(JSON.stringify(results));
+} finally { await browser.close(); }
