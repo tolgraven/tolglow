@@ -20,4 +20,4 @@ Expand the active cue's keyframe inspector and select a head and attribute to co
 
 A Transit show save includes the active endpoints and current progress. This also works for typed batch effects. Loading assigns fresh instance IDs and reconnects their captured windows. A discrete effect such as a shutter program runs each live frame. A failed future prediction leaves real-frame evaluation active for the rest of that segment.
 
-See [Afterglow's scheduling and native output contract](https://github.com/tolgraven/afterglow/blob/1acaadc325be862162b2a4d530a67eebee864e53/doc/architecture/effect-keyframes.md).
+See [Afterglow's scheduling and native output contract](https://github.com/tolgraven/afterglow/blob/8df7561c5cc7acaf9c2c92e7a7cf4da158bc24e0/doc/architecture/effect-keyframes.md).

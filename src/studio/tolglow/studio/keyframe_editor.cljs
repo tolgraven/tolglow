@@ -3,7 +3,8 @@
   (:require [afterglow.render.easing :as easing]
             [cljs.reader :as reader]
             [clojure.string :as str]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [tolglow.transit :as transit]))
 
 (def defaults {:interval {:beats 1} :curve :linear})
 (def curve-types [:linear :smoothstep :sine :ease-in :ease-out :ease-in-out :step :cubic-bezier :spring])
@@ -21,6 +22,17 @@
   (when-let [[_ top bottom] (re-matches #"\s*(\d*\.?\d+)(?:\s*/\s*(\d*\.?\d+))?\s*" s)]
     (let [n (/ (js/Number top) (if bottom (js/Number bottom) 1))]
       (when (and (js/Number.isFinite n) (pos? n)) n))))
+
+(defn duration-text [n]
+  (if (transit/fraction? n) (str (:numerator n) "/" (:denominator n)) (str n)))
+
+(defn parse-interval [s]
+  (when-let [n (ratio-value s)]
+    (if-let [[_ top bottom] (re-matches #"\s*(\d{1,128})\s*/\s*([1-9]\d{0,127})\s*" s)]
+      (transit/->BeatFraction top bottom) n)))
+
+(defn spring-setting [curve k value]
+  (assoc (if (map? curve) curve {:type :spring}) k value))
 
 (defn- select [label value options change]
   [:label [:span label]
@@ -122,8 +134,8 @@
         [:div.keyframe-fields
          [:label [:span "Keyframe interval"]
           ^{:key (str unit amount)}
-          [:input {:aria-label "Keyframe interval" :default-value (str amount)
-                   :on-blur #(if-let [value (ratio-value (text %))]
+          [:input {:aria-label "Keyframe interval" :default-value (duration-text amount)
+                   :on-blur #(if-let [value (parse-interval (text %))]
                                (do (.setCustomValidity (.-target %) "") (change (assoc spec :interval {unit value})))
                                (do (.setCustomValidity (.-target %) "Use a positive duration or fraction.")
                                    (.reportValidity (.-target %))))}]]
@@ -136,7 +148,7 @@
                            ^{:key label} [numeric label (nth (:points curve) i) (when (even? i) 0) (when (even? i) 1)
                                           #(change (assoc-in spec [:curve :points i] %))])]
           :spring [:div.keyframe-fields
-                   [numeric "Spring frequency" (:frequency curve 1.5) 0.01 16 #(change (assoc-in spec [:curve :frequency] %))]
-                   [numeric "Spring damping" (:damping curve 0.45) 0 8 #(change (assoc-in spec [:curve :damping] %))]]
+                   [numeric "Spring frequency" (:frequency curve 1.5) 0.01 16 #(change (assoc spec :curve (spring-setting curve :frequency %)))]
+                   [numeric "Spring damping" (:damping curve 0.45) 0 8 #(change (assoc spec :curve (spring-setting curve :damping %)))]]
           nil)
         [progress spec params change]])]))

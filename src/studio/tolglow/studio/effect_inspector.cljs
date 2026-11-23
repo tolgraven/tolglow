@@ -202,9 +202,25 @@
     (when (:unit sample)
       [:div.keyframe-sample
        [:p (str "Progress " (when (number? (:progress sample)) (.toFixed (:progress sample) 3))
-                " · " (:start sample) " – " (:end sample) " " (name (:unit sample)))]
+                " · " (keyframes/duration-text (:start sample)) " – " (keyframes/duration-text (:end sample)) " " (name (:unit sample)))]
        (when (contains? sample :origin)
          [:dl (for [k [:origin :target :result]] ^{:key k} [:div [:dt (name k)] [:dd (pr-str (get sample k))]])])])))
+
+(defn fixture-options [fixtures search selected]
+  (let [query (str/lower-case (str/trim search))
+        matches? #(str/includes? (str/lower-case (str %)) query)]
+    (into (if selected [selected] [])
+          (comp (map :id) (remove #{selected}) (filter matches?) (take 48))
+          fixtures)))
+
+(defn- fixture-choice [fixtures target change]
+  (r/with-let [search (r/atom "")]
+    [:<>
+     (when (> (count fixtures) 48)
+       [:label [:span "Find fixture"]
+        [:input {:type "search" :aria-label "Find fixture" :value @search
+                 :on-change #(reset! search (.. % -target -value))}]])
+     [choice "Inspect fixture" (fixture-options fixtures @search target) target change]]))
 
 (defn- timeline [instance definition latest context]
   (r/with-let [draft (r/atom (:keyframes definition)) selection (r/atom {})
@@ -217,7 +233,7 @@
           attribute (get @selection :attribute (first attributes))]
       [:section
        [keyframes/editor @draft numeric #(reset! draft %)]
-       [choice "Inspect fixture" (mapv :id fixtures) target #(swap! selection assoc :target %)]
+       [fixture-choice fixtures target #(swap! selection assoc :target %)]
        [choice "Inspect output" attributes attribute #(swap! selection assoc :attribute %)]
        [sample-view (:id instance) target attribute]
        [:button.button {:disabled (or busy? (not= latest (:version definition)) (= @draft (:keyframes definition)))

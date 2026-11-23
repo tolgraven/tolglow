@@ -1,5 +1,6 @@
 (ns tolglow.studio.keyframe-editor-test
   (:require [cljs.test :refer-macros [deftest is]]
+            [tolglow.transit :as transit]
             [tolglow.studio.events :as events]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.keyframe-editor :as editor]))
@@ -20,3 +21,19 @@
     (is (= spec (:keyframes definition)))
     (is (= (dissoc definition :keyframes) (:definition (request 1 nil))))
     (is (thrown? js/Error (request 2 spec)))))
+
+(deftest fractions-remain-edn-data-through-the-builder-and-transit
+  (let [duration (editor/parse-interval "1/3")]
+    (is (= "1/3" (editor/duration-text (transit/decode (transit/encode duration)))))
+    (is (= "{:beats 1/3}" (pr-str {:beats duration})))
+    (is (= 0.25 (editor/parse-interval "0.25")))))
+
+(deftest spring-keyword-and-map-forms-can-be-edited
+  (is (= {:type :spring :frequency 2} (editor/spring-setting :spring :frequency 2)))
+  (is (= {:type :spring :frequency 2 :damping 0.3}
+         (editor/spring-setting {:type :spring :frequency 2} :damping 0.3))))
+
+(deftest a-large-rig-bounds-options-and-retains-the-selected-target
+  (let [fixtures (mapv #(hash-map :id (keyword (str "pixel-" %))) (range 4000))]
+    (is (= 49 (count (inspect/fixture-options fixtures "" :pixel-0))))
+    (is (= [:pixel-0 :pixel-3988] (inspect/fixture-options fixtures "3988" :pixel-0)))))
