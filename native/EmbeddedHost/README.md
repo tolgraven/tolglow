@@ -29,7 +29,7 @@ This example makes the custom module's value available to later modules at `[:mo
 
 ## Live REPL
 
-Open Studio’s REPL in the running show. Each session has its own interpreter namespace and uses the same bounded input queue, streamed output, results, interruption, scratch buffers and saved history as a JVM session. You can require namespaces from the chosen folder and call `tolglow.show/submit!` with the live `runtime`. Definitions from the active session appear in completion and documentation popups. A namespace change applies to subsequent forms. Use `(tolglow.repl/capture-locals!)` inside a function or `let` to make its evaluated locals available through the session's debug namespace.
+Open Studio’s REPL in the running show. Each session has its own interpreter namespace and uses the same bounded input queue, streamed output, results, interruption, scratch buffers and saved history as a JVM session. You can require namespaces from the chosen folder and call `tolglow.show/submit!` with the live `runtime`. Use `(tolglow.show/snapshot tolglow.repl/*runtime*)` to inspect the running show from any session namespace. Definitions from the active session appear in completion and documentation popups. A namespace change applies to subsequent forms. Use `(tolglow.repl/capture-locals!)` inside a function or `let` to make its evaluated locals available through the session's debug namespace.
 
 ## Build and qualification
 

@@ -23,6 +23,7 @@
 
 (defn- interpreter [folder]
   (sci/init (cond-> {:namespaces {'tolglow.show {'submit! show/submit!
+                                                  'snapshot show/snapshot
                                                   'variables show/variables}}}
               folder (assoc :load-fn (partial ns-source folder)))))
 

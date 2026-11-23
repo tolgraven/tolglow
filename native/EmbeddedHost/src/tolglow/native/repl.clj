@@ -15,21 +15,22 @@
        :describe (fn [v] (if (class? v) {:kind :class} {:kind :var :metadata (meta v)}))
        :namespaces (when-not qualifier (map sci/ns-name (sci/all-ns ctx)))})))
 
-(defn- debug-bindings [ctx]
+(defn- session-bindings [ctx]
   (let [api (sci/create-ns 'tolglow.repl)
         session-var (sci/new-dynamic-var 'tolglow.repl/*session* nil {:ns api})
+        runtime-var (sci/new-dynamic-var 'tolglow.repl/*runtime* nil {:ns api})
         expose (fn [session values]
                  (let [result (repl/expose-locals! session values)]
                    (sci/add-namespace! ctx (symbol (:namespace result)) values)
                    result))]
     (sci/add-namespace! ctx 'tolglow.repl
-                        {'*session* session-var 'expose-locals! expose
+                        {'*session* session-var '*runtime* runtime-var 'expose-locals! expose
                          'capture-locals! (sci/copy-var repl/capture-locals! api)})
-    session-var))
+    {:session-var session-var :runtime-var runtime-var}))
 
 (defn evaluator [show-ctx {:keys [namespace bindings]}]
   (let [ctx (sci/fork show-ctx)
-        session-var (debug-bindings ctx)
+        {:keys [session-var runtime-var]} (session-bindings ctx)
         _ (sci/add-namespace! ctx namespace bindings)
         current (atom (sci/find-ns ctx namespace))]
     {:namespace-name #(str (sci/ns-name @current))
@@ -39,7 +40,8 @@
        (let [reader (sci/reader source)
              next-form #(sci/parse-next ctx reader {:eof eof})
              evaluate (fn [form]
-                        (sci/binding [sci/*1 *1 sci/*2 *2 sci/*3 *3 sci/*e *e session-var repl/*session*]
+                        (sci/binding [sci/*1 *1 sci/*2 *2 sci/*3 *3 sci/*e *e
+                                      session-var repl/*session* runtime-var repl/*runtime*]
                           (sci/eval-form ctx form)))]
          (sci/binding [sci/ns @current sci/out *out* sci/err *err* sci/read-eval false]
            (try (run-forms next-form evaluate)
