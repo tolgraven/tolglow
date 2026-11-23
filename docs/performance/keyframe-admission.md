@@ -6,7 +6,7 @@ A cheap interpolation can still make an effect more expensive. At a stride of tw
 
 The release show ran at 40 Hz and 120 BPM with two real effect workers, 1,024 RGBW pixels and 128 moving heads. A wash applied three deep spatial fields to the strip. All movers aimed at a shared target. Both contained an affine beat ramp so each interval had an exact interpolant. A clock-driven pulse and recurring quarter-beat shutter one-shots exercised the fixed-rate paths while the CPU work changed.
 
-The first pass calibrated stride one and two on **both** eligible effects, twice in opposite orders. Each run warmed up for 48 frames and measured the next 80. A worker-thread CPU timer enclosed the complete direct, endpoint or interpolation operation. A nested timer measured the release sample callback. Time spent waiting to run can increase the latter's **wall-time** cost. The report includes its CPU time as well.
+The first pass calibrated stride one and two on **both** eligible effects, twice in opposite orders. Each run warmed up for 48 frames and measured the next 80. A worker-thread CPU timer enclosed the complete direct, endpoint or interpolation operation. A nested timer measured the release sample callback. Time spent waiting to run can increase the latter's **wall-time** cost. The report includes its CPU time as well. The probe adds two clock reads around each sample and records each row after stopping the enclosing timer.
 
 | Effect | Direct worker CPU (ms) | Endpoint worker CPU (ms) | Blend worker CPU (ms) | Mean at stride two (ms) |
 | --- | ---: | ---: | ---: | ---: |
@@ -33,4 +33,4 @@ AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run \
   -m tolglow.perf.admission-cost target/profiles/admission-cost.edn 1024 128 48 80
 ```
 
-Every measured run compared all universe bytes against the full-rate show. Projected linear RGB and native 3D aim agreed within (10^{-9}). All eight lit pulse frames, ten shutter transitions, one-shot lifetimes and emitted intents matched. The EDN includes counts, mean, p50, p95 and maximum stage cost, both decision pairs, holdout measurements and output traces. [Captured report](../benchmarks/master-performance/admission-cost.edn)
+Every measured run compared all universe bytes against the full-rate show. Projected linear RGB and native 3D aim agreed within 1e-9. All eight lit pulse frames, ten shutter transitions, one-shot lifetimes and emitted intents matched. The EDN includes counts, mean, p50, p95 and maximum stage cost, both decision pairs, holdout measurements and output traces. [Captured report](../benchmarks/master-performance/admission-cost.edn)

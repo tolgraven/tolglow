@@ -30,6 +30,12 @@ Report limits and measured error alongside time saved for each device. A faster 
   controlled overload and recovery, it inspected two definitions, matched
   every reference flash byte, and returned the wash from stride eight to one.
   [Reference replay](multirate-quality.md) · [Recovery test](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
+* **Admit effects using evidence from both worker stages.** On 1,024 RGBW pixels
+  and 128 moving heads, stride two saved 0.27–0.66 ms per wash frame and cost
+  0.20–0.24 ms per shared-aim frame. The default threshold kept the aim at
+  full rate. A zero threshold admitted it in both repeat runs.
+  [Admission experiment and capture](keyframe-admission.md)
+
 * **Count the whole interpolation window.** Cheap interpolation frames can hide
   expensive endpoint preparation. On a 1,024-pixel and 64-mover show,
   four-frame spacing reduced worker CPU for a deep RGB wash but increased it
@@ -43,12 +49,6 @@ Report limits and measured error alongside time saved for each device. A faster 
   A separate comparison found identical native aim, RGB, shutter, cue lifetime,
   intents, and all DMX universe bytes for 160 frames.
   [Measured Afterglow change](https://github.com/tolgraven/afterglow/pull/76)
-
-* **Admit effects using evidence from both worker stages.** On 1,024 RGBW pixels
-  and 128 moving heads, stride two saved 0.27–0.66 ms per wash frame and cost
-  0.20–0.24 ms per shared-aim frame. The default threshold kept the aim at
-  full rate. A zero threshold admitted it in both repeat runs.
-  [Admission experiment and capture](keyframe-admission.md)
 
 The paired master profile retains `multirate-quality.edn`,
 `transient-scheduling.edn`, `sampling-cost.edn` and both source revisions.
