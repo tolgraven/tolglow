@@ -1,0 +1,505 @@
+{
+  "tolglow": "68fe5d32a1505667cd2f3af7a65dff2f67be443e",
+  "afterglow": "14abdf9630baba74bbf70029a07609a14686eb01",
+  "mainJsSha256": "513f68056b8131d8f4adfdadad2208c18c3585b850f3c3c019866c993da8755e",
+  "workerJsSha256": "e32a2306187fe2c50148227a91c8c143106a3bf71734c33fa152f14d9a6ababf",
+  "platform": "linux",
+  "architecture": "x64",
+  "output": "preview only",
+  "scenarios": [
+    {
+      "durationMs": 20000.594999998808,
+      "invalid": [],
+      "rendererThread": "worker",
+      "frameMeasurement": "accepted DOM bitmap",
+      "presented": {
+        "frames": 7,
+        "hz": 0.3499895878097835,
+        "p50Ms": 2654.7999999821186,
+        "p95Ms": 3505.25,
+        "maxMs": 3505.25,
+        "over25ms": 6
+      },
+      "windowRaf": {
+        "frames": 999,
+        "hz": 49.94851403171053,
+        "p50Ms": 16.665000000000873,
+        "p95Ms": 33.33499999999913,
+        "maxMs": 449.9800000000032,
+        "over25ms": 126
+      },
+      "frameOffsetsMs": [
+        481.2950000166893,
+        3136.094999998808,
+        5681.305000007153,
+        8168.189999997616,
+        11194.539999991655,
+        14699.789999991655,
+        17618.37999999523
+      ],
+      "qualities": [
+        "low"
+      ],
+      "sceneSizes": [
+        [
+          646,
+          279
+        ],
+        [
+          323,
+          139
+        ]
+      ],
+      "backing": [
+        1075,
+        463
+      ],
+      "css": [
+        1074.984375,
+        463.4375
+      ],
+      "dpr": 1,
+      "displayPixels": [
+        1075,
+        463
+      ],
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "start": {
+        "renderer": "Three.js r187",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "targetRefreshHz": 10,
+        "quality": "low",
+        "frameCPUms": 25.680000007152557,
+        "gpuTimeMs": null,
+        "gpuCompletionWaitMs": 2903.155000001192,
+        "workerFrameMs": 2931.639999985695,
+        "sceneSamples": 0,
+        "edgeFilter": "FXAA",
+        "renderScale": 1,
+        "displayRange": "sdr",
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "activeLights": 8,
+        "shadowCount": 1,
+        "workLight": 0.22,
+        "fogAmount": 0.25,
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            213,
+            92
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 13.294999986886978,
+          "uploads": 4,
+          "cells": 4800,
+          "steps": 6,
+          "time": 0.3,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07116179569158704,
+          "maximumDensity": 0.7652308940887451,
+          "heat": 0.0009918488296441165,
+          "activeSources": 1,
+          "massEstimate": 42.69707741495222
+        },
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8"
+        ],
+        "fallbackReason": null,
+        "frameNumber": 1024
+      },
+      "end": {
+        "renderer": "Three.js r187",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "targetRefreshHz": 10,
+        "quality": "low",
+        "frameCPUms": 13.935000002384186,
+        "gpuTimeMs": null,
+        "gpuCompletionWaitMs": 995.6299999952316,
+        "workerFrameMs": 1037.2100000083447,
+        "sceneSamples": 0,
+        "edgeFilter": "FXAA",
+        "renderScale": 0.5,
+        "displayRange": "sdr",
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "activeLights": 8,
+        "shadowCount": 1,
+        "workLight": 0.22,
+        "fogAmount": 0.25,
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            106,
+            45
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 2.5750000178813934,
+          "uploads": 11,
+          "cells": 4800,
+          "steps": 20,
+          "time": 1.0000000000000002,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07355130466632545,
+          "maximumDensity": 1.6683675050735474,
+          "heat": 0.002864712065671683,
+          "activeSources": 1,
+          "massEstimate": 44.13078279979527
+        },
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8"
+        ],
+        "fallbackReason": null,
+        "frameNumber": 1869
+      },
+      "name": "lit-fixed-ambient-fog",
+      "head1": {
+        "before": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0,
+          "pose": {
+            "pan-deg": -180,
+            "tilt-deg": -90,
+            "direction": [
+              -7.498798913309288e-33,
+              -1,
+              -6.123233995736766e-17
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        },
+        "middle": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0,
+          "pose": {
+            "pan-deg": -180,
+            "tilt-deg": -90,
+            "direction": [
+              -7.498798913309288e-33,
+              -1,
+              -6.123233995736766e-17
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        },
+        "after": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0,
+          "pose": {
+            "pan-deg": -180,
+            "tilt-deg": -90,
+            "direction": [
+              -7.498798913309288e-33,
+              -1,
+              -6.123233995736766e-17
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        }
+      }
+    },
+    {
+      "durationMs": 20148.72999998927,
+      "invalid": [],
+      "rendererThread": "worker",
+      "frameMeasurement": "accepted DOM bitmap",
+      "presented": {
+        "frames": 8,
+        "hz": 0.39704735732744745,
+        "p50Ms": 2615.705000013113,
+        "p95Ms": 3643.1649999916553,
+        "maxMs": 3643.1649999916553,
+        "over25ms": 7
+      },
+      "windowRaf": {
+        "frames": 1041,
+        "hz": 51.6657873722341,
+        "p50Ms": 16.665000000000873,
+        "p95Ms": 33.330000000001746,
+        "maxMs": 399.9850000000006,
+        "over25ms": 78
+      },
+      "frameOffsetsMs": [
+        203.81999999284744,
+        2713.4099999964237,
+        5329.115000009537,
+        8027.610000014305,
+        10039.015000015497,
+        12128.29500001669,
+        15152.564999997616,
+        18795.72999998927
+      ],
+      "qualities": [
+        "low"
+      ],
+      "sceneSizes": [
+        [
+          323,
+          139
+        ]
+      ],
+      "backing": [
+        1075,
+        463
+      ],
+      "css": [
+        1074.984375,
+        463.4375
+      ],
+      "dpr": 1,
+      "displayPixels": [
+        1075,
+        463
+      ],
+      "browser": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "start": {
+        "renderer": "Three.js r187",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "targetRefreshHz": 10,
+        "quality": "low",
+        "frameCPUms": 49.08500000834465,
+        "gpuTimeMs": null,
+        "gpuCompletionWaitMs": 1553.5349999964237,
+        "workerFrameMs": 1605.744999974966,
+        "sceneSamples": 0,
+        "edgeFilter": "FXAA",
+        "renderScale": 0.5,
+        "displayRange": "sdr",
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "activeLights": 8,
+        "shadowCount": 1,
+        "workLight": 0.22,
+        "fogAmount": 0.7,
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            106,
+            45
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 38.64999997615814,
+          "uploads": 15,
+          "cells": 4800,
+          "steps": 28,
+          "time": 1.4000000000000006,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07489653803718586,
+          "maximumDensity": 2.080838918685913,
+          "heat": 0.00381072869311861,
+          "activeSources": 1,
+          "massEstimate": 44.93792282231152
+        },
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8"
+        ],
+        "fallbackReason": null,
+        "frameNumber": 2256
+      },
+      "end": {
+        "renderer": "Three.js r187",
+        "deviceRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "softwareRenderer": true,
+        "targetRefreshHz": 10,
+        "quality": "low",
+        "frameCPUms": 6.689999997615814,
+        "gpuTimeMs": null,
+        "gpuCompletionWaitMs": 1074.0400000214577,
+        "workerFrameMs": 1096.0199999809265,
+        "sceneSamples": 0,
+        "edgeFilter": "FXAA",
+        "renderScale": 0.5,
+        "displayRange": "sdr",
+        "fixtureCount": 8,
+        "visibleFixtures": 8,
+        "activeLights": 8,
+        "shadowCount": 1,
+        "workLight": 0.22,
+        "fogAmount": 0.7,
+        "fog": {
+          "quality": "phone",
+          "targetSize": [
+            106,
+            45
+          ],
+          "raySteps": 24,
+          "lightCount": 8,
+          "shadowCount": 1,
+          "cpuUpdateMs": 2.185000002384186,
+          "uploads": 23,
+          "cells": 4800,
+          "steps": 44,
+          "time": 2.2,
+          "droppedSeconds": 0,
+          "meanDensity": 0.07756765038861582,
+          "maximumDensity": 2.6578733921051025,
+          "heat": 0.005479277548850862,
+          "activeSources": 1,
+          "massEstimate": 46.540590233169496
+        },
+        "camera": [
+          1.0800000000000003,
+          2.400000000000001,
+          7.599999999999996
+        ],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8"
+        ],
+        "fallbackReason": null,
+        "frameNumber": 3147
+      },
+      "name": "moving-heads-dense-fog",
+      "head1": {
+        "before": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0.7990711465990481,
+          "pose": {
+            "pan-deg": 107.66561277565734,
+            "tilt-deg": 9.000000000000014,
+            "direction": [
+              0.941112693174068,
+              0.15643446504023112,
+              -0.29972513557296
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0.55,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        },
+        "middle": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0.7461269334662125,
+          "pose": {
+            "pan-deg": 88.60569604783649,
+            "tilt-deg": 9.000000000000014,
+            "direction": [
+              0.987395899668911,
+              0.15643446504023112,
+              0.024033215860522674
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0.55,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        },
+        "after": {
+          "intensity": 0.7,
+          "zoom": 0,
+          "focus": 0,
+          "id": "head-1",
+          "pan": 0.21012435051974415,
+          "pose": {
+            "pan-deg": -104.35523381289211,
+            "tilt-deg": 9.000000000000014,
+            "direction": [
+              -0.9568499166245651,
+              0.15643446504023112,
+              -0.24488057334778385
+            ]
+          },
+          "strobe": 0,
+          "tilt": 0.55,
+          "emitted-color": [
+            0.7,
+            0.017499999999999998,
+            0.0056
+          ]
+        }
+      }
+    }
+  ],
+  "qualified": false
+}
