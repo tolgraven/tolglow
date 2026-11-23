@@ -4,7 +4,7 @@
  [{:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
    :kind :implementation :status :in-progress :owner "Nearby audience participation"
    :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge"]
-   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md."]}
+   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md."]}
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]

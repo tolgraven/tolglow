@@ -5,6 +5,7 @@
   (:require [afterglow.control.sensors :as core]
             [afterglow.time :as musical-time]
             [tolglow.agents.credentials :as credentials]
+            [tolglow.sensors.audience :as audience]
             [tolglow.sensors.osc :as osc])
   (:import [java.util UUID]
            [java.security MessageDigest]
@@ -248,10 +249,12 @@
         now ((:now-ms manager))
         {:keys [devices packets]}
         (locking (:lock manager)
-          (let [state (live manager) n (min (:drain-limit manager) (count (:queue state)))
-                packets (subvec (:queue state) 0 n)]
-            (swap! (:state manager) update :queue #(subvec % n))
-            {:devices (:devices state) :packets packets}))
+          (let [{:keys [queue devices]} (live manager)
+                n (min (:drain-limit manager) (count queue))]
+            ;; A subvec retains the consumed prefix when a busy queue never empties.
+            (when (pos? n)
+              (swap! (:state manager) assoc :queue (into [] (subvec queue n))))
+            {:devices devices :packets (subvec queue 0 n)}))
         initial
         (reduce-kv
          (fn [acc id source]
@@ -299,7 +302,7 @@
                   :when (not (get-in source [:state :armed?]))]
             (when (= (get-in source [:state :session-id]) (get-in @(:state manager) [:devices id :session-id]))
               (swap! (:state manager) assoc-in [:devices id :armed?] false)))))
-      result)))
+      (update result :model audience/project))))
 
 (defn start-osc! [manager options]
   (let [generation (:generation (live manager))
