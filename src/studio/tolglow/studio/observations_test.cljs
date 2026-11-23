@@ -54,3 +54,44 @@
                    (is (= 4 (count @pending)))))
           (.catch (fn [e] (is false (str e))))
           (.finally (fn [] (swap! obs/samplers dissoc ::hold) (done)))))))
+
+(deftest replacing-and-withdrawing-an-active-reader-aborts-its-work
+  (async done
+    (let [sent (atom []) held (atom []) control (obs/controller (constantly 50) #(swap! sent conj [%1 %2]))
+          query [:studio/observation-demand :rig]
+          request {:stream "s" :query query
+                   :sources {:coord {:sampler ::position :interval-ms 25 :token "t"
+                                     :show {:show-id :show/club :epoch 0}}}}
+          frame! #(obs/present! control nil "show/club" 0 51)
+          turns #(js/Promise. (fn [resolve _] (js/setTimeout resolve 0)))
+          reader (fn [_ signal]
+                   (js/Promise. (fn [resolve _] (swap! held conj {:signal signal :finish resolve}))))]
+      (obs/register-sampler! ::position {:abortable? true} reader)
+      (obs/configure! control request)
+      (frame!)
+      (is (false? (.-aborted (:signal (first @held)))))
+      (obs/register-sampler! ::position {:abortable? true} reader)
+      (is (false? (.-aborted (:signal (first @held)))) "Same implementation keeps its in-flight work")
+      (obs/register-sampler! ::position (fn [_] [4 5 6]))
+      (is (true? (.-aborted (:signal (first @held)))) "A new implementation aborts before the next frame")
+      (frame!)
+      (-> (turns)
+          (.then (fn []
+                   (is (= [[4 5 6]] (mapv (comp :value second) @sent)))
+                   ((:finish (first @held)) [1 2 3])
+                   (is (= 2 (:sequence (second (first @sent)))) "Hot replacement preserves sequence order")
+                   (obs/register-sampler! ::position {:abortable? true} reader)
+                   (frame!)
+                   (is (= 2 (count @held)))
+                   (obs/configure! control nil)
+                   (is (true? (.-aborted (:signal (second @held)))))
+                   ((:finish (second @held)) [7 8 9])
+                   (turns)))
+          (.then (fn []
+                   (is (= 1 (count @sent)))
+                   (is (= 2 (count @held)))))
+          (.catch (fn [error] (is false (str error))))
+          (.finally (fn []
+                      (obs/configure! control nil)
+                      (swap! obs/samplers dissoc ::position)
+                      (done)))))))
