@@ -456,6 +456,8 @@ Compact banks fill the card width. Wider screens can place eight controls in a r
 
 ## Responsive Studio qualification
 
+The `studio` CI job exercises live control geometry and route navigation after building the production application. Its **studio-layouts** artifact contains screenshots and CSS-pixel measurements for each tested viewport. Download the artifact from the architecture regression run to inspect a changed layout.
+
 The page-by-page results below come from touch-enabled Chromium and desktop Chromium against a release build served by Ring. The layouts used 390 × 844, 1024 × 768 and 1440 × 900 CSS pixels.
 
 | Workspace | Operator interaction exercised | Measured change or result |

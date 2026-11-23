@@ -459,6 +459,7 @@ export class SceneRenderer {
     this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
     this.film.uniforms.phase.value = this.reducedMotion.matches ? 0 : Math.floor(this.clock * 24) % 1024;
     this.composer.render(dt); this.editorOverlay?.render(this.renderer, this.camera); this.lastCPU = performance.now() - started; this.draws++;
+    this.canvas.tolglowCaptureVideo?.(this.canvas);
     this.observedFrame?.(this.canvas, this.snapshot?.['show-id'], this.snapshot?.epoch, this.snapshot?.['frame-number'] ?? 0);
     // Backpressure leaves main-thread time for cue/parameter input when a
     // driver blocks on compilation/submission. Recover gradually after it clears.

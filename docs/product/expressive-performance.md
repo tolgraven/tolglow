@@ -77,9 +77,8 @@ timestamps before a domain binding chooses quantization or smoothing.
 Automatic mapping should use semantic parameter metadata: type, range, unit,
 category, preferred gesture, polarity and display label. Offer a reviewable map,
 MIDI learn, explicit overrides and saved device profiles. Do not infer every
-controller's protocol from Push 2 or replace user mappings on reconnect. Generic
-MPE/explicit captured-address support is not native Push 3 display or standalone
-support.
+controller's protocol from Push 2 or replace user mappings on reconnect. Tethered Push 3 has a separate [USB screen qualification](../push-display-packaging.md#tethered-push-3).
+Standalone hosting requires separate implementation and device measurements.
 
 X-Touch and multiple extenders need a separately verified profile. Inspect actual
 Ableton remote-script/MCU references, document the selected mode and port
