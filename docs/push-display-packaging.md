@@ -132,3 +132,11 @@ The 24-frame software Chromium check took 25.3 seconds for cold shader compilati
 and first capture. Warm captures had a 3.86-second median and a 6.18-second maximum
 on the shared SwiftShader host. These are software rendering measurements. Hardware
 GPU throughput and transfer to a physical Push remain unmeasured.
+
+### Live parameter history on the encoder bank
+
+Selecting **History** shows a graph for each numeric, vector, or color input with an active source. A held LFO shows **Held** with its ordinary widget. A gate without a current sample shows **Waiting**. Releasing the hold starts a fresh graph. A source that actively produces one constant value keeps its flat graph. Manual parameters retain their knobs, spatial controls and waveform selectors with shape previews.
+
+History records the effective inputs from completed show frames. A parameter block that varies across the rig uses the selected eligible fixture, or the first eligible fixture in launch order. Changing the sampled fixture starts a new trace. The target picker and other display modes release the histories. The audio page still shows compact values below its waveform.
+
+Run `TOLGLOW_PUSH_ONLY=1 lein run -m tolglow.qa.push-parameters /tmp/push-parameters` after the production Studio build, with Chromium installed. It captures 48 native-size display frames covering static controls, moving and constant LFOs, held inputs, resumed modulation and detach.
