@@ -6,6 +6,7 @@
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.time :as time]
             [tolglow.compiler :as compiler]
+            [tolglow.compiler.blocks :as blocks]
             [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry]))
 
@@ -166,7 +167,7 @@
    (let [definition (or (when (and enabled? (matching/active? definition))
                           (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
                         definition)
-         {:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
+         {:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
@@ -179,6 +180,7 @@
                     (when enabled? fixtures))
          {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
+             positions (when block-plan (blocks/positions fixtures))
              scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
              envelope-attributes (set envelope-attributes)]
          (with-meta
@@ -190,6 +192,7 @@
                    _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                        (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
                    params (registry/resolve-params schemas (merge defaults (:params instance)))
+                   params (if block-plan (blocks/with-variables block-plan params frame) params)
                    releasing? (= :releasing (:phase instance))
                    clock (time/frame-clock frame)
                    envelope-result (when envelope-fn
@@ -205,11 +208,13 @@
                         :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
                                          (max 0 (- (:beat clock) (:started-at-beat instance))))
                         :meter (time/normalize-meter (:timing-meter instance))}
+                   env (if (and (seq (:tweens block-plan)) (not done?)) (blocks/sample-tweens block-plan env) env)
                    exact? (exact-environment? numeric env)
                    blocks (if (or done? exact?) []
                               (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]
                (if exact? (scalar-step context)
                    (-> context
+                       (blocks/observed block-plan env frame positions)
                        (assoc :state state :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))

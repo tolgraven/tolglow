@@ -3,6 +3,7 @@
   lower into the existing numeric IR; no parallel signal execution engine exists."
   (:require [clojure.string :as str]
             [afterglow.render.ir :as ir]
+            [afterglow.render.blocks :as blocks]
             [tolglow.registry :as registry]
             [tolglow.effects :as fx]))
 
@@ -69,16 +70,19 @@
                 (assoc-in [:versions [id version]] definition) (update :revision inc)))))
 
 (defn builtin-waveforms []
-  (let [phase (fx/param phase-input) fraction {:op :fract :args [phase]}
-        sine (fx/clamp (fx/add 0.5 (fx/multiply 0.5 {:op :sin :args [(fx/multiply (* 2.0 Math/PI) phase)]})))
-        triangle (fx/subtract 1.0 {:op :abs :args [(fx/subtract (fx/multiply 2.0 fraction) 1.0)]})
-        pulse (fx/subtract 1.0 {:op :floor :args [(fx/add fraction (fx/subtract 1.0 (fx/clamp (fx/param :duty))))]})]
+  (let [inputs {:phase (fx/param phase-input)}
+        from-block (fn [id params]
+                     (:expression (blocks/plan {:base 0.0 :stages [{:block id :inputs params}]})))
+        sine (fx/clamp (from-block :lfo/sine inputs))
+        triangle (from-block :lfo/triangle inputs)
+        saw (from-block :lfo/saw inputs)
+        pulse (from-block :lfo/pulse (assoc inputs :duty (fx/param :duty)))]
     [{:id :sine :version 1 :name "Sine" :category :smooth :range [0.0 1.0] :params {}
       :expression sine :discontinuities []}
      {:id :triangle :version 1 :name "Triangle" :category :angular :range [0.0 1.0] :params {}
       :expression triangle :discontinuities [{:channel :slope :phase 0.0} {:channel :slope :phase 0.5}]}
      {:id :saw :version 1 :name "Saw" :category :discontinuous :range [0.0 1.0] :params {}
-      :expression fraction :discontinuities [{:channel :value :phase 0.0}]}
+      :expression saw :discontinuities [{:channel :value :phase 0.0}]}
      {:id :pulse :version 1 :name "Pulse" :category :discontinuous :range [0.0 1.0]
       :params {:duty (fx/parameter 0.5 {:bounds [0.0 1.0] :semantic/type :duty-cycle
                                       :semantic/unit :ratio :control/axis :slide})}
@@ -161,6 +165,22 @@
   [state id options]
   (or (get (channels state id options) (:channel options :value))
       (fail! [:channel] "Unknown signal channel")))
+
+(defn waveform-block
+  "Capture a registered waveform/version as a portable prefab. Its phase and
+  waveform parameters become stage inputs. Choose :slope, :jagginess or
+  :angular-velocity to drive another effect input from the same signal."
+  ([state id] (waveform-block state id {}))
+  ([state id options]
+   (let [definition (lookup state id (:version options))
+         input #(hash-map :op :input :key %)
+         defaults (update-vals (:params definition) :default)
+         settings (assoc options :params (into {} (map (fn [key] [key (input key)])) (keys defaults))
+                         :phase (input phase-input))]
+     {:name (:name definition) :mode :replace
+      :waveform {:id id :version (:version definition) :channel (:channel options :value)}
+      :inputs (assoc defaults phase-input {:op :beat})
+      :expression (sample state id settings)})))
 
 (defn- choice-definitions [state choices]
   (when-not (and (vector? choices) (<= 1 (count choices) 16))

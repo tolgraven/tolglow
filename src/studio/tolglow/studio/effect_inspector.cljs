@@ -3,6 +3,8 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.authoring.output-patch :as patch]
+            [tolglow.studio.block-inspector :as block-inspector]
+            [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
             [tolglow.studio.parameter-widgets :as widgets]))
@@ -206,34 +208,18 @@
        (when (contains? sample :origin)
          [:dl (for [k [:origin :target :result]] ^{:key k} [:div [:dt (name k)] [:dd (pr-str (get sample k))]])])])))
 
-(defn fixture-options [fixtures search selected]
-  (let [query (str/lower-case (str/trim search))
-        matches? #(str/includes? (str/lower-case (str %)) query)]
-    (into (if selected [selected] [])
-          (comp (map :id) (remove #{selected}) (filter matches?) (take 48))
-          fixtures)))
-
-(defn- fixture-choice [fixtures target change]
-  (r/with-let [search (r/atom "")]
-    [:<>
-     (when (> (count fixtures) 48)
-       [:label [:span "Find fixture"]
-        [:input {:type "search" :aria-label "Find fixture" :value @search
-                 :on-change #(reset! search (.. % -target -value))}]])
-     [choice "Inspect fixture" (fixture-options fixtures @search target) target change]]))
-
 (defn- timeline [instance definition latest context]
   (r/with-let [draft (r/atom (:keyframes definition)) selection (r/atom {})
                key [(:id instance) (:version definition) :keyframes]]
     (let [{:keys [busy? error sent]} @(rf/subscribe [:inspect/status key])
           numeric (into [] (keep (fn [[id schema]] (when (numeric-schema? schema) id))) (:params definition))
-          fixtures @(rf/subscribe [:inspect/fixtures])
+          first-fixture @(rf/subscribe [::picker/first-id])
           attributes (into [] (distinct (map :attribute (patch/rows definition))))
-          target (get @selection :target (:id (first fixtures)))
+          target (get @selection :target first-fixture)
           attribute (get @selection :attribute (first attributes))]
       [:section
        [keyframes/editor @draft numeric #(reset! draft %)]
-       [fixture-choice fixtures target #(swap! selection assoc :target %)]
+       [picker/choose "Inspect fixture" "Choose fixture" target #(swap! selection assoc :target %)]
        [choice "Inspect output" attributes attribute #(swap! selection assoc :attribute %)]
        [sample-view (:id instance) target attribute]
        [:button.button {:disabled (or busy? (not= latest (:version definition)) (= @draft (:keyframes definition)))
@@ -243,7 +229,6 @@
        (when sent [:small (str "Published v" sent)])])
     (finally (rf/dispatch [:inspect/forget key]))))
 
-(rf/reg-sub :inspect/fixtures (fn [db _] (get-in db [:server-projection :view :rig :fixtures])))
 (defn- timing-panel [instance definition latest context]
   (r/with-let [open? (r/atom false)]
     [:details.slot-parameter-editor {:on-toggle #(reset! open? (.. % -currentTarget -open))}
@@ -257,6 +242,8 @@
       [:small (str "v" (:effect-version instance) " · " (widgets/label (:reload-policy instance)))]]
      ^{:key (str (:id instance) "/" (:version definition))} [timing-panel instance definition latest-version token]
      (for [[i fault] (map-indexed vector (faults-for faults instance))] ^{:key i} [fault-details fault])
+     (when (seq (:blocks definition))
+       [block-inspector/inspector (:id instance) (:blocks definition)])
      (for [{:keys [ref attribute value] :as row} (patch/rows definition)
            :let [parameters (patch/sources value)]]
        ^{:key (pr-str [(:version definition) ref])}

@@ -25,6 +25,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Sample continuous effect output at a projected musical clock, inspect or modulate the tween, and restore it at the same point."]
    :evidence ["Afterglow #62 tests future transport projection, native typed fields, faults, parallel workers and actual DMX. Tolglow exercises scalar and batch compilers, a reversing progress source, live reactive inspection, and full Transit save and restore. The 834-pixel Studio touch capture edits both Bézier coordinates, publishes an exact quarter-beat interval, and verifies all three live values. See docs/effect-keyframes.md."]}
+  {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
+   :evidence ["Afterglow #65 and Tolglow #108. Six fragment shaders and two native field programs were compared with the JVM on Mesa and SwiftShader. The focused host tests launch real effects, trace scalar and batched values, check per-frame variable resolution and reload the Transit show. A running Ring Studio release and the passive Push webview provided the visual recordings. Physical hardware and the shared UV/world fixture-input follow-up are tracked separately."]}
   {:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]

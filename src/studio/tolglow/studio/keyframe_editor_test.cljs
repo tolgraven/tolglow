@@ -2,6 +2,7 @@
   (:require [cljs.test :refer-macros [deftest is]]
             [tolglow.transit :as transit]
             [tolglow.studio.events :as events]
+            [tolglow.studio.fixture-picker :as picker]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.keyframe-editor :as editor]))
 
@@ -35,5 +36,10 @@
 
 (deftest a-large-rig-bounds-options-and-retains-the-selected-target
   (let [fixtures (mapv #(hash-map :id (keyword (str "pixel-" %))) (range 4000))]
-    (is (= 49 (count (inspect/fixture-options fixtures "" :pixel-0))))
-    (is (= [:pixel-0 :pixel-3988] (inspect/fixture-options fixtures "3988" :pixel-0)))))
+    (is (= 49 (count (picker/fixture-options fixtures "" :pixel-0))))
+    (is (= [:pixel-0 :pixel-3988] (picker/fixture-options fixtures "3988" :pixel-0)))))
+
+(deftest both-inspectors-bound-the-listed-rows-for-dense-fixtures
+  (let [rig (mapv (fn [n] {:id n :name (str "Emitter " n)}) (range 20000))]
+    (is (= 48 (count (picker/fixture-options rig "" nil))))
+    (is (= [12 19876] (picker/fixture-options rig "emitter 19876" 12)))))

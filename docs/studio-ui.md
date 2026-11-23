@@ -99,6 +99,30 @@ host checkout or lighting registry. See
 [`vendor/neovim/README.md`](../resources/studio/vendor/neovim/README.md) for provenance
 and bundled licenses.
 
+### Assigning and inspecting effect blocks
+
+In **Library**, open an effect in the EDN editor and select **Assign blocks**.
+Choose a parameter or output under **Block binding**, pick a material or waveform,
+then select **Add stage**. The catalog includes the effect’s own prefab definitions.
+Choose **Inputs** to change a constant, reference another parameter, or use the
+beat, bar, phrase or time clock. **Coordinates** selects world XYZ or surface UV.
+The arrow buttons change stage order. **Wet amount** controls how much of that
+stage reaches the next one. **Add private or variable binding** accepts a private
+varying name or a space-separated show variable path such as `weather density`.
+
+**Write stages to EDN** updates the block map in the current draft and preserves
+surrounding source and comments. **Validate & publish** sends that definition to
+the show. With **Publish valid edits** enabled the normal live-edit policy applies.
+In the visual RGB builder, use **Assign blocks** before **Generate EDN**.
+
+In **Perform**, expand the running effect and open **Block trace**. Choose its
+binding and fixture. The stage and component selectors compare the dry value,
+signed offset, stage result and final value on one scale. The plot retains up to
+96 observed show timestamps. Closing the inspector, changing its target or
+scrolling it outside the viewport releases the old WebSocket query. Push uses
+the same plot when its display mode is `:block-trace`, fed by the selected live
+instance’s passive display snapshots.
+
 ## Rig and preview
 
 Rig & space edits room dimensions and fixture names, XYZ positions in metres,

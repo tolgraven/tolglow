@@ -2,6 +2,7 @@
   "Compile declarative effects to pure context middleware, using the shared
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
+            [tolglow.compiler.blocks :as blocks]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.time :as time]
@@ -53,12 +54,12 @@
   "World positions and directions accept signed coordinates outside the unit interval."
   #{:aim :direction})
 
-(defn- compile-output [schemas bind-pure i output]
+(defn- compile-output [schemas bind-pure prepared? i output]
   (let [path [:outputs i :value]
         value (:value output)
         tween? (= :tween (:op value))
         sample (when tween? (with-path (conj path :spec) #(tween/compile-tween (:spec value))))
-        expression (when-not tween? (prepare-expression value schemas path))
+        expression (when-not tween? (if prepared? value (prepare-expression value schemas path)))
         errors (when expression (ir/validate-expression expression))]
     (when (seq errors)
       (throw (ex-info "Invalid effect expression"
@@ -108,8 +109,10 @@
                         {:errors (mapv #(update % :path (partial into [:modulation])) errors)})))))
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
-        outputs (mapv (partial compile-output schemas bind-pure) (range)
-                      (registry/output-entries (:outputs definition)))
+        entries (registry/output-entries (:outputs definition))
+        block-plan (when (contains? definition :blocks) (blocks/prepare definition entries prepare-expression))
+        outputs (mapv (partial compile-output schemas bind-pure (some? block-plan)) (range)
+                      (or (:outputs block-plan) entries))
         selected (when (contains? definition :targets) (set (:targets definition)))
         envelope-spec (:envelope definition)
         envelope-fn (when (contains? definition :envelope)
@@ -120,7 +123,7 @@
                           (every? (into registry/emitter-attributes [:dimmer :color :strobe :fog])
                                   envelope-attributes))))
       (fail! [:envelope :attributes] "Envelope targets must be intensity/color attributes"))
-    {:schemas schemas :defaults defaults :outputs outputs :selected selected
+    {:schemas schemas :defaults defaults :outputs outputs :block-plan block-plan :selected selected
      :envelope-fn envelope-fn :envelope-attributes envelope-attributes})))
 
 (defn- validate-frame-fixtures! [fixtures]
@@ -155,8 +158,9 @@
   ([definition bind-pure] (compile-effect definition bind-pure nil))
   ([definition bind-pure match-plan] (compile-effect definition bind-pure match-plan nil))
   ([definition bind-pure match-plan rig]
-  (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]}
+  (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
+        positions (when block-plan (blocks/positions rig))
         select-fixtures (fixture-selector rig selected)]
     ((if (predictable-outputs? definition) keyframes/predictable identity)
      (fn [{:keys [frame instance state] :as context}]
@@ -165,6 +169,7 @@
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                 (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
             params (registry/resolve-params schemas (merge defaults (:params instance)))
+            params (if block-plan (blocks/with-variables block-plan params frame) params)
             releasing? (= :releasing (:phase instance))
             clock (time/frame-clock frame)
             envelope-result (when envelope-fn
@@ -182,6 +187,7 @@
                  :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
                                   (max 0 (- (:beat clock) (:started-at-beat instance))))
                  :meter (time/normalize-meter (:timing-meter instance))}
+            env (if (and (seq (:tweens block-plan)) (not done?)) (blocks/sample-tweens block-plan env) env)
             ;; A tween depends on the instance clock, not fixture geometry.
             ;; Resolve it once per frame, including captured-meter normalization.
             outputs (if done? outputs
@@ -220,6 +226,7 @@
                              rows))))
                     fixtures))]
         (-> context
+            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))))))
