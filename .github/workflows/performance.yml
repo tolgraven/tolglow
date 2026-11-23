@@ -51,25 +51,31 @@ jobs:
           (let [[path lane blob out] *command-line-args*
                 report (edn/read-string (slurp path))
                 summary (:summary report)]
-            (assert (= 240 (:nominal-slots summary)))
-            (assert (:show-output-exercised? summary) (select-keys summary [:faulted-instances :incomplete-packets :distinct-volume-poses :distinct-delivered-aim-states]))
-            (assert (= 0 (:incomplete-packets summary)))
             (let [result (assoc (select-keys report [:rig :summary :window-resources :motion])
                                 :variant lane :host-source-blob blob
                                 :workload "c4d860a7081b12239a9b51c968dea69e87db4b21"
                                 :afterglow-tree "7a1067f6c6858094d5053577cb11cef5bcf6a04d")]
               (spit out (pr-str result))
               (prn lane (select-keys summary [:nominal-slots :completed-renders :complete-within-25-ms
-                                             :sent :source-counts :incomplete-packets]) (:window-resources report))))
+                                             :sent :source-counts :incomplete-packets]) (:window-resources report)))
+            (assert (= 240 (:nominal-slots summary)))
+            (assert (:show-output-exercised? summary) (select-keys summary [:faulted-instances :incomplete-packets :distinct-volume-poses :distinct-delivered-aim-states]))
+            (assert (= 0 (:incomplete-packets summary))))
           CLJ
           deps=$(lein with-profile +benchmark classpath)
+          failed=0
           for label in A1 B1 B2 A2; do
             git restore --source=HEAD -- src/tolglow/spatial.clj
             if [[ "$label" == B* ]]; then git apply "$RUNNER_TEMP/compact.patch"; fi
             source_blob=$(git hash-object src/tolglow/spatial.clj)
-            lein with-profile +benchmark run -m tolglow.perf.weighted-live "$RUNNER_TEMP/$label.edn" 20000 160 240 > "$RUNNER_TEMP/$label.log"
-            java -cp "$deps" clojure.main "$RUNNER_TEMP/aggregate.clj" "$RUNNER_TEMP/$label.edn" "$label" "$source_blob" "../results/$label.edn"
+            if lein with-profile +benchmark run -m tolglow.perf.weighted-live "$RUNNER_TEMP/$label.edn" 20000 160 240 > "$RUNNER_TEMP/$label.log"; then
+              java -cp "$deps" clojure.main "$RUNNER_TEMP/aggregate.clj" "$RUNNER_TEMP/$label.edn" "$label" "$source_blob" "../results/$label.edn" || failed=1
+            else
+              tail -n 4 "$RUNNER_TEMP/$label.log" >&2
+              failed=1
+            fi
           done
+          exit "$failed"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
