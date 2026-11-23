@@ -139,10 +139,17 @@
                               :on-click #(on-change (conj (vec stages) {:block id}))} "Add stage"]]
          [:p.muted {:role "status"} "Waiting for the block library…"])])))
 
+(defn draft-catalog [library {:keys [prefabs imported-prefabs]}]
+  (let [with-import (fn [entries id material]
+                      (if (= :show (get-in library [id :source]))
+                        entries
+                        (assoc entries id material)))]
+    (merge (reduce-kv with-import library imported-prefabs) prefabs)))
+
 (defn- editor [definition bindings write!]
   (r/with-let [chosen-path (r/atom nil)]
-    (let [id (:id definition)
-          catalog @(rf/subscribe [:studio/remote (cond-> [:runtime/block-library] id (conj id))])
+    (let [shared @(rf/subscribe [:studio/remote [:runtime/block-library]])
+          catalog (draft-catalog shared definition)
           paths (binding-paths (assoc definition :blocks bindings))
           path (or (some #{@chosen-path} paths) (first paths))
           params (vec (keys (:params definition)))]

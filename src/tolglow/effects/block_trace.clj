@@ -17,16 +17,27 @@
       (variable-blocks/inspect (::variables (meta model)) path)
       (runtime/observe (get-in model [:instances instance-id]) [path target]))))
 
-(def ^:private builtin-summaries (update-vals blocks/library #(select-keys % [:name :mode :inputs])))
+(defn- summaries [source materials]
+  (update-vals materials #(assoc (select-keys % [:name :mode :inputs]) :source source)))
 
-(defn library [context [_ effect-id]]
-  (let [model @(:db context)
-        {:keys [imported-prefabs prefabs]} (get-in model [:registry :effects effect-id])
-        custom (merge imported-prefabs (prefabs/catalog model) prefabs)]
-    (if (seq custom) (merge builtin-summaries (update-vals custom #(select-keys % [:name :mode :inputs])))
-        builtin-summaries)))
+(def ^:private builtin-summaries (summaries :builtin blocks/library))
+
+(defn material-sources [{:keys [db]} [_ effect-id]]
+  (let [model @db
+        {:keys [imported-prefabs prefabs]} (get-in model [:registry :effects effect-id])]
+    [imported-prefabs (prefabs/catalog model) prefabs]))
+
+(defn library [{:keys [subscribe]} [_ effect-id]]
+  (let [[imported shared local] @(subscribe [::material-sources effect-id])]
+    (if (or (seq imported) (seq shared) (seq local))
+      (merge builtin-summaries (summaries :captured imported) (summaries :show shared)
+             (summaries :local local))
+      builtin-summaries)))
 
 (defn register! [system]
+  (graph/reg-sub! system ::material-sources material-sources
+                  {:id ::material-sources :kind :sub
+                   :implementation {:type :var :symbol "tolglow.effects.block-trace/material-sources"}})
   (graph/reg-sub! system :runtime/block-library library
                   {:id :runtime/block-library :kind :sub
                    :implementation {:type :var :symbol "tolglow.effects.block-trace/library"}})
