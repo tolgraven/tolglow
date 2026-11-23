@@ -145,15 +145,30 @@
     (live-request! manager active request-id :place-in-arrangement
                    {:destination-id (:destination-id recording) :song-beat beat})))
 
-(defn- recording-at [recording at-ms freshness-ms]
-  (when (and recording (finite? (:sampled-at-ms recording)) (<= (Math/abs (double (- at-ms (:sampled-at-ms recording)))) freshness-ms))
-    (let [bpm (get-in recording [:clock :bpm] 120) playing? (get-in recording [:clock :playing?])
-          delta (if playing? (* (/ (- at-ms (:sampled-at-ms recording)) 60000.0) bpm) 0.0)
-          beat (when (finite? (:beat recording)) (+ (:beat recording) delta))
-          low (:loop-start recording) high (:loop-end recording)
-          beat (if (and beat (:looping? recording) (every? finite? [low high]) (< low high)) (+ low (mod (- beat low) (- high low))) beat)]
-      (cond-> (assoc recording :beat beat)
-        (finite? (:song-beat recording)) (update :song-beat + delta)))))
+(defn- clip-beat-at [{:keys [beat loop-start loop-end looping?]} delta]
+  (when (finite? beat)
+    (let [position (+ beat delta)]
+      (if (and looping? (every? finite? [loop-start loop-end]) (< loop-start loop-end)
+               (or (and (< beat loop-end) (<= loop-end position))
+                   (and (<= loop-start beat) (< beat loop-end) (< position loop-start))))
+        (+ loop-start (mod (- position loop-start) (- loop-end loop-start)))
+        position))))
+
+(defn- recording-sample [latest previous at-ms]
+  (when (and latest (every? latest [:track-armed? :recording? :writable?]))
+    (if (and previous (< at-ms (:sampled-at-ms latest)))
+      (when (= (:destination-id previous) (:destination-id latest)) previous)
+      latest)))
+
+(defn- recording-at [latest previous at-ms freshness-ms]
+  (when-let [sample (recording-sample latest previous at-ms)]
+    (let [elapsed (- at-ms (:sampled-at-ms sample))
+          {:keys [playing? bpm]} (:clock sample)]
+      (when (and (<= (Math/abs (double elapsed)) freshness-ms)
+                 (<= (Math/abs (double (- at-ms (:sampled-at-ms latest)))) freshness-ms))
+        (let [delta (if playing? (* (/ elapsed 60000.0) (or bpm 120)) 0.0)]
+          (cond-> (assoc sample :beat (clip-beat-at sample delta))
+            (finite? (:song-beat sample)) (update :song-beat + delta)))))))
 
 (defn- process-status! [manager run result at-ms round-trip-ms]
   (let [config (:config @(:state manager)) source (get-in config [:live :source-id])
@@ -180,7 +195,7 @@
     (when (and (true? (get-in result [:capabilities :observe-parameters?]))
                (compare-and-set! (:setup-watchers? run) false true))
       (update-parameter-watchers! manager run))
-    (swap! (:state manager) assoc :recording recording)
+    (swap! (:state manager) (fn [state] (assoc state :previous-recording (:recording state) :recording recording)))
     (emit! manager run {:type :live/status :status recording})))
 
 (defn- midi-control! [manager run event]
@@ -206,9 +221,9 @@
       (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode mode}))))
 
 (defn- receive-recording! [manager run {:keys [command ack]} at]
-  (let [{:keys [config recording]} @(:state manager)
+  (let [{:keys [config recording previous-recording]} @(:state manager)
         {:keys [record-route poll-ms]} (:live config)
-        observed (recording-at recording (get command :time-ms at) (max 1500 (* 3 poll-ms)))
+        observed (recording-at recording previous-recording (get command :time-ms at) (max 1500 (* 3 poll-ms)))
         plan (bridge-step! manager #(ableton/record-command % command ack observed))]
     (when (seq (if (= :midi record-route) (:midi plan) (:intents plan)))
       (enqueue-io!
@@ -281,7 +296,7 @@
 (defn- prepare-state [state phase]
   (when (and (= phase :start) (>= (count (:retired state)) 16))
     (fail! :pending-acknowledgements "Resolve pending launch acknowledgements before opening more synchronization sessions"))
-  (cond-> (assoc state :bridge (bridge (:config state)) :recording nil :parameter-watch nil)
+  (cond-> (assoc state :bridge (bridge (:config state)) :recording nil :previous-recording nil :parameter-watch nil)
     (or (= phase :rebind) (nil? (:retired state))) (assoc :retired [])))
 
 (defn- run-state []

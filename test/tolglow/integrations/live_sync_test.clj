@@ -1,13 +1,17 @@
 (ns tolglow.integrations.live-sync-test
   (:require [clojure.test :refer :all]
             [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [afterglow.sync :as sync]
             [afterglow.sync.session :as session]
             [tolglow.integrations.live-sync :as live-sync]
             [tolglow.integrations.live-transport :as live-transport]
             [tolglow.integrations.live-parameters :as live-params]
-            [tolglow.integrations.ableton :as ableton])
+            [tolglow.integrations.ableton :as ableton]
+            [tolglow.qa.live-pickup :as pickup])
   (:import [java.net InetSocketAddress]
+           [java.io ByteArrayOutputStream]
+           [javax.sound.midi MidiSystem ShortMessage]
            [com.sun.net.httpserver HttpServer HttpHandler]))
 
 (defn envelope [id] {:show-id :show :epoch 1 :time-ms 0.0 :command-id id})
@@ -204,6 +208,73 @@
       (is (session/flush! manager)) (is (= 1 (count @written)))
       (is (:stopped? (sync/stop! manager))) (is (= 1 @closed))
       (finally (sync/close! manager)))))
+
+(deftest pickup-lane-records-before-the-brace-and-loops-at-its-end
+  (let [events (pickup/clip-events pickup/fixture)
+        rows (filterv :level (pickup/playback events))
+        recording {:track-armed? true :recording? true :writable? true :destination-id "clip:3"
+                   :beat 0 :song-beat 0 :looping? true :loop-start 2 :loop-end 6
+                   :clock {:beat 0 :bpm 120 :playing? true}}
+        writes (java.util.concurrent.LinkedBlockingQueue.)
+        inspected (promise)
+        manager (live-sync/create-manager
+                 {:now-ms (constantly 0)
+                  :config {:live {:enabled? true :poll-ms 10000 :mappings {36 {:cue-id :wash}}
+                                  :parameters {1 {:cue-id :wash :param :level
+                                                  :bounds [0 1] :lane-note 100}}}}
+                  :live-factory (fn [_]
+                                  {:open! (constantly :live) :close! (constantly nil)
+                                   :request! (fn [_ id op data]
+                                               (when (= :record-event op) (.add writes data))
+                                               {:id id :status :executed :result (when (= :inspect op) recording)})})})]
+    (is (= [1/2 1 5/2 9/2 13/2 17/2] (mapv :song-beat rows)))
+    (is (= [33 64 96 127 96 127] (mapv :velocity rows)))
+    (is (= [1/2 1 5/2 9/2 5/2 9/2] (mapv :clip-beat rows)))
+    (try
+      (sync/start! manager {:events! #(when (= :live/status (:type %)) (deliver inspected true))})
+      (is (true? (deref inspected 3000 false)))
+      (live-sync/record! manager (assoc (envelope "start") :op :cue/launch :cue-id :wash)
+                         {:status :accepted :command-id "start" :instance-id :gate})
+      (let [launch (.poll writes 3 java.util.concurrent.TimeUnit/SECONDS)]
+        (is (zero? (:beat launch))) (is (= 36 (get-in launch [:event :note]))))
+      ;; Live reports entry into its loop before the first two earlier edits reach the recording worker.
+      (session/ingest! manager {:type :live/status :time-ms 1000
+                                :status (-> recording (assoc :beat 2 :song-beat 2) (assoc-in [:clock :beat] 2))})
+      (doseq [{:keys [song-beat clip-beat velocity level]} rows]
+        (let [id (str "rec-" song-beat) cmd (assoc (envelope id) :op :param/set :instance-id :gate
+                                                   :param :level :value level :time-ms (* 500 song-beat))]
+          (is (live-sync/record! manager cmd {:command-id id :status :accepted}))
+          (let [intent (.poll writes 3 java.util.concurrent.TimeUnit/SECONDS)]
+            (is (= [velocity 100] ((juxt :velocity :note) (:event intent))))
+            (is (= (mapv double [song-beat clip-beat]) ((juxt :song-beat :beat) intent))))))
+      (session/ingest! manager {:type :live/status :time-ms 5000
+                                :status (assoc recording :destination-id "clip:other")})
+      (doseq [[id at] [["previous-clip" 4750] ["new-clip" 5000]]]
+        (live-sync/record! manager (assoc (envelope id) :op :param/set :instance-id :gate
+                                         :time-ms at :param :level :value 1)
+                           {:status :accepted :command-id id}))
+      (is (= ["new-clip" "clip:other"] ((juxt :command-id :destination-id)
+                                         (.poll writes 3 java.util.concurrent.TimeUnit/SECONDS))))
+      (finally (sync/close! manager)))))
+
+(deftest a-manually-edited-midi-export-changes-only-the-pickup-step
+  (with-open [input (io/input-stream pickup/fixture)]
+    (let [clip (MidiSystem/getSequence input)
+          track (first (.getTracks clip))
+          half-beat (quot (.getResolution clip) 2)
+          export (ByteArrayOutputStream.)]
+      (doseq [i (range (.size track))
+              :let [event (.get track i) message (.getMessage event)]
+              :when (and (= half-beat (.getTick event)) (instance? ShortMessage message)
+                         (= ShortMessage/NOTE_ON (.getCommand message)) (= 100 (.getData1 message)))]
+        (.setMessage message ShortMessage/NOTE_ON (.getChannel message) 100 96))
+      (MidiSystem/write clip 1 export)
+      (let [trace (pickup/playback (pickup/clip-events (.toByteArray export)))
+            levels (filterv :level trace)]
+        (is (= [96 64 96 127 96 127] (mapv :velocity levels)))
+        (is (= (double (/ 95 126)) (:level (first levels))))
+        (is (= [0 2 6] (mapv :song-beat (filter #(= :cue/launch (:command %)) trace))))
+        (is (= [3/2 11/2 19/2] (mapv :song-beat (filter #(= :instance/end (:command %)) trace))))))))
 
 (deftest live-callbacks-require-current-bridge-and-session-and-deduplicate-events
   (let [requests (atom []) commands (atom [])
