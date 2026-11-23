@@ -1,7 +1,12 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :runtime/publication-clock
+ [{:id :web/studio-type-alignment :title "Align Studio navigation, transport, cue pads and instrument labels"
+   :kind :implementation :status :in-progress :owner "Studio shell and live card design owners"
+   :paths ["tolglow/resources/studio/console.css" "tolglow/src/shared/tolglow/studio/page_routes.cljc" "tolglow/src/studio/tolglow/studio/views.cljs" "tolglow/dev/studio/shell-alignment-qa.mjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Inspect rendered labels, controls and baselines on phone, iPad and desktop. Measure their bounds, exercise the controls and retain comparable before/after releases."] :evidence []}
+  {:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
    :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
