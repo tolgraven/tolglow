@@ -84,6 +84,19 @@ Each spatial cue exposes the fixture IDs in its weight map as a Clojure set. Acr
 
 Whole-show median allocation fell from 80.10 to 73.23 MB. Median elapsed time rose from 553 to 600 ms, while p95 fell from 1,797 to 1,681 ms. A separate trial using a transient set and `reduce-kv` saved another 0.29 MB inside the projection. Reusing a previous set helped isolated nearly stationary volumes, but cost more CPU when a volume changed all its members. The host uses the single `into` expression for every volume. [Projection comparisons and playback commands](../benchmarks/master-performance/render-packet-and-membership.zip)
 
+#### Checking masked layer weights
+
+A spatial mask assigns a weight to each selected fixture. Afterglow checks that every weight is finite and nonnegative before using the mask. It also checks whether all weights are within the unit interval before choosing the direct packed blend. The two checks can stop at the first failing entry. Using `reduce-kv` avoids constructing an intermediate sequence of map values on each scan. Ratios, decimal values just above one and invalid weights on unpatched targets retain their original handling.
+
+Two show hosts ran four moving optical fields, eight overlapping washes, a mixed-UV material and 64 moving heads. All packets, ordered fixture events, preview samples, model and intents agreed over 18 warmups and 40 measured frame pairs at each size. Both hosts dispatched 357 GPU draws without a fallback at each size on Mesa software GL.
+
+| Pixels | Median allocation inside the scans | Scan CPU p95 | Median whole-frame allocation | Whole-frame elapsed p95 |
+| ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 8.10 → 1.04 MB | 11.27 → 7.61 ms | 38.64 → 31.51 MB | 370 → 402 ms |
+| 20,000 | 16.44 → 2.07 MB | 23.31 → 13.96 ms | 72.42 → 58.05 MB | 650 → 572 ms |
+
+The 20,000-pixel case checked a median of 73,826 weights per frame. A separate run without scan timers saved 14.30 MB per frame. Its elapsed p95 went from 373 to 649 ms with 106 and 222 ms of runnable wait on the coordinator in those two frames. Neither frame overlapped a recorded GC pause. The consistent result across the two runs is lower allocation. The shared machine did not establish a whole-show latency improvement. [Afterglow #85, raw captures and replay](https://github.com/tolgraven/afterglow/pull/85)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
