@@ -1,6 +1,7 @@
 (ns tolglow.studio.performance-test
   (:require [cljs.test :refer-macros [deftest is]]
             [re-frame.db :as rf-db]
+            [tolglow.authoring.parameter-layout :as layout]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
             [tolglow.studio.events :as events]
@@ -140,8 +141,7 @@
         instance {:effect-id "wash" :definition definition}]
     (is (= definition (performance/card-definition show instance)))
     (is (= 2 (:version (performance/card-definition show (dissoc instance :definition)))))
-    (is (= [:color :level] (mapv first (performance/card-parameters definition false))))
-    (is (= [:color :level :a :z] (mapv first (performance/card-parameters definition true))))))
+    (is (= [:color :level :a :z] (mapv first (:parameters (layout/resolve-layout definition nil)))))))
 
 (deftest group-clear-and-card-expansion-stay-local
   (let [selected (transition base [:performance/group-set :scope "all"])
@@ -157,3 +157,33 @@
         instance {:id "4:1" :params {"x" 0.25 :z 0.7}}
         show {:modulation {:overrides {(keyword "4:1") {"y" 0.5 :z 0}}}}]
     (is (= {:base [0.25 2 0.7] :effective [0.25 0.5 0]} (performance/xyz-readings show instance components)))))
+
+(deftest strip-layout-uses-schema-and-saved-precedence-without-losing-controls
+  (let [definition {:tags [:movement]
+                    :params {:pan {} :tilt {} :aim {} :fine {:ui/order 1} :user/level {}}
+                    :ui/layout {:template :movement :monitor :pan}}
+        ids (fn [cue] (mapv first (:parameters (layout/resolve-layout definition cue))))
+        cue {:ui/layout {:order ["user/level" :missing :tilt :tilt] :monitor :tilt}}]
+    (is (= [:fine :aim :pan :tilt :user/level] (ids nil)))
+    (is (= [:user/level :tilt :fine :aim :pan] (ids cue)))
+    (is (= :tilt (:monitor (layout/resolve-layout definition cue))))
+    (is (= :pan (:monitor (layout/resolve-layout definition nil))))
+    (is (= #{:fine :pan :tilt :aim :user/level}
+           (set (ids {:ui/layout :unavailable}))))))
+
+(deftest each-effect-has-its-own-monitor-selection
+  (let [chosen (:db (transition base [:performance/monitor-select "4:2" "tilt"]))]
+    (is (= {"4:2" "tilt"} (get-in chosen [:ui :performance :monitor])))
+    (is (nil? (get-in (:db (transition chosen [:performance/runtime-change])) [:ui :performance :monitor])))))
+
+(deftest grouped-xyz-and-an-independent-aim-parameter-keep-distinct-monitors
+  (let [param {:parameter :aim :schema {:type :vector :size 3}}
+        group {:attribute :aim :components [[:x {}] [:y {}] [:z {}]]}
+        sibling (assoc group :components [[:a {}] [:b {}] [:c {}]])
+        namespaced {:parameter :group/aim :schema {:type :number}}
+        controls [group sibling namespaced param]]
+    (is (= 4 (count (set (map performance/control-id controls)))))
+    (is (= param (:selected (performance/resolve-monitor controls nil :aim))))
+    (doseq [control controls]
+      (is (= control (:selected (performance/resolve-monitor controls (performance/control-id control) :aim)))))
+    (is (= group (:selected (performance/resolve-monitor [group] nil :aim))))))
