@@ -14,9 +14,9 @@ function pack(fixtures, axes, universeCount) {
       let v = axes[i * 4 + j] * 255;
       const pivot = spec['inverted-from'];
       if (pivot != null && v >= pivot) v = 255 - (v - pivot);
-      const coarse = Math.trunc(v);
-      bytes[start + spec.offset - 1] = coarse;
-      bytes[start + spec['fine-offset'] - 1] = Math.round((v - coarse) * 255);
+      const word = Math.round(v * 257);
+      bytes[start + spec.offset - 1] = word >>> 8;
+      bytes[start + spec['fine-offset'] - 1] = word & 255;
     }
   }
   return bytes;
@@ -61,9 +61,9 @@ function compare(measured, fixtures, frame, sample, axes, actual) {
       if (expected[c] !== actual[c]) ++measured.coarseMismatches;
       if (expected[k] !== actual[k]) ++measured.fineMismatches;
       const coarseDelta = expected[c] - actual[c], fineDelta = expected[k] - actual[k];
-      const delta = coarseDelta * 255 + fineDelta;
-      measured.maxWordError = Math.max(measured.maxWordError, Math.abs(coarseDelta * 256 + fineDelta));
-      measured.maxPackedStepError = Math.max(measured.maxPackedStepError, Math.abs(delta));
+      const wordError = Math.abs(coarseDelta * 256 + fineDelta);
+      measured.maxWordError = Math.max(measured.maxWordError, wordError);
+      measured.maxPackedStepError = measured.maxWordError;
     }
   }
 }

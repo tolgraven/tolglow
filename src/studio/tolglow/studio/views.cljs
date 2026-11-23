@@ -29,6 +29,7 @@
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.numeric-display :as numeric]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
@@ -46,24 +47,6 @@
 (defn- set-ui! [path value] (input! [:studio/ui-set path value]))
 (defn- input-value [event] (.. event -target -value))
 (defn- checked? [event] (.. event -target -checked))
-(defn- number-input [attrs]
-  ;; Native number inputs report an empty value while the user types a minus or
-  ;; decimal separator. Preserve that editing text in app-db until blur instead
-  ;; of restoring the previous domain number between individual keystrokes.
-  (r/with-let [field-id (or (:id attrs) (str (random-uuid)))]
-    (if (= "number" (:type attrs))
-      (let [editing @(rf/subscribe [:studio/numeric-edit field-id])
-            value (:value attrs)
-            displayed (if (and (number? value) (js/Number.isFinite value)) (js/Number (.toPrecision value 12)) value)]
-        [:input (assoc attrs
-                  :value (if (some? editing) editing displayed)
-                  :on-focus #(rf/dispatch-sync [:studio/numeric-edit field-id (str (or displayed ""))])
-                  :on-change (fn [event]
-                               (rf/dispatch-sync [:studio/numeric-edit field-id (input-value event)])
-                               (when-let [change (:on-change attrs)] (change event)))
-                  :on-blur #(rf/dispatch-sync [:studio/numeric-blur field-id]))])
-      [:input attrs])
-    (finally (rf/dispatch [:studio/numeric-blur field-id]))))
 (defn- number-value [event]
   (let [value (js/parseFloat (input-value event))]
     (when (js/Number.isFinite value) value)))
@@ -72,8 +55,6 @@
 (defn- display-name [item] (or (:name item) (label (:id item))))
 (defn- swatch [item] (widgets/swatch-css (or (:swatch item) "#a8b99a")))
 (defn- color-style [item] {"--cue-color" (swatch item)})
-(defn- numeric-label [value]
-  (if (number? value) (str/replace (.toFixed value 3) #"\.?0+$" "") (str value)))
 (defn- hex-color [components]
   (str "#" (apply str (map (fn [n] (.padStart (.toString (js/Math.round (* 255 (max 0 (min 1 (or n 0)))) ) 16) 2 "0")) (take 3 components)))))
 (defn- color-components [hex]
@@ -131,7 +112,7 @@
                                       :on-click #(send! [:studio/command "transport/set" {:transport {:playing? (not playing?)}}])}
        [:span.transport-symbol {:class (if playing? "pause" "play") :aria-hidden true}]]
       [:label.bpm-label
-       [number-input {:id "bpm" :type "number" :min 1 :max 999 :value (get-in show [:transport :bpm] 120)
+       [numeric/number-input {:id "bpm" :type "number" :min 1 :max 999 :value (get-in show [:transport :bpm] 120)
                     :aria-label "Tempo in beats per minute"
                     :on-change #(when-let [value (number-value %)]
                                   (send! [:studio/command "transport/set" {:transport {:bpm value}}]))}]
@@ -152,7 +133,7 @@
 (defn- duration-control [id title value unit on-change & [allow-zero?]]
   [:label [:span.duration-name title]
    [:span.duration-control {:style {:display "flex" :gap "0.5rem"}}
-    [number-input {:id id :type "number" :min (if allow-zero? 0 0.001) :step "any"
+    [numeric/number-input {:id id :type "number" :min (if allow-zero? 0 0.001) :step "any"
              :value value :aria-label (str title " value")
              :on-change #(when-let [n (number-value %)] (on-change n nil))}]
     [:select {:id (str id "-unit") :aria-label (str title " unit") :value unit
@@ -255,7 +236,7 @@
         bounds (:bounds schema) title (or (:name schema) (label parameter))
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
-     [:label [:span title] [:output (if (vector? value) (str/join ", " (map numeric-label value)) (widgets/value-label schema value))]]
+     [:label [:span title] [:output (if (vector? value) (str/join ", " (map #(numeric/number-label schema %) value)) (widgets/value-label schema value))]]
      (case type
        "waveform" [waveform/picker (:id instance) parameter schema value change!
                    {:params (:params instance) :live? (nil? handlers)}]
@@ -275,7 +256,7 @@
        "range"
        [:div.param-vector
         (for [index (range (or (:size schema) (count value)))]
-          ^{:key index} [number-input {:type "number" :step "any" :value (get value index 0)
+          ^{:key index} [numeric/number-input {:display-schema schema :type "number" :step "any" :value (get value index 0)
                                  :min (first bounds) :max (second bounds)
                                  :aria-label (str title " component " (inc index))
                                  :on-change #(when-let [n (number-value %)]
@@ -287,19 +268,19 @@
             :strip? (:strip? options)
             :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
           [:div.parameter-number-fields
-           [number-input {:type "range" :aria-label title :value (or value 0)
+           [numeric/number-input {:type "range" :aria-label title :value (or value 0)
                           :min (first bounds) :max (second bounds)
-                          :step (if (= "integer" type) 1 (/ (- (second bounds) (first bounds)) 1000))
+                          :step (if (= "integer" type) 1 (or (numeric/channel-step schema) (/ (- (second bounds) (first bounds)) 1000)))
                           :on-change #(when-let [n (number-value %)] (change! n))}]
            (when fader?
              [:span.strip-fader-bounds
               [:span (widgets/number-label (first bounds))]
               [:span (widgets/number-label (second bounds))]])
            (when-not (:compact? options)
-             [number-input {:class "numeric-exact" :type "number" :aria-label (str title " exact value") :value (or value 0)
+             [numeric/number-input {:class "numeric-exact" :display-schema schema :type "number" :aria-label (str title " exact value") :value (or value 0)
                             :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
-         [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
+         [numeric/number-input {:display-schema schema :type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
      (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source])
      (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
@@ -377,7 +358,7 @@
        [duration-control "auto-interval" "Every" (:interval-value form 8) (:interval-unit form "beats")
         (fn [value unit] (when (some? value) (set-ui! [:auto-form :interval-value] value))
           (when unit (set-ui! [:auto-form :interval-unit] unit)))]
-       [:label "Cues per step" [number-input {:id "auto-count" :type "number" :min 1 :max 8 :value (:count form 1)
+       [:label "Cues per step" [numeric/number-input {:id "auto-count" :type "number" :min 1 :max 8 :value (:count form 1)
                                                  :on-change #(when-let [n (number-value %)] (set-ui! [:auto-form :count] n))}]]]
       [:div.form-row
        [:label "Choose from" [:select#auto-scope {:value (:scope form "page") :on-change #(set-ui! [:auto-form :scope] (input-value %))}
@@ -611,7 +592,7 @@
                                    ["Length · m" [:length] (:length truss 4)]
                                    ["Angle · °" [:rotation-deg 1] (get-in truss [:rotation-deg 1] 0)]]]
             ^{:key path} [:label title
-                          [number-input {:type "number" :step 0.1 :min (when (= path [:length]) 0.1) :value value
+                          [numeric/number-input {:type "number" :step 0.1 :min (when (= path [:length]) 0.1) :value value
                                          :on-change #(when-let [n (number-value %)]
                                                        (input! [:studio/truss-set index path n]))}]])]])
       [:p.small.muted "Add a truss, set its height and length, then place it in the plan."])]] )
@@ -629,7 +610,7 @@
        [:div.form-body
         [:div.form-row.room-dimensions
          (for [[dimension title] [[:width "Width · m"] [:height "Height · m"] [:depth "Depth · m"]]]
-           ^{:key dimension} [:label title [number-input {:id (str "room-" (name dimension)) :type "number" :min 1 :max 1000 :step 0.1
+           ^{:key dimension} [:label title [numeric/number-input {:id (str "room-" (name dimension)) :type "number" :min 1 :max 1000 :step 0.1
                                                    :value (get-in rig [:room dimension] 1)
                                                    :on-change #(when-let [n (number-value %)] (input! [:studio/rig-set [:room dimension] n]))}]])]
         (when-let [measurement (get-in rig [:room :measured-fog])]
@@ -641,7 +622,7 @@
                 [:fog-half-life-s "Fog deposition half-life (s)" 180 0 nil]]]
            ^{:key field}
            [:label {:for (name field)} title
-            [number-input {:id (name field) :type "number" :step "any"
+            [numeric/number-input {:id (name field) :type "number" :step "any"
                            :min minimum :max maximum :placeholder (str default)
                            :value (get-in rig [:room field] "")
                            :on-change (fn [e]
@@ -662,7 +643,7 @@
             [:div.fixture-fields
              (for [[title key] [["X · m" 0] ["Y · m" 1] ["Z · m" 2] ["Universe" :universe] ["Address" :address]]]
                ^{:key key} [:label title
-                            [number-input {:type "number" :step (if (number? key) 0.1 1) :min (when (keyword? key) 1) :max (when (= key :address) 512)
+                            [numeric/number-input {:type "number" :step (if (number? key) 0.1 1) :min (when (keyword? key) 1) :max (when (= key :address) 512)
                                      :value (if (number? key) (get-in fixture [:position key] 0) (get fixture key))
                                      :on-change #(when-let [n (number-value %)]
                                                    (input! [:studio/rig-set (if (number? key) [:fixtures index :position key] [:fixtures index key]) n]))}]])]])]]]
@@ -685,7 +666,7 @@
       [:label "Name" [:input#builder-name {:value (:name builder "") :on-change #(set-ui! [:builder :name] (input-value %))}]]]
      [:div.form-row
       [:label "Color" [:input#builder-color {:type "color" :value (:color builder "#b981a3") :on-change #(set-ui! [:builder :color] (input-value %))}]]
-      [:label "Intensity" [number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
+      [:label "Intensity" [numeric/number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
                                                :on-change #(when-let [n (number-value %)] (set-ui! [:builder :level] n))}]]
       [duration-control "builder-duration" "Duration" (:duration-value builder 4) (:duration-unit builder "beats")
        (fn [value unit] (when (some? value) (set-ui! [:builder :duration-value] value))
