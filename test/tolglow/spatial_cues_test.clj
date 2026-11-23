@@ -257,3 +257,21 @@
           (host/tick rt 125)
           (is (empty? (members))))
         (finally (show/stop! rt))))))
+
+(deftest a-cylinders-native-mask-follows-its-live-radius
+  (let [rt (host/runtime true)
+        shape {:shape :cylinder :position [0 1 0] :radius 0.25 :height 2.0}
+        region (assoc request :volume shape :paint {:red 1.0})
+        covered? (fn [n] (pos? (nth (host/output rt) n)))]
+    (try
+      (let [id (:instance-id (host/submit rt 0 :spatial-cue region))]
+        (is (covered? 0))
+        (is (not (covered? 3)))
+        (change! rt 25 id :radius 0.75)
+        (is (covered? 3))
+        (is (not (covered? 6)))
+        (host/submit rt 50 :command {:op :instance/remove :instance-id id}))
+      (host/submit rt 75 :spatial-cue (assoc region :id :sourced-cylinder :cell [3 1] :sources {:radius 0.75}))
+      (is (covered? 3))
+      (is (not (covered? 6)))
+      (finally (show/stop! rt)))))

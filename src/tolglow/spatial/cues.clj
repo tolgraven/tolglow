@@ -184,7 +184,7 @@
                    :else (merge template shape-fields))]
     (-> geometry
         (merge (select-keys values [:strength :translation :scale :position :velocity :restitution]))
-        (cond-> ball? (assoc :radius (:radius values)))
+        (cond-> (#{:ball :cylinder} (:shape template)) (assoc :radius (:radius values)))
         (update :falloff merge (select-keys values [:inner-m :outer-m])))))
 
 (defn- live-instance [model clock instance]
