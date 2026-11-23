@@ -65,6 +65,7 @@
             [tolglow.fixtures.patch :as fixture-patch]
             [tolglow.rig.rdm :as rdm]
             [tolglow.rig.calibration :as calibration]
+            [tolglow.rig.venue-scan :as venue-scan]
             [tolglow.rig.photometry :as photometry]
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.venue-fog :as venue-fog]
@@ -226,13 +227,16 @@
          compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
+         rdm-state (rdm/session-state)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! (spatial/register! nil)))))
-         worker-pool (try (executor/create {:workers workers :queue-size 64 :timeout-ms 500})
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
+                                                                             (rdm/register-status! rdm-state) (spatial/register! nil)))))
+         worker-pool (try (executor/create {:workers workers :queue-size 64
+                                            :timeout-ms (:worker-timeout-ms options 500)})
                           (catch Exception error (connections/close! owned) (throw error)))]
      (let [development (try (development/create
                              (when-let [workspace-options (if (contains? options :workspace-options)
@@ -270,7 +274,7 @@
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
-                             {:model! #(get @(:state @runtime-ref) :model)
+                             {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
@@ -290,7 +294,8 @@
 
 (defn create-runtime
   "Create an unscheduled show. The CPU backend is the default. Explicit
-  :compute-backend :native-gpu acquires one session owned by this show."
+  :compute-backend :native-gpu acquires one session owned by this show.
+  :worker-timeout-ms sets the per-frame effect worker deadline (default 500)."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
@@ -407,6 +412,10 @@
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
                     {:model (rdm/update-model model payload) :ack {:status :accepted}})
+    :venue-surface (do
+                     (when (or (:armed? (calibration/current model)) (photometry/current model) (fog-scan/current model))
+                       (throw (ex-info "Finish the active calibration before changing the rig" {})))
+                     (venue-scan/admit model payload))
     :fog-calibration (fog-scan/operation model payload ((:now-ms (:publisher runtime))))
     :photometry (photometry/apply-operation model payload ((:now-ms (:publisher runtime)))
                                            (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!]))))
@@ -1186,7 +1195,7 @@
        (let [before (:model @(:state runtime))
              epoch (get payload :expected-epoch (:epoch before))]
          (when-not (and @(:running runtime) (= epoch (:epoch before))
-                        (or (not (#{:photometry :fog-calibration} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
+                        (or (not (#{:photometry :fog-calibration :venue-surface} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
          (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
@@ -1452,7 +1461,7 @@
                        {:runtime-id (:id runtime) :expected-epoch epoch}))]
       (case operation
         :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
-        :disconnect (rdm/disconnect! (:rdm runtime))
+        :disconnect (rdm/disconnect-session! (:rdm runtime) (:session-id payload))
         :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
         (:associate :unassociate :adopt)
         (deref (submit! runtime :rdm-update (merge payload identity {:operation operation})) 5000 {:status :pending})

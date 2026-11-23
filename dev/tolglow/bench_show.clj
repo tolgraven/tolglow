@@ -7,7 +7,9 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [afterglow.output.artnet :as artnet]
+            [afterglow.output.scheduler :as scheduler]
             [tolglow.show :as show]
+            [tolglow.perf.venue-rig :as venue]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.pprint :as pprint]
@@ -24,16 +26,18 @@
                          "--workers" (assoc m :workers (mapv parse-long (str/split v #",")))
                          "--warmup" (assoc m :warmup (parse-long v))
                          "--samples" (assoc m :samples (parse-long v))
+                         "--layout" (assoc m :layout (keyword v))
                          "--scope" (assoc m :scope (keyword v))
                          "--output" (assoc m :output v)
                          (throw (ex-info "Unknown option" {:option k}))))
                      {:heads [100 1000 10000] :movers [0 8] :workers [1 2]
-                      :warmup 40 :samples 120 :scope :all} (partition 2 args))]
+                      :warmup 40 :samples 120 :scope :all :layout :grid} (partition 2 args))]
     (when-not (and (every? pos-int? (:heads opts)) (seq (:heads opts))
                    (every? nat-int? (:movers opts)) (seq (:movers opts))
                    (every? #(and (pos-int? %) (<= % 32)) (:workers opts))
                    (pos-int? (:warmup opts)) (pos-int? (:samples opts))
-                   (#{:all :pipeline :host} (:scope opts)))
+                   (#{:all :pipeline :host} (:scope opts))
+                   (#{:grid :sculpture} (:layout opts)))
       (throw (ex-info "Invalid benchmark counts or scope" {:options opts})))
     opts))
 
@@ -45,44 +49,56 @@
       (throw (ex-info "Benchmark command rejected" {:ack (:ack result)})))
     (:model result)))
 
-(defn corpus [pixels movers]
-  (let [pixel-fixtures (mapv (fn [i] {:id (str "pixel-" i)
-                                     :position [(double (mod i 100)) 0.0 (double (quot i 100))]
-                                     :universe (inc (quot (* i 4) 512)) :address (inc (mod (* i 4) 512))
-                                     :channels {:red 1 :green 2 :blue 3 :white 4}}) (range pixels))
-        moving-fixtures (mapv (fn [i] (let [address (+ (* pixels 4) (* i 12))]
-                                        {:id (str "mover-" i) :position [(* 1.0 i) 4.0 -3.0]
-                                         :rotation-deg [0.0 0.0 0.0]
-                                         :universe (inc (quot address 512)) :address (inc (mod address 512))
-                                         :channels {:red 1 :green 2 :blue 3 :white 4 :dimmer 5
-                                                    :pan [6 7] :tilt [8 9] :focus 10 :zoom 11}
-                                         :footprint 12})) (range movers))
-        fixtures (into pixel-fixtures moving-fixtures)
-        definitions (cond->
-                      [{:id :spatial :version 1 :targets (mapv :id pixel-fixtures)
-                        :params {:level {:type :number :default 0.5 :bounds [0 1]}}
-                        :outputs {:color {:op :vec3 :args [{:op :multiply :args [0.5 {:op :add :args [1.0 {:op :sin :args [{:op :add :args [{:op :multiply :args [{:op :position :axis :x} 0.05]} {:op :bar}]}]}]}]}
-                                                           {:op :param :key :level} 0.25]} :white 0.1}}
-                       {:id :gain :version 1 :params {:level {:type :number :default 0.8 :bounds [0 1]}}
-                        :envelope {:attack {:beats 1/2} :release {:beats 1}}
-                        :outputs {:dimmer {:op :param :key :level}}}
-                       {:id :accent :version 1 :targets (mapv :id (take 16 pixel-fixtures))
-                        :outputs {:dimmer {:op :tween :spec {:keyframes [{:at-ms 0 :value 0.3}
-                                                                       {:at-ms 10000 :value 0.7}]}}}}]
-                      (pos? movers)
-                      (conj {:id :movement :version 1 :targets (mapv :id moving-fixtures)
-                             :outputs {:aim {:op :vec3 :args [{:op :multiply :args [3.0 {:op :sin :args [{:op :bar}]}]}
-                                                             1.5 4.0]}
-                                       :color [0.5 0.1 0.7] :focus 0.45 :zoom 0.3}}))
-        model (reduce (fn [m definition]
-                        (let [id (:id definition)]
-                          (-> m (command [id :definition] {:op :registry/publish :kind :effects :definition definition})
-                              (command [id :cue] {:op :cue/put :cue {:id id :effect-id id}})
-                              (command [id :launch] {:op :cue/launch :cue-id id}))))
-                      (control/new-show {:show-id "master-performance" :rig {:fixtures fixtures}}) definitions)]
-    {:model model :fixtures fixtures :definitions definitions :patch (render/compile-patch fixtures)
-     :pixels pixels :movers movers
-     :preview-indices (vec (concat (range (min 16 pixels)) (range pixels (+ pixels movers))))}))
+(defn- patch-address [offset]
+  {:universe (inc (quot offset 512)) :address (inc (mod offset 512))})
+
+(defn- pixel [layout i]
+  (assoc (patch-address (* 4 i))
+         :id (str "pixel-" i)
+         :position (if (= layout :sculpture)
+                     (venue/pixel-position i)
+                     [(double (mod i 100)) 0.0 (double (quot i 100))])
+         :channels {:red 1 :green 2 :blue 3 :white 4}))
+
+(defn- moving-head [layout pixels movers i]
+  (merge (patch-address (+ (* 4 pixels) (* 12 i)))
+         (if (= layout :sculpture)
+           (venue/mover-pose i movers)
+           {:position [(* 1.0 i) 4.0 -3.0] :rotation-deg [0.0 0.0 0.0]})
+         {:id (str "mover-" i) :footprint 12
+          :channels {:red 1 :green 2 :blue 3 :white 4 :dimmer 5
+                     :pan [6 7] :tilt [8 9] :focus 10 :zoom 11}}))
+
+(defn corpus
+  ([pixels movers] (corpus pixels movers :grid))
+  ([pixels movers layout]
+   (let [pixel-fixtures (mapv (partial pixel layout) (range pixels))
+         moving-fixtures (mapv (partial moving-head layout pixels movers) (range movers))
+         fixtures (into pixel-fixtures moving-fixtures)
+         definitions (cond->
+                       [{:id :spatial :version 1 :targets (mapv :id pixel-fixtures)
+                         :params {:level {:type :number :default 0.5 :bounds [0 1]}}
+                         :outputs {:color (venue/spatial-color layout) :white 0.1}}
+                        {:id :gain :version 1 :params {:level {:type :number :default 0.8 :bounds [0 1]}}
+                         :envelope {:attack {:beats 1/2} :release {:beats 1}}
+                         :outputs {:dimmer {:op :param :key :level}}}
+                        {:id :accent :version 1 :targets (mapv :id (take 16 pixel-fixtures))
+                         :outputs {:dimmer {:op :tween :spec {:keyframes [{:at-ms 0 :value 0.3}
+                                                                        {:at-ms 10000 :value 0.7}]}}}}]
+                       (pos? movers)
+                       (conj {:id :movement :version 1 :targets (mapv :id moving-fixtures)
+                              :outputs {:aim {:op :vec3 :args [{:op :multiply :args [3.0 {:op :sin :args [{:op :bar}]}]}
+                                                              1.5 4.0]}
+                                        :color [0.5 0.1 0.7] :focus 0.45 :zoom 0.3}}))
+         model (reduce (fn [m definition]
+                         (let [id (:id definition)]
+                           (-> m (command [id :definition] {:op :registry/publish :kind :effects :definition definition})
+                               (command [id :cue] {:op :cue/put :cue {:id id :effect-id id}})
+                               (command [id :launch] {:op :cue/launch :cue-id id}))))
+                       (control/new-show {:show-id "master-performance" :rig {:fixtures fixtures}}) definitions)]
+     {:model model :fixtures fixtures :definitions definitions :patch (render/compile-patch fixtures)
+      :pixels pixels :movers movers :layout layout
+      :preview-indices (vec (concat (range (min 16 pixels)) (range pixels (+ pixels movers))))})))
 
 (defn capture-sink []
   (let [latest (volatile! [])]
@@ -176,34 +192,58 @@
                :result (measure (fn [_] (pipeline data typed (executor/mapper pool) (capture-sink) false)) (constantly expected) opts)})))))
 
 (defn host-step! [runtime sink preview-indices i]
-  (let [reply (when (zero? (mod i 8))
+  (let [now (* 25.0 (inc i))
+        reply (when (zero? (mod i 8))
                 (show/submit! runtime {:command-id (str "frame-" i) :op :master/set
-                                         :value (+ 0.5 (* 0.01 (mod i 40)))}))]
-    (show/tick! runtime (* 25.0 (inc i)))
+                                       :value (+ 0.5 (* 0.01 (mod i 40)))}))
+        start (System/nanoTime)
+        _ (show/tick! runtime now)
+        ticked (System/nanoTime)
+        _ (when (:independent-output? runtime)
+            (scheduler/publish! (:publisher runtime)))
+        published (System/nanoTime)]
     (let [{:keys [model output status]} @(:state runtime)]
       (when (or (:error status) (:output-error status) (:reactive-error status)
                 (and reply (not= :accepted (:status @reply))))
         (throw (ex-info "Host benchmark did not produce a successful frame" {:status status})))
-      {:model model :intents (:last-intents status) :packets @(:latest sink)
-       :preview (if (:compact output) (render/project-compact (:compact output) preview-indices)
-                    (mapv #(get (:values output) (nth (:target-order output) %)) preview-indices))})))
+      (let [preview (if (:compact output)
+                      (render/project-compact (:compact output) preview-indices)
+                      (mapv #(get (:values output) (nth (:target-order output) %)) preview-indices))]
+        {:model model :intents (:last-intents status) :packets @(:latest sink) :preview preview
+         :stages-ms {:tick (/ (- ticked start) 1e6)
+                     :publish (/ (- published ticked) 1e6)
+                     :preview (/ (- (System/nanoTime) published) 1e6)}}))))
 
-(defn- host-bench [{:keys [model preview-indices]} opts]
-  ;; Full rich values differ structurally from compact projections. Compare the
-  ;; fields actually published by the compact schema, including moving-head aim.
-  (let [project (fn [frame]
-                  (update frame :preview #(mapv (fn [v] (select-keys v [:id :pan :tilt :focus :zoom :strobe
-                                                                       :emitted-color :intensity :aim :direction])) %)))
+(defn- projected-host-step! [runtime sink clock indices i]
+  (vreset! clock (* 25.0 (inc i)))
+  (vreset! (:latest sink) [])
+  (let [frame (host-step! runtime sink indices i)]
+    (when (empty? (:packets frame))
+      (throw (ex-info "Expected a fresh ArtDMX capture" {:frame i})))
+    (update frame :preview
+            (fn [values]
+              (mapv #(select-keys % [:id :pan :tilt :focus :zoom :strobe
+                                     :emitted-color :intensity :aim :direction]) values)))))
+
+(defn- host-bench [{:keys [model preview-indices layout]} opts]
+  (let [clock (volatile! 0.0)
+        options {:model model :workspace-options nil :physical-now-ms #(deref clock)}
+        step! (fn [rt sink i] (projected-host-step! rt sink clock preview-indices i))
         sink (capture-sink)
-        oracle (show/create-runtime {:model model :workers 1 :sink sink :batch? false :workspace-options nil})
-        expected (try (mapv #(project (host-step! oracle sink preview-indices %)) (range (+ (:warmup opts) (:samples opts))))
-                      (finally (show/stop! oracle)))]
-    (mapv (fn [workers]
-            (let [sink (capture-sink)
-                  runtime (show/create-runtime {:model model :workers workers :sink sink :workspace-options nil})]
-              (try {:scope :host-tick :execution :workers :workers workers
-                    :result (measure #(project (host-step! runtime sink preview-indices %)) #(nth expected %) opts)}
-                   (finally (show/stop! runtime))))) (:workers opts))))
+        oracle (show/create-runtime (assoc options :workers 1 :sink sink :batch? false :worker-timeout-ms 10000))
+        expected (try
+                   (mapv #(step! oracle sink %) (range (+ (:warmup opts) (:samples opts))))
+                   (finally (show/stop! oracle)))]
+    (vec (for [workers (:workers opts)
+               independent? (if (= layout :sculpture) [false true] [false])]
+           (let [sink (capture-sink)
+                 runtime (show/create-runtime (assoc options :workers workers :sink sink
+                                                     :independent-output? independent?))]
+             (try
+               {:scope :host-tick :execution :workers :workers workers
+                :output (if independent? :independent :direct)
+                :result (measure #(step! runtime sink %) #(nth expected %) opts)}
+               (finally (show/stop! runtime))))))))
 
 (defn revision [directory]
   (let [r (shell/sh "git" "rev-parse" "HEAD" :dir directory)] (when (zero? (:exit r)) (str/trim (:out r)))))
@@ -242,10 +282,10 @@
                           "Pipeline replays one captured frame; stage timings include timer overhead."
                           "Host ticks advance musical time, admission/master commands, effects, rendering, reactive publication and ArtDMX capture; construction/compilation warmup excluded."
                           "No sockets or physical devices. Async scheduler jitter, external browser/UI load and packet delivery are excluded."
-                          "Host output uses synchronous capture to include encoding; independent publication clock is not measured."
+                          "Sculpture host runs also tick the independent publisher at a deterministic 25 ms cadence; no thread scheduling jitter is simulated."
                           "Allocation includes owner plus warmed runtime worker threads; GC counts cover measured loop including outside-timing oracle checks."]
                   :results (vec (for [pixels (:heads opts) movers (:movers opts)
-                                      :let [data (corpus pixels movers)]]
+                                      :let [data (corpus pixels movers (:layout opts))]]
                                   (do (binding [*out* *err*] (println "Profiling" pixels "pixels +" movers "moving heads"))
                                       {:pixels pixels :moving-heads movers :effects (count (:definitions data))
                                        :universes (count (get-in data [:patch :universes]))

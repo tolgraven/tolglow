@@ -7,6 +7,8 @@
             [tolglow.calibration.geometry :as g]
             [tolglow.calibration.session :as scan]
             [tolglow.rig.calibration :as host]
+            [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.venue-scan :as venue-scan]
             [tolglow.persistence :as files]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -173,3 +175,47 @@
           (is (= :suspended (:status (host/current (:model @(:state runtime))))))
           (is (= (:plan (host/current active)) (:plan (host/current (:model @(:state runtime))))))))
       (finally (show/stop! runtime)))))
+
+(deftest passive-room-receiver-round-trip
+  (let [rt (show/start! {:workspace-options nil})
+        handler (studio/handler rt)
+        model #(:model @(:state rt))
+        saved #(-> (handler {:request-method :get :uri "/api/calibration"}) :body (json/read-str :key-fn keyword))
+        post (fn [payload]
+               (let [response (handler {:request-method :post :uri "/api/venue-surface"
+                                        :headers {"content-type" "application/json"}
+                                        :body (java.io.StringReader. (json/write-str payload))})]
+                 (-> (:body response) (json/read-str :key-fn keyword) (update :status keyword))))
+        {:keys [runtime-id epoch]} (saved)
+        capture {:runtime-id runtime-id :expected-epoch epoch :surface-name "booth-wall"
+                 :world-id (str (random-uuid)) :anchor-id (str (random-uuid))
+                 :point [0 1 -3] :normal [0 0 1] :u-axis [1 0 0] :size [4 2]}
+        initial-fixtures (get-in (model) [:rig :fixtures])]
+    (try
+      (is (empty? (:saved-surfaces (saved))))
+      (is (= :rejected (:status (post (dissoc capture :runtime-id)))))
+      (is (= :rejected (:status (post (assoc capture :expected-epoch (inc epoch))))))
+      (is (= :rejected (:status (post (assoc capture :normal [1 0 0])))))
+      (is (= :accepted (:status (post capture))))
+      (let [[{:keys [revision name]}] (:saved-surfaces (saved))
+            [surface] (get-in (model) [:rig :surfaces])
+            remeasure (assoc capture :expected-surface-revision revision :point [0 1 -3.2])]
+        (is (= "booth-wall" name))
+        (is (= "scan-booth-wall" (:id surface)))
+        (is (surfaces/on-surface? surface [2 2 -3]))
+        (is (not (surfaces/on-surface? surface [2.1 2 -3])))
+        (is (= "arkit-plane" (get-in surface [:measurement :method])))
+        (is (= (:world-id capture) (get-in surface [:measurement :world-id])))
+        (is (= :rejected (:status (post capture))))
+        (let [manual (assoc-in (model) [:rig :surfaces 0] (dissoc surface :measurement))]
+          (is (thrown? clojure.lang.ExceptionInfo (venue-scan/admit manual capture))))
+        (let [edited (assoc-in (model) [:rig :surfaces 0 :material] :brick)]
+          (is (= :brick (get-in (venue-scan/admit edited remeasure) [:model :rig :surfaces 0 :material]))))
+        (is (= :accepted (:status (post remeasure))))
+        (is (= :rejected (:status (post remeasure))))
+        (is (= [[0 1 -3.2]] (mapv :point (get-in (model) [:rig :surfaces]))))
+        (is (= initial-fixtures (get-in (model) [:rig :fixtures])))
+        (is (empty? (:instances (model))))
+        (is (= (:rig (model))
+               (get-in (files/read-string (files/write-string (model))) [:model :rig]))))
+      (finally (show/stop! rt)))))

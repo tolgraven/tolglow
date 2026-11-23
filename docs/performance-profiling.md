@@ -15,6 +15,12 @@ explicit Afterglow checkout. The report records both commits, CPU quota/model,
 JVM/Clojure versions, JVM arguments and workload options. Run without other
 builds or browser gates; keep every report, including unfavorable repeats.
 
+For the dense 3D venue, select the sculpture layout. Ten thousand pixels and
+twenty thousand pixels use the same twenty-four curved strands. Mounted heads
+follow the time-varying target from pitched and rolled positions on a truss.
+The benchmark compares both direct and independent output against the scalar
+reference and captures every ArtDMX universe. [Dense venue measurements](performance/dense-venue.md)
+
 The corpus includes spatial RGBW pixel color, beat-based attack/release, an
 ordinary tween overlay, and optionally eight moving heads with aim, focus, zoom,
 RGBW and physical dimmers. Fixtures cross universe boundaries. The pipeline
@@ -32,7 +38,7 @@ Percentiles, maximum, frames over 25 ms, mean throughput, owner/worker allocated
 bytes and GC counters are retained alongside individual observations. GC counters
 span the measured loop, including oracle comparisons outside the timed samples.
 
-This does not measure scheduler wakeup jitter, independent output publication,
+The grid workload excludes scheduler wakeup jitter, independent output publication,
 actual packet delivery, OLA/USB/fixture latency, browser or simulator work. It is
 not a GPU benchmark. Render stage costs are present only in the pipeline lane;
 the host lane deliberately times the real production tick without instrumentation.

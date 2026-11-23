@@ -121,20 +121,37 @@
     {:schemas schemas :defaults defaults :outputs outputs :selected selected
      :envelope-fn envelope-fn :envelope-attributes envelope-attributes})))
 
+(defn- validate-frame-fixtures! [fixtures]
+  (when-not (and (vector? fixtures) (every? #(and (map? %) (some? (:id %))) fixtures))
+    (fail! [:frame :fixtures] "Frame fixtures must be a vector with stable IDs"))
+  fixtures)
+
+(defn- fixture-selector [rig selected]
+  (let [select (if selected #(filterv (comp selected :id) %) identity)
+        prepared (when rig (select (validate-frame-fixtures! rig)))]
+    (fn [fixtures]
+      (if (and rig (identical? rig fixtures))
+        prepared
+        (select (validate-frame-fixtures! fixtures))))))
+
 (defn compile-effect
   "Return a context -> context middleware function. :outputs accepts an
   attribute->expression map or ordered output descriptors. Numeric expressions
   use afterglow.render.ir; {:op :tween :spec ...} is an output-level time tween.
   Definition/output :targets select stable fixture IDs, intersected when both
   are present. Optional :envelope scales :attributes (default [:dimmer]).
+  A captured rig lets targeted scalar effects reuse their selection while the
+  show presents that same immutable fixture vector.
   Scalar outputs and linear RGB components are normalized to [0,1], while
   :aim/:direction use finite 3D world coordinates/vectors;
   invalid computed values throw before any caller can publish a frame."
   ([definition] (compile-effect definition nil))
   ([definition bind-pure] (compile-effect definition bind-pure nil))
-  ([definition bind-pure match-plan]
+  ([definition bind-pure match-plan] (compile-effect definition bind-pure match-plan nil))
+  ([definition bind-pure match-plan rig]
   (let [{:keys [schemas defaults outputs selected envelope-fn envelope-attributes]}
-        (compile-plan definition bind-pure)]
+        (compile-plan definition bind-pure)
+        select-fixtures (fixture-selector rig selected)]
     (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
@@ -151,9 +168,8 @@
                                                                :released-at-beat (:release-at-beat instance))) clock))
             done? (boolean (or (:done? context)
                                (if envelope-fn (:done? envelope-result) releasing?)))
-            fixtures (:fixtures frame [])
-            _ (when-not (and (vector? fixtures) (every? #(and (map? %) (some? (:id %))) fixtures))
-                (fail! [:frame :fixtures] "Frame fixtures must be a vector with stable IDs"))
+            frame-fixtures (:fixtures frame [])
+            fixtures (select-fixtures frame-fixtures)
             env {:time-ms now :elapsed-ms (max 0 (- now start)) :params params :state state
                  :beat (:beat clock)
                  :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
@@ -167,14 +183,15 @@
                                   (assoc output :sampled-value
                                          (with-path [:outputs i :value] #((:evaluate output) env)))
                                   output)) (range) outputs))
-            targets (when (matching/active? definition) (or match-plan (matching/prepare fixtures selected)))
+            targets (when (matching/active? definition)
+                      (or (when (or (nil? rig) (identical? rig frame-fixtures)) match-plan)
+                          (matching/prepare frame-fixtures selected)))
             assignments
             (if done? []
               (into []
                     (mapcat
                      (fn [fixture]
-                       (when (or (nil? selected) (selected (:id fixture)))
-                         (let [rows (keep-indexed
+                       (let [rows (keep-indexed
                           (fn [i {:keys [attribute blend targets evaluate frame-only? sampled-value]}]
                             (when (or (nil? targets) (some #{(:id fixture)} targets))
                               (let [value (try
@@ -193,7 +210,7 @@
                                 {:target-id (:id fixture) :attribute attribute :value value :blend blend}))) outputs)]
                            (if targets
                              (matching/match-rows (get targets (:id fixture)) (get params matching/target-param) rows)
-                             rows)))))
+                             rows))))
                     fixtures))]
         (-> context
             (assoc :state state :done? done?)

@@ -2,6 +2,10 @@
   (:require [afterglow.reactive :as rx]
             [afterglow.sync :as sync]
             [tolglow.connections :as connections]
+            [tolglow.application :as app]
+            [tolglow.rig.rdm-gateway :as gateway]
+            [tolglow.rig.rdm-test :as rdm-peer]
+            [tolglow.studio.rdm-host-test :as rdm-host]
             [clojure.test :refer [deftest is testing]]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :refer [wrap-params]]
@@ -385,3 +389,47 @@
               (is (some? (receive socket))))))
           (finally (.abort ^WebSocket (:socket socket)))))
       (finally (stream/close! hub) (.stop server) (rx/close! graph)))))
+
+(defn- next-rdm [client base matches?]
+  (loop [previous base attempts 0]
+    (when (> attempts 64) (throw (ex-info "RDM feedback did not converge" {})))
+    (let [message (receive client)
+          view (apply-patch previous message)
+          status (get-in view [:subscriptions [:rdm/status] :value])]
+      (acknowledge client message)
+      (if (and status (matches? status)) [view message] (recur view (inc attempts))))))
+
+(deftest configured-headless-rdm-pushes-direct-gateway-readbacks-and-restores-offline
+  (let [{:keys [config requests close!]} (gateway/start!)
+        runtime (app/start! (assoc (app/default-config) :web-server false :show {:workspace-options nil}
+                                   :rdm (assoc config :enabled true)))
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        client (connect server "rig-fixtures&view=queries")
+        call! (fn [op body] (:data (rdm-host/request runtime op body true)))
+        qpath [:subscriptions [:rdm/status] :value]]
+    (try
+      (let [initial (receive client)]
+        (acknowledge client initial)
+        (is (= {} (:subscriptions (:view initial)))))
+      (send-control client {:op :queries :queries [[:rdm/status]]})
+      (let [[connected _] (next-rdm client {} :connected?)
+            session (get-in connected (conj qpath :session-id))
+            run! (fn [op body] (call! op (assoc body :session-id session)))
+            _ (is (empty? @requests))
+            _ (run! :discover {:universe 1 :full? false})
+            [inventory diff] (next-rdm client connected #(seq (get-in % [:discovered 1])))
+            _ (is (= :patch (:kind diff)))
+            _ (is (= [:cached] @requests))
+            _ (is (= [(:uid rdm-peer/device)] (get-in inventory (into qpath [:discovered 1]))))
+            _ (run! :read rdm-peer/device)
+            observed? #(= "Test Lighting" (get-in % [:observations "1/1234:01020304/0" :fields :manufacturer-label :value]))
+            [readback _] (next-rdm client inventory observed?)
+            source (show/export-show-source runtime)
+            prev @requests]
+        (is (= :accepted (:status (deref (show/submit! runtime :import {:source source}) 5000 {}))))
+        (let [[restored _] (next-rdm client readback #(and (observed? %) (not (:connected? %))))]
+          (is (= :art-net (get-in restored (into qpath [:config :transport]))))
+          (is (= [] (get-in restored (conj qpath :jobs))))
+          (is (nil? (get-in restored (conj qpath :session-id))))
+          (is (= prev @requests))))
+      (finally (.abort ^WebSocket (:socket client)) (.stop server) (app/stop! runtime) (close!)))))

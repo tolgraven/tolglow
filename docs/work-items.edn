@@ -10,6 +10,12 @@
    :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
    :evidence ["The pure/parity CI runner includes tolglow.spatial-cues-test. The host suite captures native DMX across weighted boundaries, Ring grid placement, HSL modulation, reachable aim-only selection, exact beat deadlines and instance remapping through Transit."
               "Editing the room beneath a running volume emits one diagnostic, preserves unrelated pixel output and recovers automatically. The Studio browser scenario submits the sculpted field to the running show using the iPad layout."]}
+  {:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
+   :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
+   :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
+   :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
+   :acceptance ["Tap a tracked room surface, review its metric extent and add or remeasure the named receiver without arming fixture output."]
+   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Physical wall survey comparison is pending."]}
   {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
@@ -74,7 +80,7 @@
    :acceptance ["Edit scope, targets, signal bindings, response and highlight behavior using the headless settings contract, and inspect decisions and measured output."]
    :evidence ["src/studio/tolglow/studio/autopilot_test.cljs exercises scoped edits, waveform bindings, per-stage response and ownership readback. dev/studio/autopilot-browser-qa.mjs drives the Ring-hosted Studio at tablet and phone viewport sizes. Hardware touch and display timing require device verification."]}
   {:id :render/conductor-frame-budget :title "Keep the measured conductor workload within the 40 Hz frame budget"
-   :kind :implementation :status :in-progress :owner "master_render_performance_profiler_and_optimizations"
+   :kind :implementation :status :in-progress :owner "tolglow_dense_mixed_venue_profiling_and_show_host_optimization"
    :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
    :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
    :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
@@ -469,6 +475,7 @@
    :kind :implementation :status :in-progress
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/dev/tolglow/perf/venue_rig.clj" "tolglow/docs/performance/dense-venue.md"
            "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
@@ -480,7 +487,8 @@
                 "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
                 "Measure actual acknowledged WebSocket subscribers and withheld-ACK backpressure alongside identical host ticks"
                 "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
-   :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
+   :evidence ["docs/performance/dense-venue.md records scalar-checked twisted 3D rigs with 64 differently mounted moving heads, synchronous ArtDMX and deterministic independent publication."
+              "docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
               "Tolglow #78 delivers 17 ArtDMX universes for four foggers and 2,048 pixels in direct and independent-output modes. The profile identified the #80 batching fix, reducing direct CPU with fog from 24.33 to 5.78 ms/frame. See docs/performance/venue-fog.md for wall-time overruns and allocation."
               "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
               "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
@@ -569,14 +577,27 @@
               "Actual Ring/Chromium loopback workflow: 14 checks passed, no component errors or horizontal overflow at desktop/iPad/phone widths"
               "dev/tolglow/rdm_qa.clj and test/studio/rdm_browser.mjs reproduce browser evidence; no physical olad/USB fixture or Safari qualification"]}
   {:id :rig/direct-artnet-rdm
-   :title "Add direct ArtTod discovery and ArtRdm device control"
-   :kind :implementation :status :planned :owner nil
-   :paths ["tolglow/src/tolglow/studio/rdm/artnet.clj"
-           "tolglow/test/tolglow/studio/rdm_artnet_test.clj"]
+   :title "Discover and configure fixtures over direct Art-Net with pushed rig feedback"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/rdm" "afterglow/test/afterglow/rdm"
+           "tolglow/src/tolglow/rig/rdm.clj" "tolglow/src/studio/tolglow/studio/rdm.cljs"
+           "tolglow/src/studio/tolglow/studio/rdm_test.cljs" "tolglow/test/tolglow/studio/state_stream_test.clj"
+           "tolglow/test/tolglow/rig/rdm_gateway.clj" "tolglow/docs/rdm.md"]
    :depends-on [:rig/rdm-device-management]
    :acceptance ["Verify ArtTod and ArtRdm formats against the published Art-Net specification"
-                "Reuse explicit sessions, bounded jobs and separate physical readback without sharing the DMX deadline transport"
-                "Qualify discovery and controls against protocol peers, then separately selected real nodes"]
+                "Use explicit sessions and bounded jobs for both transports and restore observations offline"
+                "Register headless RDM config and drive the Rig tab with a leased Transit subscription"]
+   :evidence ["Afterglow #58 implements the Art-Net 4 wire path and tests independent gateway packets on loopback"
+              "Headless module and real Ring to UDP to WebSocket diff and Transit restore in state_stream_test.clj"
+              "Chromium passed 15 OLA and 17 Art-Net checks including discovery, SET/readback, patch adoption and zero Rig status fetches"
+              "Optimized Studio build produced 204 files with zero compiler warnings. Physical qualification is tracked separately."]}
+  {:id :rig/rdm-gateway-qualification
+   :title "Qualify RDM readback on physical USB and Art-Net gateways"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/rdm.md"]
+   :depends-on [:rig/direct-artnet-rdm]
+   :acceptance ["Record gateway and fixture models and versions during a selected physical session"
+                "Verify discovery, readback, identification and restore using the physical interfaces"]
    :evidence []}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
   {:id :runtime/effect-fault-isolation

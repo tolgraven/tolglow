@@ -12,6 +12,8 @@ import Foundation
     @Published private(set) var busy = false
     @Published private(set) var armed = false
     @Published private(set) var outputCapable = false
+    @Published private(set) var connected = false
+    @Published private(set) var surfaceRevisions: [String: String] = [:]
     private var identity: [String: Any] = [:]
     private var baseURL: URL?
     private var polling: Task<Void, Never>?
@@ -33,10 +35,10 @@ import Foundation
     init() {
         scanner.onInterrupted = { [weak self] in Task { @MainActor in self?.finish() } }
     }
-    private func request(_ body: [String: Any]? = nil) async throws -> [String: Any] {
+    private func request(_ body: [String: Any]? = nil, path: String = "api/calibration") async throws -> [String: Any] {
         let requestGeneration = generation
         guard let baseURL else { throw URLError(.notConnectedToInternet) }
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/calibration"))
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
         if let body {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: identity.merging(body) { _, new in new })
@@ -61,6 +63,11 @@ import Foundation
     private func refresh() async throws {
         let result = try await request()
         identity = ["runtime-id": result["runtime-id"] ?? "", "expected-epoch": result["epoch"] ?? -1]
+        connected = true
+        surfaceRevisions = [:]
+        for row in result["saved-surfaces"] as? [[String: String]] ?? [] {
+            if let name = row["name"], let revision = row["revision"] { surfaceRevisions[name] = revision }
+        }
         fixtures = result["fixtures"] as? [[String: Any]] ?? []
         scan = result["session"] as? [String: Any]
         outputCapable = result["output-capable?"] as? Bool ?? false
@@ -71,6 +78,8 @@ import Foundation
         guard !armed, !busy, let url = URL(string: address), ["http", "https"].contains(url.scheme ?? ""),
               url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/" else { status = "Finish the scan first and enter an HTTP(S) Studio origin"; return }
+        connected = false; identity = [:]; outputCapable = false
+        surfaceRevisions = [:]; scanner.clearSurface()
         baseURL = url
         perform { try await self.refresh(); self.status = self.outputCapable ? "Host connected; output needs explicit scan arming" : "Preview host: no physical output sink enabled" }
     }
@@ -93,6 +102,21 @@ import Foundation
                     self.polling?.cancel(); self.polling = nil
                 }
             }
+        }
+    }
+    func saveSurface(named name: String) {
+        guard connected, !armed, let surface = scanner.surface, scanner.running else { return }
+        var payload = surface.geometry
+        payload["surface-name"] = name
+        payload["expected-surface-revision"] = surfaceRevisions[name]
+        perform {
+            let receipt = try await self.request(payload, path: "api/venue-surface")
+            guard receipt["status"] as? String == "accepted" else {
+                throw HostRejection(message: "Host has not confirmed this measurement. Reconnect to check the saved surfaces.")
+            }
+            self.scanner.clearSurface()
+            try await self.refresh()
+            self.status = "Saved scan-\(name) to the show rig."
         }
     }
     func arm(selectedFixtures: [String]) {
