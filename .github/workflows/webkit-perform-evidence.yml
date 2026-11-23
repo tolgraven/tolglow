@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: 8002a2d07cd3a2fc1f8da3f8d6bbc5a61498c74b
+          ref: e09e9c0e1d92a091fcfedf1e5f178c5efb3a4f4a
           path: tolglow
       - uses: actions/checkout@v7.0.1
         with:
@@ -51,6 +51,7 @@ jobs:
         run: |
           npx --no-install playwright-core install --with-deps webkit
           lein run -m tolglow.qa.performance-layout target/webkit-perform shell-alignment
+          STUDIO_CARD_LAYOUT_ONLY=1 lein run -m tolglow.qa.performance-layout target/webkit-perform/cards
       - name: Recheck the default Chromium runner
         if: always() && !cancelled()
         env:
@@ -59,6 +60,7 @@ jobs:
         run: |
           export CHROMIUM_PATH="$(command -v google-chrome)"
           lein run -m tolglow.qa.performance-layout target/chromium-perform shell-alignment
+          STUDIO_CARD_LAYOUT_ONLY=1 lein run -m tolglow.qa.performance-layout target/chromium-perform/cards
       - uses: actions/upload-artifact@v4
         if: always()
         with:
