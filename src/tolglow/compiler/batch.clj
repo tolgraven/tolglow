@@ -184,10 +184,10 @@
                    (not enabled?) (conj :disabled)
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
-       (with-meta (compiler/compile-effect definition bind-pure
+       (vary-meta (compiler/compile-effect definition bind-pure
                     (when (matching/active? definition) (matching/prepare fixtures selected))
                     (when enabled? fixtures))
-         {:backend :ordinary :fallback-reasons reasons})
+         merge {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
              fixture-index (when block-plan (blocks/fixture-index fixtures))
              scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
@@ -227,8 +227,9 @@
                        (assoc :state state :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))
-           {:backend (if prepare-group :deferred :batch) :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
-            :groups (count groups)}))))))
+           (blocks/step-info {:backend (if prepare-group :deferred :batch)
+                              :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
+                              :groups (count groups)} block-plan)))))))
 
 (defn compile-effect
   "Compile the live backend. Future keyframes retain owned numeric samples. A

@@ -6,9 +6,11 @@
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
             [tolglow.studio.composition-layers :as layers]
+            [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.block-builder :as block-builder]
+            [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
@@ -472,7 +474,8 @@
           (for [item (:compositions show)] ^{:key (:id item)}
             [:div.list-card [:div [:strong (display-name item)] [:p (str (label (:mode item)) " · " (count (:slots item)) " slots · " (label (:loop item)) (when (:running? item) " · playing"))]]
              [button nil "Open" [:studio/composition-open item]]])
-          [:p.muted.small "Your saved macros and sequences will appear here."])]]]]))
+          [:p.muted.small "Your saved macros and sequences will appear here."])]]
+      (when (= :compose (get-in db [:ui :view])) [variable-blocks/panel])]]))
 
 (defn- plan-point [svg event width depth]
   (let [rect (.getBoundingClientRect svg)]
@@ -649,6 +652,8 @@
     [:section#view-library.view {:hidden (not= :library (:view ui))}
      [heading "MAKE IT YOURS" "Ideas become instruments." "Create declarative effects and cues. Validate, publish, then play."
       [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
+     (when (= :library (:view ui))
+       ^{:key [(:runtime-id show) (:show-id show) (:epoch show)]} [materials/panel])
      [:div.definition-layout
       [:aside.panel.definition-library
        [:div.panel-top [:span.section-label "DEFINITIONS"] [button "new-definition" "New +" [:studio/definition-new] "text-button"]]
@@ -761,7 +766,7 @@
        [perform-view db]
        (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
        (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
-       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
+       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
        [chat/panel db]
        (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
               [expressive/panel (:show db)]])

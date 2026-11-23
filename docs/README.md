@@ -83,6 +83,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Modulation](modulation.md) | Seeded typed modulation, targeting and holds |
 | [Compound cues and native layers](native-composition.md) | Ordered color, aim and musical transforms, reusable modifier effects and layer opacity |
 | [Effect recipes](effect-recipes.md) | Declarative musical/spatial construction helpers |
+| [Shared variable chains](global-variable-blocks.md) | Authoring and tracing global material chains in Studio, the REPL and Ring |
 | [Effect building blocks](effect-blocks.md) | Shader materials, parameter and variable bindings, stage inspection |
 | [Registered signals](signals.md) | Waveform versions, selectors and derivative units |
 | [Live waveform projections](waveform-projections.md) | Current signal parameters, captured PCM history and bounded Push data |

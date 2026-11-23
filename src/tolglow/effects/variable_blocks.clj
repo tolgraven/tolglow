@@ -4,30 +4,47 @@
   (:require [afterglow.render.ir :as ir]
             [afterglow.runtime.events :as events]
             [afterglow.time :as time]
-            [tolglow.compiler.blocks :as blocks]))
+            [tolglow.compiler.blocks :as blocks]
+            [tolglow.effects.prefabs :as prefabs]))
 
-(defn compile-settings [{:keys [bindings prefabs] :as settings}]
-  (when-not (or (nil? settings)
-                (and (map? settings) (every? #{:bindings :prefabs} (keys settings))
-                     (or (nil? bindings) (map? bindings))))
-    (throw (ex-info "Variable blocks require a settings map with named bindings" {})))
-  (when (seq bindings)
-    (when-not (every? #(and (vector? %) (= :variables (first %))) (keys bindings))
-      (throw (ex-info "Show-wide bindings require paths starting with :variables" {})))
-    (doseq [path (keys bindings)
-            length (range 2 (count path))]
-      (when (contains? bindings (subvec path 0 length))
-        (throw (ex-info "One binding would replace the parent of another" {:path path}))))
-    (let [no-params (fn [_ _ path] (throw (ex-info "Use show variables as global block inputs" {:path path})))
-          plan (blocks/prepare {:blocks bindings :prefabs prefabs} [] no-params)]
-      (assoc plan :evaluate (update-vals (:expressions plan) ir/compile-expression)))))
+(defn compile-settings
+  ([settings] (compile-settings settings nil))
+  ([{:keys [bindings prefabs] :as settings} entries]
+   (when-not (or (nil? settings)
+                 (and (map? settings) (every? #{:bindings :prefabs} (keys settings))
+                      (or (nil? bindings) (map? bindings))))
+     (throw (ex-info "Variable blocks require a settings map with named bindings" {})))
+   (when (seq bindings)
+     (when-not (every? #(and (vector? %) (= :variables (first %))) (keys bindings))
+       (throw (ex-info "Show-wide bindings require paths starting with :variables" {})))
+     (doseq [path (keys bindings)
+             length (range 2 (count path))]
+       (when (contains? bindings (subvec path 0 length))
+         (throw (ex-info "One binding would replace the parent of another" {:path path}))))
+     (let [no-params (fn [_ _ path] (throw (ex-info "Use show variables as global block inputs" {:path path})))
+           plan (blocks/prepare {:blocks bindings :prefabs prefabs :imported-prefabs entries} [] no-params)]
+       (assoc plan :evaluate (update-vals (:expressions plan) ir/compile-expression))))))
 
-(defn prepare! [cache settings]
-  (let [cached @cache]
-    (if (= settings (:settings cached))
+(defn compile-model [model]
+  (compile-settings (get-in model [:settings :variable-blocks]) (prefabs/catalog model)))
+
+(defn- same-inputs? [ids before after]
+  (every? #(= (get before %) (get after %)) ids))
+
+(defn prepare! [cache settings entries]
+  (let [cached @cache
+        same-settings? (identical? settings (:settings cached))]
+    (cond
+      (and same-settings? (identical? entries (:entries cached)))
       (:plan cached)
-      (let [plan (compile-settings settings)]
-        (vreset! cache {:settings settings :plan plan})
+
+      (and same-settings? (same-inputs? (:shared-ids cached) (:entries cached) entries))
+      (:plan (vreset! cache (assoc cached :entries entries)))
+
+      :else
+      (let [plan (compile-settings settings entries)
+            ids (prefabs/shared-ids (:bindings settings) (:prefabs settings))]
+        (vreset! cache {:settings settings :entries entries :shared-ids ids :plan plan})
         plan))))
 
 (defn- environment [plan model time-ms]

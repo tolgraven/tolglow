@@ -4,6 +4,7 @@
   (:require [tolglow.studio.origin :as origin]
             [clojure.data.json :as json]
             [tolglow.data :as data]
+            [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
@@ -166,8 +167,10 @@
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
+   "/api/variable-block" :variable-block
    "/api/modulation/start" :modulation-start "/api/modulation/stop" :modulation-stop
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
+   "/api/materials" :material-edit
    "/api/modulation/cue" :modulation-cue "/api/waveforms/publish" :waveform
    "/api/patch/save" :patch-save "/api/patch/enabled" :patch-enabled})
 
@@ -209,7 +212,7 @@
    (available service message (fn [request] (ok (service operation (params request)))))))
 
 (defn- get-routes
-  [{:keys [snapshot! definition! export! heartbeat! provider-get! chat-history! patch!
+  [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch!
            app-agent! fixture! rdm! audio! sync! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers!]}]
   (merge
    {"/api/event-subscribers" (available event-subscribers! "Event subscribers unavailable" (fn [_] (ok (event-subscribers!))))
@@ -219,6 +222,7 @@
     "/api/state" (fn [{:keys [query-params]}]
                    (heartbeat! (get query-params "session"))
                    (ok (snapshot! query-params)))
+    "/api/materials" (available materials! "Material library unavailable" (fn [_] (ok (materials!))))
     "/api/settings" (fn [_] (ok (:settings (snapshot! {}))))
     "/api/definition" (fn [{:keys [query-params]}]
                         (if-let [definition (definition! (keyword (get query-params "kind" "effects"))
@@ -265,8 +269,9 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]}]
+(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]
+                     :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
    (post-actions "/api/application-agents/" app-agent! ok
@@ -288,7 +293,9 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/" sync! ok {"live" :live})
-   {"/api/spatial/search" (available spatial-search! "Spatial search unavailable"
+   {"/api/materials/preview" #(ok (material-preview! (:json-params %)))
+    "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))
+    "/api/spatial/search" (available spatial-search! "Spatial search unavailable"
                                       #(ok {:results (spatial-search! (:json-params %))}))
     "/api/repl/eval" (available repl-eval! "REPL unavailable" #(event-stream repl-eval! (:json-params %) {}))
     "/api/expressive/preview" (available expressive! "Expressive mapping preview unavailable" #(ok (expressive! (:json-params %))))
