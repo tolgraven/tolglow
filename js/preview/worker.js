@@ -82,6 +82,7 @@ function applyState(message) {
   if (state.snapshot) {
     const snapshot = state.snapshot;
     if (!snapshot.rig && engine.snapshot) snapshot.rig = engine.snapshot.rig;
+    if (!Object.hasOwn(snapshot, 'editor')) snapshot.editor = engine.snapshot?.editor;
     engine.update(snapshot, false, state.receivedAt - performance.timeOrigin);
   }
   engine.camera.position.fromArray(state.camera.position); engine.controls.target.fromArray(state.camera.target);

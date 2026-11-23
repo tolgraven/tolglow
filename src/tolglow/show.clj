@@ -26,7 +26,7 @@
             [tolglow.registry :as registry]
             [tolglow.integrations.ableton :as ableton]
             [tolglow.aim-paths :as aim-paths]
-            [tolglow.rig.surfaces :as surfaces]
+            [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.reflections :as reflections]
             [tolglow.rig.surface-aim :as surface-aim]
             [tolglow.modulation :as modulation]
@@ -209,7 +209,9 @@
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
-   (let [model (fog-scan/disarm (photometry/disarm (calibration/disarm-restored (or model (demo/model)))))
+   (let [model (-> (or model (demo/model))
+                   (update :rig pixel-layout/prepare-startup)
+                   calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
@@ -226,12 +228,14 @@
          compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
+         rdm-state (rdm/session-state)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! (spatial/register! nil)))))
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
+                                                                             (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
                           (catch Exception error (connections/close! owned) (throw error)))]
@@ -271,7 +275,7 @@
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
-                             {:model! #(get @(:state @runtime-ref) :model)
+                             {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
@@ -471,23 +475,13 @@
             (update result :model assoc-in [:pages page-id] (assoc-in page [:cells position] (:id cue)))
             (update result :ack assoc :page-full? true)))))
     :rig
-    (let [resolve-ids (fn [entries kind]
-                        (let [existing (into {} (map (juxt :id identity)) (get-in model [:rig kind]))]
-                          (if-not (and (vector? entries) (every? map? entries)) entries
-                            (mapv (fn [entry]
-                                  (let [id (:id entry)
-                                        text (if (keyword? id) (subs (str id) 1) id)
-                                        original (or (get existing id) (get existing text)
-                                                     (when (string? text) (get existing (keyword text))))]
-                                    (cond-> entry original (assoc :id (:id original))))) entries))))
-          payload (cond-> (update payload :fixtures resolve-ids :fixtures)
-                    (contains? payload :trusses) (update :trusses resolve-ids :trusses)
-                    (:edge-tracking payload) surfaces/resolve-link-ids)]
-      (rig/validate-rig payload)
-      {:model (cond-> (-> model (assoc :rig payload) (update :revision inc))
+    (let [{:keys [basis rig]} payload]
+      (when-not (identical? basis (:rig model))
+        (throw (ex-info "Rig changed while editing; reload the current patch before saving" {})))
+      {:model (cond-> (-> model (assoc :rig rig) (update :revision inc))
                 (get-in model [:variables :surface-aim])
                 (update-in [:variables :surface-aim] select-keys
-                           (for [{:keys [id channels]} (:fixtures payload) :when (and (:pan channels) (:tilt channels))] id)))
+                           (for [{:keys [id channels]} (:fixtures rig) :when (and (:pan channels) (:tilt channels))] id)))
        :ack {:status :accepted}})
     :fixture-patch
     (let [types (get-in model [:registry :fixtures])
@@ -1175,6 +1169,13 @@
                                 @restored-generation @restarted-generation)
          (rdm/reconcile! (:rdm runtime)))))))
 
+(defn- prepare-rig-edit [model proposed]
+  (let [basis (:rig model)
+        proposed (dissoc proposed :runtime-id :expected-epoch)
+        proposed (cond-> proposed (map? (:fixtures proposed))
+                   (update :fixtures (partial fixture-patch/expand (get-in model [:registry :fixtures]))))]
+    {:basis basis :rig (rig/prepare-edit basis proposed)}))
+
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
   the frame-owner lock, then committed atomically by the next owner cycle."
@@ -1188,8 +1189,7 @@
                         (or (not (#{:photometry :fog-calibration :venue-surface} type)) (and (= epoch (:expected-epoch payload)) (= (:id runtime) (:runtime-id payload))))
                         (or (nil? (:runtime-id payload)) (= (:id runtime) (:runtime-id payload))))
            (throw (ex-info "Show stopped or session changed" {})))
-         (let [payload (cond-> payload (and (= :rig type) (map? (:fixtures payload)))
-                         (update :fixtures (partial fixture-patch/expand (get-in before [:registry :fixtures]))))
+         (let [payload (if (= :rig type) (prepare-rig-edit before payload) payload)
                payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
                          (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
                          payload)
@@ -1451,7 +1451,7 @@
                        {:runtime-id (:id runtime) :expected-epoch epoch}))]
       (case operation
         :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
-        :disconnect (rdm/disconnect! (:rdm runtime))
+        :disconnect (rdm/disconnect-session! (:rdm runtime) (:session-id payload))
         :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
         (:associate :unassociate :adopt)
         (deref (submit! runtime :rdm-update (merge payload identity {:operation operation})) 5000 {:status :pending})

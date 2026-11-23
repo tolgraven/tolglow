@@ -7,6 +7,7 @@
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
+            [tolglow.rig.rdm :as rdm]
             [tolglow.fixtures.patch :as patch]
             [tolglow.agents :as agents]
             [tolglow.connections :as connections]))
@@ -84,14 +85,17 @@
                   (show/sync-action! runtime :start {})))
      :stop! #(show/sync-action! runtime :stop {})}))
 
-(defn- install-fixtures [context {:keys [definitions patches factories fixture-types groups]}]
+(defn- install-fixtures [context {:keys [definitions patches factories fixture-types groups pixel-layouts]}]
   (let [runtime (need-show context)]
     (doseq [definition definitions]
       (accepted! (show/submit! runtime :definition {:kind :fixtures :definition definition})))
-    (when (some? patches)
+    (when (or (some? patches) (some? pixel-layouts))
       (let [model (:model @(:state runtime))
-            fixtures (patch/expand (merge fixture-types (get-in model [:registry :fixtures])) factories patches groups)]
-        (accepted! (show/submit! runtime :rig (assoc (:rig model) :fixtures fixtures)))))
+            types (merge fixture-types (get-in model [:registry :fixtures]))
+            rig (cond-> (:rig model)
+                  (some? patches) (assoc :fixtures (patch/expand types factories patches groups))
+                  (some? pixel-layouts) (assoc :pixel-layouts pixel-layouts))]
+        (accepted! (show/submit! runtime :rig rig))))
     {:value (get-in @(:state runtime) [:model :rig :fixtures])}))
 
 (defn- install-cue-pages [context {:keys [definitions]}]
@@ -128,6 +132,13 @@
     (when (seq options) (agents/configure! manager options))
     {:value manager}))
 
+(defn- start-rdm [context options]
+  (let [runtime (need-show context)
+        manager (:rdm runtime)
+        identity ((:identity! manager))]
+    {:value (rdm/connect! manager options identity)
+     :stop! #(rdm/disconnect! manager)}))
+
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
@@ -141,7 +152,7 @@
    :lighting-activity (settings-module :lighting-activity {:enabled? true})
    :fog-control (settings-module :fog-control {:enabled? true})
    :lighting-scenes install-lighting-scenes
-   :fixtures install-fixtures :cue-pages install-cue-pages})
+   :rdm start-rdm :fixtures install-fixtures :cue-pages install-cue-pages})
 
 (defn start!
   "Launch a show using :init stages and per-module :enabled options. Supply a

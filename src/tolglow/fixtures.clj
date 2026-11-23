@@ -2,6 +2,7 @@
   (:require [afterglow.channels :as chan :refer [dimmer functions pan tilt fine-channel color-wheel-hue focus]]
             [afterglow.effects.channel :as chan-fx :refer [function-value-scaler]]
             [afterglow.transform :as tf :refer [degrees]]
+            [tolglow.rig.pixel-layout :as pixel-layout]
             [clojure.string :as string]))
 
 (defn shutter-strobe-map "helper for strobe defs and scaling"
@@ -27,9 +28,7 @@
  (partial function-value-scaler low high))
 
 
-(def color-layouts {:rgb [:red :green :blue] ;XXX add BRG etc
-                    :rgbw [:red :green :blue :white]
-                    :rgbwa [:red :green :blue :white :amber]})
+(def color-layouts pixel-layout/color-layouts)
 (def named-colors [:red :green :blue :white :amber :uv :cyan :magenta :yellow])
 (def color-hues {:amber 45 :uv 270 :cyan 180 :magenta 300 :yellow 55})
 
