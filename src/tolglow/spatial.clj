@@ -151,17 +151,28 @@
     {:cache {:rig rig :venue venue :extinction extinction :options options :index index}
      :frame (assoc options :values values)}))
 
+(defn- live-settings [original active previous]
+  (if (empty? active)
+    original
+    (let [overlays (into {} (keep (fn [[id {:keys [volume]}]] (when volume [id volume]))) active)
+          settings (-> (if (:enabled? original) original (select-keys original [:bounds :gravity]))
+                       (assoc :enabled? true :run-when :enabled)
+                       (update :volumes merge overlays))]
+      (if (= settings previous) previous settings))))
+
+(defn- volume-errors [model fields now]
+  (for [[key {:keys [instance-id error]}] (:views fields)
+        :when (and error (not= error (get-in model [:variables :spatial :signals key :error])))]
+    {:type :spatial/invalid-volume :volume-id key :instance-id instance-id :time-ms now :message error}))
+
 (defn advance [model before now graph command]
   (let [original (get-in model [:settings :spatial])
-        active (cues/volumes (assoc model :time-ms now) (:modulation-view before))
+        old-cache (:spatial-cache before)
+        active (cues/volumes (assoc model :time-ms now) (:modulation-view before) (:settings old-cache))
         model (cues/reconcile model active now command)
-        s (if (empty? active) original
-              (-> (if (:enabled? original) original (select-keys original [:bounds :gravity]))
-                  (assoc :enabled? true :run-when :enabled)
-                  (update :volumes merge (update-vals active :volume))))
+        s (live-settings original active (:settings old-cache))
         prior (get-in model state-path)
-        clock (assoc (time/frame-clock model) :time-ms now :epoch (:epoch model))
-        old-cache (:spatial-cache before)]
+        clock (assoc (time/frame-clock model) :time-ms now :epoch (:epoch model))]
     (cond
       (not (:enabled? s))
       (if (or prior (get-in model actions/run-path))
@@ -196,11 +207,12 @@
                        (field/sample volume rig (:frame @observations))
                        (field/positions volume rig)))
             fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
-            view (cond-> (select-keys result [:members :signals :events :dropped-ms])
+            events (into (:events result) (volume-errors model fields now))
+            view (cond-> (assoc (select-keys result [:members :signals :dropped-ms]) :events events)
                    fields (update :signals #(merge-with merge % (:views fields)))
                    fields (update :members merge (:members fields)))
             model (-> model (assoc-in state-path (assoc (:state result) :start-clock start))
-                      (assoc-in [:variables :spatial] view) (stage (:events result)))]
+                      (assoc-in [:variables :spatial] view) (stage events))]
         {:model (actions/apply-frame model result (:bindings s {}) now command)
          :fields fields
          :cache (cond-> {:fixtures fixtures :rig rig :settings s :dynamic? dynamic? :scene scene}

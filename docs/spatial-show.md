@@ -22,6 +22,29 @@ The aggregate query `[:spatial/scene]` returns signals by volume. `[:spatial/bod
 
 Open **Rig → Spatial** to edit, throw and inspect. The subscriptions guide covers linked query lifetimes, immutable Transit projections and resynchronization. The cue inspector shows the affected instance and effect inputs. [Spatial Studio](spatial-studio.md) · [Studio subscriptions](studio-subscriptions.md) · [Cue inspector](cue-inspector.md)
 
+## Launch a sculpted volume as a cue
+
+**Rig → Volumes** places a sculpted region on a cue page, starts it, and shows its current shape in the rig. The same operation runs headless. For example, this ball paints blue toward its centre, follows a show variable for hue and follows the ordinary cue lifecycle.
+
+```clojure
+(show/submit! runtime :spatial-cue
+  {:op :spawn :id :rolling-wash :name "Rolling wash" :page-id :main
+   :volume {:shape :ball :position [-2 1 0] :velocity [1.5 0 0]
+            :gravity [0 -2 0] :restitution 0.9 :radius 0.6
+            :selection #{:position}
+            :falloff {:inner-m 0.2 :outer-m 0.3 :curve :smoothstep}}
+   :paint {:color [0.0 0.0 1.0]}
+   :sources {:color {:hsl [{:variable [:wash-hue] :default 0.65} 0.8 0.5]}}})
+```
+
+The receipt gives the `:cue-id`, `:instance-id`, `:page-id` and `:cell`. Omit `:cell` for the first free grid cell or supply `[column row]`. A collision with an occupied cell or definition ID rejects the whole operation. Launching the registered cue again creates a fresh instance with the saved controls. A timed launch can use `:launch {:mode :one-shot :duration {:beats 1/2}}`. The Ring endpoint accepts the same map as a Transit POST to `/api/spatial/cues`.
+
+- **Shape and motion.** Coordinates, sizes, radii and feather distances use metres. A rounded box has a centre in `:position`, full dimensions in `:size`, and `:rounding` from zero to one. A ball with a `:geometry` uses the local shape as its field and the outer `:radius` for collisions. A sphere or rounded box exposes both shape choices on its cue. `:scale` stretches the field along its local axes. Use a union, intersection or difference for a composite field. The rig editor can configure each operand. [Shape definitions](spatial-studio.md)
+- **Fixture selection.** `#{:position}` selects heads by their world origin. Add `:beam` to include illuminated beams that enter the field, or `:aimable` to include heads that can point into it. Multiple modes take their greatest weight for each head. The beam calculation reads the last committed fixture output, fog extinction and receiver surfaces. A launch with `:targets` further restricts the field. Set `:paint {:aim :volume}` to steer reachable heads toward points inside the moving volume.
+- **Paint and scene blending.** A head inside the solid centre gets `:strength` times the final group opacity. A head within the edge feather receives a fraction. Its lower-priority look remains visible underneath. `:paint` accepts native color, dimmer, focus, direction or other registered fixture fields. Supply `:members [{:cue-id :wash} {:effect-id :sweep :launch {:params {:speed 0.3}}}]` or `:scene-id :saved-macro` to apply an existing look inside the volume. Each member gets one owned instance. All its native writes and slot transforms compose before the field weight is applied. A cue outside this group keeps its own identity.
+- **Live controls.** Cue parameters expose strength, edge feather, velocity, bounciness, size, position and the declared paint. `:sources` can take a scalar signal, a show variable, a running cue parameter, three component sources or an HSL triple. The ordinary parameter commands, modulation controls and device mappings apply. The active shape, paint, membership count and any invalid-volume fault appear in the leased `[:spatial/scene]` view. An invalid room or shape edit removes the affected field from output and emits a `:spatial/invalid-volume` event. Correcting it resumes output.
+- **Save and restore.** Saving a show captures the grid cue, field, sources, launching cue/effect references and owned member runs. Loading it remaps runtime instance identities. Stopping the restored parent releases its owned scene and leaves other performers’ launches running. [Show files](show-files.md)
+
 ## Review and verification
 
 - A single `[:spatial/scene]` lease covers every visible preview body. A rig with 32 or more volumes can open the preview without exhausting the socket’s limit of 32 queries. The selected body can still expose its own details and members. [Studio subscriptions](studio-subscriptions.md)

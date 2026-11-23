@@ -189,15 +189,39 @@
                     {:duration {:unit :ms :value duration} :started-at (:started-at-ms instance)}))]
     (and timer (not (get-in instance [:system :paused?])) (:done? (time/sample timer clock)))))
 
-(defn volumes [model modulation]
-  (into {}
-        (keep (fn [instance]
-                (when (and (running? instance) (not (expired? instance (time/frame-clock model))))
-                  (let [spec (get-in instance [:definition :spatial-volume])
-                        values (controls model instance modulation)]
-                    [(key-for instance) {:instance instance :volume (volume (:volume spec) values)
-                                         :values values :members (:members spec)}]))))
-        (vals (:instances model))))
+(defn- live-volume [model modulation previous settings key instance]
+  (let [{:keys [members] :as spec} (get-in instance [:definition :spatial-volume])]
+    (try
+      (let [values (controls model instance modulation)
+            resolved (volume (:volume spec) values)
+            room (select-keys settings [:bounds :gravity])]
+        (when-not (and (= room (select-keys previous [:bounds :gravity]))
+                       (= resolved (get-in previous [:volumes key])))
+          (physics/validate! (assoc room :volumes {key resolved}))
+          (field/prepare resolved))
+        {:instance instance :volume resolved :values values :members members})
+      (catch Exception ex
+        {:instance instance :error (ex-message ex)}))))
+
+(defn volumes [model modulation previous]
+  (let [settings (get-in model [:settings :spatial])
+        static (when (:enabled? settings) (:volumes settings))
+        clock (time/frame-clock model)
+        running (sort-by :order (filter #(and (running? %) (not (expired? % clock))) (vals (:instances model))))
+        admit (fn [{:keys [entries volumes balls] :as state} instance]
+                (let [key (key-for instance)
+                      entry (live-volume model modulation previous settings key instance)
+                      ball? (= :ball (get-in entry [:volume :shape]))
+                      error (cond
+                              (contains? static key) "A configured volume already uses this cue's ID"
+                              (>= volumes 256) "The room already has 256 active volumes"
+                              (and ball? (>= balls 64)) "The room already has 64 active balls"
+                              :else (:error entry))]
+                  (if error
+                    (assoc-in state [:entries key] {:instance instance :error error})
+                    {:entries (assoc entries key entry) :volumes (inc volumes) :balls (if ball? (inc balls) balls)})))]
+    (:entries (reduce admit {:entries {} :volumes (count static) :balls (count (filter #(= :ball (:shape %)) (vals static)))}
+                      running))))
 
 (defn- member-source [key index]
   {:adapter :spatial-cue :volume-id key :member index})
@@ -273,19 +297,21 @@
       (let [position (get-in physical [:signals key :position])
             volume (cond-> volume (and (= :ball (:shape volume)) position) (assoc :position position))
             aim? (get-in instance [:definition :spatial-volume :aim-at-volume?])
-            {:keys [weights aims]} (sample volume)
-            aims (if (and aim? (not (contains? (:selection volume) :aimable)))
+            {:keys [weights aims]} (when volume (sample volume))
+            aims (if (and volume aim? (not (contains? (:selection volume) :aimable)))
                    (:aims (sample (assoc volume :selection #{:aimable}))) aims)
-            weights (if (contains? instance :targets) (select-keys weights (:targets instance)) weights)]
+            weights (if (contains? instance :targets) (select-keys weights (:targets instance)) (or weights {}))
+            error (or (:error entry) (get-in model (into run-path [key :error])))]
         (-> frame
             (update :groups into (group-rows model key entry weights))
             (cond-> aim? (assoc-in [:aims (:id instance)] (select-keys aims (keys weights))))
             (assoc-in [:overrides (:id instance)] (select-keys values (keys (get-in instance [:definition :spatial-volume :sources]))))
             (assoc-in [:members key] (set (keys weights)))
-            (assoc-in [:views key] {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
+            (assoc-in [:views key] (cond-> {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
                                     :paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
                                              aim? (assoc :aim :volume))
-                                    :affected-head-count (count weights)}))))
+                                    :affected-head-count (count weights)}
+                                     error (assoc :error error))))))
     {:groups {} :overrides {} :views {} :members {}} active))
 
 (defn with-aims

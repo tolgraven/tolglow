@@ -8,7 +8,8 @@
            "tolglow/src/tolglow/studio/web.clj" "tolglow/test/tolglow/spatial_cues_test.clj"]
    :depends-on [:show/spatial-bindings]
    :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
-   :evidence ["tolglow.spatial-cues-test covers actual captured DMX across field boundaries, native tint over a running cue, an edited/relaunched ball, saved macro ownership, Transit restore and HSL/global sources."]}
+   :evidence ["The pure/parity CI runner includes tolglow.spatial-cues-test. The host suite captures native DMX across weighted boundaries, Ring grid placement, HSL modulation, reachable aim-only selection, exact beat deadlines and instance remapping through Transit."
+              "Editing the room beneath a running volume emits one diagnostic, preserves unrelated pixel output and recovers automatically. The Studio browser scenario submits the sculpted field to the running show using the iPad layout."]}
   {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]

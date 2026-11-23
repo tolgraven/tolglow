@@ -1,5 +1,6 @@
 (ns tolglow.spatial-cues-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.render.frame :as frame]
+            [clojure.test :refer [deftest is]]
             [tolglow.composition :as composition]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
@@ -96,8 +97,11 @@
 
 (deftest ring-spawn-morphs-a-ball-and-honors-the-ordinary-launch-targets
   (let [rt (host/runtime true)
-        app (web/app {:heartbeat! (constantly nil) :submit! (fn [op data] (let [receipt (show/submit! rt op data)]
-                                               (host/tick rt 0) receipt))})
+        submit! (fn [op data]
+                  (let [receipt (show/submit! rt op data)]
+                    (host/tick rt 0)
+                    receipt))
+        app (web/app {:heartbeat! (constantly nil) :submit! submit!})
         req (-> request (dissoc :cell) (assoc :launch {:targets [:near]}))
         response (app {:uri "/api/spatial/cues" :request-method :post
                        :headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
@@ -135,7 +139,6 @@
       (is (empty? (:instances (state rt))))
       (finally (show/stop! rt)))))
 
-
 (deftest cache-only-optical-plans-across-committed-frames
   (doseq [batch? [false true]]
     (let [rt (host/runtime batch?)
@@ -150,4 +153,44 @@
           (let [second-plan (get-in @(:state rt) [:spatial-cache :optics])]
             (is (identical? (:options first-plan) (:options second-plan)))
             (when batch? (is (identical? (:index first-plan) (:index second-plan))))))
+        (finally (show/stop! rt))))))
+
+(deftest a-room-edit-isolates-the-invalid-ball-and-retries-after-correction
+  (let [rt (host/runtime true)]
+    (try
+      (launch! rt 0 :blue)
+      (let [id (:instance-id (host/submit rt 0 :spatial-cue request))
+            key (cues/key-for (get-in (state rt) [:instances id]))
+            view #(get-in (state rt) [:variables :spatial])]
+        (host/settings rt 10 {:bounds {:min [0 0 0] :max [0.6 0.6 0.6]}})
+        (is (string? (get-in (view) [:signals key :error])))
+        (is (= [key] (mapv :volume-id (filter #(= :spatial/invalid-volume (:type %)) (:events (view))))))
+        (is (empty? (get-in (view) [:members key])))
+        (is (= [0 0 255 0 0 255 0 0 255] (host/output rt)))
+        (host/tick rt 25)
+        (is (empty? (filter #(= :spatial/invalid-volume (:type %)) (:events (view)))))
+        (host/settings rt 50 {:bounds {:min [-5 0 -5] :max [5 5 5]}})
+        (is (nil? (get-in (view) [:signals key :error])))
+        (is (= [255 0 0 128 0 128 0 0 255] (host/output rt))))
+      (finally (show/stop! rt)))))
+
+(deftest an-aim-only-sculpted-cue-steers-the-reachable-moving-head
+  (doseq [batch? [true false]]
+    (let [rt (host/runtime batch?)
+          head {:id :moving :position [0 1 0] :direction [0 0 1] :beam-angle 12
+                :universe 1 :address 4 :channels {:red 1 :green 2 :blue 3 :pan 4 :tilt 5}}
+          rig [(first host/fixtures) head]
+          model (assoc-in (state rt) [:rig :fixtures] rig)
+          centre [2.0 1.0 3.0]
+          command (assoc request :paint {:aim :volume}
+                         :volume {:shape :sphere :position centre :radius 0.25 :selection #{:aimable}})]
+      (try
+        (host/submit rt 0 :import {:source (persistence/write-string model)})
+        (let [id (:instance-id (host/submit rt 0 :spatial-cue command))
+              key (cues/key-for (get-in (state rt) [:instances id]))
+              output (:output @(:state rt))
+              resolved (or (get-in output [:values :moving])
+                           (some #(when (= :moving (:id %)) %) (frame/project-compact (:compact output))))]
+          (is (= #{:moving} (get-in (state rt) [:variables :spatial :members key])))
+          (is (= centre (:aim resolved))))
         (finally (show/stop! rt))))))
