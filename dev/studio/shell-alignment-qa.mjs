@@ -63,7 +63,7 @@ async function verify(page, id, width) {
   await page.waitForURL('**/debug');
   await page.keyboard.press('1');
   await page.waitForURL('**/perform');
-  assert.equal(await page.getByRole('link', {name: 'Perform', exact: true}).getAttribute('aria-current'), 'page');
+  await page.locator('a[data-view="perform"][aria-current="page"]').waitFor();
 }
 
 await mkdir(directory, {recursive: true});
