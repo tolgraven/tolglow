@@ -23,6 +23,10 @@ jobs:
           echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
           curl -fLsS https://repo.maven.apache.org/maven2/io/github/willena/sqlite-jdbc/3.49.0.0/sqlite-jdbc-3.49.0.0.jar -o sqlite.jar
           echo '8240639e54a1270fbc11cd56b5f5f0d0ea4aab839a9b80c791978aef4522e01e  sqlite.jar' | shasum -a 256 -c -
+          mkdir -p override/tolglow
+          unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
+          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(compile 'tolglow.persistence)"
+          jar uf studio.jar -C override .
           native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
           ./studio-native --port 0 >native-start.log 2>&1 &
           child=$!
@@ -81,6 +85,7 @@ jobs:
             </nativeImageArgs></configuration></plugin></plugins></build>
           </project>
           POM
+          mkdir -p target/classes
           mvn -B com.gluonhq:gluonfx-maven-plugin:1.0.29:compile 2>&1 | tee ios-build.log
       - uses: actions/upload-artifact@v7.0.2
         if: always()
