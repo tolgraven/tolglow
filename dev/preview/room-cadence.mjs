@@ -15,7 +15,7 @@ export async function measureRoom(durationMs) {
     qualities.add(t.quality);
     sizes.add(JSON.stringify(t.pixels)); scales.add(t.renderScale);
     samples.push({atMs: performance.now() - boundary, tier: t.quality, scale: t.renderScale,
-      scene: t.pixels, targetHz: t.targetRefreshHz, intervalMs: t.frameIntervalMs,
+      scene: t.pixels, targetHz: t.targetRefreshHz, measuredDisplayHz: t.displayHz ?? null, tierMaxHz: t.tierMaxHz ?? null, intervalMs: t.frameIntervalMs,
       workerFrameMs: t.workerFrameMs ?? null, cpuSubmitMs: t.frameCPUms ?? null,
       gpuFenceWaitMs: t.gpuCompletionWaitMs ?? null, gpuTimerMs: t.gpuTimeMs ?? null});
   };
