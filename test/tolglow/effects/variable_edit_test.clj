@@ -89,3 +89,13 @@
       (is (< (abs (- 0.4 (:wash (show/variables runtime)))) 1.0e-9))
       (is (< (abs (- 0.2 (:private-wash (show/variables runtime)))) 1.0e-9))
       (finally (show/stop! runtime)))))
+
+(deftest source-picker-filters-before-limiting-and-preserves-read-path-types
+  (let [vars (array-map :many (into {} (map #(vector (keyword (str "n" %)) %) (range 100)))
+                        :watch {"left" {:axes [0.25 0.75 1.0]}})]
+    (is (= [{:path [:variables :watch "left" :axes] :type :vec3}]
+           (:sources (edit/sources vars "" {:readable? true :type :vec3}))))
+    (is (= [{:path [:variables :watch "left" :axes 2] :type :number}]
+           (:sources (edit/sources vars "axes 2" {:readable? true :type :number}))))
+    (is (= [] (:sources (edit/sources vars "watch"))))
+    (is (= 48 (count (:sources (edit/sources vars "" {:readable? true :type :number})))))))

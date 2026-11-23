@@ -121,3 +121,39 @@ pairs reading each of 20,064 rows four times, the scoped compact reader used
 13.36 MB. Every requested attribute in every row agreed.
 
 [Download the optical and whole-host captures](../benchmarks/master-performance/fixed-emitter-field.zip).
+
+## Overlapping optical fields on a mixed-material rig
+
+The next comparison adds a material that reads both world Z and a fixture's
+UV coordinates. Half of the 20,064 fixtures have an explicit chart. The rest
+use their world X/Y coordinates. Four independently moving fields sample the
+same committed emission. The show still packs and publishes 158 ArtDMX
+universes for every frame.
+
+| Mixed UV and world input | Separate observations | Shared observations |
+| --- | ---: | ---: |
+| Median full frame | 545 ms | 376 ms |
+| p95 full frame | 1,003 ms | 736 ms |
+| Median worker and coordinator CPU | 326 ms | 219 ms |
+| Median optical field sampling | 288 ms | 176 ms |
+| Median allocations per frame | 129.1 MB | 109.3 MB |
+| Frames over 25 ms | 40 of 40 | 40 of 40 |
+
+The two hosts alternated evaluation order. The comparison checked the
+complete model, intents, visible fixture values and every packet across 30
+warmup pairs and 40 measured pairs. The candidate includes the shared
+per-frame observations and improvements to the radial contact arithmetic
+and three-coordinate validation. A separate eight-frame run compared the
+candidate against the scalar compiler and renderer. All checks passed.
+
+The p95 frames in this run spent 490 ms and 166 ms respectively runnable
+on the coordinator, with 481 ms and 182 ms spent inside output publication.
+Those time measurements can overlap. Neither frame overlapped a
+stop-the-world garbage collection pause. A separate 28-pair repeat of the
+preceding sphere-distance change measured p95 at 1,576 ms and 1,464 ms
+respectively. Its optimized p95 frame recorded 1,430 ms of coordinator CPU,
+14 ms of runnable wait and zero GC pause. The earlier nine-frame comparison
+had no per-frame GC or scheduling trace, so its individual delay remains
+unattributed. Runner load materially affects these tail measurements.
+
+[Download the per-frame EDN reports, scalar packet digest and Linux replay scripts](../benchmarks/master-performance/optical-frame-captures.zip).

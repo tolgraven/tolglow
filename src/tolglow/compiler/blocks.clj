@@ -170,10 +170,10 @@
   (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
           env (:tweens plan)))
 
-(defn positions
+(defn fixture-index
   "Index this rig on first inspection. Effects that nobody views never build the index."
   [rig]
-  (when rig (delay (into {} (map (juxt :id #(:position % [0.0 0.0 0.0]))) rig))))
+  (when rig (delay (into {} (map (juxt :id identity)) rig))))
 
 (defn- observation [plan inputs number rig index path target]
   (let [trace (get-in plan [:traces path])
@@ -182,11 +182,14 @@
         selection (:targets output)]
     (when (and trace (or (nil? target) (and (or (nil? group) (contains? group target))
                                            (or (nil? selection) (contains? selection target)))))
-      (when-let [point (cond (nil? target) [0.0 0.0 0.0]
-                             index (get @index target)
-                             :else (some #(when (= target (:id %)) (:position % [0.0 0.0 0.0])) rig))]
-        (assoc (trace (assoc inputs :position point))
-               :position point :target-id target :attribute (:attribute output) :time-ms (:time-ms inputs) :frame-number number)))))
+      (when-let [fixture (cond (nil? target) {}
+                               index (get @index target)
+                               :else (some #(when (= target (:id %)) %) rig))]
+        (let [position (:position fixture [0.0 0.0 0.0])
+              surface-uv (or (:surface-uv fixture) (subvec position 0 2))]
+          (assoc (trace (assoc inputs :position position :surface-uv surface-uv))
+                 :position position :surface-uv surface-uv :target-id target :attribute (:attribute output)
+                 :time-ms (:time-ms inputs) :frame-number number))))))
 
 (defn observed
   "Retain the traced plan and numeric inputs from a successful step. Queries
