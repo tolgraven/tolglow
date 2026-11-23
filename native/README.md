@@ -208,3 +208,5 @@ The server challenge must identify the Tolglow Studio realm. **Forget saved
 password** removes the local credential for the selected origin. Existing
 browser sessions expire on their normal schedule. OSC pairing for the phone
 and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).
+
+For the packaged iPhone and iPad simulator companion, stage association file and signed QR size check, see [Apple audience deployment](../docs/apple-audience-deployment.md).
