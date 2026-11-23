@@ -1,6 +1,6 @@
 # Conversation request register
 
-Recorded through request **83**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
+Recorded through request **84**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
 
 **Open** is a to-do for the exact behavior or verification in that row. A linked milestone can already have shipped one part. **Verified** includes a source or merge receipt for the whole row. **Standing** is a recurring working agreement. The [work ledger](work-items.edn) owns implementation status, dependencies, ownership and evidence. For working branches and hardware gaps see the [handoff](request-handoff.md).
 
@@ -168,3 +168,5 @@ Recorded through request **83**. Each number follows the original user messages 
 | R82 | Preserve the additional precision of actual coarse/fine pan and tilt or other 16-bit destinations, including mixed-resolution rigs. | `:control/parameter-readouts` | Open |
 | R83a | Preserve Studio’s visual theme and use a dedicated product-design owner to improve its density, polish and touch usability across phone, iPad and desktop. Prioritize several simultaneous running cues/effects, with more space for real parameter visualizations. Verify each size with actual captures. | `:web/responsive-performance-layouts` | Open |
 | R83b | Provide a semi-minimized horizontal playable parameter layout like Push. Support authored effect/cue combinations, individualized library layouts and templated generated cues with a smart fallback for new combinations. | `:web/responsive-performance-layouts` | Open |
+| R84a | Discover a nearby venue and send phone or Watch motion without joining venue Wi-Fi. Share dance intensity, individual steps and optional exercise pulse. Merge a person's phone and Watch into one participant, support a soloist or a crowd, expire stale sources and measure latency and churn. | `:sensors/nearby-audience` | Open |
+| R84b | Join by QR with a small sensor-only App Clip and a full-app handoff for restricted sensors. Let consenting full-app devices contribute render work independently of participation. Qualify real radio range, host capacity and energy impact before claiming dancefloor-scale rendering. | `:sensors/nearby-audience`, `:render/distributed-workers` | Open |
