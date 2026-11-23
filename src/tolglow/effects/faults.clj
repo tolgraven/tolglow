@@ -47,6 +47,15 @@
     (doto (FileHandler. pattern (long 1048576) (int 4) (boolean true))
       (.setFormatter (SimpleFormatter.)))))
 
+(defn- diagnostic-pool [queue-size handler]
+  (let [factory (reify ThreadFactory
+                  (newThread [_ task] (doto (Thread. task "tolglow-effect-diagnostics") (.setDaemon true))))]
+    (proxy [ThreadPoolExecutor] [1 1 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. queue-size)
+                                 factory (ThreadPoolExecutor$AbortPolicy.)]
+      (terminated []
+        (when (realized? handler)
+          (when-let [h (try @handler (catch Exception _ nil))] (.close ^FileHandler h)))))))
+
 (defn create
   "Creating an owner starts no thread. Logging never runs on the frame owner.
   log! is an optional external sink for structured portable events."
@@ -56,17 +65,14 @@
      (throw (ex-info "Invalid effect log configuration" {})))
    (let [logger (Logger/getLogger "tolglow.effects")
          handler (delay (file-handler (or log-file (io/file (System/getProperty "user.home") ".local" "state" "tolglow" "faults-%g.log"))))
+         custom-sink? (some? log!)
          log! (or log! (fn [event]
                          (let [level (if (= :effect/recovered (:type event)) Level/INFO Level/WARNING)
                                message (pr-str event)]
                            (.log logger level message)
                            (.publish ^FileHandler @handler (LogRecord. level message)))))
-         pool (ThreadPoolExecutor. 1 1 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. queue-size)
-                                   (reify ThreadFactory
-                                     (newThread [_ task]
-                                       (doto (Thread. task "tolglow-effect-diagnostics") (.setDaemon true))))
-                                   (ThreadPoolExecutor$AbortPolicy.))]
-     {:pool pool :file-handler handler :log! log! :dropped (AtomicLong. 0) :failed (AtomicLong. 0)})))
+         pool (diagnostic-pool queue-size handler)]
+     {:pool pool :custom-sink? custom-sink? :log! log! :dropped (AtomicLong. 0) :failed (AtomicLong. 0)})))
 
 (defn offer! [owner events]
   (doseq [event events]
@@ -84,13 +90,16 @@
   {:queued (.size (.getQueue ^ThreadPoolExecutor (:pool owner)))
    :dropped (.get ^AtomicLong (:dropped owner)) :failed (.get ^AtomicLong (:failed owner))})
 
-(defn close! [owner]
-  (let [pool ^ThreadPoolExecutor (:pool owner) handler (:file-handler owner)]
+(defn close! [{:keys [pool custom-sink?]}]
+  (let [pool ^ThreadPoolExecutor pool]
     (.shutdown pool)
     (try
-      (when-not (.awaitTermination pool 250 TimeUnit/MILLISECONDS) (.shutdownNow pool))
+      ;; Custom callbacks can block indefinitely. The owned file writer may
+      ;; drain after this wait; its termination hook always releases the lock.
+      (when (and (not (.awaitTermination pool (if custom-sink? 250 5000) TimeUnit/MILLISECONDS))
+                 custom-sink?)
+        (.shutdownNow pool))
       (catch InterruptedException _
-        (.shutdownNow pool)
-        (.interrupt (Thread/currentThread))))
-    (when (realized? handler) (when-let [h (try @handler (catch Exception _ nil))] (.close ^FileHandler h))))
+        (when custom-sink? (.shutdownNow pool))
+        (.interrupt (Thread/currentThread)))))
   nil)
