@@ -1,6 +1,7 @@
 (ns tolglow.studio.variable-blocks
   "Compose and inspect global show-variable bindings."
-  (:require [cljs.reader :as reader]
+  (:require [cljs.tools.reader.edn :as edn]
+            [cljs.tools.reader.reader-types :as readers]
             [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.block-builder :as builder]
@@ -66,10 +67,19 @@
   (fn [db [_ path type]]
     (if (and path (nil? (:pending (form db)))) (choose db path type) db)))
 
+(defn- read-base [source]
+  (let [input (readers/string-push-back-reader source)
+        eof (gensym "end")
+        read! #(edn/read {:eof eof} input)
+        value (read!)]
+    (when (or (identical? eof value) (not (identical? eof (read!))))
+      (throw (ex-info "Enter one dry value or expression." {})))
+    value))
+
 (defn- desired [{:keys [fixed? base-str expected stages type]}]
   (cond-> (assoc (or expected {}) :stages (vec stages))
     (or (not= type :number) (contains? expected :type)) (assoc :type type)
-    fixed? (assoc :base (reader/read-string base-str))
+    fixed? (assoc :base (read-base base-str))
     (not fixed?) (dissoc :base)))
 
 (rf/reg-event-fx ::submit

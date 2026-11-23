@@ -45,6 +45,11 @@ try {
   const second = await operator({width:390,height:844});
   const {page, panel, leases} = first;
   assert.ok(!leases.includes(true),'A new binding should have no trace sample demand');
+  await panel.getByLabel('Dry input').selectOption('fixed');
+  await panel.getByLabel('Dry value or expression').fill('0.4 0.9');
+  await panel.getByRole('button',{name:'Save variable chain'}).tap();
+  await panel.getByRole('alert').filter({hasText:'Enter one dry value or expression.'}).waitFor();
+  await panel.getByLabel('Dry input').selectOption('live');
   await panel.getByLabel('New block').selectOption({label:'Through water'});
   await panel.getByRole('button',{name:'Add stage'}).tap();
   const wet = panel.getByRole('spinbutton',{name:'Wet amount',exact:true});
