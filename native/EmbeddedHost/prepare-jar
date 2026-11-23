@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Patch the dependency RNG only during image generation; each running show installs its own RNG.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${1:?ios, ios-sim or macos}"
+test -s studio.jar
+curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
+echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
+mkdir -p override/tolglow override/thi/ng/math override/slf4j_timbre
+# Clojure's gen-class normally reloads its source on the first Java call. The
+# fixed image preloads these vars. Make the inherited SLF4J default-method
+# interface explicit when regenerating the adapter on modern JDKs.
+for logger in adapter factory service_provider; do
+  source="slf4j_timbre/$logger.clj"
+  unzip -p studio.jar "$source" | sed -e 's/(:gen-class/(:gen-class :load-impl-ns false/' \
+    -e 's/\[org.slf4j.spi.LocationAwareLogger\]/[org.slf4j.spi.LocationAwareLogger org.slf4j.Logger]/' > "override/$source"
+done
+unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
+java -cp "$root/dev:studio.jar" clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
+cp "$root/src/tolglow/native_resources.clj" override/tolglow/native_resources.clj
+cat > override/tolglow/fixed_image.clj <<'CLOJURE'
+(ns tolglow.fixed-image (:gen-class)
+  (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
+(defn -main [& args]
+  (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
+  (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
+       (catch Throwable failure (.printStackTrace failure) (throw failure)))
+  (apply app/-main args))
+CLOJURE
+cp "$root/src/tolglow/fixed_host.clj" override/tolglow/fixed_host.clj
+java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core ring.adapter.jetty slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider tolglow.native-resources tolglow.fixed-image tolglow.fixed-host tolglow.native.desktop]] (compile ns))"
+jar uf studio.jar -C override .
+java -cp studio.jar clojure.main "$root/native/EmbeddedHost/register-callbacks.clj"
+jar uf studio.jar -C callbacks META-INF
+if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
+  mkdir -p tracing/META-INF/native-image/tolglow/studio
+  java -agentlib:native-image-agent=config-output-dir="$PWD/tracing/META-INF/native-image/tolglow/studio" -cp studio.jar tolglow.fixed_image --port 0 >training.log 2>&1 &
+  trainer=$!
+  trap 'kill "$trainer" 2>/dev/null || true' EXIT
+  for ((i=0; i<120; i++)); do
+    if grep -q 'Tolglow Studio listening on' training.log; then break; fi
+    if ! kill -0 "$trainer"; then tail -30 training.log; exit 1; fi
+    sleep 1
+  done
+  origin="$(sed -n 's/Tolglow Studio listening on //p' training.log)"
+  curl -fsS "$origin/studio/js/main.js" -o /dev/null
+  curl -fsS "$origin/api/state" -o /dev/null
+  node "$root/native/Tests/check-state-stream.mjs" "$origin"
+  python3 "$root/native/Tests/check_compiled_studio.py" --restore "$origin"
+  kill -TERM "$trainer"
+  wait "$trainer" || test "$?" = 143
+  trap - EXIT
+  python3 - "$target" <<'METADATA'
+import json, sys
+from pathlib import Path
+directory=Path('tracing/META-INF/native-image/tolglow/studio')
+# The iOS image uses the public JDK concurrency and numeric APIs sampled by
+# the same startup, WebSocket and restore rehearsal. VM and OS internals vary.
+prefixes=('ring.adapter.jetty$', 'org.eclipse.jetty.', 'org.slf4j.', 'com.github.fzakaria.slf4j.',
+          'com.fasterxml.jackson.', 'java.util.concurrent.', 'java.lang.Thread', 'java.math.', 'java.time.')
+if sys.argv[1] == 'macos':
+    prefixes+=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.', 'javax.net.')
+def retained(entry):
+    name=entry.get('type',entry.get('name',''))
+    return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
+for path in directory.iterdir():
+    if path.name=='reflect-config.json':
+        entries=json.loads(path.read_text())
+        path.write_text(json.dumps([e for e in entries if retained(e)]))
+    elif path.name=='reachability-metadata.json':
+        tables=json.loads(path.read_text())
+        path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
+    elif path.is_file():
+        path.unlink()
+METADATA
+  jar uf studio.jar -C tracing META-INF
+fi

@@ -13,7 +13,7 @@
 (defn- origin! [value]
   (when-not (and (string? value) (<= 1 (count value) 253))
     (invalid! "Enter the HTTPS origin associated with the signed App Clip."))
-  (let [uri (try (URI. value) (catch java.net.URISyntaxException _ nil))]
+  (let [^URI uri (try (URI. value) (catch java.net.URISyntaxException _ nil))]
     (when-not (and uri (= "https" (.getScheme uri)) (.getHost uri)
                    (nil? (.getUserInfo uri)) (nil? (.getQuery uri)) (nil? (.getFragment uri))
                    (#{"" "/"} (.getPath uri)) (#{-1 443} (.getPort uri)))
@@ -74,7 +74,8 @@
       (.setDaemon true) (.start))))
 
 (defn- launch [executable name origin ^Path qr device-id port token]
-  (let [command (ProcessBuilder. ^java.util.List [executable name origin (str qr)])
+  (let [^java.util.List arguments [executable name origin (str qr)]
+        command (ProcessBuilder. arguments)
         environment (.environment command)
         inherited (select-keys (System/getenv) ["HOME" "TMPDIR" "LANG"])]
     (.clear environment)

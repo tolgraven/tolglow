@@ -2,9 +2,17 @@
 
 The Apple Silicon Mac application opens the same re-frame Studio and Ring show host used by the browser. The app bundle includes the compiled frontend, Java dependencies, a GraalVM Community JVM and both application source checkouts. Building uses Leiningen, Node and Xcode. Running a packaged show needs macOS 14 or newer on Apple Silicon.
 
+The **Compiled macOS Studio** artifact adds a native Apple Silicon executable to that bundle. The launch window offers **Compiled Clojure** and **Full JVM Clojure**. The compiled engine runs the local show and Room UI with editable interpreted show code. Full JVM Clojure supports arbitrary JVM libraries and runtime compilation. Both engines use the selected show folder, the application workspace manager and the bundled audience bridge. The app remembers the selected engine. [Compiled runtime, folder format and local REPL](../EmbeddedHost/README.md)
+
 ## Open a show
 
-Unzip the **Tolglow-Studio-arm64** artifact from the **Packaged Apple Studio** workflow. It contains a development build with an ad hoc signature. Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
+For the full JVM window, unzip **Tolglow-Studio-arm64** from **Packaged Apple Studio**. For the window with both engines, unzip **Tolglow-compiled-Studio-arm64** from **Compiled macOS Studio**. The packaged development app has an ad hoc signature. You can verify its bundled code locally with the command below. If macOS prompts about the developer when you open the downloaded build, follow Apple’s per-app approval steps for a build and workflow revision you trust. [Open an app on your Mac](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)
+
+```sh
+codesign --verify --deep --strict "Tolglow Studio.app"
+```
+
+Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
 
 The runner reads the first available file in this order.
 
@@ -46,7 +54,7 @@ REQUIRE_UHD=1 node --test test/js/preview/airplay-browser.test.mjs
 
 Realtime encoding and the receiver’s buffers add latency. The HLS URL grants access to this preview to anyone who has it on the selected network. Studio operator controls stay on their own listener. System screen mirroring and fullscreen are also available through Control Center. Physical AirPlay output and negotiated display modes require an actual receiver.
 
-iPhone and iPad use the existing **Studio** tab to open an enrolled host. The local native calibration, Watch relay and sensor controls remain available. They require their ordinary permissions. The Mac host bundle cannot run as an iOS subprocess.
+iPhone and iPad use **Studio** to open an enrolled host. The embedded-host build also offers **On this device** for a local show in the selected folder. That host runs in a Native Image isolate inside the application and stops when the app enters the background. Calibration, Watch relay and sensors use their ordinary permissions.
 
 Foreground browser work follows the app's lifecycle. iOS and iPadOS may suspend the WebKit process after a window moves to the background. Picture in Picture and an external display do not guarantee continuous JavaScript execution. A host using a phone or tablet for opt-in computation must recover from a missing client locally. Low Power Mode, thermal pressure and display refresh adjustments can reduce throughput before suspension. Physical devices are needed to measure these cases.
 
@@ -63,7 +71,7 @@ native/Packaging/bundle-macos target/uberjar/*-standalone.jar "$PWD/build/apps" 
 python3 native/Tests/check_packaged_studio.py "build/apps/Tolglow Studio.app"
 ```
 
-The Mac release executes JVM bytecode using GraalVM's runtime compiler. Native Image can ahead-of-time compile a fixed set of classes. Ordinary Clojure `eval`, requiring user namespaces that have never been compiled, and recompiling arbitrary application code generate new JVM classes. Keeping that capability on iOS requires an interpreter or an external compilation design compatible with iOS. GluonFX provides separate iOS device and simulator static-library targets. A generic macOS ARM64 Native Image targets a different platform ABI.
+The bundled GraalVM JVM executes JVM bytecode, including user namespaces that compile new classes. The compiled Mac host and iOS framework use a fixed Native Image and a separate SCI context for editable show code. GluonFX produces different Mach-O products for the iOS simulator and the iOS device ABI. A physical device requires an appropriately signed app.
 
 - [GraalVM Native Image compatibility](https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/)
 - [GluonFX iOS device and simulator toolchains](https://docs.gluonhq.com/#_platforms)
