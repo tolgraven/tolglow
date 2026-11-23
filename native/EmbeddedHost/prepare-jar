@@ -38,6 +38,7 @@ if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
   curl -fsS "$origin/studio/js/main.js" -o /dev/null
   curl -fsS "$origin/api/state" -o /dev/null
   node "$root/native/Tests/check-state-stream.mjs" "$origin"
+  python3 "$root/native/Tests/check_compiled_studio.py" --restore "$origin"
   kill -TERM "$trainer"
   wait "$trainer" || test "$?" = 143
   trap - EXIT

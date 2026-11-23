@@ -43,9 +43,12 @@ jobs:
           command -v xcodegen || brew install xcodegen
           app="build/deliverables/Tolglow Studio.app"
           native/Packaging/bundle-macos build/release/studio.jar "$PWD/build/deliverables" build/release build/native-host/TolglowNativeHost
+          ditto -c -k --keepParent "$app" build/Tolglow-compiled-Studio-arm64.zip
+      - name: Verify the packaged fixed and full Clojure sessions
+        run: |
+          app="build/deliverables/Tolglow Studio.app"
           python3 native/Tests/check_compiled_studio.py "$app"
           python3 native/Tests/check_packaged_studio.py "$app"
-          ditto -c -k --keepParent "$app" build/Tolglow-compiled-Studio-arm64.zip
       - name: Capture three cue launches in the packaged compiled show
         run: native/Tests/capture-compiled-mac "build/deliverables/Tolglow Studio.app" build/media
       - uses: actions/upload-artifact@v7.0.2

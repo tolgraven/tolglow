@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 
@@ -31,16 +32,24 @@ def evaluate(origin, request_id, source):
     return events[-1]["result"]
 
 
-def check_restored_session(origin, folder):
-    assert evaluate(origin, "read-rig", "(require 'rig) (rig/hz)") == "40"
+def restore_show(origin):
     with urllib.request.urlopen(origin + "/api/export", timeout=10) as response:
         saved = response.read()
         content_type = response.headers.get_content_type()
     restore = urllib.request.Request(origin + "/api/import", data=saved,
                                      headers={"Content-Type": content_type})
-    with urllib.request.urlopen(restore, timeout=20) as response:
-        result = json.load(response)
-        assert result.get("ack", result)["status"] == "accepted", result
+    try:
+        with urllib.request.urlopen(restore, timeout=20) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as error:
+        reason = error.read(4096).decode("utf-8", errors="replace")
+        raise AssertionError(f"Could not restore the compiled show ({error.code}): {reason}") from error
+    assert result.get("ack", result)["status"] == "accepted", result
+
+
+def check_restored_session(origin, folder):
+    assert evaluate(origin, "read-rig", "(require 'rig) (rig/hz)") == "40"
+    restore_show(origin)
     (folder / "swing.clj").write_text("(ns swing) (defn range-at [v] [(- v 6) (+ v 6)])")
     assert evaluate(origin, "restored-rig", "(require 'swing) (swing/range-at 40)") == "[34 46]"
 
@@ -84,4 +93,7 @@ def check(app):
 
 
 if __name__ == "__main__":
-    check(Path(sys.argv[1]))
+    if sys.argv[1:2] == ["--restore"]:
+        restore_show(sys.argv[2])
+    else:
+        check(Path(sys.argv[1]))

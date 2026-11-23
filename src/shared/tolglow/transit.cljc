@@ -87,7 +87,8 @@
          (transit/read-handler
           (fn [rep]
             (let [[n d] (fraction-parts rep)]
-              #?(:clj (/ (bigint n) (bigint d)) :cljs (->BeatFraction n d)))))}
+              #?(:clj (/ (java.math.BigInteger. ^String n) (java.math.BigInteger. ^String d))
+                 :cljs (->BeatFraction n d)))))}
         (map (fn [[tag _ read-color]]
                [tag (transit/read-handler
                      (fn [rep]
