@@ -46,6 +46,10 @@ jobs:
         working-directory: tolglow
         run: |
           if [[ "${{ matrix.suite }}" == pure ]]; then lein test-pure; else lein test; fi
+      - name: Exercise Linux GATT and the paired OSC receiver
+        if: matrix.java == '21' && matrix.suite == 'pure'
+        working-directory: tolglow/linux/audience
+        run: lein with-profile +paired test
       - name: Verify public model data and offline preparation
         if: matrix.java == '17' && matrix.suite == 'pure'
         working-directory: tolglow
