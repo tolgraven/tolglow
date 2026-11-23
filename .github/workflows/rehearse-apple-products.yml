@@ -1,0 +1,37 @@
+name: Inspect compiled Apple products
+on:
+  push:
+    branches: [codex/rehearse-apple-compiled-products]
+permissions: {contents: read, actions: read}
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {repository: tolgraven/tolglow, run-id: 45173152463, name: Tolglow-compiled-Studio-arm64, github-token: '${{ github.token }}', path: build}
+      - run: |
+          find build -name '*.png' -o -name '*.log'
+          cp "$(find build -name compiled-studio.png)" compiled-studio.png
+      - uses: actions/upload-artifact@v7.0.2
+        with: {name: compiled-mac-original-window, path: compiled-studio.png}
+  ipad:
+    runs-on: macos-15-intel
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v4
+        with: {repository: tolgraven/tolglow, run-id: 45171272767, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: product}
+      - name: Reuse the previously linked simulator framework
+        run: |
+          product="$(find product -name embedded-ipad-studio.zip -print -quit)"
+          ditto -x -k "$product" original
+          mkdir -p native/build/embedded
+          ditto original/TolglowPhone.app/Frameworks/TolglowRuntime.framework native/build/embedded/TolglowRuntime.framework
+      - run: native/Tests/check-embedded-studio
+      - run: |
+          mkdir -p result
+          xcrun xcresulttool export attachments --path run-ui.xcresult --output-path result
+        if: always()
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with: {name: ipad-window-evidence, path: result}
