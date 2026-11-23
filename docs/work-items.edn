@@ -4,12 +4,13 @@
  [{:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
-   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md"]
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
                 "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
                 "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."]
-   :evidence ["Afterglow PR 89 and the paired host use a phase-locked producer and publisher, a measured render and wake-up reserve, and strict direct or delayed buffered completion windows. The host regression captures two effect workers, audio input, a Link seek, pause, resume and restart. The paired performance job records full release-clock timing and actual sink calls for 1,024 pixels and 128 movers. The separate dependency-aware batching experiment and timestamped GPU observation qualification remain open."]}
+   :evidence ["Afterglow PR 89 and the paired host use a phase-locked producer and publisher, a measured render and wake-up reserve, and strict direct or delayed buffered completion windows. The host regression captures two effect workers, audio input, a Link seek, pause, resume and restart. The paired performance job records full release-clock timing and actual sink calls for 1,024 pixels and 128 movers. Tolglow PR 181 replays independent and conflicting effect groups against serial packets, states and events."
+              "The browser observation rehearsal compares the actual worker and main-thread presented pixels with a consumer's show graph value. It covers zero-demand reads, producer epochs, presented show frame IDs, distinct-value transport and final disposal. Physical GPU timing remains open."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"
    :kind :research :status :in-progress :owner "Mixed venue profiling"
@@ -25,7 +26,7 @@
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
-   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first-connection and the remaining general Studio pages are open."]}
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first connection (#156), Definitions (#161), Debug (#163) and Develop (#168) have release-browser coverage. Develop also receives workspace checks, coding-agent progress and terminal bytes by subscription (#173 and #177). The eight-workspace scope, before/after measurements and captures are indexed in docs/studio-ui.md. Perform passed Linux WebKit iPhone/iPad profiles, including keyboard input, held pointer menus and live controls. Physical iPad Safari and direct finger-hold verification are open."]}
   {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
    :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
    :paths ["tolglow/linux/audience"]
@@ -53,7 +54,8 @@
               "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
-   :paths ["tolglow/dev/tolglow/perf/musical_ceilings.clj"
+   :paths ["tolglow/dev/tolglow/perf/independent_effects.clj" "tolglow/docs/performance/independent-effect-workers.md"
+           "tolglow/dev/tolglow/perf/musical_ceilings.clj"
            "tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
@@ -118,6 +120,13 @@
    :depends-on [:foundation/tests]
    :acceptance ["Run a selected show folder in the macOS app, execute its namespaces, retain editable paired source branches, and present the real canvas through the system PiP API."]
    :evidence ["Apple Silicon run 45150904204 opened the packaged window, ran Clojure in the embedded GraalVM, fetched the release re-frame code from Ring, created worktrees from both bundled Git revisions, completed a WebKit backup replacement, and recorded three accepted cue launches. The browser regression reads changed pixels from a live captured track and exercises the system PiP window on supported Chromium desktops."]}
+  {:id :native/audience-stage-controls :title "Manage the stage invitation from Studio and package the Apple clients"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/native/Packaging" "tolglow/src/studio/tolglow/studio/audience_invitation.cljs"
+           "tolglow/src/tolglow/integrations/audience_invitation.clj"]
+   :depends-on [:foundation/tests]
+   :notes "Extends the shipped macOS bundle in #122 and the nearby stage helper in #130. Physical QR invocation and mobile Native Image qualification have separate acceptance checks."
+   :acceptance ["Start, stop and export a stage QR from operator Studio. Scope credentials to the owned process and show. Export the full simulator companion, report embedded Clip size and document signed physical QR qualification."] :evidence ["Apple workflow 45168401845 built the Mac bundle and Release simulator apps. Apple Vision decoded the saved QR from WKWebView, and the old image returned 404 after Stop. Independent decoding of the native screenshot matched. The simulator parent measured 7914609 bytes, Clip 1348995 and Watch 1299988. Physical QR invocation remains with :sensors/nearby-audience."]}
   {:id :native/apple-on-device-show :title "Compile the show host for on-device iPad and iPhone execution"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/native/Packaging" "tolglow/native/iOS/WebStudioView.swift"]

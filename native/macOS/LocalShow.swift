@@ -53,11 +53,13 @@ final class LocalShow: ObservableObject {
                                       attributes: [.posixPermissions: 0o700])
             child.executableURL = resources.appendingPathComponent("runtime/bin/java")
             child.currentDirectoryURL = folder
+            var environment = ProcessInfo.processInfo.environment
+            let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/TolglowAudienceBridge")
+            environment["TOLGLOW_AUDIENCE_BRIDGE"] = helper.path
             if let sources = ApplicationSources(), sources.installed {
-                var environment = ProcessInfo.processInfo.environment
                 environment["TOLGLOW_APPLICATION_SOURCES"] = sources.directory.path
-                child.environment = environment
             }
+            child.environment = environment
             child.arguments = ["-Djava.awt.headless=true", "-cp", resources.appendingPathComponent("studio.jar").path,
                                "clojure.main", "-m", "tolglow.desktop", folder.path, ready.path]
             child.standardInput = pipe

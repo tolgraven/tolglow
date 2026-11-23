@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Measure the Clip's uncompressed payload inside exported, device-thinned IPAs."""
+
+import argparse
+import json
+import plistlib
+from pathlib import Path
+from zipfile import ZipFile
+
+
+def clip_size(ipa, bundle_id):
+    with ZipFile(ipa) as archive:
+        files = archive.infolist()
+        for item in files:
+            if not item.filename.endswith(".app/Info.plist"):
+                continue
+            info = plistlib.loads(archive.read(item))
+            if info.get("CFBundleIdentifier") != bundle_id:
+                continue
+            if "iPhoneOS" not in info.get("CFBundleSupportedPlatforms", []):
+                raise ValueError(f"{ipa.name} contains a non-device App Clip")
+            prefix = item.filename.removesuffix("Info.plist")
+            return sum(entry.file_size for entry in files if entry.filename.startswith(prefix))
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("export_directory", type=Path)
+    parser.add_argument("--bundle-id", default="org.tolglow.ios.Clip")
+    args = parser.parse_args()
+    rows = []
+    for ipa in sorted(args.export_directory.rglob("*.ipa")):
+        size = clip_size(ipa, args.bundle_id)
+        if size is not None:
+            rows.append({"variant": str(ipa.relative_to(args.export_directory)),
+                         "clipUncompressedFileBytes": size})
+    if not rows:
+        parser.error("no exported device IPA contains the requested App Clip bundle")
+    print(json.dumps(rows, indent=2))
+
+
+if __name__ == "__main__":
+    main()

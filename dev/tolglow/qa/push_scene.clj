@@ -19,7 +19,9 @@
                                     :dimmer (demo/constant 0.93) :zoom (demo/constant 0.28)})))
    (get-in model [:rig :fixtures])))
 
-(defn- scenic-show []
+(def cue-ids (into [:haze] (map #(keyword (str "path-" %))) (range 8)))
+
+(defn scenic-show []
   (let [base (-> (demo/model)
                  (assoc-in [:rig :room :width] 19)
                  (assoc-in [:rig :trusses 0 :length] 15)
@@ -35,8 +37,7 @@
 
 (defn- frames! [runtime]
   (let [cache (preview/create-cache)
-        ids (cons :haze (map #(keyword (str "path-" %)) (range 8)))
-        starts (mapv #(show/submit! runtime {:op :cue/launch :cue-id %}) ids)]
+        starts (mapv #(show/submit! runtime {:op :cue/launch :cue-id %}) cue-ids)]
     (show/tick! runtime 0)
     (assert (every? #(= :accepted (:status @%)) starts))
     (doseq [t (range 250 18000 250)] (show/tick! runtime t))
