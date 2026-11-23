@@ -318,7 +318,7 @@
      [widgets/axes-control title axes base update!]
      (let [param (or (some #(when (sources/bound? instance (first %)) (first %)) components) (ffirst components))]
        [sources/trigger (:id instance) param title (sources/reading instance param) components])
-     (when (and (not compact?) (some #(sources/bound? instance (first %)) components))
+     (when (and (not compact?) (some #(sources/driven? instance (first %)) components))
        [sources/axes-visual visualization/studio instance components (xyz-schema control)])]))
 
 (defn- parameter-bank [show instance controls compact? parameter-control]
@@ -335,9 +335,9 @@
   (or (seq components)
       (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
 
-(defn bound-controls [instance controls]
+(defn driven-controls [instance controls]
   (filter (fn [{:keys [parameter components]}]
-            (if components (some #(sources/bound? instance (first %)) components) (sources/bound? instance parameter)))
+            (if components (some #(sources/driven? instance (first %)) components) (sources/driven? instance parameter)))
           controls))
 
 (defn resolve-monitor [controls requested preferred]
@@ -384,7 +384,7 @@
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
         editing @(rf/subscribe [::sources/selection id])
-        scope (resolve-monitor (bound-controls instance controls) (get-in state [:monitor id]) monitor)]
+        scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-density (if expanded? "detail" "strip")
                                 :data-wide (boolean (or expanded? (> (count controls) 3)))

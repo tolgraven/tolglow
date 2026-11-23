@@ -12,6 +12,11 @@
   (get (:parameter-sources instance) (keyword (events/wire-id param))))
 
 (defn bound? [instance param] (boolean (seq (:sources (reading instance param)))))
+(defn- driving-source? [{:keys [held? error]}] (not (or held? error)))
+(defn driven? [instance param] (boolean (some driving-source? (:sources (reading instance param)))))
+(defn- driving-block [source]
+  (some #(when (and (driving-source? %) (= :blocks (keyword (:type %)))) %) (:sources source)))
+
 (defn- source-of [source kind]
   (some #(when (= kind (keyword (:type %))) %) (:sources source)))
 (defn- selected-parameter [db id] (get-in db [:ui :parameter-source id]))
@@ -90,7 +95,7 @@
 
 (defn- native-value [instance param]
   (let [source (reading instance param)]
-    (if-let [block (source-of source :blocks)]
+    (if-let [block (driving-block source)]
       (when-let [target (:id @(rf/subscribe [::fixture (:id instance)]))]
         (:result @(rf/subscribe [:studio/remote [:runtime/block-trace (:id instance) (mapv keyword (:path block)) target]])))
       (:effective-value source))))
@@ -103,8 +108,8 @@
       [:span.block-trace-empty "No target fixtures"])))
 
 (defn result-visual [view instance param schema]
-  (when (bound? instance param)
-    [result-view view instance schema #(native-value instance param) (source-of (reading instance param) :blocks)]))
+  (when (driven? instance param)
+    [result-view view instance schema #(native-value instance param) (driving-block (reading instance param))]))
 
 (defn axes-visual [view instance components schema]
   (let [axis (fn [[param spec]]
@@ -112,7 +117,7 @@
                  (native-value instance param)
                  (get-in instance [:params param] (:default spec))))
         sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
-        block? (some (fn [[k _]] (source-of (reading instance k) :blocks)) components)]
+        block? (some (fn [[k _]] (driving-block (reading instance k))) components)]
     [result-view view instance schema sample block?]))
 
 (defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))

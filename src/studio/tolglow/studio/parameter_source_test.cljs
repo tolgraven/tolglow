@@ -3,7 +3,7 @@
             [tolglow.studio.parameter-source :as source]
             [tolglow.studio.performance :as performance]))
 
-(deftest monitors-follow-source-ownership-even-when-levels-are-flat
+(deftest monitors-follow-active-drivers-and-editors-retain-held-or-faulted-bindings
   (let [manual {:parameter :level :schema {:type :number}}
         held {:parameter :depth :schema {:type :number}}
         axes {:attribute :aim :components [[:x {}] [:y {}] [:z {}]]}
@@ -12,10 +12,19 @@
                                       :depth {:effective-value 0 :sources [{:type :lfo :held? true}]}
                                       :z {:effective-value nil :sources [{:type :patch}]}}}
         controls [manual held axes]]
-    (is (empty? (performance/bound-controls (dissoc instance :parameter-sources) controls)))
-    (is (= [held axes] (performance/bound-controls instance controls)))
-    (is (= held (:selected (performance/resolve-monitor (performance/bound-controls instance controls) (performance/control-id manual) :level))))
-    (is (nil? (source/result-visual :visual instance :level {})))))
+    (is (empty? (performance/driven-controls (dissoc instance :parameter-sources) controls)))
+    (is (= [axes] (performance/driven-controls instance controls)))
+    (is (source/bound? instance :depth))
+    (is (nil? (source/result-visual :visual instance :depth {})))
+    (is (nil? (source/result-visual :visual instance :level {})))
+    (let [steady (assoc-in instance [:parameter-sources :depth :sources] [{:type :random :held? false}])
+          mixed (update-in instance [:parameter-sources :depth :sources] conj {:type :patch})
+          faulted (assoc-in instance [:parameter-sources :depth :sources] [{:type :lfo :error "Invalid waveform"}])]
+      (is (= [held axes] (performance/driven-controls steady controls)))
+      (is (= [held axes] (performance/driven-controls mixed controls)))
+      (is (source/bound? faulted :depth))
+      (is (= [axes] (performance/driven-controls faulted controls)))
+      (is (= held (:selected (performance/resolve-monitor (performance/driven-controls steady controls) (performance/control-id manual) :level)))))))
 
 (deftest source-bindings-round-trip-typed-endpoints-and-musical-fractions
   (doseq [id [:house/saw "house/saw"]]

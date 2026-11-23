@@ -288,7 +288,7 @@
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
      (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source])
-     (when (and (seq (:sources source)) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
+     (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
                 (or (not (:compact? options)) (visualization/spatial-kind schema)))
        [sources/result-visual visualization/studio instance parameter schema])]))
 

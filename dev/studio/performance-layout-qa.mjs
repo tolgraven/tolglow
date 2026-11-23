@@ -117,9 +117,11 @@ async function verifyControls(page,touch,profile) {
   await page.waitForFunction(()=>document.querySelector('input[aria-label="Source period"]').value==='0.25');
   await activate(edit.getByRole('button',{name:'Use base value',exact:true}));
   await edit.getByRole('button',{name:'Resume LFO',exact:true}).waitFor();
-  assert.equal(await scope.count(),1);
+  await scope.waitFor({state:'detached'});
+  assert.equal(await card.getByRole('button',{name:'Edit source for Intensity'}).count(),1);
   await activate(edit.getByRole('button',{name:'Resume LFO',exact:true}));
   await edit.getByRole('button',{name:'Use base value',exact:true}).waitFor();
+  await scope.waitFor({state:'attached'});
   await close(edit);
   const vector=await attach('Orbit aim', async panel => {
     await panel.getByLabel('From X',{exact:true}).fill('-0.85');
