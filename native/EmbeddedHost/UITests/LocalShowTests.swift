@@ -22,7 +22,7 @@ final class LocalShowTests: XCTestCase {
             open.tap()
             let page = app.webViews.firstMatch
             XCTAssertTrue(page.waitForExistence(timeout: 80))
-            XCTAssertTrue(page.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Cues"))
+            XCTAssertTrue(page.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Ember"))
                 .firstMatch.waitForExistence(timeout: 60))
             record("running-\(cycle)")
             app.buttons["Stop show"].tap()
