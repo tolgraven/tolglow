@@ -1,0 +1,9 @@
+file 'parameters-default.png'
+duration 1.2
+file 'simulator-fit.png'
+duration 1.2
+file 'simulator-panorama.png'
+duration 1.2
+file 'rig-panorama.png'
+duration 1.2
+file 'rig-panorama.png'

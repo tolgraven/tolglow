@@ -1,0 +1,1 @@
+{:views {[:parameters nil] {:file "parameters-default.png", :size 327680}, [:simulator :fit] {:file "simulator-fit.png", :size 327680}, [:simulator :panorama] {:file "simulator-panorama.png", :size 327680}, [:rig :panorama] {:file "rig-panorama.png", :size 327680}}, :released [], :midi-errors []}
