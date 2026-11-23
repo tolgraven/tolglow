@@ -1,0 +1,230 @@
+{
+  "phone": {
+    "horizontalOverflow": 0,
+    "topbar": [
+      0,
+      0,
+      390,
+      88
+    ],
+    "cards": [
+      {
+        "name": "Ember",
+        "box": [
+          12,
+          258,
+          366,
+          174
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Breathe",
+        "box": [
+          12,
+          441,
+          366,
+          174
+        ],
+        "controls": 2,
+        "scope": null
+      },
+      {
+        "name": "Slow sweep",
+        "box": [
+          12,
+          624,
+          366,
+          216
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Orbital wash",
+        "box": [
+          12,
+          849,
+          366,
+          238
+        ],
+        "controls": 8,
+        "scope": null
+      }
+    ],
+    "bank": {
+      "columns": 8,
+      "rows": 1,
+      "overflow": 302,
+      "unusedRight": -302,
+      "labelSpread": 0,
+      "sourceSpread": 20
+    },
+    "smallCards": {
+      "titles": [
+        15,
+        15,
+        15
+      ],
+      "footerSpread": 0,
+      "footerOffset": [
+        124,
+        124,
+        166
+      ]
+    }
+  },
+  "ipad": {
+    "horizontalOverflow": 0,
+    "topbar": [
+      148,
+      0,
+      876,
+      56
+    ],
+    "cards": [
+      {
+        "name": "Ember",
+        "box": [
+          168,
+          157,
+          273,
+          174
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Breathe",
+        "box": [
+          450,
+          157,
+          273,
+          174
+        ],
+        "controls": 2,
+        "scope": null
+      },
+      {
+        "name": "Slow sweep",
+        "box": [
+          731,
+          157,
+          273,
+          216
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Orbital wash",
+        "box": [
+          168,
+          382,
+          836,
+          238
+        ],
+        "controls": 8,
+        "scope": null
+      }
+    ],
+    "bank": {
+      "columns": 8,
+      "rows": 1,
+      "overflow": 0,
+      "unusedRight": 168,
+      "labelSpread": 0,
+      "sourceSpread": 20
+    },
+    "smallCards": {
+      "titles": [
+        15,
+        15,
+        5
+      ],
+      "footerSpread": 42,
+      "footerOffset": [
+        124,
+        124,
+        166
+      ]
+    }
+  },
+  "desktop": {
+    "horizontalOverflow": 0,
+    "topbar": [
+      148,
+      0,
+      1292,
+      56
+    ],
+    "cards": [
+      {
+        "name": "Ember",
+        "box": [
+          558,
+          157,
+          281,
+          159
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Breathe",
+        "box": [
+          849,
+          157,
+          281,
+          159
+        ],
+        "controls": 2,
+        "scope": null
+      },
+      {
+        "name": "Slow sweep",
+        "box": [
+          1139,
+          157,
+          281,
+          187
+        ],
+        "controls": 1,
+        "scope": null
+      },
+      {
+        "name": "Orbital wash",
+        "box": [
+          558,
+          353,
+          862,
+          211
+        ],
+        "controls": 8,
+        "scope": null
+      }
+    ],
+    "bank": {
+      "columns": 8,
+      "rows": 1,
+      "overflow": 0,
+      "unusedRight": 194,
+      "labelSpread": 0,
+      "sourceSpread": 20
+    },
+    "smallCards": {
+      "titles": [
+        13,
+        13,
+        13
+      ],
+      "footerSpread": 28,
+      "footerOffset": [
+        117,
+        117,
+        145
+      ]
+    }
+  }
+}
