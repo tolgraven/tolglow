@@ -177,6 +177,11 @@
           (let [replies (run-commands! runtime 0.0 commands)
                 top-id (:instance-id (last replies))]
             (is (every? #(= :accepted (:status %)) replies))
+            ;; A cold software GL context may outlive the first frame deadline.
+            ;; Wait for that actual draw before comparing the three warm frames.
+            (when-let [worker (get-in runtime [:compute :movement :worker])]
+              (.get (.submit ^java.util.concurrent.ExecutorService worker ^Runnable (fn []))
+                    45 java.util.concurrent.TimeUnit/SECONDS))
             (doseq [[tick alpha] [[25.0 0.0] [50.0 0.5] [75.0 1.0]]]
               (is (= :accepted (:status (first (run-commands! runtime tick
                                                 [{:op :instance/opacity-set :instance-id top-id :value alpha}]))))))))
