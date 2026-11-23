@@ -31,6 +31,7 @@ final class AudienceSession: ObservableObject {
     private var phoneMotion: AudienceMotion?
     @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
+    private var wristStageJoin: TimeInterval?
     private var lastPulse: Int?
     private var lastLevelTime = -Double.infinity
     @Published var allowLockedWatch = false
@@ -41,7 +42,24 @@ final class AudienceSession: ObservableObject {
     private let motion = CMMotionManager()
     #endif
 
-    init() { client.onEnd = { [weak self] in self?.stopInputs() } }
+    init() {
+        client.onJoin = { [weak self] in
+            self?.wristStageJoin = Date().timeIntervalSince1970
+            self?.startInputs()
+        }
+        client.onEnd = { [weak self] in self?.stopInputs() }
+        client.onSuspend = { [weak self] in self?.pauseInputs() }
+    }
+
+    private func pauseInputs() {
+        stopSampling()
+        lastPulse = nil
+        lastLevelTime = -.infinity
+        watch = nil
+        lastWatchSteps = nil
+        lastPhoneSteps = nil
+        effort = 0
+    }
 
     func startInputs() {
         guard client.joined, timer == nil else { return }
@@ -115,8 +133,15 @@ final class AudienceSession: ObservableObject {
         publish(refreshLevels: false)
     }
 
-    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
+    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?, sent: TimeInterval) -> Bool {
+        // Acknowledge wrist receipt during a brief stage outage. Drop this
+        // observation; the first fresh wrist count after rejoining is a baseline.
+        if client.reconnecting { return true }
         guard client.joined else { return false }
+        if let joined = wristStageJoin {
+            guard AudienceWatchReceipt.startsBaseline(sent: sent, afterStageJoin: joined) else { return true }
+            wristStageJoin = nil
+        }
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = sample.steps }
         watch = (sample, time, motionTime)
@@ -130,6 +155,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func enterBackground() {
+        client.setForeground(false)
         guard !watchOnlyInBackground else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard client.joined, allowLockedWatch, let watch, now - watch.time <= 2 else { client.leave(); return }
@@ -138,6 +164,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func foreground() {
+        client.setForeground(true)
         guard watchOnlyInBackground else { return }
         watchOnlyInBackground = false
         startInputs()
@@ -179,6 +206,7 @@ final class AudienceSession: ObservableObject {
     }
 
     func stopInputs() {
+        wristStageJoin = nil
         watchOnlyInBackground = false; allowLockedWatch = false; shareMotionAxes = false
         stopSampling()
         serial = 0; totalSteps = 0; effort = 0; lastPhoneSteps = nil; endWatch()

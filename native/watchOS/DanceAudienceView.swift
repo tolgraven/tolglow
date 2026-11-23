@@ -30,7 +30,10 @@ struct DanceAudienceView: View {
             routeButton(.pairedPhone, title: "Paired iPhone", icon: "iphone", id: "route-paired")
             routeButton(.nearbyStage, title: "Nearby stage", icon: "antenna.radiowaves.left.and.right", id: "route-direct")
             if link.route == .nearbyStage {
-                if stage.joined {
+                if stage.reconnecting {
+                    Text(stage.status).accessibilityAddTraits(.updatesFrequently)
+                    Button("Cancel reconnection") { workout.stop() }
+                } else if stage.joined {
                     Label("Connected to stage", systemImage: "checkmark.circle")
                     if !participating { Button("Disconnect") { workout.stop() } }
                 } else if let venue = link.selectedStage {
