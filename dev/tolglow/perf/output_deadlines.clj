@@ -117,6 +117,8 @@
         frames (parse-long (or frames "160"))
         movers (compare-leads :eight-movers (demo-scene) warmup frames 6 true)
         sculpture (compare-leads :pixel-sculpture (:model (admission/workload 1024 128)) warmup frames 0 false)
-        results (into movers sculpture)]
+        revisions {:tolglow (bench/revision ".")
+                   :afterglow (bench/revision (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))}
+        results (mapv #(assoc % :source-revisions revisions) (concat movers sculpture))]
     (spit path (pr-str results))
     (prn (mapv #(select-keys % [:scenario :policy :summary :cold]) results))))
