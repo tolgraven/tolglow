@@ -1,7 +1,16 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
+ [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
+           "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"
+           "tolglow/js/preview/fog.js" "tolglow/js/preview/fog-field.js" "tolglow/js/preview/reflections.js"
+           "tolglow/test/tolglow/fog_optics_test.clj" "tolglow/test/js/preview/fog-gpu.test.mjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["One emitted material computes absorption on both incident and viewing paths. Check measured reference paths, thin haze, dense fog and GPU pixel readback."]
+   :evidence ["Afterglow #64. Focused JVM suite passed 74 tests and 1,145 assertions. Actual SwiftShader central-ray readback through eight metres of 10% mixed haze returned 0.367878 and 0.135377 at extinction 1.25 and 2.5 per metre. The 17 fog and reflected-light tests passed."]}
+  {:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/control/model.clj" "afterglow/src/afterglow/control/params.clj"
            "afterglow/test/afterglow/control/model_test.clj" "tolglow/src/tolglow/registry.clj"
