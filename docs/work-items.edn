@@ -8,11 +8,11 @@
    :acceptance ["Find a source; edit, save and remove one binding without replacing sibling edits. Observe the live stages only when visible."]
    :evidence []}
   {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
-   :kind :implementation :status :in-progress :owner "effect-blocks"
+   :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
-   :evidence []}
+   :evidence ["Afterglow #65 and Tolglow #108. Six fragment shaders and two native field programs were compared with the JVM on Mesa and SwiftShader. The focused host tests launch real effects, trace scalar and batched values, check per-frame variable resolution and reload the Transit show. A running Ring Studio release and the passive Push webview provided the visual recordings. Physical hardware and the shared UV/world fixture-input follow-up are tracked separately."]}
   {:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/runtime/keyframes.clj" "tolglow/src/tolglow/effects/keyframes.clj" "tolglow/src/studio/tolglow/studio/keyframe_editor.cljs"]

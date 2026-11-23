@@ -32,6 +32,8 @@ Publish the effect through the usual definition registry. Bind its ID to a cue. 
 
 Each stage specifies a `:block`, optional `:inputs`, `:mode`, `:amount` and `:coordinates`. Modes are `:multiply`, `:add` and `:replace`. For a wet amount from zero to one, multiply interpolates its factor from unity, add scales its offset and replace crossfades to the generated value. Omit the amount for the full effect. Scalar factors broadcast over numeric color and vector components. Output validation still follows the channel type and the show’s HDR settings.
 
+A beat, bar or phrase tween can supply the dry signal, or feed a stage input. The host samples that tween once for the current effect clock and supplies its numeric result to every selected fixture. The chain result is available before the downstream envelope, native compositing, master and channel packing.
+
 Use `[:outputs 2]` to attach a stage to the third assignment when an ordered output list writes the same channel more than once. A varying is private to an effect and needs a base expression. Its result can feed any number of outputs through `{:op :varying :key :lens}`. A cue parameter uses its effective value after upstream control mappings as the dry input. Cycles between named bindings fail during compilation.
 
 ## Planes, mesh surfaces and volumes
@@ -66,5 +68,7 @@ Global chains sample once per show frame. They start from current source values 
 ## Inspecting a chain
 
 Open a running effect’s block inspector and select its binding and fixture. The dry value, every signed stage change and the final result use the same captured parameters and private effect clock. With no fixture chosen the preview samples the venue origin. An instance's result is absent if the selected fixture is unknown or outside its assignment. The rolling history lives in the viewing surface. Closing the inspector releases the query.
+
+If the runtime predicts keyframes, the inspector distinguishes values sampled at an endpoint from current interpolated native output. Opening an inspector never runs the effect a second time. A failing shared variable chain holds its last successful value in the same show epoch when available. Failure and recovery enter the runtime event stream.
 
 Headless clients can acquire `[:runtime/block-trace instance-id binding-path target-id]`. For a global variable, pass nil as the instance ID and omit the target. `[:runtime/block-library effect-id]` lists the available stages and input defaults. The passive Push webview takes the selected trace from the display capture worker. Configure `[:settings :controllers :push-display]` with `:mode :block-trace`, `:binding-path` and optionally `:target-id`.

@@ -31,6 +31,7 @@ try {
   const wet = stage.getByRole('spinbutton',{name:'Wet amount',exact:true});
   await wet.fill('0.4');await wet.blur();
   await panel.getByRole('button',{name:'Write stages to EDN'}).tap();
+  await page.waitForFunction(() => document.querySelector('#definition-source').value.includes(':blocks'));
   const changed = await source.inputValue();
   assert.ok(changed.startsWith(before.slice(0,before.indexOf('}} ; preserve this')+1)));
   assert.ok(changed.endsWith('} ; preserve this\n'));

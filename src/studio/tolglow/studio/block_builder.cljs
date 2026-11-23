@@ -120,7 +120,7 @@
                                :placeholder (if (= :variables @kind) "weather density" "ripple")
                                :on-change #(reset! path (.. % -target -value))}]]
        [options "Value type" [:number :vec3] @type #(if (= :vec3 %) "Vector" "Number") #(reset! type %)]
-       [:button.secondary {:type "button" :disabled (or (nil? destination) (contains? bindings destination))
+       [:button.button.secondary {:type "button" :disabled (or (nil? destination) (contains? bindings destination))
                            :on-click #(do (create! destination initial) (reset! path ""))}
         "Create binding"]])))
 
@@ -135,7 +135,7 @@
        (if (seq ids)
          [:div.block-stage-add
           [options "New block" ids id #(get-in library [% :name] (str %)) #(reset! chosen %)]
-          [:button.secondary {:type "button" :disabled (>= (count stages) 32)
+          [:button.button.secondary {:type "button" :disabled (>= (count stages) 32)
                               :on-click #(on-change (conj (vec stages) {:block id}))} "Add stage"]]
          [:p.muted {:role "status"} "Waiting for the block library…"])])))
 
@@ -200,10 +200,10 @@
        (when @problem [:p.error {:role "alert"} @problem])
        (when-let [{:keys [definition bindings] baseline :source} @draft]
          (if (not= source baseline)
-           [:button.secondary {:type "button" :on-click load!} "Reload changed definition"]
+           [:button.button.secondary {:type "button" :on-click load!} "Reload changed definition"]
            [:<>
             [editor definition bindings #(swap! draft assoc :bindings %)]
-            [:button.secondary {:type "button"
+            [:button.button.secondary {:type "button"
                                 :on-click #(try
                                              (replace! (write-bindings source bindings))
                                              (reset! draft nil)

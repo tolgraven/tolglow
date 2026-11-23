@@ -42,3 +42,11 @@
 .block-trace-presented {color:#6edef1}
 .block-trace-clock {display:flex;gap:.4rem 1rem;flex-wrap:wrap;font-size:11px;color:#bcc8bc;font-variant-numeric:tabular-nums}
 #push-display .block-trace:has(.block-trace-clock) svg {height:69px}
+
+.block-editor > .text-button {min-height:42px}
+.block-stage-order .text-button {min-width:44px;min-height:44px;font-size:14px}
+.block-stage-order .text-button:disabled {opacity:.38}
+.block-stage-editor {display:grid;gap:.6rem}
+.block-stage-add {justify-content:flex-end}
+.block-stage .button,.block-builder .button {min-height:42px}
+.block-stage header strong {color:#d6e7c4}
