@@ -139,6 +139,11 @@ async function verifyControls(page,touch,profile) {
   const dialog=aim.getByRole('dialog');
   await dialog.getByRole('spinbutton',{name:'Orbit aim X value'}).fill('0.42');
   await activate(dialog.getByRole('button',{name:'Done'}));
+  await aim.getByRole('button',{name:'History'}).waitFor({state:'detached'});
+  const overridden=await open('Orbit aim',true);
+  await activate(overridden.getByRole('button',{name:'Resume LFO',exact:true}));
+  await overridden.getByRole('button',{name:'Use base value',exact:true}).waitFor();
+  await close(overridden);
   await activate(aim.getByRole('button',{name:'History'}));
   await aim.getByLabel('Parameter history beat window').selectOption('8');
   await aim.getByRole('img',{name:'Last 8 beats'}).waitFor();

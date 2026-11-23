@@ -316,7 +316,9 @@
     [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")}
      [:label title]
      [widgets/axes-control title axes base update!]
-     (let [param (or (some #(when (sources/bound? instance (first %)) (first %)) components) (ffirst components))]
+     (let [param (or (some #(when (sources/driven? instance (first %)) (first %)) components)
+                     (some #(when (sources/bound? instance (first %)) (first %)) components)
+                     (ffirst components))]
        [sources/trigger (:id instance) param title (sources/reading instance param) components])
      (when (and (not compact?) (some #(sources/driven? instance (first %)) components))
        [sources/axes-visual visualization/studio instance components (xyz-schema control)])]))

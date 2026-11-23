@@ -129,14 +129,20 @@
   (when-let [node (.getElementById js/document (trigger-id id (or (ffirst components) param)))] (.focus node)))
 
 (defn trigger [id param title source & [components]]
-  (let [selected @(rf/subscribe [::selection id])
-        bound? (seq (:sources source))]
-    [:button.param-source-trigger {:type "button" :class (when bound? "bound") :id (trigger-id id (or (ffirst components) param))
-                                  :aria-expanded (boolean (or (= param selected) (some #(= selected (first %)) components)))
-                                  :title (str (if bound? "Edit" "Attach") " source for " title)
-                                  :aria-label (str (if bound? "Edit" "Attach") " source for " title)
-                                  :on-click #(rf/dispatch [::select id (or (some (fn [[k _]] (when (= k selected) k)) components) param)])}
-     [:span {:aria-hidden true} (if bound? "∿" "+")] (if components "Sources" "Source")]))
+  (let [selected @(rf/subscribe [::selection id]) inputs (:sources source)
+        chosen (some (fn [[k _]] (when (= k selected) k)) components)
+        state (cond (:error source) :error (some driving-source? inputs) :driving
+                    (some :error inputs) :error (some :pending? inputs) :pending (seq inputs) :base)
+        action (str (if state "Edit" "Attach") " source for " title)
+        status (case state :driving "Source is driving this input" :pending "Awaiting a source sample"
+                           :base "Using the manual base value" :error "Source error" nil)]
+    [:button.param-source-trigger {:type "button" :class (when (= state :driving) "bound")
+                                  :id (trigger-id id (or (ffirst components) param))
+                                  :aria-expanded (boolean (or (= param selected) chosen))
+                                  :title (if status (str action " · " status) action) :aria-label action :aria-description status
+                                  :on-click #(rf/dispatch [::select id (or chosen param)])}
+     [:span {:aria-hidden true} (case state :driving "∿" :base "Ⅱ" :pending "…" :error "!" "+")]
+     (if components "Sources" "Source")]))
 
 (defn- options [schema]
   (or (when (seq (:choices schema)) (mapv :value (:choices schema))) (:values schema) (:options schema)))
