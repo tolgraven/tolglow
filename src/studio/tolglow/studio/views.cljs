@@ -64,7 +64,6 @@
     [:aside.sidebar
      [:a.brand {:href "/" :aria-label "Tolglow studio home"}
       [:span.brand-mark "t" [:span "g"]] [:span "tolglow" [:small "LIGHT IN MOTION"]]]
-     [:div.workspace-label "WORKSPACE " [:span.tiny-dot]]
      [:nav {:aria-label "Studio views"}
       (for [[view title icon n] [[:perform "Perform" "▦" "1"] [:compose "Compose" "▤" "2"]
                                  [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
@@ -84,8 +83,7 @@
                            :on-change (fn [event]
                                         (when-let [file (aget (.. event -target -files) 0)]
                                           (send! [:studio/import-file file]))
-                                        (set! (.. event -target -value) ""))}]
-      [:div.sidebar-note "A space for playing with light."]]]))
+                                        (set! (.. event -target -value) ""))}]]]))
 
 (defn- topbar [db]
   (let [show (:show db) ui (:ui db) playing? (get-in show [:transport :playing?] true)
@@ -114,8 +112,8 @@
                                 :on-click #(send! [:studio/command "blackout/set" {:value (not (:blackout? show))}])}
       [:span {:aria-hidden true} "●"] " Blackout"]]))
 
-(defn- heading [eyebrow title subtitle & [action]]
-  [:div.view-heading [:div [:div.eyebrow eyebrow] [:h1 title] [:p subtitle]] action])
+(defn- heading [title & [action]]
+  [:div.view-heading [:h1 title] action])
 
 (defn- duration-control [id title value unit on-change & [allow-zero?]]
   [:label title
@@ -218,8 +216,9 @@
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
         overlay (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter]))
-        bounds (:bounds schema) title (or (:name schema) (label parameter))]
-    [:div.param-row {:data-param (name parameter)}
+        bounds (:bounds schema) title (or (:name schema) (label parameter))
+        fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
+    [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
      [:label [:span title] [:output (if (vector? value) (str/join ", " (map #(numeric/number-label schema %) value)) (widgets/value-label schema value))]]
      (case type
        "waveform" [waveform/picker (:id instance) parameter schema value change!
@@ -246,7 +245,7 @@
                                  :on-change #(when-let [n (number-value %)]
                                                (component! index n))}])]
        (if (widgets/numeric-range schema)
-         [:div.parameter-number-layout
+         [:div.parameter-number-layout {:data-widget (when (:strip? options) (if fader? "fader" "rotary"))}
           [widgets/rotary-control schema (or value 0) change!
            {:name (str title " rotary") :base-value value :effective-value overlay
             :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
@@ -255,13 +254,17 @@
                           :min (first bounds) :max (second bounds)
                           :step (if (= "integer" type) 1 (or (numeric/channel-step schema) (/ (- (second bounds) (first bounds)) 1000)))
                           :on-change #(when-let [n (number-value %)] (change! n))}]
+           (when fader?
+             [:span.strip-fader-bounds
+              [:span (widgets/number-label (first bounds))]
+              [:span (widgets/number-label (second bounds))]])
            (when-not (:compact? options)
              [numeric/number-input {:class "numeric-exact" :display-schema schema :type "number" :aria-label (str title " exact value") :value (or value 0)
                             :min (first bounds) :max (second bounds) :step (if (= "integer" type) 1 "any")
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [numeric/number-input {:display-schema schema :type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
-     (when (and (nil? handlers) (#{"number" "integer" "vector" "color" "range"} type)
+     (when (and (nil? handlers) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
                 (or (not (:compact? options)) (visualization/spatial-kind schema)))
        [visualization/studio schema (if (some? overlay) overlay value)])
      (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
@@ -430,7 +433,7 @@
   (let [show (:show db) composition (get-in db [:ui :composition]) slots (:slots composition [])
         selected-cue (or (get-in db [:ui :slot-cue]) (:id (first (:cues show))))]
     [:section#view-compose.view {:hidden (not= :compose (get-in db [:ui :view]))}
-     [heading "BUILD A MOMENT" "A little structure. Endless play." "Gather cues into a simultaneous macro or a sequence of timed steps."]
+     [heading "Macros & sequences"]
      [:div.compose-layout
       [:section.panel.composition-editor
        [:div.panel-top [:span.section-label "COMPOSITION"] [button "new-composition" "New +" [:studio/composition-new] "text-button"]]
@@ -564,7 +567,7 @@
 (defn- rig-view [db]
   (let [rig (get-in db [:ui :rig-draft])]
     [:section#view-rig.view {:hidden (not= :rig (get-in db [:ui :view]))}
-     [heading "SET THE STAGE" "Everything has its place." "Position fixtures in metres and address their DMX channels."
+     [heading "Rig & space"
       [button "save-rig" "Save rig" [:studio/rig-save] "button primary"]]
      [rig-editor/panel db]
      (when (= :rig (get-in db [:ui :view])) [spatial/panel])
@@ -653,7 +656,7 @@
         definitions (concat (map #(vector "effects" %) (:effects show)) (map #(vector "cues" %) (:cues show)))
         filtered (filter (fn [[_ item]] (str/includes? (str/lower-case (str (:name item) " " (:id item))) query)) definitions)]
     [:section#view-library.view {:hidden (not= :library (:view ui))}
-     [heading "MAKE IT YOURS" "Ideas become instruments." "Create declarative effects and cues. Validate, publish, then play."
+     [heading "Effect & cue definitions"
       [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
      (when (= :library (:view ui))
        ^{:key [(:runtime-id show) (:show-id show) (:epoch show)]} [materials/panel])

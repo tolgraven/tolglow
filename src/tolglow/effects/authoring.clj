@@ -21,7 +21,7 @@
                               (if (nil? targets) row
                                 (when-let [ids (seq (filter selected targets))]
                                   (assoc row :targets (vec ids)))))) outputs)
-        definition (assoc (select-keys candidate [:name :params :envelope])
+        definition (assoc (select-keys candidate [:name :params :envelope :ui/layout])
                           :id (:effect-id request) :version 1 :auto? false
                           :targets (vec (:fixture-ids request)) :outputs rows
                           :performance-owner (:owner-id request))]
@@ -68,6 +68,7 @@
                         {:attribute attr :targets (mapv :id members)
                          :value (if (== tint 1.0) base {:op :multiply :args [tint base]})}))]
     {:name (if (= domain :activity) "Beat pulse" "Warm fill")
+     :ui/layout (if (= domain :activity) :pulse :wash)
      :params {:level {:type :number :bounds [0 1] :default (max 0.1 (min 1.0 amount))}}
      :outputs (into rows (open-shutters fixtures))}))
 
