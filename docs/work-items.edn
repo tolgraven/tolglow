@@ -203,7 +203,7 @@
    :paths ["tolglow/src/studio/tolglow/studio/parameter_visualization.cljs"]
    :depends-on [:foundation/tests]
    :acceptance ["Default spatially meaningful values to a calibrated 3D view. Retain editing and waveform previews, zoom recorded parameter history and release hidden history."]
-   :evidence ["Real Ring preview show with 48 owned Push capture requests, three spatial widgets, all eight zoomable traces and preserved component editing at a 1024×768 touch viewport. See docs/push-parameter-visualizations.md for the repeatable browser check."
+   :evidence ["Real Ring preview show with 48 owned Push capture requests, three spatial widgets, three active traces interleaved with five manual inputs, held/resumed LFOs and preserved component editing at a 1024×768 touch viewport. See docs/push-parameter-visualizations.md for the repeatable browser check."
               "Studio tests cover scalar, RGB, XYZ, degree and radian schemas, adaptive keyframes, clock rewinds, bounded observations, zoom and plot gaps. The host tests cover namespace-preserving IPC and stale selections."]}
   {:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
