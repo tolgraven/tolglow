@@ -685,43 +685,70 @@
       "Create matching cue"]
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
+(defn- registry-results [show search]
+  (let [query (str/lower-case search)
+        matches? (fn [[_ item]] (str/includes? (str/lower-case (str (:name item) " " (:id item))) query))]
+    (->> (concat (map #(vector "effects" %) (:effects show)) (map #(vector "cues" %) (:cues show)))
+         (filter matches?))))
+
+(defn- registry-option [definition kind item]
+  (let [selected? (and (= kind (:kind definition)) (= (:id item) (:loaded-id definition)))]
+    [:button.definition-item {:class (when selected? "selected") :aria-current (when selected? "true")
+                              :style (color-style item) :on-click #(send! [:studio/definition-load kind (:id item)])}
+     [:span.definition-swatch] [:span [:strong (display-name item)]
+                                [:small (str (if (= kind "effects") "Effect" "Cue") " · v" (:version item 1))]]]))
+
+(defn- definition-registry [catalog selected search]
+  (let [results (registry-results catalog search)]
+    [:aside.panel.definition-library {:aria-label "Definition registry"}
+     [:div.registry-toolbar
+      [:label.search-label [:input#definition-search {:type "search" :placeholder "Search registry" :aria-label "Search definitions"
+                                                     :value search :on-change #(set-ui! [:definition-search] (input-value %))}]]
+      [:button#new-definition.text-button {:aria-label "New definition" :on-click #(send! [:studio/definition-new])} "New"]]
+     [:div#definition-list.definition-list
+      (if (seq results)
+        (for [[kind item] results]
+          ^{:key (str kind "/" (:id item))} [registry-option selected kind item])
+        [:p.registry-empty {:role "status"} "No matching definitions."])]]))
+
+(defn- definition-toolbar [definition]
+  [:<>
+   [:div.definition-toolbar
+    [:div#editor-modes.segmented {:role "group" :aria-label "Editing mode"}
+     (for [[mode title] [[:source "EDN source"] [:form "Visual builder"]]]
+       (let [selected? (= mode (:mode definition))]
+         ^{:key mode} [:button {:class (when selected? "selected") :data-editor-mode (name mode) :aria-pressed selected?
+                                :on-click #(set-ui! [:definition :mode] mode)} title]))]
+    [:button#publish-definition.button.primary {:disabled (boolean (:publishing? definition))
+                                                 :on-click #(send! [:studio/definition-publish])} "Validate & publish"]]
+   [:div.definition-settings
+    [:label "Definition type" [:select#definition-kind {:value (:kind definition "effects")
+                                                        :on-change #(set-ui! [:definition :kind] (input-value %))}
+                               [:option {:value "effects"} "Effect"] [:option {:value "cues"} "Cue"]]]
+    [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
+                                             :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
+                      [:option {:value "textarea"} "Text editor"] [:option {:value "neovim"} "Neovim · WASM"]]]
+    [:label.auto-publish [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
+                                                             :on-change #(set-ui! [:definition :auto?] (checked? %))}]
+     "Publish valid edits"]]
+   [:div.definition-feedback
+    [:span#definition-status.small.muted (:status definition "Ready to create")]
+    [:div#validation-result.validation-result {:class (when (:error? definition) "error") :role "status" :aria-live "polite"}
+     (:result definition "")]]])
+
 (defn- definition-view [db]
-  (let [show (:show db) ui (:ui db) definition (:definition ui)
-        query (str/lower-case (:definition-search ui ""))
-        definitions (concat (map #(vector "effects" %) (:effects show)) (map #(vector "cues" %) (:cues show)))
-        filtered (filter (fn [[_ item]] (str/includes? (str/lower-case (str (:name item) " " (:id item))) query)) definitions)]
+  (let [show (:show db) ui (:ui db) definition (:definition ui)]
     [:section#view-library.view {:hidden (not= :library (:view ui))}
      [heading "Effect & cue definitions"
-      [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
+      [button "generate-registry-page" "Build registry page" [:studio/generate-page]]]
      (when (= :library (:view ui))
        ^{:key [(:runtime-id show) (:show-id show) (:epoch show)]} [materials/panel])
      [:div.definition-layout
-      [:aside.panel.definition-library
-       [:div.panel-top [:span.section-label "DEFINITIONS"] [button "new-definition" "New +" [:studio/definition-new] "text-button"]]
-       [:label.search-label [:input#definition-search {:placeholder "Find an effect or cue…" :aria-label "Search definitions"
-                                                      :value (:definition-search ui "")
-                                                      :on-change #(set-ui! [:definition-search] (input-value %))}]]
-       [:div#definition-list.definition-list
-        (for [[kind item] filtered]
-          ^{:key (str kind "/" (:id item))}
-          [:button.definition-item {:class (when (and (= kind (:kind definition)) (= (:id item) (:loaded-id definition))) "selected")
-                                     :style (color-style item) :on-click #(send! [:studio/definition-load kind (:id item)])}
-           [:span.definition-swatch] [:span [:strong (display-name item)] [:small (str (if (= kind "effects") "Effect" "Cue") " · v" (:version item 1))]]])]]
+      [definition-registry (select-keys show [:effects :cues])
+       (select-keys definition [:kind :loaded-id]) (:definition-search ui "")]
       [:section.panel.definition-editor
-       [:div.panel-top
-        [:div#editor-modes.segmented
-         (for [[mode title] [[:source "EDN source"] [:form "Visual builder"]]]
-           ^{:key mode} [:button {:class (when (= mode (:mode definition)) "selected") :data-editor-mode (name mode)
-                                  :on-click #(set-ui! [:definition :mode] mode)} title])]
-        [:span#definition-status.small.muted (:status definition "Ready to create")]]
+       [definition-toolbar definition]
        [:div.form-body
-        [:div.form-row
-         [:label "Definition type" [:select#definition-kind {:value (:kind definition "effects")
-                                                            :on-change #(set-ui! [:definition :kind] (input-value %))}
-                                    [:option {:value "effects"} "Effect"] [:option {:value "cues"} "Cue"]]]
-         [:label "Editor" [:select#editor-engine {:value (name (:engine definition :textarea)) :disabled (= :form (:mode definition))
-                                                 :on-change #(send! [:studio/editor-engine (keyword (input-value %))])}
-                           [:option {:value "textarea"} "Accessible text editor"] [:option {:value "neovim"} "Neovim · WebAssembly"]]]]
         [:div#source-editor {:hidden (= :form (:mode definition))}
          (if (= :neovim (:engine definition))
            [interop/neovim definition]
@@ -734,15 +761,7 @@
          [:p#source-help.muted.small "EDN is data. Publishing validates the definition and compiles its effect expressions; arbitrary Clojure is not evaluated."]]
         (when (and (= :library (:view ui)) (= :source (:mode definition)) (= "effects" (:kind definition)))
           [block-builder/source-field (:source definition) #(send! [:studio/apply-block-source (:source definition) %])])
-        [visual-builder db]
-        [:div.button-row
-         [:button#publish-definition.button.primary {:disabled (boolean (:publishing? definition))
-                                                      :on-click #(send! [:studio/definition-publish])} "Validate & publish"]
-         [:label.checkbox-label [:input#auto-publish {:type "checkbox" :checked (boolean (:auto? definition))
-                                                      :on-change #(set-ui! [:definition :auto?] (checked? %))}]
-          "Publish valid edits"]]
-        [:div#validation-result.validation-result {:class (when (:error? definition) "error") :role "status" :aria-live "polite"}
-         (:result definition "")]]]]]))
+        [visual-builder db]]]]]))
 
 (defn- dialog [attrs & children]
   (into [:dialog (assoc attrs :ref (fn [node] (when (and node (not (.-open node))) (.showModal node))))] children))
