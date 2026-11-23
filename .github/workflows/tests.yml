@@ -215,3 +215,9 @@ jobs:
           python3 native/Tests/check_contract.py
           python3 native/Tests/check_rig_calibration.py
           native/Tests/check_macos.sh
+      - name: Capture audience App Clip on iPhone simulator
+        run: native/Tests/capture_audience.sh "$RUNNER_TEMP/audience-clip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audience-clip-simulator
+          path: ${{ runner.temp }}/audience-clip

@@ -10,6 +10,7 @@ packages:
     path: Core
 settings:
   base:
+    AUDIENCE_DOMAIN: tolgraven.se
     SWIFT_VERSION: '5.0'
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -32,12 +33,19 @@ targets:
       - path: iOS
         excludes: ["**/AGENTS.md"]
       - Shared
+      - Audience
+    entitlements:
+      path: iOS/TolglowPhone.entitlements
+      properties:
+        com.apple.developer.associated-domains: ["appclips:$(AUDIENCE_DOMAIN)", "applinks:$(AUDIENCE_DOMAIN)"]
     info:
       path: iOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
-        NSCameraUsageDescription: Measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
+        NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.
+        NSCameraUsageDescription: Estimate dance movement locally or measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you conduct lights, preview sensors, or hold a fixed sightline for fog or reflectance measurements.
         NSLocalNetworkUsageDescription: Connect to your chosen Tolglow lighting host and send armed OSC observations.
         NSAppTransportSecurity:
@@ -49,16 +57,65 @@ targets:
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
       - package: TolglowSensorCore
+      - target: TolglowAudienceClip
+        embed: true
       - target: TolglowWatch
         embed: true
+  TolglowAudienceClip:
+    type: application.on-demand-install-capable
+    platform: iOS
+    sources: [AppClip, Audience]
+    info:
+      path: AppClip/Info.plist
+      properties:
+        CFBundleDisplayName: Dance floor
+        UILaunchScreen: {}
+        NSAppClip:
+          NSAppClipRequestEphemeralUserNotification: false
+          NSAppClipRequestLocationConfirmation: false
+        NSCameraUsageDescription: Estimate dance movement on this phone while you choose camera input.
+        NSBluetoothAlwaysUsageDescription: Discover the nearby stage and send movement estimates.
+    entitlements:
+      path: AppClip/TolglowAudienceClip.entitlements
+      properties:
+        com.apple.developer.associated-domains: ["appclips:$(AUDIENCE_DOMAIN)"]
+        com.apple.developer.parent-application-identifiers: ["$(AppIdentifierPrefix)org.tolglow.ios"]
+        com.apple.developer.on-demand-install-capable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.Clip
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) APPCLIP"
+        TARGETED_DEVICE_FAMILY: '1,2'
+    dependencies:
+      - package: TolglowSensorCore
+  TolglowAudienceBridge:
+    type: tool
+    platform: macOS
+    deploymentTarget: '13.0'
+    sources: [AudienceBridge, Audience/AudienceRadio.swift]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host the audience for this show over nearby Bluetooth.
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.audience-bridge
+    dependencies:
+      - package: TolglowSensorCore
   TolglowWatch:
     type: application
     platform: watchOS
     sources: [watchOS, Shared]
+    entitlements:
+      path: watchOS/TolglowWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
     info:
       path: watchOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        WKBackgroundModes: [workout-processing]
+        NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
+        NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
         WKApplication: true
         WKCompanionAppBundleIdentifier: org.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
@@ -68,6 +125,14 @@ targets:
     dependencies:
       - package: TolglowSensorCore
 schemes:
+  TolglowAudienceClip:
+    build:
+      targets:
+        TolglowAudienceClip: all
+  TolglowAudienceBridge:
+    build:
+      targets:
+        TolglowAudienceBridge: all
   TolglowStudio:
     build:
       targets:
