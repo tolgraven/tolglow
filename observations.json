@@ -1,0 +1,104 @@
+[
+  {
+    "renderer": "worker",
+    "measurements": [
+      {
+        "camera": "audience",
+        "sample": {
+          "received-ns": 176316339619696,
+          "producer": "0dcfca22-9a67-4296-93ed-969546cb012b",
+          "value": [
+            129,
+            101,
+            107
+          ],
+          "source": "center-rgb",
+          "frame-number": 2430,
+          "sequence": 2,
+          "completed-ms": 63036.30000001192,
+          "sampled-ms": 62857.56999999285,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 3
+      },
+      {
+        "camera": "overview",
+        "sample": {
+          "received-ns": 176330652362623,
+          "producer": "0dcfca22-9a67-4296-93ed-969546cb012b",
+          "value": [
+            113,
+            100,
+            112
+          ],
+          "source": "center-rgb",
+          "frame-number": 3153,
+          "sequence": 5,
+          "completed-ms": 77350.8599999845,
+          "sampled-ms": 77161.68999999762,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 6
+      }
+    ],
+    "readsBeforeDemand": 0,
+    "readsAfterRelease": 0
+  },
+  {
+    "renderer": "main",
+    "measurements": [
+      {
+        "camera": "audience",
+        "sample": {
+          "received-ns": 176477572138840,
+          "producer": "2f675847-5856-40c1-93f7-4871f607143d",
+          "value": [
+            123,
+            102,
+            109
+          ],
+          "source": "center-rgb",
+          "frame-number": 8847,
+          "sequence": 3,
+          "completed-ms": 73271.96000000834,
+          "sampled-ms": 66491.90500000119,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 3
+      },
+      {
+        "camera": "overview",
+        "sample": {
+          "received-ns": 176498229714954,
+          "producer": "2f675847-5856-40c1-93f7-4871f607143d",
+          "value": [
+            112,
+            100,
+            110
+          ],
+          "source": "center-rgb",
+          "frame-number": 9861,
+          "sequence": 5,
+          "completed-ms": 93936.77500000596,
+          "sampled-ms": 92581.90500000119,
+          "show": {
+            "show-id": "main",
+            "epoch": 0
+          }
+        },
+        "reads": 5
+      }
+    ],
+    "readsBeforeDemand": 0,
+    "readsAfterRelease": 0
+  }
+]
