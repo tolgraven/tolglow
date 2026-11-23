@@ -177,6 +177,30 @@ Each configuration used the same four moving spheres, eight washes, a beat-drive
 
 Comparing each sample with its partner, the median whole-frame CPU ratio was 1.015 at 10,000 pixels and 1.086 at 20,000. The candidate finished faster at 20,000 pixels in 16 of 36 pairs. P95 includes substantial variation in runnable wait and occasional GC pauses. These measurements do not justify adding the shortcut to production. The 20,000-pixel original spent a median 90.17 ms of owner CPU and allocated 19.25 MB while sampling the four fields, including beam selection and its shared emission preparation. [Source-only replay kit](https://raw.githubusercontent.com/tolgraven/afterglow/422f51fea615c33598b854840c05edf047936392/experiments/guarded-origin-cpu-source.zip)
 
+#### Measuring optical work across four moving spheres
+
+In the 20,000-pixel venue, every sphere can select a head by its position and by its light beam. The larger weight wins. Across 32 complete calculations on the same two CPU hosts, the following medians measure the coordinator thread. Each row totals that operation's calls within one frame. Allocation uses decimal MB. The four beam reductions exclude the separate cost of reading committed emission levels.
+
+| Operation | Calls per frame | Coordinator CPU | Allocation |
+| --- | ---: | ---: | ---: |
+| Test beams against spheres and room surfaces | 4 | 48.90 ms | 8.08 MB |
+| Test fixture positions against spheres | 4 | 13.42 ms | 2.98 MB |
+| Read the previous frame's emission and prepare its poses | 1 | 10.83 ms | 7.86 MB |
+| Prepare sphere shape and fade | 4 | 0.53 ms | 0.07 MB |
+
+A candidate skipped the beam intersection when the fixture's position already gave a larger weight than even an unobstructed beam could supply. In four sampled frames, this applied to 15,873–16,667 of the 80,256 sphere/fixture pairs per frame. It preserved the ordinary illumination, range and pose checks, including lazy validation of invalid mounted fixtures. Fog, custom blockers and mechanical aiming used the original calculation.
+
+At both sizes the complete show ran for 18 warmup frames and 36 timed pairs. All ArtDMX packets, fixture transitions, models and intents matched. The selected preview rows passed the existing comparison. Allocation fell in 35 of 36 pairs at each size. The CPU needed to decide whether a beam could be skipped outweighed the saved intersections in the median pair.
+
+| Median paired change, candidate minus original | 10,000 pixels + 64 moving heads | 20,000 pixels + 64 moving heads |
+| --- | ---: | ---: |
+| Coordinator and show-worker CPU per complete frame | +1.96 ms | +9.24 ms |
+| Coordinator CPU in the four sphere calls | +5.68 ms | +8.07 ms |
+| Whole-frame allocation | −0.85 MB | −1.68 MB |
+| Full calculations completed in 25 ms, original / candidate | 0 / 0 of 36 each | 0 / 0 of 36 each |
+
+This comparison ran under substantial Linux host contention. The production renderer keeps its existing intersection test. The shared emission read accounts for nearly as much allocation as four beam reductions combined.
+
 #### Tracing late frames on the 1,024-pixel show
 
 Two workers rendered a beat-driven wash and aim movement on 128 heads, with a pulse, an independent 40 Hz publisher and an in-memory sink. The comparison used the exact source revisions of Afterglow #89. Each run covered 240 physical slots after 120 warmup slots. The owner thread selects and blends effect results, converts head positions into mechanical commands and packs DMX while the independent publisher prepares its own output. Timing the effect functions alone misses both costs.
