@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
+ [{:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/runtime/keyframes.clj" "tolglow/src/tolglow/effects/keyframes.clj" "tolglow/src/studio/tolglow/studio/keyframe_editor.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Sample continuous effect output at a projected musical clock, inspect or modulate the tween, and restore it at the same point."]
+   :evidence ["Afterglow #62 tests future transport projection, native typed fields, faults, parallel workers and actual DMX. Tolglow exercises scalar and batch compilers, a reversing progress source, live reactive inspection, and full Transit save and restore. The 834-pixel Studio touch capture edits both Bézier coordinates, publishes an exact quarter-beat interval, and verifies all three live values. See docs/effect-keyframes.md."]}
+  {:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]
    :depends-on [:native/venue-receivers :native/photometry-camera]
