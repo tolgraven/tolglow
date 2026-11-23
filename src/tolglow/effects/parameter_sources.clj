@@ -114,22 +114,29 @@
 
 (defn- append [sources id param entry] (update-in sources [id param] (fnil conj []) entry))
 
+(defn- running-cues [model]
+  (into {} (for [instance (sort-by :order (vals (:instances model)))
+                 :when (= :running (:phase instance))]
+             [(:cue-id instance) (:id instance)])))
+
 (defn- patch-sources [sources model]
   (let [routing (:routing model)]
     (if-not (:enabled? routing) sources
-      (reduce (fn [out {:keys [id destination source]}]
-                (let [instance (get-in routing [:state :routes id :instance-id])
-                      param (get-in routing [:spec :destinations destination :param])]
-                  (if (and param (contains? (:instances model) instance))
-                    (append out instance param {:type :patch :route-id id :source-id source})
-                    out)))
-              sources (get-in routing [:spec :routes])))))
+      (let [latest (running-cues model)]
+        (reduce (fn [out {:keys [id destination source]}]
+                  (let [{:keys [contributing? instance-id]} (get-in routing [:state :routes id])
+                        {:keys [cue-id param]} (get-in routing [:spec :destinations destination])
+                        active? (and contributing? (contains? (get-in routing [:state :last-values]) [destination instance-id]))
+                        target (if active? instance-id (get latest cue-id instance-id))]
+                    (if (and param (contains? (:instances model) target))
+                      (append out target param (cond-> {:type :patch :route-id id :source-id source}
+                                                 (not active?) (assoc :pending? true)))
+                      out)))
+                sources (get-in routing [:spec :routes]))))))
 
 (defn- live-destinations [sources model {:keys [parameters] :as routing}]
   (if-not (seq parameters) sources
-    (let [latest (reduce (fn [m instance] (if (= :running (:phase instance))
-                                           (assoc m (:cue-id instance) (:id instance)) m))
-                         {} (sort-by :order (vals (:instances model))))]
+    (let [latest (running-cues model)]
       (reduce-kv
         (fn [out controller {:keys [disabled? cue-id instance-id param lane-note]}]
           (let [id (get latest cue-id instance-id)]
@@ -160,8 +167,9 @@
     [param {:type :blocks :path path}]))
 
 (defn- add-responses [fields responses]
-  (reduce (fn [m {:keys [params id]}]
-            (reduce #(update %1 %2 (fnil conj []) {:type :response :id id}) m params))
+  (reduce (fn [m {:keys [params id error]}]
+            (let [source (cond-> {:type :response :id id} error (assoc :error error))]
+              (reduce #(update %1 %2 (fnil conj []) source) m params)))
           fields responses))
 
 (defn project [instance sources resolve-inputs responses?]
@@ -172,8 +180,9 @@
             fields (reduce (fn [m [param source]] (update m param (fnil conj []) source))
                            (add-responses sources (:response-values context)) blocks)]
         (into {} (for [[param entries] fields]
-                   [param (cond-> {:base-value (get-in instance [:params param])
-                                   :effective-value (get-in context [:instance :params param])
-                                   :sources entries}
-                            (:error context) (assoc :error (:error context)))])))
+                   (let [error (or (:error context) (some :error (filter #(= :response (:type %)) entries)))]
+                     [param (cond-> {:base-value (get-in instance [:params param])
+                                     :effective-value (when-not error (get-in context [:instance :params param]))
+                                     :sources entries}
+                              error (assoc :error error))]))))
       {})))

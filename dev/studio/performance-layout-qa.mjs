@@ -137,7 +137,8 @@ async function verifyControls(page,touch,profile) {
   const aim=card.locator('[data-param=aim]');
   await activate(aim.getByRole('button',{name:'Edit Orbit aim components'}));
   const dialog=aim.getByRole('dialog');
-  await dialog.getByRole('spinbutton',{name:'Orbit aim X value'}).fill('0.42');
+  const axis=dialog.getByRole('spinbutton',{name:'Orbit aim X value'});
+  await axis.fill(Number(await axis.inputValue())>0 ? '-0.42' : '0.42');
   await activate(dialog.getByRole('button',{name:'Done'}));
   await aim.getByRole('button',{name:'History'}).waitFor({state:'detached'});
   const overridden=await open('Orbit aim',true);
