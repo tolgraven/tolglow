@@ -14,15 +14,30 @@
 (defn finished? [status] (contains? #{"completed" "failed" "cancelled"} status))
 (defn task [s] (some #(when (= (:selected s) (:id %)) %) (:tasks s)))
 (defn- store [db s] (assoc db :application-agents s))
+(def ^:private command-keys #{:start :cancel :configure})
+
 (defn- request [db key operation params body]
-  (let [s (state db) serial (inc (:serial s)) query (when (seq params)
-        (str "?" (str/join "&" (map (fn [[k v]] (str (name k) "=" (js/encodeURIComponent (str v)))) params))))]
-    {:db (store db (-> s (assoc :serial serial) (assoc-in [:pending key] serial) (update :errors dissoc key)))
+  (let [s (state db)
+        serial (inc (:serial s))
+        t (token db)
+        pending (cond-> {:token t :serial serial}
+                  (= key :start) (assoc :prompt (:prompt body)))
+        query (when (seq params)
+                (str "?" (str/join "&" (map (fn [[k v]] (str (name k) "=" (js/encodeURIComponent (str v)))) params))))]
+    {:db (store db (-> s (assoc :serial serial) (assoc-in [:pending key] pending) (update :errors dissoc key)))
      :studio/http {:path (str "/api/application-agents" (when operation (str "/" (name operation))) query)
                    :body (when body (assoc body :runtime-id (get-in db [:show :runtime-id])))
                    :timeout-ms (if (= operation :start) 15000 8000)
-                   :on-success [:application-agents/received (token db) key serial operation]
-                   :on-failure [:application-agents/failed (token db) key serial]}}))
+                   :on-success [:application-agents/received t key serial operation]
+                   :on-failure [:application-agents/failed t key serial]}}))
+
+(defn- owns-request? [db pending t serial]
+  (and (= (first t) (get-in db [:show :runtime-id]))
+       (= t (:token pending)) (= serial (:serial pending))))
+
+(defn- release-view-requests [s]
+  (update s :pending select-keys command-keys))
+
 (defn- update-task [s data]
   (let [tasks (if (some #(= (:id data) (:id %)) (:tasks s))
                 (mapv #(if (= (:id data) (:id %)) (merge % data) %) (:tasks s))
@@ -47,7 +62,7 @@
   (fn [{:keys [db]} _]
     {:db (store db (assoc (state db) :open? true)) :dispatch [:application-agents/list]}))
 (rf/reg-event-db :application-agents/close
-  (fn [db _] (store db (-> (state db) (assoc :open? false :pending {}) (update :generation inc)))))
+  (fn [db _] (store db (-> (state db) release-view-requests (assoc :open? false) (update :generation inc)))))
 (rf/reg-event-fx :application-agents/runtime-change
   (fn [{:keys [db]} _]
     (let [s (state db)]
@@ -62,17 +77,18 @@
         {:dispatch-later [{:ms 250 :dispatch [:application-agents/list]}]}))))
 (rf/reg-event-fx :application-agents/select
   (fn [{:keys [db]} [_ id]]
-    {:db (store db (assoc (state db) :selected id :cursor 0 :items {} :order [] :events [] :pending {} :dropped? false))
-     :fx [[:dispatch [:application-agents/status id]] [:dispatch [:application-agents/poll id]]]}))
+    (let [s (release-view-requests (state db))]
+      (cond-> {:db (store db (assoc s :selected id :cursor 0 :items {} :order [] :events [] :dropped? false))}
+        (:open? s) (assoc :fx [[:dispatch [:application-agents/status id]] [:dispatch [:application-agents/poll id]]])))))
 (rf/reg-event-fx :application-agents/status
   (fn [{:keys [db]} [_ id]]
-    (when (and (= id (:selected (state db))) (not (get-in (state db) [:pending [:status id]])))
+    (when (and (:open? (state db)) (= id (:selected (state db))) (not (get-in (state db) [:pending [:status id]])))
       (request db [:status id] :status {:id id} nil))))
 (rf/reg-event-fx :application-agents/poll
   (fn [{:keys [db]} [_ id expected-token]]
     (let [s (state db)]
       (when (and (:open? s) (= id (:selected s)) (not (get-in s [:pending [:events id]]))
-                 (or (nil? expected-token) (= expected-token (token db))))
+                 (or (nil? expected-token) (current? db expected-token)))
         (request db [:events id] :events {:id id :cursor (:cursor s)} nil)))))
 (defn start-payload [form]
   (when-not (and (contains? #{"codex"} (:provider form)) (contains? #{"tolglow" "afterglow"} (:repo form))
@@ -82,8 +98,9 @@
   (select-keys form [:provider :repo :policy :prompt]))
 (rf/reg-event-fx :application-agents/start
   (fn [{:keys [db]} _]
-    (try (request db :start :start {} (start-payload (:form (state db))))
-         (catch :default error {:db (assoc-in db [:application-agents :errors :start] (events/error-message error))}))))
+    (when-not (get-in db [:application-agents :pending :start])
+      (try (request db :start :start {} (start-payload (:form (state db))))
+           (catch :default error {:db (assoc-in db [:application-agents :errors :start] (events/error-message error))})))))
 (rf/reg-event-fx :application-agents/configure
   (fn [{:keys [db]} [_ fields]]
     ;; Credential text is only in this transient HTTP effect, never app-db.
@@ -94,8 +111,9 @@
 (rf/reg-event-fx :application-agents/received
   (fn [{:keys [db]} [_ t key serial operation data]]
     (let [s (state db)]
-      (when (and (current? db t) (= serial (get-in s [:pending key])))
-        (let [s (update s :pending dissoc key)]
+      (when (owns-request? db (get-in s [:pending key]) t serial)
+        (let [submitted (get-in s [:pending key :prompt])
+              s (update s :pending dissoc key)]
           (case operation
             nil {:db (store db (merge s (select-keys data [:available? :runner-ready? :execution-configured? :providers :tasks
                                                           :preview-available? :activation-available? :configuration-persisted?])))
@@ -104,10 +122,13 @@
                              (seq (:tasks data)) [:application-agents/select (:id (last (:tasks data)))])}
             :configure {:db (store db (merge s (select-keys data [:providers :configuration-persisted?])))
                         :dispatch [:application-agents/list]}
-            :start {:db (store db (-> s (update-task data) (assoc-in [:form :prompt] "")))
+            :start {:db (store db (cond-> (update-task s data)
+                                   (= submitted (get-in s [:form :prompt])) (assoc-in [:form :prompt] "")))
                     :fx [[:dispatch [:application-agents/select (:id data)]] [:dispatch [:workspace/list]]]}
             :status {:db (store db (update-task s data))}
-            :cancel {:db (store db s) :dispatch [:application-agents/status (:selected s)]}
+            :cancel {:db (store db (update-task s data))
+                     :dispatch (when (and (:open? s) (= (:id data) (:selected s)))
+                                 [:application-agents/status (:id data)])}
             :events (if (not= (:selected s) (:task-id data)) {:db (store db s)}
                       {:db (store db (consume-events s data))
                        :dispatch (when (or (:dropped? data) (finished? (:status data))) [:application-agents/status (:selected s)])
@@ -117,7 +138,7 @@
 (rf/reg-event-fx :application-agents/failed
   (fn [{:keys [db]} [_ t key serial error]]
     (let [s (state db)]
-      (when (and (current? db t) (= serial (get-in s [:pending key])))
+      (when (owns-request? db (get-in s [:pending key]) t serial)
         {:db (store db (-> s (update :pending dissoc key) (assoc-in [:errors key] error)))
          :dispatch-later (when (and (:open? s) (vector? key) (= :events (first key)) (= (:selected s) (second key)))
                            [{:ms 1200 :dispatch [:application-agents/poll (:selected s) t]}])}))))

@@ -12,6 +12,8 @@ independent Git repositories. Their common parent makes Tolglow's `../afterglow`
 dependency resolve to the paired fork. Each repository root and workspace parent
 is configured by the host, not chosen through arbitrary browser paths.
 
+In Studio, open **Develop** to create or select a paired workspace. **Files** opens the selected repository’s editor with Save and Read disk beside its engine picker. On a phone, **Browse files** brings back the tree while keeping the current buffer. **Diff**, **Checks & preview** and **Terminal** use the selected workspace. **Coding agent** opens the application-task composer and progress feed. A task’s **Review workspace changes** action selects its own workspace and opens its diff.
+
 ## Service API
 
 ```clojure
@@ -96,6 +98,8 @@ terminal lifecycle suite, the checkpoint is **22 tests / 139 assertions**.
 
 ## Checks and candidate readiness
 
+The Develop panel subscribes to `[:development/workspace "lighting"]` for the selected workspace, on Studio’s existing operator-authenticated Transit WebSocket. It receives the initial status followed by changes to running checks, their results, the worktree revision and preview readiness. An edit or a completed check in another client or at the REPL also updates the panel, even while the lighting clock is paused. Switching workspaces, hiding the page or leaving Develop releases the observer when its last client leaves. Reconnecting requests the current status. The one-time workspace list supplies available check profiles. REPL and HTTP callers can still request a status snapshot directly.
+
 Only named host-configured argv profiles can run. Without a runner, `check!`
 rejects the operation explicitly. The default application uses the
 [Docker runner](terminal.md). The exported `run-trusted-process!` helper is for
@@ -152,3 +156,7 @@ ID and mask cross-repository ref lookup. The tests reproduce the original
 isolation, current owned HEAD/staged-index behavior, recovered diffs, check
 fingerprints and temporary-view cleanup.
 The full pure lane on this branch passed **457 tests / 3,610 assertions**.
+
+Run `lein run -m tolglow.qa.workspace-layout` after building Studio to exercise the paired Git workflow, compact layout and bundled Neovim in Chromium. The harness creates two temporary local repositories and uses the preview output sink.
+
+Run `lein run -m tolglow.qa.workspace-status` with the built Studio bundle to inspect live check delivery. It holds the lighting clock before frame 1, starts a Git check outside the page, and releases that check only after Chromium has observed its running state. The browser verifies the final result again after reconnecting.

@@ -79,3 +79,27 @@ respectively. [CI evidence](https://github.com/tolgraven/tolglow/actions/runs/45
 Physical GPU timing, iPad power and display latency, and a live angular-error
 ceiling for strongly curved movement remain open. The native GL reference
 replay used Mesa software rendering with deadline fallbacks.
+
+## Musical ceilings in a running compound cue
+
+The replay compares the two-worker release host with a full-rate reference for
+80 frames over 11 universes. A compound cue runs a spatial wash across 1,023
+RGBW pixels, an aim field across 128 moving heads and a short pulse on the first
+pixel. One-shot shutter cues exercise lifecycle and discrete output. The wash
+allows at most one eighth of a beat between expensive evaluations. At frame 40
+both runs accept a transport tempo command from 120 to 240 BPM. The wash moves
+from stride two to direct sampling on that frame, while the aim remains at stride
+eight and the pulse keeps its frame-accurate evaluation.
+
+Worker costs and total frame pressure are injected for reproducible admission.
+Cue launches, both workers, native blending and ArtDMX packing run normally.
+Sixteen lit pulse frames, eight at each tempo, nine shutter changes, every active instance and all
+intent records match. Maximum native RGB error was 1.12 × 10⁻¹⁶ and maximum
+aim displacement was 2.23 × 10⁻¹⁶ m. Both sets of ArtDMX packets had SHA-256
+`c4cd7c04222dc08a39098c36285bdf57f92ecc5bb8a0ef7b4111cdea36efb1b2`.
+
+```sh
+lein run -m tolglow.perf.musical-ceilings target/musical-ceilings.edn 1024 128
+```
+
+[Small and large rig captures](captures/musical-ceilings.zip) · [Authoring in Studio](../effect-keyframes.md)

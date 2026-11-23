@@ -155,7 +155,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
                 peers[id] = (key, time, nil)
                 floor.leave(id)
             case AudienceRadio.samples:
-                guard packet.count == 39, let peer = peers[id] else {
+                guard (packet.count == 39 || packet.count == 63), let peer = peers[id] else {
                     peripheral.respond(to: first, withResult: .insufficientAuthentication); return
                 }
                 let data = try AES.GCM.open(AES.GCM.SealedBox(combined: packet), using: peer.key)
@@ -201,6 +201,8 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         let delivered = queue.takeBatch()
         var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
                       "dance-steps": Double(delivered), "pulse-count": Double(levels.pulseCount), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
+        values["motion-count"] = Double(levels.motionCount)
+        values.merge(levels.motion) { _, measured in measured }
         if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
         do {
             let gestures = (0..<delivered).map { _ in Gesture(type: "dance-step") }
