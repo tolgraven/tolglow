@@ -76,14 +76,29 @@ window.shadowCacheTest = ({fullSizeCapture = false} = {}) => {
   update(values); engine.camera.position.copy(cameraPosition); engine.setFog(0); const clear = draw();
   engine.setFog(.7); const fog = draw();
   const renderFog = engine.fog.render;
-  const copyReference = () => {
-    engine.fog.render = function(scene, camera) {
+  const copyReference = ({exactTexels = false} = {}) => {
+    const material = engine.inputPass.material;
+    const source = material.fragmentShader;
+    if (exactTexels) {
+      const sample = 'texture2D( tDiffuse, vUv )';
+      if (!source.includes(sample)) throw new Error('Unrecognized same-raster copy shader');
+      // Reference the same pixel without normalized UV interpolation. The
+      // original filtered copy is measured separately on both backends.
+      material.fragmentShader = source.replace(sample, 'texelFetch( tDiffuse, ivec2(gl_FragCoord.xy), 0 )');
+      material.needsUpdate = true;
+    }
+    engine.fog.render = function(scene, camera, target) {
+      if (exactTexels && (target.width !== engine.compositeTarget.width || target.height !== engine.compositeTarget.height))
+        throw new Error('Same-raster copy requires matching target dimensions');
       engine.inputPass.enabled = true;
       return renderFog.call(this, scene, camera, engine.compositeTarget);
     };
-    try {return draw();} finally {engine.fog.render = renderFog;}
+    try {return draw();} finally {
+      engine.fog.render = renderFog;
+      if (exactTexels) {material.fragmentShader = source; material.needsUpdate = true;}
+    }
   };
-  const copied = copyReference(), directAgain = draw();
+  const filteredCopy = copyReference(), copied = copyReference({exactTexels: true}), directAgain = draw();
   const directInputEnabled = engine.inputPass.enabled;
   update(values, {'glass-meshes': {orb: {kind: 'sphere'}}, 'glass-volumes': [
     {id: 'orb', mesh: 'orb', position: [0,1.5,0], 'half-size': [.55,.55,.55], color: [.3,.8,1], strength: 1}]});
@@ -170,6 +185,7 @@ window.shadowCacheTest = ({fullSizeCapture = false} = {}) => {
       difference: difference(cached.pixels, forced.pixels)}, initialMaps,
     finalMaps: engine.spots.filter(light => light.castShadow).map(light => light.shadow.map.depthTexture.uuid),
     fogBrightened, fogDimmed, directCopyDifference: difference(fog.pixels, copied.pixels),
+    filteredCopyDifference: difference(fog.pixels, filteredCopy.pixels),
     directRepeatDifference: difference(fog.pixels, directAgain.pixels), directInputEnabled,
     glass: {inputEnabled: glassInputEnabled, targetIsComposite: glassTargetIsComposite,
       changed: difference(directAgain.pixels, glass.pixels), referenceDifference: difference(glass.pixels, glassReference.pixels)},

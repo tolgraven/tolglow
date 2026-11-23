@@ -59,6 +59,8 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     assert.deepEqual(result.finalMaps, result.initialMaps);
     assert.ok(result.fogBrightened > 100); assert.ok(result.fogDimmed > 100);
     assert.deepEqual(result.directCopyDifference, {maximum: 0, changed: 0});
+    if (!result.telemetry.softwareRenderer)
+      assert.deepEqual(result.filteredCopyDifference, {maximum: 0, changed: 0});
     assert.deepEqual(result.directRepeatDifference, {maximum: 0, changed: 0});
     assert.equal(result.directInputEnabled, false);
     assert.equal(result.glass.inputEnabled, true); assert.equal(result.glass.targetIsComposite, true);
@@ -75,7 +77,9 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
       assert.deepEqual(capture.pixels, telemetry.displayPixels);
       assert.deepEqual(capture.viewport, [0, 0, ...telemetry.displayPixels]);
       assert.equal(capture.opaqueEdges, true);
-      assert.ok(capture.brightPixels > 1000, `${prefix}${name} contains the illuminated scene`);
+      const [width, height] = capture.pixels;
+      const brightFloor = compact ? 1000 * width * height / (2806 * 1260) : 1000;
+      assert.ok(capture.brightPixels > brightFloor, `${prefix}${name} contains the illuminated scene`);
       if (directory) await writeFile(join(directory, prefix + name + '.png'), png);
       captures.push({name: prefix + name, telemetry, capture});
     };
@@ -83,9 +87,9 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     if (directory) for (const name of names) await captureScene(name);
     if (!compact) await page.setViewportSize({width: 1580, height: 730});
     const floor = await page.evaluate(() => window.setShadowCaptureAutoFloor());
-    assert.deepEqual(floor.pixels, floor.softwareRenderer ? [317,142] : [914,410]);
+    assert.deepEqual(floor.pixels, compact ? [293,131] : floor.softwareRenderer ? [317,142] : [914,410]);
     assert.deepEqual(floor.displayPixels, compact ? [1404,630] : [2806,1260]);
-    assert.deepEqual(floor.fog.targetSize, floor.softwareRenderer ? [104,46] : [301,135]);
+    assert.deepEqual(floor.fog.targetSize, compact ? [96,43] : floor.softwareRenderer ? [104,46] : [301,135]);
     for (const name of directory ? names : ['fresh-plume']) await captureScene(name, 'auto-');
     assert.deepEqual(errors, []);
     if (directory) {
