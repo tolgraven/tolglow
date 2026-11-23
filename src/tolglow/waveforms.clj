@@ -134,12 +134,23 @@
   (let [instance (get-in snapshot [:model :instances (:instance-id view)])
         current? (and instance (= (:epoch view) (get-in snapshot [:model :epoch]))
                       (= (:definition-version view) (:effect-version instance)))
-        effective (when current? (effective-params snapshot instance))]
-    (cond-> (update (assoc view :display-mode (get-in snapshot [:model :settings :controllers :push-display :mode] :parameters)) :parameters
+        effective (when current? (effective-params snapshot instance))
+        model (:model snapshot)
+        config (get-in model [:settings :controllers :push-display])
+        stale? (and (:instance-id view) (not current?))
+        clock (when-not stale?
+                (assoc (select-keys (:visualization-clock view) [:sample-period-ms])
+                       :time-ms (:time-ms model) :beat (get-in model [:transport :beat])))
+        view (merge {:display-mode (:mode config :parameters)
+                     :parameter-view (:parameter-view config :auto)
+                     :history-beats (:history-beats config 4)} view)]
+    (cond-> (update (assoc view :visualization-clock clock :runtime-id (or (:runtime-id view) (:runtime-id snapshot) (:show-id model))) :parameters
                     (fn [parameters]
                       (mapv (fn [parameter]
                               (let [id (:param parameter (:id parameter))
-                                    parameter (cond-> parameter current?
+                                    parameter (cond-> parameter
+                                                stale? (dissoc :value :base-value :effective-value)
+                                                current?
                                                 (assoc :value (get-in instance [:params id])
                                                        :base-value (get-in instance [:params id])
                                                        :effective-value (get effective id)))]

@@ -19,6 +19,12 @@
    :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
    :evidence ["The pure/parity CI runner includes tolglow.spatial-cues-test. The host suite captures native DMX across weighted boundaries, Ring grid placement, HSL modulation, reachable aim-only selection, exact beat deadlines and instance remapping through Transit."
               "Editing the room beneath a running volume emits one diagnostic, preserves unrelated pixel output and recovers automatically. The Studio browser scenario submits the sculpted field to the running show using the iPad layout."]}
+  {:id :studio/spatial-parameter-history :title "Inspect parameter results in space and musical time on Push and Studio"
+   :kind :implementation :status :in-progress :owner "Push parameter visualization"
+   :paths ["tolglow/src/studio/tolglow/studio/parameter_visualization.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Default spatially meaningful values to a calibrated 3D view. Retain editing and waveform previews, zoom recorded parameter history and release hidden history."]
+   :evidence []}
   {:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/runtime/keyframes.clj" "tolglow/src/tolglow/effects/keyframes.clj" "tolglow/src/studio/tolglow/studio/keyframe_editor.cljs"]

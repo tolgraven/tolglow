@@ -4,7 +4,8 @@
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]))
 
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
@@ -22,7 +23,7 @@
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
 (defn observe-view [previous view]
-  (let [next (normalize-view view)
+  (let [next (visualization/update-push previous (normalize-view view) view)
         {:keys [binding-path target-id sample]} (:block-trace view)
         identity [(:runtime-id view) (:epoch view) (:instance-id view) (:definition-version view) binding-path target-id]]
     (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
@@ -130,7 +131,7 @@
                    (cond
                      (nil? parameter) (when-not compact? [:div.push-empty "·"])
                      compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
-                     :else [widgets/typed-display parameter])])])
+                     :else [visualization/push view parameter])])])
 
 (defn- target-choices [{:keys [rows page pages]}]
   [:section.push-targets {:aria-label "Cue launch targets"}

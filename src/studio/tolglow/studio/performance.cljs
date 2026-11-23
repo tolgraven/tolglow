@@ -8,7 +8,8 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.spatial-picker :as spatial]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
@@ -309,11 +310,15 @@
       (for [{:keys [parameter schema attribute components]} (if expanded? controls (take 2 controls))]
         ^{:key (pr-str (or parameter [attribute components]))}
         (if components
-          [:div.param-row [:label (widgets/label attribute)]
-           [widgets/axes-control (widgets/label attribute)
-            (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
-            (mapv (fn [[id schema]] (get-in instance [:params id] (:default schema))) components)
-            (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]]
+          (let [values (mapv (fn [[id schema]] (get-in instance [:params id] (:default schema))) components)
+                limits (mapv (comp :bounds second) components)
+                schema (cond-> {:type :vector :size 3 :semantic/type attribute}
+                         (apply = limits) (assoc :bounds (first limits)))]
+            [:div.param-row [:label (widgets/label attribute)]
+             [widgets/axes-control (widgets/label attribute)
+              (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
+              values (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]
+             [visualization/studio schema values]])
           [parameter-control instance parameter schema nil {:compact? (not expanded?)}]))]
      [instance-controls instance {:compact? true}]
      (when expanded?

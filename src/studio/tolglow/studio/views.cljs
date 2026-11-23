@@ -24,6 +24,7 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
@@ -276,6 +277,9 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
+     (when (and (nil? handlers) (#{"number" "integer" "vector" "color" "range"} type)
+                (or (not (:compact? options)) (visualization/spatial-kind schema)))
+       [visualization/studio schema (if (some? overlay) overlay value)])
      (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
 
 (defn- preview-panel [db]
