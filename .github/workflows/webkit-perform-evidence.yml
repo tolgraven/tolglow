@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          ref: 69f3c4eec6ea459264c964d22d5a9c822a4fa48e
+          ref: 45a35e569c3c25212321d87949993bafe773dd1d
           path: tolglow
       - uses: actions/checkout@v7.0.1
         with:
