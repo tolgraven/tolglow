@@ -119,8 +119,7 @@
       (show/tick! runtime 75)
       (let [snapshot @(:state runtime)
             device (show/connect-device! runtime :push-2 {:session-id "captured-push" :midi capture
-                                                         ;; This replay feeds 128 replies synchronously on a shared CI CPU.
-                                                         :timeout-ms 60000 :led-batch-size 16 :schedule! nil})
+                                                         :led-batch-size 16 :schedule! nil})
             service (:cue-pad-previews runtime)]
         (doseq [index (range 128)]
           (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))

@@ -1349,21 +1349,23 @@
    "Verify the interaction and reconnect checklist, display, encoder, touch strip, LED palette and USB capture on a Push 2.",
    :depends-on [:control/kernel],
    :owner nil}
-  {:evidence ["Afterglow control/codecs/push_3_test and control/devices/push_3_test exercise controller-mode expressive note events and session handling. Tolglow expressive_test exercises automatic and manual mappings."],
+  {:evidence ["Afterglow control/codecs/push_3_test and control/devices/push_3_test exercise controller-mode expressive note events and session handling. Tolglow expressive_test exercises automatic and manual mappings."
+               "Afterglow #86 and Tolglow #166 route the common re-frame views to a descriptor-checked tethered USB sink. A Linux libusb ABI recorder checked transfer errors and ownership. The native-size replay checked 3,840,000 pixels. See docs/push-display-packaging.md."],
    :paths
-   ["afterglow/src/afterglow/controllers/push3"
-    "afterglow/test/afterglow/controllers/push3"],
+   ["afterglow/src/afterglow/control/devices/push_3"
+    "afterglow/test/afterglow/control/devices/push_3_display_test.clj"],
    :acceptance
    ["Document controller-mode protocol and capabilities from hardware"
     "Shared semantic conformance"
     "Do not assume Push 2 display/USB compatibility"
     "Standalone separately scoped"],
    :title "Add verified Push 3 support",
-   :status :planned,
+   :status :blocked,
+   :blocker "The physical Push 3 has not been connected to a qualification host. Record the controller-mode chart, audio/MIDI continuity and Live handoff on the actual unit.",
    :id :control/push3,
    :kind :implementation,
    :notes
-   "Capture real controller-mode MIDI/USB traces and pressure/X/Y motion on a Push 3. Determine display transport and independently qualify any standalone integration.",
+   "Capture the local controller-mode MIDI/USB descriptors and pressure/X/Y motion. The tethered display has a documented, runnable chart and handoff procedure. Qualify standalone independently.",
    :depends-on [:control/kernel],
    :owner nil}
   {:evidence ["Afterglow control/sensors_test, control/bindings_test and control/devices/osc_transport_parity_test check calibrated timestamped inputs, exact held IDs, pure commands and session cleanup. Tolglow studio/routing_host_test, sensor_host_test and repl_host_test drive the owner using MIDI, motion, web and REPL commands. Device-specific qualification is tracked under the corresponding device."],
