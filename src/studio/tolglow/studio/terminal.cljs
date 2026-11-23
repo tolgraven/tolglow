@@ -82,7 +82,7 @@
           (let [advanced? (> (:cursor value) cursor)
                 more? (< (:cursor value) (:available-cursor value))
                 next (assoc s :cursor (:cursor value) :status (:state value)
-                              :exit-code (:exit-code value) :draining? more? :error nil)]
+                              :exit-code (:exit-code value) :draining? more? :error (:error value))]
             (cond-> {:db (assoc-in db [:terminals key] next)}
               advanced? (assoc :terminal/write {:key key :data (:data value) :dropped? (:dropped? value)}))))))))
 
