@@ -55,12 +55,17 @@
     {:frame frame :cpu-ms elapsed :acknowledgements acks :projections @counter
      :palette-writes (filterv #(= 0x03 (get % 6)) @(:messages recorder))}))
 
+(defn- cpu-clock []
+  (let [bean (ManagementFactory/getThreadMXBean)]
+    (when-not (and (.isCurrentThreadCpuTimeSupported bean) (.isThreadCpuTimeEnabled bean))
+      (throw (ex-info "Push session measurement needs enabled thread CPU timing" {})))
+    #(.getCurrentThreadCpuTime ^ThreadMXBean bean)))
+
 (defn replay []
-  (let [model (reduce pad (demo/model) (range 64))
+  (let [cpu (cpu-clock)
+        model (reduce pad (demo/model) (range 64))
         runtime (show/create-runtime {:model model :workspace-options nil :batch? false})
-        recorder (midi-recorder) counter (volatile! 0) original pads/present!
-        bean (ManagementFactory/getThreadMXBean)
-        cpu #(.getCurrentThreadCpuTime ^ThreadMXBean bean)]
+        recorder (midi-recorder) counter (volatile! 0) original pads/present!]
     (try
       (with-redefs [pads/present! (fn [& args] (vswap! counter inc) (apply original args))]
         (show/tick! runtime 0)
