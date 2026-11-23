@@ -1,0 +1,22 @@
+.variable-blocks {grid-column: 1 / -1; min-width: 0}
+.variable-blocks .panel-top {gap: 1rem}
+.variable-blocks .panel-top h2 {font-size: 1.1rem; letter-spacing: -.025em}
+.variable-block-workspace {display: grid; grid-template-columns: minmax(13rem, .7fr) minmax(0, 1.6fr); align-items: start}
+.variable-block-workspace > fieldset {border: 0; margin: 0; padding: 0; min-width: 0}
+.variable-block-workspace > fieldset .form-row {grid-template-columns: 1fr; gap: .5rem}
+.variable-block-workspace > fieldset button {justify-self: start}
+.variable-block-workspace .form-body {display: grid; gap: .85rem}
+.variable-block-workspace .form-row {margin: 0}
+.variable-block-workspace select, .variable-block-workspace input {max-width: 100%; min-width: 0}
+.variable-block-workspace button, .variable-block-workspace select, .variable-block-workspace input {min-height: 44px}
+.variable-block-workspace summary {cursor: pointer; min-height: 44px; align-content: center}
+.variable-block-workspace .variable-block-editor {border-inline-start: 1px solid var(--line)}
+.variable-block-editor h3 {margin: 0; font-variant-numeric: tabular-nums}
+.variable-block-editor .block-trace-viewport {min-height: 32px}
+.variable-block-editor .button-row {display: flex; gap: .5rem; flex-wrap: wrap}
+.variable-blocks [role=alert] {color: var(--danger)}
+.variable-block-workspace > p {grid-column: 1 / -1; margin: 0}
+@media (max-width: 730px) {
+  .variable-block-workspace {grid-template-columns: minmax(0, 1fr)}
+  .variable-block-workspace .variable-block-editor {border-inline-start: 0; border-top: 1px solid var(--line)}
+}

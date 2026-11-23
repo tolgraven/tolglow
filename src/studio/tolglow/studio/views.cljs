@@ -6,6 +6,7 @@
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
             [tolglow.studio.composition-layers :as layers]
+            [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.block-builder :as block-builder]
@@ -471,7 +472,8 @@
           (for [item (:compositions show)] ^{:key (:id item)}
             [:div.list-card [:div [:strong (display-name item)] [:p (str (label (:mode item)) " · " (count (:slots item)) " slots · " (label (:loop item)) (when (:running? item) " · playing"))]]
              [button nil "Open" [:studio/composition-open item]]])
-          [:p.muted.small "Your saved macros and sequences will appear here."])]]]]))
+          [:p.muted.small "Your saved macros and sequences will appear here."])]]
+      (when (= :compose (get-in db [:ui :view])) [variable-blocks/panel])]]))
 
 (defn- plan-point [svg event width depth]
   (let [rect (.getBoundingClientRect svg)]

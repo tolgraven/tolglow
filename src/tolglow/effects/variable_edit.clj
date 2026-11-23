@@ -18,6 +18,8 @@
   "Return matching numeric paths, on request, without sending their source values.
   Large variable trees can always be addressed by their exact keyword path."
   [variables query]
+  (when-not (or (nil? query) (and (string? query) (<= (count query) 256)))
+    (throw (ex-info "Enter up to 256 characters to search variable paths." {})))
   (let [query (str/lower-case (str/trim (or query "")))
         tree (tree-seq #(map? (second %)) children [[:variables] variables])
         matches (keep (fn [[path value]]
