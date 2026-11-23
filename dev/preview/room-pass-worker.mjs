@@ -30,7 +30,7 @@ function inspect(engine) {
   const renderer = engine.renderer, gl = renderer.getContext();
   const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
   const originalShadowUpdate = renderer.shadowMap.autoUpdate;
-  const phases = ['opaque', 'fog', 'post'], pending = new Map();
+  const pending = new Map(), instrumentedFog = new WeakSet();
   let sample, frame = 0, copy;
   function observe(phase, run) {
     const timed = ext && frame % 8 === 0 && !pending.has(phase);
@@ -55,19 +55,29 @@ function inspect(engine) {
     }
   }
   const opaque = renderer.render.bind(renderer);
-  renderer.render = (scene, camera) => scene === engine.scene && camera === engine.camera
-    ? observe(phases[0], () => opaque(scene, camera)) : opaque(scene, camera);
-  const fog = engine.fog.render.bind(engine.fog);
-  engine.fog.render = (...args) => observe(phases[1], () => {
-    const amount = engine.fog.amount;
-    if (mode === 'skip-fog-raymarch') engine.fog.amount = 0;
-    try {return fog(...args);} finally {engine.fog.amount = amount;}
-  });
+  renderer.render = (scene, camera) => {
+    if (scene === engine.scene && camera === engine.camera) return observe('opaque', () => opaque(scene, camera));
+    if (sample && scene === engine.fog.scene && engine.fog.quad.material === engine.fog.volumeMaterial)
+      sample.raymarched = true;
+    return opaque(scene, camera);
+  };
+  function observeFog(current) {
+    if (instrumentedFog.has(current)) return;
+    const render = current.render.bind(current);
+    current.render = (...args) => observe('fog', () => {
+      const amount = current.amount;
+      if (mode === 'skip-fog-raymarch') current.amount = 0;
+      try {return render(...args);} finally {current.amount = amount;}
+    });
+    instrumentedFog.add(current);
+  }
   const compose = engine.composer.render.bind(engine.composer);
-  engine.composer.render = (...args) => observe(phases[2], () => compose(...args));
+  engine.composer.render = (...args) => observe('post', () => compose(...args));
   return {
     draw(dt, ordinary) {
       prepare();
+      // Selecting a tier replaces the fog target and its shader owner.
+      observeFog(engine.fog);
       renderer.shadowMap.autoUpdate = mode === 'cached-shadows' ? false : originalShadowUpdate;
       if (mode === 'present-cached-frame' && copy) {
         const start = performance.now();

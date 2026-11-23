@@ -35,6 +35,8 @@ test('private Room diagnostics keep real worker presentations through each pass 
     });
     const peer=page.workers().find(w => w.url().endsWith('/studio/preview-worker.js'));
     assert.ok(peer, 'private worker stayed active');
+    await page.evaluate(() => document.querySelector('#preview').tolglowPreview.setQuality('desktop'));
+    await page.waitForFunction(() => document.querySelector('#preview').tolglowPreview.getTelemetry().quality === 'desktop');
     for (const mode of ['full','cached-shadows','skip-fog-raymarch','present-cached-frame','full']) {
       await peer.evaluate(choice => self.setRoomPassMode(choice),mode);
       await page.waitForFunction(choice => {
@@ -48,7 +50,9 @@ test('private Room diagnostics keep real worker presentations through each pass 
           if (e.data.type === 'frame') {engine.worker.removeEventListener('message',next);ok();}
         }));
       });
-      const observations=await page.evaluate(() => window.finishRoomPassSample());
+      const {timings:observations,raymarched}=await page.evaluate(() => window.finishRoomPassSample());
+      if (mode==='full' || mode==='cached-shadows') assert.ok(raymarched > 0);
+      else assert.equal(raymarched,0);
       assert.ok(observations.domSubmitMs.samples > 0,mode);
       assert.ok(observations[mode==='present-cached-frame'?'replaySubmitMs':'fogSubmitMs'].samples > 0,mode);
       assert.ok(observations.gpuFenceWaitMs.p50 >= 0);
