@@ -24,6 +24,18 @@
     (is (debug/matches? {:category "audio" :type "audio/kick" :emitter "audio/in" :subscribers "fx/hit"} (row 1)))
     (is (false? (debug/matches? {:subscribers "fx/other"} (row 1))))))
 
+(deftest hiding-filter-controls-keeps-the-frozen-selection
+  (let [initial {:debug {:rows [(row 1)] :frozen [(row 1)] :filters {:category "audio"} :limit 100}}
+        open (:db (transition initial [:debug/toggle-filters]))
+        closed (:db (transition open [:debug/toggle-filters]))
+        cleared (:db (transition closed [:debug/clear-filters]))]
+    (is (true? (get-in open [:debug :filters-open?])))
+    (is (false? (get-in closed [:debug :filters-open?])))
+    (is (= {:category "audio"} (get-in closed [:debug :filters])))
+    (is (= {} (get-in cleared [:debug :filters])))
+    (is (= 50 (get-in cleared [:debug :limit])))
+    (is (= [(row 1)] (get-in cleared [:debug :frozen])))))
+
 (deftest delayed-disconnected-socket-and-unselected-dmx-cannot-overwrite-current-view
   (let [db {:debug {:handle "tab" :generation 3 :runtime "run" :universe 2 :rows []}}
         packet {:protocol "tolglow-debug/1" :kind :dmx :runtime-id "run" :universe 2 :token "t" :frame-number 4
