@@ -288,8 +288,9 @@
                         (:send! sink)
                         (assoc :receipt-capacity 256
                                :prepare-output (fn [buffers source]
-                                                 (let [runtime @runtime-ref]
-                                                   (prepare-output runtime @(:patch runtime) buffers source)))
+                                                 (prepare-output @runtime-ref (:output-context source) buffers source))
+                               :output-valid-until-ms (fn [source checked-at-ms]
+                                                        (fog-deadline/next-cutoff (:safety-state source) checked-at-ms))
                                :prepare-safety-output (fn [buffers source] (prepare-safety-output @runtime-ref buffers source))
                                :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
@@ -786,21 +787,24 @@
                                  ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
 
-(defn- prepare-safety-output [runtime universes {:keys [uncertain?] :as source}]
-  (let [{:keys [compiled retirement] :as patch} @(:patch runtime)
+(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
+  (let [{:keys [compiled retirement]} output-context
         off-bytes (:fog-off-bytes compiled)
-        corrected (prepare-output runtime patch universes source)]
-    (if (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
-      ;; A failed transport may have changed pump bytes even if our last
-      ;; complete packet shows them off. Use idle bytes for newly mapped pumps.
-      (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
-            packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
-        (fog-deadline/apply-off-bytes packet off-bytes))
-      (when (and (not (identical? universes corrected))
-                 (some (fn [[universe ^bytes bytes]]
-                         (not (Arrays/equals ^bytes (get universes universe) bytes)))
-                       corrected))
-        corrected))))
+        corrected (prepare-output runtime output-context universes source)
+        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
+                    ;; Old light bytes may now address a pump. Recover it using
+                    ;; the current patch, even if its universe was absent before.
+                    (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
+                          packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
+                      (fog-deadline/apply-off-bytes packet off-bytes))
+                    corrected)]
+    ;; A transport can fail after writing only part of the attempted packet.
+    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+              (and (not (identical? universes corrected))
+                   (some (fn [[universe ^bytes bytes]]
+                           (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                         corrected)))
+      corrected)))
 
 (defn- present-output! [runtime packet frame-number]
   ((get-in runtime [:sink :send!]) packet frame-number)
@@ -1014,11 +1018,12 @@
 (defn- begin-presentation! [runtime model slot]
   (let [clock-id [@(:presentation-clock runtime) (get-in model [:transport :playing?])]
         options (merge {:period-ms (/ 1000.0 (:frame-rate runtime))}
-                       (get-in model [:settings :output :presentation]))]
+                       (get-in model [:settings :output :presentation]))
+        compiled (patch! runtime (get-in model [:rig :fixtures]))]
     (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
-                                   (patch! runtime (get-in model [:rig :fixtures]))
+                                   compiled
                                    options (or (pause-look/blackout? model) (zero? (:master model)))
-                                   (assoc slot :timeline-id clock-id))))
+                                   (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
 
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
@@ -1095,7 +1100,7 @@
                  presentation-token (when (:independent-output? runtime) (begin-presentation! runtime model output-slot))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
-                 sampling (when-not restored? (cadence/begin runtime before model))
+                 sampling-session (volatile! nil)
                  started (System/nanoTime)
                  next-state
                  (if restored?
@@ -1162,6 +1167,7 @@
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
+                           sampling (vreset! sampling-session (cadence/begin runtime before model))
                            frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
@@ -1310,7 +1316,7 @@
                ((:frame! observer) @(:state runtime)))
              (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)
                    defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
-               (when sampling
+               (when-let [sampling @sampling-session]
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally

@@ -10,7 +10,7 @@
 (defn- bytes-copy [universes]
   (into {} (map (fn [[u data]] [u (mapv #(bit-and (int %) 255) data)])) universes))
 
-(defn- fog-capture [off]
+(defn- fog-capture [off & [stall-ms]]
   (let [clock (atom 0) sent (atom []) stall? (atom false) partial? (atom false)
         pump {:id :pump :universe 1 :address 2 :channels {:fog 1}
               :fogger {:flow-m3-min 60 :dmx-range [off (if (zero? off) 255 0)]}}
@@ -27,18 +27,19 @@
                       (fn [prepare]
                         (fn [buffers source]
                           (let [packet (prepare buffers source)]
-                            (when @stall? (swap! clock + 26))
+                            (when @stall? (swap! clock + (or stall-ms 26)))
                             packet))))]
     {:clock clock :sent sent :stall? stall? :partial? partial? :runtime runtime :owner owner}))
 
 (defn- offer-fog! [{:keys [clock runtime owner]} slot red fog until]
-  (let [patch (:compiled @(:patch runtime))
+  (let [{:keys [compiled] :as patch} @(:patch runtime)
         epoch (get-in @(:state runtime) [:model :epoch])
-        token (scheduler/begin-frame! owner epoch patch {} false
-                                      {:slot slot :started-at-ms @clock :deadline-ms (* 25 slot)})
-        universes (into {} (map (fn [u] [u (byte-array 512)])) (:universes patch))
+        token (scheduler/begin-frame! owner epoch compiled {} false
+                                      {:slot slot :started-at-ms @clock :deadline-ms (* 25 slot)
+                                       :output-context patch})
+        universes (into {} (map (fn [u] [u (byte-array 512)])) (:universes compiled))
         ^bytes buffer (get universes 1)
-        assignments (when until [{:target-id :pump :until-ms until :off-bytes (:fog-off-bytes patch)}])]
+        assignments (when until [{:target-id :pump :until-ms until :off-bytes (:fog-off-bytes compiled)}])]
     (aset-byte buffer 0 (unchecked-byte red))
     (aset-byte buffer 1 (unchecked-byte fog))
     (swap! (:fog-deadlines runtime) fog-deadline/remember (:frame-id token) assignments)
@@ -63,6 +64,17 @@
       (publish-fog! capture 100)
       (is (= 2 (count @sent)) "A cutoff already on the wire does not repeat on another expired packet")
       (is (= 1 (:safety-publications (scheduler/status owner))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-fog-cutoff-can-expire-before-an-otherwise-valid-slot-is-admitted
+  (let [{:keys [runtime sent stall?] :as capture} (fog-capture 196 2)]
+    (try
+      (offer-fog! capture 1 10 100 26)
+      (reset! stall? true)
+      (let [packet (publish-fog! capture 25)]
+        (is (= [[1 [10 196]]] @sent))
+        (is (< 26 (:sent-at-ms packet) 50))
+        (is (not (:expired-before-send? packet))))
       (finally (show/stop! runtime)))))
 
 (deftest an-expired-slot-recovers-from-a-partial-send
@@ -106,6 +118,26 @@
         (is (:safety-output? (publish-fog! capture 50)))
         (is (= [[1 [10 100]] [1 [10 off]]] @sent))
         (finally (show/stop! runtime))))))
+
+(deftest a-fog-pump-reusing-a-light-address-does-not-receive-the-stale-light-level
+  (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
+    (try
+      (offer-fog! capture 1 200 100 1000)
+      (publish-fog! capture 25)
+      (let [model (:model @(:state runtime))
+            fixtures (mapv #(if (= :pump (:id %)) (assoc % :address 1) %)
+                           (remove #(= :light (:id %)) (get-in model [:rig :fixtures])))
+            rig (assoc (:rig model) :fixtures fixtures :expected-epoch (:epoch model))
+            reply (show/submit! runtime :rig rig)]
+        (reset! clock 40)
+        (show/tick! runtime 40)
+        (is (= :accepted (:status @reply)) (str @reply)))
+      (reset! stall? true)
+      (is (:safety-output? (publish-fog! capture 50)))
+      (is (= [[1 [200 100]] [1 [196 196]]] @sent))
+      (publish-fog! capture 75)
+      (is (= 2 (count @sent)) "A second expired slot does not resend an unchanged cutoff")
+      (finally (show/stop! runtime)))))
 
 (deftest a-published-fog-cutoff-outlasts-the-producer-history
   (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
