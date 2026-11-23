@@ -30,3 +30,22 @@ let url = URL(string: "https://stage.example/audience/" + room)!
 try expect(AudienceRadio.room(in: url) == room, "QR identity")
 try expect(AudienceRadio.room(in: URL(string: "http://stage.example/audience/" + room)!) == nil, "insecure invitation")
 print("Stage key agreement, independent guests, expired challenge, integrity and invite checks passed.")
+
+let centralID = UUID()
+func transferred(_ data: Data, as field: AudienceGATTWrite.Field) throws -> Data {
+    let parts = stride(from: 0, to: data.count, by: 17).map { offset in
+        AudienceGATTWrite.Fragment(central: centralID, field: field, offset: offset,
+                                   value: data.subdata(in: offset..<min(offset + 17, data.count)))
+    }
+    return try AudienceGATTWrite.assemble(parts, inspect: { $0 }).value
+}
+let assembledKey = try transferred(guest.publicKey.x963Representation, as: .hello)
+let longWriteKey = try AudienceRadio.key(stage, assembledKey, challenge: challenge)
+for length in [11, 35] {
+    let cleartext = Data(repeating: UInt8(length), count: length)
+    let payload = try AES.GCM.seal(cleartext, using: guestKey).combined!
+    let assembled = try transferred(payload, as: .samples)
+    let verified = try AES.GCM.open(AES.GCM.SealedBox(combined: assembled), using: longWriteKey)
+    try expect(verified == cleartext, "segmented authenticated payload")
+    print("Authenticated \(payload.count)-byte sample reconstructed across 17-byte value fragments.")
+}

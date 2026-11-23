@@ -1,5 +1,7 @@
 # Dance floor participation
 
+The packaged Mac app lets an operator start a stage, save its QR image, and close the invitation under **Connections → Stage invitation**. The QR is specific to that running stage. [Operator setup and Apple deployment](apple-audience-deployment.md)
+
 The full iPhone app and the lightweight Dance floor App Clip have a common **Find nearby stages** action. The Mac bridge advertises a Bluetooth LE service, so the venue and phone can have different Wi-Fi connections or no Wi-Fi association. Installing the app or fetching a Clip for the first time still requires access to Apple’s distribution service. A guest chooses the stage and input. Leaving or losing the stage ends capture. Backgrounding the phone stops its camera and motion capture. In the full app a guest may keep an already joined Watch sharing while the phone locks. Incoming Watch samples drive BLE writes in that mode. The Clip uses foreground participation.
 
 | Input | Available in | What the stage receives |
@@ -75,6 +77,12 @@ For pre-alpha testing, run the Clip in the iPhone simulator. On a development-si
 
 The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work has a separate full-app consent control and uses a measured peer connection for its GPU buffers. The Clip only participates in sensing. [Configure and qualify guest GPUs](../native/AudienceCompute/README.md)
 
+## Bluetooth write size
+
+The Mac stage accepts a single value or an ATT write batch from the same central to the same characteristic. Each value starts at byte zero and its fragments fill successive offsets. The guest hello is 65 bytes. An authenticated effort/step/pulse sample is 39 bytes, increasing to 63 when it includes six motion axes. Empty chunks, incomplete payloads, overlap and excessive lengths reject the complete transaction. A rejected hello leaves the live challenge available for a valid key. The stage responds once to the first request in the batch. [Apple’s peripheral role guide](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/PerformingCommonPeripheralRoleTasks/PerformingCommonPeripheralRoleTasks.html)
+
+Swift tests exercise all three lengths with one-byte through single-write fragments, mixed characteristics and participant IDs. The macOS radio test also reassembles a real P-256 public key and opens AES-GCM payloads reconstructed from 17-byte fragments. Include a reduced-MTU physical device in radio qualification.
+
 ## Qualification
 
 Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. A deterministic model test exercises 96 guests at five updates per second for three minutes with missed readings, duplicates, a guest rejoining, pulse opt-out and final expiry. It checks every tick’s individual step delta, participant count and mean effort. The Watch UI test exercises route selection on the actual simulator and captures the interaction. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Include a solo Watch with its phone switched off, phone return, stage disconnection and the Bluetooth permission prompt. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
@@ -86,3 +94,13 @@ Open **Connections → Audience**. The list contains enrolled gateway sources wh
 **Dancers** counts the participants in the selected, armed zones. **Dance effort** weights each zone by its dancers. **Pulse sharing** shows how many of those dancers share a fresh pulse measurement. The BPM signal stays in the show model for mappings. On signal expiry the zone drops out of the readings and requires a fresh observation and explicit arming. The operator’s selection survives show save/load. Studio receives this view through the Connections Transit stream. It contains the logical zones and aggregate measurements.
 
 A REPL controller can use the same incremental command as the operator. Submit `:sensor-audience-zone` with `{:device-id "balcony" :included? true}` to the show. Other zones keep their selection. To reproduce the operator flow locally, build the Studio release then run `lein run -m tolglow.qa.audience-zones target/audience-zones`.
+
+### A stage goes out of range
+
+An iPhone, App Clip or directly connected Watch can recover an interrupted foreground sensor session. The client tries the chosen peripheral up to three times. It waits 0.5, 1 and 2 seconds before the respective connection attempts, allows each handshake six seconds and enforces a 24-second overall limit. The screen shows the stage name and attempt number with a cancel button. Leave, Bluetooth being turned off, or entering the background cancels recovery. An already connected, explicitly allowed Watch session can continue in the background under the existing workout and lock settings. If its link drops there, the participant rejoins in the foreground.
+
+Each attempt obtains a fresh challenge, checks the same stage public-key fingerprint, and negotiates a new sensor key. Browsing manually also pins the key from the first successful join, even when two stages advertise the same name. A different invitation ends the old session before the new floor appears. Scanning the same verified invitation keeps the session and a malformed invitation ends it. In the full app the user can explicitly discard an invitation to browse again. The App Clip waits for a valid invitation after an invalid invocation.
+
+The participant has one place on the floor. While its iPhone is reconnecting, the paired Watch retains its iPhone route. Observations made during the gap are dropped. A delayed WatchConnectivity receipt must be newer than the handshake plus the allowed half-second clock lead to establish the first wrist baseline. The resumed handshake establishes a new cumulative-step baseline. A subsequent step counts once and an old sample cannot be replayed. Full-app GPU sharing requires a separate new opt-in after the sensor link drops.
+
+The Swift package simulates recovery, key mismatch, cancellation, timeout and a dropout through the actual floor counter. The Watch simulator test displays an explicitly simulated interruption and taps the real cancellation control. Validate range loss, Bluetooth power cycling, wrist background transitions, actual delivery latency and interruption of a running GPU worker with physical devices.

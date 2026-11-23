@@ -32,6 +32,7 @@ on:
       - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'src/tolglow/effects/cadence.clj'
       - 'src/tolglow/effects/sampling_quality.clj'
       - 'bin/profile-*'
@@ -56,6 +57,7 @@ on:
       - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
@@ -189,6 +191,13 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein run -m tolglow.perf.beam-fidelity ../performance-artifact/beam-fidelity.edn 0.25
+      - name: Compare independent worker batches with serial lighting output
+        if: hashFiles('tolglow/dev/tolglow/perf/independent_effects.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein run -m tolglow.perf.independent-effects ../performance-artifact/independent-effects.edn 32 80
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:

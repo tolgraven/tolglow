@@ -3,7 +3,9 @@
   start, stop, clock selection and Live handoff is a named re-frame event."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
+            [tolglow.studio.audience-invitation :as invitation]
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
             [tolglow.studio.audience :as audience]
@@ -649,6 +651,7 @@
       [:button.button {:type "button" :on-click #(rf/dispatch [:connections/refresh-devices])} "Refresh device lists"]]
      [error-list s]
      [audience/panel]
+     [invitation/panel]
      [clock-panel s (get-in db [:show :transport])]
      (when-let [error (get-in s [:sync :last-error])]
        [:p.connection-error {:role "status"} (or (:message error) (str error))])
@@ -662,6 +665,7 @@
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
       [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+     [compute-client/panel]
      [sensors/panel db]
      [patchbay/panel db]]))
 (def panel

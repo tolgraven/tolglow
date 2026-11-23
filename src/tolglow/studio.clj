@@ -28,6 +28,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.studio.state-stream :as state-stream]
+            [tolglow.render.workers :as workers]
             [tolglow.observations :as observations]
             [tolglow.studio.web :as web]))
 
@@ -65,14 +66,15 @@
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
+            compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN"))
             projections (projection/create)
             receiver (airplay/create)]
         (state-stream/publish! stream @(:state runtime))
-        {:debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
+        {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections :airplay receiver
          :frame! #(state-stream/publish! stream %)
          :tracing? #(debug-stream/observing? debug)
          :events! #(debug-stream/commit! debug %1 %2 %3 %4)
-         :close! (fn [] (debug-stream/close! debug) (state-stream/close! stream)
+         :close! (fn [] (workers/close! compute) (debug-stream/close! debug) (state-stream/close! stream)
                    (projection/clear! projections) (airplay/close! receiver))}))))
 
 (defn browser-snapshot
@@ -118,6 +120,7 @@
                                    (variable-edit/sources vars query opts)))
             :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
+            :compute-stream! #(workers/response (:compute-stream bindings) %)
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)
             :state-stream! #(state-stream/response (:state-stream bindings) %)
             :definition! (fn [kind id]

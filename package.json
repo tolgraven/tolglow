@@ -3,9 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "studio:build": "npm run preview:build && shadow-cljs release studio",
-    "studio:dev": "shadow-cljs watch studio",
-    "studio:check": "shadow-cljs compile studio",
+    "studio:build": "npm run preview:build && node js/compute/build.mjs && shadow-cljs release studio compute-worker",
+    "studio:dev": "node js/compute/build.mjs && shadow-cljs watch studio compute-worker",
+    "studio:check": "node js/compute/build.mjs && shadow-cljs compile studio compute-worker",
     "studio:test": "shadow-cljs compile studio-test && node -r ./dev/studio-node-globals.cjs target/studio-tests.js",
     "preview:build": "node js/preview/build.mjs",
     "preview:test": "node --test --test-concurrency=1 test/js/preview/*.test.mjs"

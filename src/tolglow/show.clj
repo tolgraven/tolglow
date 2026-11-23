@@ -70,6 +70,7 @@
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
+            [tolglow.integrations.audience-invitation :as audience-stage]
             [tolglow.sensors :as sensors]
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
@@ -212,16 +213,16 @@
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
-                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
+                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
-  (when (and (= :native-gpu compute-backend) (not batch?))
-    (throw (ex-info "Native GPU expressions require :batch? true" {})))
+  (when (and (contains? #{:native-gpu :distributed} compute-backend) (not batch?))
+    (throw (ex-info "GPU expressions require :batch? true" {})))
   (compute/open!
    (cond-> (select-keys options [:compute-backend :movement-backend :gpu-options])
-     (or (= :native-gpu compute-backend) (= :native-gpu movement-backend))
+     (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
 (defn- configure-runtime
@@ -1692,6 +1693,12 @@
       (:configure :arm :calibrate)
       (deref (submit! runtime ({:configure :sensor-configure :arm :sensor-arm :calibrate :sensor-calibrate} operation) payload)
              5000 {:status :pending :message "Sensor configuration remains queued"})
+      (:stage-start :stage-stop)
+      (let [current (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
+        (if (= :stage-start operation)
+          (sensors/start-stage! current payload)
+          (audience-stage/stop-current! (:stage current) (:stage-id payload))))
+      :stage-qr (audience-stage/png (:stage manager) (:id payload))
       :osc-start
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (sensors/start-osc! manager (select-keys payload [:host :port]))

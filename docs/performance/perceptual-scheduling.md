@@ -14,6 +14,12 @@ Report limits and measured error alongside time saved for each device. A faster 
 
 ## Measured decisions
 
+* **Schedule independent effect work from a common snapshot.** A two-worker
+  grouping experiment on 1,024 pixels and 128 movers sent identical ArtDMX
+  and preserved the serial state and events. Reducing 48 tasks to two did
+  not improve the 25 ms deadline count in the local capture.
+  [Work, fault and timing comparison](independent-effect-workers.md)
+
 * **Give visible controls their own sampling budget.** Studio and Push 2 share
   musical cue-color keyframes for mounted cells. The host releases work when
   the final surface leaves. Sustained pressure first widens presentation
