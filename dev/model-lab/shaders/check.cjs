@@ -4,7 +4,8 @@ const {readFileSync} = require('node:fs');
 const {join} = require('node:path');
 const {chromium} = require('playwright-core');
 
-async function verify(directory, executablePath) {
+async function verify(directory, executablePath, predictionFile, heldOut = 'test') {
+  assert(['valid', 'test'].includes(heldOut), 'select valid or test for candidate scoring');
   const rows = [], references = [], families = new Map(), upstreams = new Map();
   for (const split of ['train', 'valid', 'test']) {
     for (const line of readFileSync(join(directory, split + '.jsonl'), 'utf8').trim().split('\n')) {
@@ -19,7 +20,7 @@ async function verify(directory, executablePath) {
         assert(row.context.requires_renderer_bindings && row.source.git_blob.length === 40);
         assert(row.messages[2].content.includes(row.source.path) && row.messages[2].content.includes(row.source.notice));
         references.push(row.id);
-      } else {assert.equal(row.mode, 'shader'); rows.push(row);}
+      } else {assert.equal(row.mode, 'shader'); rows.push({...row, split});}
 
     }
   }
@@ -28,6 +29,20 @@ async function verify(directory, executablePath) {
   if (references.length) {
     const index = readFileSync(join(directory, 'shader-reference.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).id);
     assert.deepEqual(index, references);
+  }
+  let candidates = rows;
+  if (predictionFile) {
+    const predictions = new Map();
+    for (const line of readFileSync(predictionFile, 'utf8').split('\n').filter(Boolean)) {
+      const {id, content} = JSON.parse(line);
+      assert(!predictions.has(id) && typeof content === 'string', 'invalid prediction');
+      predictions.set(id, content);
+    }
+    candidates = rows.filter(row => row.split === heldOut).map(row => {
+      assert(predictions.has(row.id), 'missing prediction for '+row.id);
+      return {...row, messages: [...row.messages.slice(0, -1), {role: 'assistant', content: predictions.get(row.id)}]};
+    });
+    assert.equal(predictions.size, candidates.length, 'unexpected predictions');
   }
   const browser = await chromium.launch({executablePath, args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
   try {
@@ -100,7 +115,7 @@ async function verify(directory, executablePath) {
         checked.push(row.id); g.deleteProgram(program); g.deleteShader(fragment);
       }
       return checked;
-    }, rows);
+    }, candidates);
     console.log(checked.length+' WebGL2 programs compiled, linked and sampled; '+families.size+' split-isolated upstreams; '+references.length+' render-stage references.');
   } finally {await browser.close();}
 }

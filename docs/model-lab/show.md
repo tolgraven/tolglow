@@ -52,4 +52,4 @@ The export starts isolated, unscheduled preview shows. It sends each compact for
 
 The `show/edn`, `show/clojure` and `show/qa` modes share family-level splits. Changing a fixture subset or a beat duration keeps a template in the same split. The resulting directories contain `train.jsonl`, `valid.jsonl`, `test.jsonl` and a manifest with realized counts and source digests. These examples use the local show API and demo rig as an owner-local corpus. Only the training split belongs in a training mix. Compare held-out responses on fresh preview shows, with physical output disabled.
 
-The verified corpus contains 560 records across 26 scenario families. It has 406 training, 68 validation and 86 test records. The generator verifies these scenarios independent of recorded studio sessions or model credits.
+The verified corpus contains 596 records across 29 scenario families. Through-water, gel and calibrated fog examples publish an effect, launch it and advance the preview owner. The dataset has 430 training, 80 validation and 86 test records. The generator verifies these scenarios independent of recorded studio sessions or model credits.

@@ -19,7 +19,7 @@ The first command produces the EPL source set. The second includes Tolglow for t
 | `tolgraven/afterglow` | `bcdba8b51b6daeb541ea3a3dac8918268b15b2d1` | `4d96625fc615ba6730275d02484efb9b4c384c34` | EPL-2.0, verified against the pinned license bytes at both commits. Preserve `NOTICE-afterglow.txt` with any exported data. |
 | `tolgraven/tolglow` | `07817ede8b32859977a5d9f16bbcea5605fcac04` | `8f0765afb5dbae03558c974173300f4d9505a42d` | The pinned tree has no repository-wide license. `--owner-local-tolglow` includes the owner's local material and writes `NOTICE-tolglow.txt`. No redistribution grant is provided. |
 
-The Afterglow corpus snapshot matches the fork pinned by this Tolglow revision's CI. Every edit carries its repository, file path, base and target revisions, target blob, source license and 1-based inclusive ranges in both files. The source index preserves file text and its content digest. Model license terms and third-party libraries need their own review when assembling a larger model release.
+The Afterglow corpus snapshot pins a specific training baseline independently of later runtime and CI updates. Every edit carries its repository, file path, base and target revisions, target blob, source license and 1-based inclusive ranges in both files. The source index preserves file text and its content digest. Model license terms and third-party libraries need their own review when assembling a larger model release.
 
 ## Splits and exclusions
 
@@ -32,7 +32,7 @@ Implementation namespaces and their tests share a family. A stable hash assigns 
 | EPL-2.0 | 72 | 5 | 23 | 158 |
 | Owner-local paired | 254 | 13 | 92 | 454 |
 
-`train.jsonl`, `valid.jsonl` and `test.jsonl` contain `id`, `family`, `mode`, `source` and role-tagged `messages`. Use only `train.jsonl` for fine-tuning. Exclude the final assistant message from evaluation prompts. `sources-train.jsonl` is the retrieval corpus for the same split. `manifest.json` records exact inputs, realized split counts, family assignments and deduplication results. Generated data belongs outside source control.
+`train.jsonl`, `valid.jsonl` and `test.jsonl` contain `id`, `family`, `mode`, `source` and role-tagged `messages`. Use only `train.jsonl` for fine-tuning. Exclude the final assistant message from evaluation prompts. `sources-train.jsonl` is the retrieval corpus for the same split. `manifest.json` records exact inputs, realized split counts, family assignments and deduplication results. The combined public release includes the attributed EPL edit examples. Owner-local outputs belong outside source control.
 
 ## Score edit predictions
 

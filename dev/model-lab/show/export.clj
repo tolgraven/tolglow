@@ -45,6 +45,21 @@
      (entry :author/cue-definition (str "Register cue " k " for existing effect " id " with duration " (dur duration) " and priority 20.")
             [:cue/put k id {:duration duration :priority 20}]))))
 
+(defn materials []
+  (for [[family block inputs] [[:water :optics/through-water {:frequency 0.8 :phase {:op :bar} :depth 0.55}]
+                               [:gel :optics/gel {:transmission [0.7 0.95 1.0]}]
+                               [:fog :optics/fog-transmission {:extinction 1.2 :density 0.3 :distance 2.0}]]
+        [i color] (map-indexed vector palette) wet [0.25 0.6 1.0]
+        :let [id (named "material" (name family) i (int (* 100 wet)))
+              stage {:block block :inputs inputs :amount wet}
+              form (effect-form id {:outputs {:color color :dimmer 1.0}
+                                    :blocks {[:outputs :color] {:stages [stage]}}})]]
+    (assoc (entry (keyword "material" (name family))
+                  (str "Publish " id " with dimmer at full and linear RGB " color
+                       ". Modulate the output color using " block " at wet amount " wet
+                       " with inputs " (pr-str inputs) ".") form)
+           :preview-effect id)))
+
 (defn launches []
   (concat
    (for [id effects opts [{:mode :persistent} {:mode :one-shot :duration {:beats 1/3}}
@@ -146,7 +161,7 @@
         :context schema :answer (registry/resolve-params schema {:level v}) :schema-path "src/tolglow/registry.clj"}))))
 
 (def split-by-family
-  {:author/aim-sweep :test :launch/effect-direct :valid :perform/envelope :test
+  {:material/fog :valid :author/aim-sweep :test :launch/effect-direct :valid :perform/envelope :test
    :author/page :valid :repl/registry-default :test :query/page :test :query/parameter-schema :valid :query/musical-time :test})
 
 (defn sha [text]
@@ -159,7 +174,7 @@
       (throw (ex-info "Corpus scenario failed the live show owner" {:step step :receipt result})))
     result))
 
-(defn verify! [{:keys [form program run! setup expected-members]}]
+(defn verify! [{:keys [form program run! setup expected-members preview-effect]}]
   (when (or form program)
     (let [runtime (show/create-runtime {:workspace-options nil :workers 1})]
       (try
@@ -169,6 +184,12 @@
               ack (consume! runtime receipt (or form program) (* (count setup) 25))]
           (when (and expected-members (not= expected-members (count (:instance-ids ack))))
             (throw (ex-info "Group selected an unexpected number of instances" {:step form :receipt ack}))))
+        (when preview-effect
+          (let [launch [:effect/launch preview-effect]
+                ack (consume! runtime (forms/submit! runtime launch) launch 25)]
+            (show/tick! runtime 50)
+            (when-not (= :running (get-in @(:state runtime) [:model :instances (:instance-id ack) :phase]))
+              (throw (ex-info "Material did not render on the preview show" {:effect preview-effect})))))
         (finally (show/stop! runtime))))))
 
 (defn record [{:keys [family prompt form program answer setup schema-repo schema-path context]}]
@@ -186,7 +207,7 @@
 
 (defn -main [directory]
   (let [dir (io/file directory) parent (or (.getParentFile dir) (io/file "."))
-        examples (vec (concat (authoring) (launches) (performance) (repl-examples) (questions (demo/model))))]
+        examples (vec (concat (authoring) (materials) (launches) (performance) (repl-examples) (questions (demo/model))))]
     (when (.exists dir) (throw (ex-info "Choose a new output directory" {:directory directory})))
     (doseq [example examples] (verify! example))
     (let [splits (group-by #(get split-by-family (:family %) :train) examples)

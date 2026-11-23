@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+ [{:id :models/pilot-data-preparation :title "Prepare a source-attributed local model pilot for show control, GLSL and Clojure"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/dev/model-lab" "tolglow/docs/model-lab" "tolglow/src/tolglow/agents/forms.clj" "tolglow/test/tolglow/agents/forms_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Produce deterministic public and owner-local corpora, executable held-out checks, pinned tokenizers and hardware-specific recipes without training."]
+   :evidence ["268 public examples. Owner-local generation assembled 1,123 examples across 88 isolated families. Both model snapshots passed tokenizer-only preparation, and reference replays passed 48 held-out EDN command equivalences and 32 WebGL2 numeric checks. See docs/model-lab/README.md for open training, device and deployment gates."]}
+  {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
            "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"
