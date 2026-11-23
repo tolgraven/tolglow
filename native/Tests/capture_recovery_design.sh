@@ -6,6 +6,15 @@ xcodegen generate
 python3 - <<'PY'
 from pathlib import Path
 p=Path('Audience/AudienceClient.swift')
+s=p.read_text()
+anchor='        looking = true; status = "Looking for stages"'
+assert s.count(anchor)==1
+# At the radio boundary reproduce the same terminal result as powered-off BLE.
+# The buttons, invitation withdrawal, real leave() and SwiftUI updates run normally.
+p.write_text(s.replace(anchor,anchor+'''
+        if CommandLine.arguments.contains("-simulate-bluetooth-off") {
+            leave(); status = "Allow Bluetooth and turn it on to join"; return
+        }'''))
 p.write_text(p.read_text()+'''
 #if os(iOS) && !APPCLIP
 extension AudienceClient {
@@ -68,6 +77,17 @@ for platform in iphone ipad; do
     sleep 4; xcrun simctl io "$id" screenshot "$out/$platform-$1.png"
   }
   capture joined
-  if [[ "$platform" == iphone ]]; then capture invalid; capture recover; capture invited; fi
+  if [[ "$platform" == iphone ]]; then
+    capture invalid
+    capture recover
+    capture invited
+    xcrun simctl terminate "$id" org.tolglow.ios
+    result="$RUNNER_TEMP/dance-floor-browse.xcresult"
+    xcodebuild -project Tolglow.xcodeproj -scheme TolglowPhone \
+      -destination "platform=iOS Simulator,id=$id" -parallel-testing-enabled NO \
+      -derivedDataPath "$RUNNER_TEMP/dance-recovery-derived" -resultBundlePath "$result" \
+      CODE_SIGNING_ALLOWED=NO -only-testing:DanceFloorUITests test
+    xcrun xcresulttool export attachments --path "$result" --output-path "$out/browse-failures"
+  fi
   xcrun simctl shutdown "$id"
 done

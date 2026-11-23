@@ -139,6 +139,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
     dependencies:
       - package: TolglowSensorCore
+  DanceFloorUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tests/DanceFloorUI]
+    dependencies:
+      - target: TolglowPhone
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: TolglowPhone
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.dance-floor-ui-tests
   WatchAudienceUITests:
     type: bundle.ui-testing
     platform: watchOS
@@ -167,6 +178,9 @@ schemes:
     build:
       targets:
         TolglowPhone: all
+    test:
+      targets:
+        - DanceFloorUITests
   TolglowWatch:
     build:
       targets:
