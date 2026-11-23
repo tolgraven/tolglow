@@ -1,7 +1,20 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :runtime/publication-clock
+ [{:id :documentation/repl-studio-parity :title "Review operator workflows from both the running REPL and Studio"
+   :kind :documentation :status :in-progress :owner "Show domain owners and Studio reviewers"
+   :paths ["tolglow/docs/repl-studio-parity.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["For each changed show workflow, name its public REPL entry point, Studio path and shared command or model."
+                "Check that operators can discover the operation and observe the same accepted state and rejection from each surface."
+                "Explain any surface-specific interaction. Give each missing operator path an owner, work item and observable acceptance check."]
+   :evidence ["docs/repl-studio-parity.md follows the Ember cue across both surfaces and records a scoped scheduling gap. R94 applies to future changes."]}
+  {:id :web/studio-type-alignment :title "Align Studio navigation, transport, cue pads and instrument labels"
+   :kind :implementation :status :in-progress :owner "Studio shell and live card design owners"
+   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/dev/studio/shell-alignment-qa.mjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Inspect rendered labels, controls and baselines on phone, iPad and desktop. Measure their bounds, exercise the controls and retain comparable before/after releases."] :evidence []}
+  {:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
    :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
