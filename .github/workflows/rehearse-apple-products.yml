@@ -1,50 +1,36 @@
-name: Inspect the portable compiled show
+name: Exercise the full-window on-device iPad Studio
 on:
   push:
     branches: [codex/rehearse-apple-compiled-products]
 permissions: {contents: read, actions: read}
 jobs:
-  gluon-17-loopback:
-    runs-on: ubuntu-latest
-    timeout-minutes: 50
+  ipad:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
-        with: {ref: 9239ac6f2e1280a56a2b679b3bc080ab4f924929}
-      - uses: actions/checkout@v7.0.1
-        with:
-          repository: tolgraven/afterglow
-          ref: 07b88dfdada4413ed07d0320bba584a810e674f2
-          sparse-checkout: src/afterglow/render
-          path: paired-afterglow
+        with: {ref: 39d66aaacc2759cfeaa2cb75f6b82e0fbce35644}
       - uses: actions/download-artifact@v4
-        with: {repository: tolgraven/tolglow, run-id: 45203669721, name: studio-runtime, github-token: '${{ github.token }}', path: build/release}
-      - name: Exercise the phone's Gluon 17 metadata and show folder on Linux
+        with: {repository: tolgraven/tolglow, run-id: 45208752583, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: prior}
+      - name: Link this Swift UI against the qualified native iOS simulator library
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libfreetype-dev
-          toolchain="$RUNNER_TEMP/gluon-linux"
-          mkdir -p "$toolchain"
-          curl -fLsS --retry 3 https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-linux-gluon-22.1.0.1-Final.tar.gz -o "$toolchain/graal.tgz"
-          echo "70df79831e4e55289414b4e9c4ab78b74e31d7b7db7ba70cfff86ab8f9f8d4ef  $toolchain/graal.tgz" | sha256sum --check
-          tar -xf "$toolchain/graal.tgz" --strip-components 1 -C "$toolchain"
-          export JAVA_HOME="$(dirname "$(dirname "$(find "$toolchain" -name java -path '*/bin/java' -type f -print -quit)")")"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          # Gluon's JDK 17.0.3 predates the hosted Linux cgroup mount layout.
-          export JAVA_TOOL_OPTIONS="-XX:-UseContainerSupport -Xmx6g"
-          java -version
-          python3 - <<'PY'
-          from pathlib import Path
-          runner=Path('native/EmbeddedHost/build-macos')
-          runner.write_text(runner.read_text().replace('"$root/native/EmbeddedHost/prepare-jar" macos','"$root/native/EmbeddedHost/prepare-jar" ios-sim').replace('-o TolglowNativeHost','--trace-object-instantiation=java.security.SecureRandom -H:Name=TolglowNativeHost').replace('https://repo.maven.apache.org/maven2/io/github/willena', 'https://maven-central.storage-download.googleapis.com/maven2/io/github/willena'))
-          prepare=Path('native/EmbeddedHost/prepare-jar')
-          patch = 'mkdir -p override/afterglow/render\ncp "$root/paired-afterglow/src/afterglow/render/verified.clj" override/afterglow/render/verified.clj\n'
-          prepare.write_text(prepare.read_text().replace('libnative-image-agent.dylib','libnative-image-agent.so').replace('java -Dclojure.compile.path=override',patch+'java -Dclojure.compile.path=override').replace("'[thi.ng.math.core ring.adapter.jetty","'[afterglow.render.verified thi.ng.math.core ring.adapter.jetty"))
-          PY
-          native/EmbeddedHost/build-macos build/release/studio.jar build/gluon
-          tmpapp="$RUNNER_TEMP/Linux native probe.app"
-          mkdir -p "$tmpapp/Contents/Helpers"
-          cp build/gluon/TolglowNativeHost "$tmpapp/Contents/Helpers/"
-          python3 native/Tests/check_compiled_studio.py "$tmpapp"
+          archive="$(find prior -name embedded-ipad-studio.zip -print -quit)"
+          test -s "$archive"
+          mkdir -p prior/simulator
+          ditto -x -k "$archive" prior/simulator
+          library="$(find prior/simulator -name TolglowRuntime -type f -print -quit)"
+          test -s "$library"
+          native/EmbeddedHost/package-framework "$library" iPhoneSimulator native/build/embedded
+          native/Tests/check-embedded-studio
       - uses: actions/upload-artifact@v7.0.2
-        if: failure()
-        with: {name: portable-show-log, path: build/gluon/*.log}
+        if: always()
+        with:
+          name: full-window-ipad-visuals
+          path: |
+            build/ipad-media/ipad.png
+            build/ipad-media/ipad.gif
+            build/ipad-media/attachments/manifest.json
+            build/ipad-media/last-start-error.log
+      - uses: actions/upload-artifact@v7.0.2
+        if: success()
+        with: {name: full-window-ipad-simulator, path: embedded-ipad-studio.zip}
