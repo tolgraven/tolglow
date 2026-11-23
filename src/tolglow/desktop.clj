@@ -25,7 +25,7 @@
       (Files/move temporary ready (into-array StandardCopyOption [StandardCopyOption/ATOMIC_MOVE]))
       (finally (Files/deleteIfExists temporary)))))
 
-(defn run! [^File folder ^Path ready input]
+(defn run-show! [^File folder ^Path ready input]
   ;; The user's namespace root is scoped to this show process. A URL keeps paths
   ;; containing a colon or spaces intact and leaves bundled resources first.
   (with-open [loader (doto (DynamicClassLoader. (RT/baseLoader)) (.addURL (.toURL (.toURI folder))))]
@@ -45,5 +45,5 @@
           (finally (app/stop! runtime)))))))
 
 (defn -main [folder ready]
-  (try (run! (.getCanonicalFile (io/file folder)) (.toPath (io/file ready)) System/in)
+  (try (run-show! (.getCanonicalFile (io/file folder)) (.toPath (io/file ready)) System/in)
        (finally (shutdown-agents))))

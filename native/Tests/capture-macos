@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Record the shipped WKWebView's actual CG window on a Mac with WindowServer.
+set -euo pipefail
+app="${1:?path to app}"
+out="${2:?media directory}"
+mkdir -p "$out"
+show="$(mktemp -d)/Apple Studio Session"
+mkdir "$show"
+cat > "$show/show.clj" <<'SHOW'
+(ns show)
+(defn ready [context _]
+  (spit "window-port" (get-in context [:modules :web-server :port]))
+  {})
+(def config {:init {:components [:show] :modules [:web-server :ready]
+                    :search-in-namespaces ['show]}})
+SHOW
+xcrun swiftc native/Tests/window-id.swift -o "$out/window-id"
+"$app/Contents/MacOS/TolglowStudio" --open-show "$show" > "$out/launch.log" 2>&1 &
+app_pid=$!
+trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+for ((i=0; i<120; i++)); do
+  if [[ -s "$show/window-port" ]]; then break; fi
+  kill -0 "$app_pid"
+  sleep 1
+done
+test -s "$show/window-port"
+port="$(cat "$show/window-port")"
+curl -fsS "http://127.0.0.1:$port/studio/js/main.js" -o /dev/null
+sleep 6
+window="$("$out/window-id" "$app_pid")"
+test -n "$window"
+screencapture -x -o -l "$window" "$out/studio.png"
+for ((i=0; i<12; i++)); do
+  screencapture -x -o -l "$window" "$out/frame-$i.png"
+  sleep 0.25
+done
+python3 -m venv "$out/tools"
+"$out/tools/bin/pip" -q install pillow==12.0.0
+"$out/tools/bin/python" - "$out" <<'PY'
+import sys
+from pathlib import Path
+from PIL import Image, ImageStat
+root = Path(sys.argv[1])
+frames = []
+for i in range(12):
+    image = Image.open(root / f"frame-{i}.png").convert("RGB")
+    assert max(ImageStat.Stat(image).stddev) > 15, "Captured window has no visible Studio"
+    image.thumbnail((1080, 720))
+    frames.append(image)
+frames[0].save(root / "studio.gif", save_all=True, append_images=frames[1:], duration=250, loop=0)
+PY

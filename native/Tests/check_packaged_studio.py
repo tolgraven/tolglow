@@ -29,7 +29,7 @@ def exercise(java, jar, environment):
                     time.sleep(.1)
                 assert (folder / "started").read_text() == "loaded"
                 origin = "http://127.0.0.1:" + ready.read_text()
-                for route, expected in [("/", b"app"), ("/js/main.js", b"function")]:
+                for route, expected in [("/", b"app"), ("/studio/js/main.js", b"function")]:
                     with urllib.request.urlopen(origin + route, timeout=10) as response:
                         assert response.status == 200 and expected in response.read()
             finally:

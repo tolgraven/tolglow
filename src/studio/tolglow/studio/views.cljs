@@ -9,6 +9,7 @@
             [tolglow.studio.variable-blocks :as variable-blocks]
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
+            [tolglow.studio.preview-playback :as playback]
             [tolglow.studio.block-builder :as block-builder]
             [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
@@ -284,6 +285,7 @@
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
    [:div.panel-top [:div [:span.section-label "THE ROOM"] [:span#fixture-count.muted.small (str (count (get-in db [:show :rig :fixtures])) " fixtures")]]
     [:div.preview-size-controls
+     [playback/control "preview"]
      [:button.text-button {:type "button" :aria-pressed (boolean (get-in db [:ui :preview-expanded?]))
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"

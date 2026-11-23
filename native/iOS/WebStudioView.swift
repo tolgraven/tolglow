@@ -38,6 +38,9 @@ private struct OwnedStudioWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(origin: url, status: $status) }
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.allowsPictureInPictureMediaPlayback = true
+        configuration.allowsAirPlayForMediaPlayback = true
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator

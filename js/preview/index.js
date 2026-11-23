@@ -10,3 +10,4 @@ export class RoomPreview {
   }
 }
 export {SceneRenderer};
+export {CanvasPlayback, canPresentCanvas} from './playback.js';
