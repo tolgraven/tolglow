@@ -22,7 +22,7 @@
 (defn- oscillation [rate phase]
   (op :add 0.5 (op :multiply 0.45 (op :sin (op :add (op :multiply rate beat) phase)))))
 
-(defn- programs [fixtures pixels]
+(defn programs [fixtures pixels]
   (let [movers (subvec fixtures pixels)
         phase (op :multiply 0.15 {:op :position :axis :x})
         pulse (op :floor (op :add 0.12 (op :fract (op :add (op :multiply 2.0 beat) 0.04))))]
@@ -51,7 +51,7 @@
         data (get-in output [:universes (+ (:universe fixture) (quot slot 512))])]
     (bit-and 255 (aget ^bytes data (mod slot 512)))))
 
-(defn- read-frame [state fixtures pixels]
+(defn read-frame [state fixtures pixels]
   (let [{:keys [model output status]} state
         rows (if-let [compact (:compact output)]
                (frame/project-compact compact (range (count fixtures)))
@@ -95,7 +95,7 @@
         {:samples samples :backend (compute/status (:compute runtime)) :movement (compute/movement-status (:compute runtime) (:output @(:state runtime)))})
       (finally (show/stop! runtime)))))
 
-(defn- compare-frame [fixtures pixels expected actual]
+(defn compare-frame [fixtures pixels expected actual]
   (let [origin (map :position (subvec fixtures pixels))
         target (:aim expected) observed (:aim actual)]
     (merge (metrics/rgb-error (:rgb expected) (:rgb actual))

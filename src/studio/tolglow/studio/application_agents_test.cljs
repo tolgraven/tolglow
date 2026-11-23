@@ -83,3 +83,22 @@
     (is (= "new-workspace" (get-in reviewed [:db :ui :workspace :selected-id])))
     (is (= :diff (get-in reviewed [:db :ui :workspace :pane])))
     (is (= "unsaved" (get-in reviewed [:db :ui :workspace :files file-key :source])))))
+
+(deftest a-starting-task-belongs-to-the-runtime-while-its-pane-is-closed
+  (let [opened (:db (transition base [:application-agents/open]))
+        draft (:db (transition opened [:application-agents/edit :prompt "Review the fixtures."]))
+        start (transition draft [:application-agents/start])
+        ack (conj (get-in start [:studio/http :on-success]) {:id "task-a" :status "running"})
+        close (:db (transition (:db start) [:application-agents/close]))
+        reopened (:db (transition close [:application-agents/open]))
+        edited (:db (transition reopened [:application-agents/edit :prompt "A second change."]))
+        accepted (transition close ack)
+        selected (transition (:db accepted) [:application-agents/select "task-a"])
+        replaced (:db (transition (assoc-in edited [:show :runtime-id] "server-b") [:application-agents/runtime-change]))]
+    (is (nil? (:studio/http (transition reopened [:application-agents/start]))))
+    (is (= "" (get-in accepted [:db :application-agents :form :prompt])))
+    (is (= "A second change." (get-in (transition edited ack) [:db :application-agents :form :prompt])))
+    (is (= "task-a" (get-in selected [:db :application-agents :selected])))
+    (is (nil? (:fx selected)))
+    (is (nil? (:db (transition replaced ack))))
+    (is (nil? (:db (transition (:db accepted) ack))))))
