@@ -29,10 +29,11 @@
    :depends-on [:foundation/tests] :acceptance ["Observe a single dispatch and readback from the show for an eligible multi-effect chain. Test parameter changes, ordering, native alpha, invalidation, precision, barriers and CPU-reference equivalence."] :evidence []}
   {:id :performance/render-work-elimination :title "Measure and eliminate provably unobservable renderer work"
    :kind :research :status :in-progress :owner "Renderer work elimination and GPU compilation"
-   :paths ["tolglow/docs/performance/render-work-elimination.md"]
+   :paths ["tolglow/docs/performance/render-work-elimination.md" "tolglow/src/tolglow/spatial/cues.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."
+              "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
    :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
