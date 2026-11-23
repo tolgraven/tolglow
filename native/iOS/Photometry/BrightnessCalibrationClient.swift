@@ -72,6 +72,10 @@ private struct BrightnessLease {
 }
 
 func calibrationJSON<T: Decodable>(_ type: T.Type, _ request: URLRequest, _ http: URLSession) async throws -> T {
+    if SimulatorEvidence.active {
+        let data = try JSONSerialization.data(withJSONObject: SimulatorEvidence.receipt(request))
+        return try JSONDecoder().decode(type, from: data)
+    }
     let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
     try StudioOperatorAccess.checkSignIn(response)
     var data = Data()

@@ -43,6 +43,7 @@ import Foundation
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: identity.merging(body) { _, new in new })
         }
+        if SimulatorEvidence.active { return SimulatorEvidence.receipt(request) }
         let (bytes, response) = try await http.bytes(for: request, delegate: StudioRedirectPolicy.shared)
         try StudioOperatorAccess.checkSignIn(response)
         var data = Data()

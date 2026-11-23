@@ -22,6 +22,42 @@ enum SimulatorEvidence {
         HStack { Image(systemName: "iphone"); Text(text).font(.caption.weight(.medium)); Spacer() }
             .foregroundStyle(.secondary).padding(.horizontal, 18).padding(.vertical, 6).background(.thinMaterial)
     }
+    private static var saved = [[String: String]]()
+    private static var stepIndex = 0
+    private static var phase = "dark"
+    private static var levels = [Double]()
+    static func receipt(_ request: URLRequest) -> [String: Any] {
+        let path = request.url?.path ?? ""
+        let payload = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        if path == "/api/calibration" {
+            return ["runtime-id":"simulated-venue","epoch":0,"show-id":"capture","physical-now-ms":0,
+                    "fixtures":[],"output-capable?":false,"saved-surfaces":saved]
+        }
+        if path == "/api/venue-surface" {
+            saved = [["name":"booth-wall","revision":"reviewed"]]
+            return ["status":"accepted"]
+        }
+        if request.httpMethod == "GET" || request.httpMethod == nil {
+            return ["runtime-id":"simulated-venue","epoch":0,"output-capable?":true,
+                    "fixtures":[["id":"ref","name":"Booth wash","type":"wash","reflectance-capable?":true]],
+                    "receivers":[["id":"scan-booth-wall","revision":"fixture","point":[0,1,-3]]]]
+        }
+        switch payload["op"] as? String {
+        case "start-surface": stepIndex = 0; levels = []
+        case "step": stepIndex += 1; phase = payload["phase"] as? String ?? "dark"
+        case "read-surface":
+            if let source = payload["frame-levels"] as? [Double], source.count == 15 { levels.append(source.sorted()[7]) }
+        default: break
+        }
+        var reply: [String: Any] = ["status":"accepted","step-index":stepIndex,"presentation-generation":0,
+                                    "fixture-id":"ref","phase":phase,"presented?":true]
+        if levels.count == 6 {
+            let card = ((levels[1] - levels[0]) + (levels[5] - levels[4])) / 2
+            let ratio = (levels[3] - levels[2]) / card
+            reply["fit"] = ["estimate":0.18 * ratio,"relative-to-card":ratio,"range":[0.17 * ratio,0.19 * ratio]] as [String: Any]
+        }
+        return reply
+    }
     static let axes: [Float] = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]
     static let transform = simd_float4x4(columns: (SIMD4(1,0,0,0),SIMD4(0,0,1,0),SIMD4(0,-1,0,0),SIMD4(0,1,-3,1)))
 

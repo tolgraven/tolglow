@@ -11,6 +11,7 @@ final class MeterPreviewView: UIView {
         let area = preview.layerRectConverted(fromMetadataOutputRect: CGRect(x: 0.375, y: 0.375, width: 0.25, height: 0.25))
         if SimulatorEvidence.scene == "meter" {
             let bounds = self.bounds
+            guard bounds.width > 0, bounds.height > 0 else { return }
             let drawing = UIGraphicsImageRenderer(size: bounds.size).image { context in
                 let c = context.cgContext
                 c.setFillColor(UIColor(white: 0.22, alpha: 1).cgColor); c.fill(bounds)

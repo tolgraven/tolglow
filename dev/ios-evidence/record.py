@@ -11,7 +11,7 @@ doc=Path(output("get_app_container",udid,bundle,"data"))/"Documents"
 doc.mkdir(exist_ok=True)
 def step(cmd, expect=None, delay=.75):
     stage=doc/"stage"; tmp=doc/"stage.tmp";tmp.write_text(cmd);tmp.replace(stage)
-    until=time.monotonic()+16
+    until=time.monotonic()+75
     while time.monotonic()<until:
         value=(doc/"observed").read_text() if (doc/"observed").exists() else ""
         if not stage.exists() and (not expect or expect in value):
@@ -37,6 +37,10 @@ try:
         step("fit",delay=2);screenshot("meter-review")
         step("save","Measured relative diffuse return saved",delay=1)
         step("result",delay=.9)
+except BaseException:
+    try: screenshot(mode + "-diagnostic")
+    except Exception: pass
+    raise
 finally:
     if rec:
         rec.send_signal(signal.SIGINT);rec.wait(timeout=35)

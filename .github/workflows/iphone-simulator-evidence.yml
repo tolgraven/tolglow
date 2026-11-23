@@ -15,20 +15,18 @@ jobs:
           udid=$(xcrun simctl list --json devices available | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"] in ["iPhone 16 Pro", "iPhone 17 Pro", "iPhone 16"]))')
           echo "SIMULATOR_ID=$udid" >> "$GITHUB_ENV"
           xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100
+
       - name: Build the instrumented app
         run: |
           command -v xcodegen >/dev/null || brew install xcodegen
           cd native
           xcodegen generate
           xcodebuild -quiet -project Tolglow.xcodeproj -scheme TolglowPhone -configuration Debug -destination "id=$SIMULATOR_ID" -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcrun simctl status_bar "$SIMULATOR_ID" override --time 9:41 --batteryState charged --batteryLevel 100
           xcrun simctl install "$SIMULATOR_ID" DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app
       - name: Record the actual SwiftUI workflows with synthetic inputs
         run: |
-          python3 -u dev/ios-evidence/host.py > /tmp/fixture-host.log 2>&1 &
-          server=$!
-          trap 'kill "$server" || true; cat /tmp/fixture-host.log' EXIT
           python3 dev/ios-evidence/record.py plane "$SIMULATOR_ID"
           python3 dev/ios-evidence/record.py meter "$SIMULATOR_ID"
       - uses: actions/upload-artifact@v4
