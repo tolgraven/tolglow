@@ -3,7 +3,7 @@ export function beginPassSample(mode) {
   const engine = document.querySelector('#preview').tolglowPreview;
   if (!engine.worker || !engine.bitmapPresenter) throw new Error('Pass attribution requires a worker and bitmaprenderer.');
   const presenter = engine.presenter, original = presenter.transferFromImageBitmap, values = new Map();
-  let submitted;
+  let submitted, accepted = 0, raymarched = 0;
   const add = (name, ms) => {
     if (!Number.isFinite(ms)) return;
     if (!values.has(name)) values.set(name, []);
@@ -17,6 +17,7 @@ export function beginPassSample(mode) {
   const collect = ({data}) => {
     const t = data?.telemetry, p = t?.passProbe;
     if (!p || p.mode !== mode || t !== engine.telemetry) return;
+    accepted++; if (p.raymarched) raymarched++;
     for (const [phase, ms] of Object.entries(p.submitMs)) add(phase+'SubmitMs', ms);
     for (const [phase, ms] of Object.entries(p.gpuMs)) add(phase+'GpuMs', ms);
     add('workerFrameMs', t.workerFrameMs); add('gpuFenceWaitMs', t.gpuCompletionWaitMs);
@@ -28,10 +29,11 @@ export function beginPassSample(mode) {
     presenter.transferFromImageBitmap = original;
     engine.worker.removeEventListener('message', collect);
     delete window.finishRoomPassSample;
-    return Object.fromEntries([...values].map(([key, xs]) => {
+    const timings = Object.fromEntries([...values].map(([key, xs]) => {
       xs.sort((a,b) => a-b);
       const at = p => xs[Math.ceil(xs.length * p)-1];
       return [key, {samples:xs.length, p50:at(.5), p95:at(.95), max:xs.at(-1)}];
     }));
+    return {timings, accepted, raymarched};
   };
 }

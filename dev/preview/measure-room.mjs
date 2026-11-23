@@ -165,7 +165,13 @@ try {
     const after = await state();
     if (pass) {
       measured.pass = pass;
-      measured.passTimingsMs = await page.evaluate(() => window.finishRoomPassSample());
+      const {timings, accepted, raymarched} = await page.evaluate(() => window.finishRoomPassSample());
+      measured.passTimingsMs = timings;
+      measured.passEvidence = {accepted, raymarched};
+      if (pass !== 'present-cached-frame' && timings.fogSubmitMs?.samples !== accepted)
+        measured.invalid.push('fog renderer instrumented for only part of the sample');
+      if (((pass === 'full' || pass === 'cached-shadows') && !raymarched) || (pass === 'skip-fog-raymarch' && raymarched))
+        measured.invalid.push('actual fog volume draws differ from selected diagnostic mode');
       if (!measured.passTimingsMs.domSubmitMs?.samples) measured.invalid.push('no diagnostic presentations');
       name += '-' + String(metadata.scenarios.length+1).padStart(2,'0') + '-' + pass;
     }
