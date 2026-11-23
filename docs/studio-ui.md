@@ -446,6 +446,14 @@ process restart. Existing worktree files remain on disk, but a fresh process doe
 not recover the catalog; saving/restoring a show does not currently repair this.
 This is a known lifecycle gap, not a completed persistent development environment.
 
+## Running cue controls
+
+Each card in **Perform → In the mix** places the cue title above its state and category labels. **Detail** opens exact parameter editing, envelope controls and effect inspection. **Compact** returns to the instrument bank. Both modes edit the running cue instance.
+
+Use **Source** beside a control to attach or edit a driver. A parameter that has a working driver can share the card’s result display. Select its name above the graph to switch between driven parameters. **Use base value** hands the parameter back to the manual control. **Resume LFO** restores the driver. The waveform picker has its own shape preview.
+
+Compact banks fill the card width. Wider screens can place eight controls in a row. A narrower card wraps the same controls into rows. Pause, zero, release and opacity stay below the bank.
+
 ## Responsive Studio qualification
 
 The page-by-page results below come from touch-enabled Chromium and desktop Chromium against a release build served by Ring. The layouts used 390 × 844, 1024 × 768 and 1440 × 900 CSS pixels.

@@ -283,6 +283,7 @@
          [:div.parameter-number-layout {:data-widget (when (:strip? options) (if fader? "fader" "rotary"))}
           [widgets/rotary-control schema (or value 0) change!
            {:name (str title " rotary") :base-value value :effective-value overlay
+            :strip? (:strip? options)
             :key-change (or (:key-change handlers) #(input! [:studio/param-key (:id instance) parameter schema %]))}]
           [:div.parameter-number-fields
            [number-input {:type "range" :aria-label title :value (or value 0)

@@ -325,8 +325,9 @@
 
 (defn- parameter-bank [show instance controls compact? parameter-control]
   [:div.live-effect-parameters {:class (if compact? "control-strip" "control-detail")
-                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")
-                                :tab-index (when compact? 0)}
+                                :data-size (if (<= (count controls) 2) "small" "bank")
+                                :style {"--control-count" (min 8 (count controls))}
+                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")}
    (for [{:keys [parameter schema components] :as control} controls]
      ^{:key (control-id control)}
      (if components
@@ -393,8 +394,11 @@
                                 :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
      [:header.live-effect-header
-      [:div.live-effect-title [:h3 title] [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]]
-      [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]
+      [:div.live-effect-title
+       [:h3 title]
+       [:div.live-effect-meta
+        [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
+        [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]]]
       [:button.live-effect-expand {:type "button" :aria-expanded expanded? :aria-label (str (if expanded? "Collapse " "Expand ") title " controls")
                                    :on-click #(rf/dispatch [:performance/card-toggle id])}
        (if expanded? "Compact" "Detail")]]
