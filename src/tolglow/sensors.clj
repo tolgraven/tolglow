@@ -5,6 +5,7 @@
   (:require [afterglow.control.sensors :as core]
             [afterglow.time :as musical-time]
             [tolglow.agents.credentials :as credentials]
+            [tolglow.sensors.audience :as audience]
             [tolglow.sensors.osc :as osc])
   (:import [java.util UUID]
            [java.security MessageDigest]
@@ -299,7 +300,7 @@
                   :when (not (get-in source [:state :armed?]))]
             (when (= (get-in source [:state :session-id]) (get-in @(:state manager) [:devices id :session-id]))
               (swap! (:state manager) assoc-in [:devices id :armed?] false)))))
-      result)))
+      (update result :model audience/project))))
 
 (defn start-osc! [manager options]
   (let [generation (:generation (live manager))

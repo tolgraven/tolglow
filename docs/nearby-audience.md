@@ -20,9 +20,9 @@ Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses
 4. Display the generated QR. Full-app visitors can also browse advertised names manually. Scanning pins a particular stage’s public key. Restarting the bridge creates a fresh stage identity and QR.
 5. Guests open **Dance floor**, select the stage, then choose their input. For Watch participation, open the paired iPhone’s Dance floor and join first. On Watch select Dance floor and choose whether to share workout pulse.
 
-The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. Heart rate and motion histories are never written by the bridge.
+The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. The bridge keeps current readings in memory. A saved show can contain the most recent configured aggregate channel, including its BPM when one wearer is participating.
 
-Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host with a locally secured OSC forward. Native Linux BLE hosting and coordinated multiple gateways remain open.
+Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host. The bridge runs on macOS.
 
 To use each admitted step to launch a registered accent cue, add the following entry to the audience sensor’s mapping. The musical cooldown lets a large crowd play one accent per sixteenth note in 4/4. Remove the cooldown to process every detected guest onset.
 
@@ -33,6 +33,12 @@ To use each admitted step to launch a registered accent cue, add the following e
              :command {:op :cue/launch :cue-id :accent
                        :launch {:mode :one-shot :duration {:beats 1/8}}}}]}
 ```
+
+## Cover several areas of a venue
+
+Give each Bluetooth gateway its own enrolled sensor ID, credential and zone QR. Set `TOLGLOW_AUDIENCE_OSC_HOST` on a remote gateway to the lighting host on your encrypted venue network or VPN. The default is loopback. Guests only need Bluetooth. The gateway-to-show OSC link carries its source credential, so keep it on the private link.
+
+Configure each source with `tolglow.sensors.audience/gateway-mapping` and arm its observed session. In the initial show model, select the zones with `(assoc-in model [:variables :audience :gateways] ["front" "balcony"])`. The renderer and Studio subscriptions can read `[:variables :audience :levels]`. The dance-effort mean weights each gateway by its participating dancers. The pulse mean weights only the wearers with fresh, shared readings. Leaving or disarming a zone removes its contribution. Configure step gestures on the individual gateway sensor mappings to retain distinct events. Capacity and handoff across physical radios need a venue test.
 
 ## Publish a scannable Clip
 

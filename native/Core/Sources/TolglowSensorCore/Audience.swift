@@ -66,6 +66,7 @@ public struct DanceMeter {
 
 public struct AudienceLevels {
     public let count: Int
+    public let pulseCount: Int
     public let effort: Double
     public let pulse: Double?
     public let steps: Int
@@ -112,7 +113,7 @@ public struct AudienceFloor {
     public mutating func drain(at time: Double) -> AudienceLevels {
         expire(at: time)
         let pulses = guests.values.compactMap { $0.sample.pulse }
-        let levels = AudienceLevels(count: guests.count,
+        let levels = AudienceLevels(count: guests.count, pulseCount: pulses.count,
             effort: guests.values.reduce(0) { $0 + $1.sample.effort } / Double(max(1, guests.count)),
             pulse: pulses.isEmpty ? nil : Double(pulses.reduce(0,+)) / Double(pulses.count),
             steps: pendingSteps)

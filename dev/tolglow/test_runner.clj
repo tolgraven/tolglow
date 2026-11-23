@@ -34,7 +34,7 @@
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
     tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
-    tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test
+    tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
     tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test])
