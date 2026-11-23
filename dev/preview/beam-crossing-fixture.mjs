@@ -137,7 +137,9 @@ function draw({mask = -1, gain = 1, exposure = .85, bloom = .28, grain = 0, yaw 
   const report = {
     scene: targetSamples(engine.sceneTarget),
     volume: targetSamples(engine.fog.target),
-    linear: targetSamples(engine.compositeTarget),
+    // Follow the actual pass input even when the renderer composites fog
+    // directly into the composer and bypasses its separate fogged target.
+    linear: stages.preBloom ?? stages.postBloom,
     ...stages,
     screen,
     settings: {mask, gain, exposure, bloom, grain, yaw},
