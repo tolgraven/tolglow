@@ -40,6 +40,7 @@ async function verify(page, id, width) {
   await page.locator('.connection .connected').waitFor({state: 'attached'});
   await page.evaluate(() => document.fonts.ready);
   const report = await measureShell(page);
+  console.log('Checking', id, 'at', width, 'CSS pixels');
   await writeFile(join(directory, id + '.json'), JSON.stringify(report, null, 2));
   await page.screenshot({path: join(directory, id + '.png')});
   assert.equal(report.overflow, 0, id + ' document overflow');

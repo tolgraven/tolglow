@@ -47,5 +47,7 @@
           (when-not (= :accepted (:status ack)) (throw (ex-info "Could not launch performance fixture" ack)))))
       (let [{:keys [exit out err]} (shell/sh "node" script origin directory)]
         (print out) (flush)
-        (when-not (zero? exit) (throw (ex-info "Studio layout browser check failed" {:scenario script :error err}))))
+        (when-not (zero? exit)
+          (binding [*out* *err*] (print err) (flush))
+          (throw (ex-info "Studio layout browser check failed" {:scenario script :error err}))))
       (finally (app/stop! host) (shutdown-agents)))))

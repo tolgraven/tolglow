@@ -291,6 +291,6 @@
 @container (max-width: 420px) {
   #view-perform .cue-panel :is(.panel-top, .grid-toolbar, .cue-grid, .grid-footer) { --cue-inset: 6px; }
   #view-perform .cue-grid { min-width: 371px; gap: 1px; grid-template-columns: repeat(8,minmax(44px,1fr)); }
-  #view-perform .cue-cell:not(.empty) { padding: 4px 3px; }
-  #view-perform .cue-name { font-size: 11px; }
+  #view-perform .cue-cell:not(.empty) { padding: 4px 1px; }
+  #view-perform .cue-name { font-size: 11px; font-weight: 500; }
 }
