@@ -11,7 +11,7 @@ export const TIERS = {
 // Auto may use low's spatial budget on a hardware GPU while still presenting
 // faster than 10 Hz. Manual low and software rendering retain their explicit cap.
 export function presentationHz(tier, choice, software, displayHz) {
-  const limit = tier === 'low' && choice === 'auto' && !software ? TIERS.mobile.fps : TIERS[tier].fps;
+  const limit = tier === 'low' && choice === 'auto' && !software && displayHz ? TIERS.mobile.fps : TIERS[tier].fps;
   return Math.min(limit, displayHz || limit);
 }
 

@@ -52,5 +52,6 @@ test('hardware quality uses its display budget while software and manual low ret
   assert.equal(presentationHz('mobile', 'mobile', false, 60), 60);
   assert.equal(presentationHz('low', 'auto', false, 60), 60);
   assert.equal(presentationHz('low', 'low', false, 60), 10);
+  assert.equal(presentationHz('low', 'auto', false, null), 10);
   assert.equal(presentationHz('low', 'auto', true, 120), 10);
 });
