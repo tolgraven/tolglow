@@ -50,20 +50,50 @@
         universe (+ (:universe fixture) (quot offset 512))]
     (bit-and 255 (aget ^bytes (get universes universe) (mod offset 512)))))
 
-(defn- normalized-axis [universes fixture axis]
-  (let [[msb lsb] (get-in fixture [:channels axis])
-        coarse (channel universes fixture msb) fine (channel universes fixture lsb)]
-    (/ (+ (bit-shift-left coarse 8) fine) 65535.0)))
+(defn- axis-bytes [universes fixture axis]
+  (mapv #(channel universes fixture %) (get-in fixture [:channels axis])))
 
-(defn- observed-beam [universes fixture]
-  (let [pose (frame/fixture-pose fixture {:pan (normalized-axis universes fixture :pan)
-                                         :tilt (normalized-axis universes fixture :tilt)})
+(def ^:private calibration-levels [0 (/ 255 65535) (/ 256 65535) (/ 1 255) 1/2 1])
+
+(def ^:private axis-encodings
+  {[[0 0] [0 253] [0 254] [1 0] [127 128] [255 0]]
+   {:name :fractional-255 :coarse-weight 255 :max-code 65025}
+   [[0 0] [0 255] [1 0] [1 1] [128 0] [255 255]]
+   {:name :unsigned-16 :coarse-weight 256 :max-code 65535}})
+
+(defn- decode-axis [{:keys [coarse-weight max-code]} [coarse fine]]
+  (/ (+ (* coarse-weight coarse) fine) (double max-code)))
+
+(defn- calibrated-encoding []
+  ;; The pan pair straddles universes. Raw byte expectations come from each
+  ;; published channel contract, independently of this replay's decoder.
+  (let [fixture {:id :probe :universe 1 :address 512 :channels {:pan [1 2] :tilt [3 4]}}
+        patch (frame/compile-patch [fixture])
+        probes (mapv (fn [value]
+                       (let [rows (mapv (fn [axis] {:target-id :probe :attribute axis :value (double value)})
+                                        [:pan :tilt])
+                             raw (:universes (frame/resolve-frame patch rows))]
+                         (mapv #(axis-bytes raw fixture %) [:pan :tilt]))) calibration-levels)
+        bytes (mapv first probes)
+        encoding (axis-encodings bytes)]
+    (when-not (and encoding (= bytes (mapv second probes)))
+      (throw (ex-info "Unrecognized pan/tilt coarse and fine encoding" {:levels calibration-levels :probes probes})))
+    (doseq [[level pair] (map vector calibration-levels bytes)]
+      (let [decoded (decode-axis encoding pair)]
+        (when (> (abs (- decoded (double level))) (+ (/ 0.5 (:max-code encoding)) 1e-12))
+          (throw (ex-info "Decoded axis exceeds half a quantization step"
+                          {:encoding (:name encoding) :level level :bytes pair :decoded decoded})))))
+    (assoc encoding :levels calibration-levels :wire-bytes bytes)))
+
+(defn- observed-beam [encoding universes fixture]
+  (let [pose (frame/fixture-pose fixture {:pan (decode-axis encoding (axis-bytes universes fixture :pan))
+                                         :tilt (decode-axis encoding (axis-bytes universes fixture :tilt))})
         beam (optics/fixture-beam fixture {:pose pose})
         area (optics/beam-footprint beam ground)]
     (when-not area (throw (ex-info "Fixture beam missed the benchmark floor" {:fixture (:id fixture) :pose pose})))
     {:direction (:direction beam) :beam-angle (:beam-angle beam) :area area}))
 
-(defn- replay [fixtures stride target]
+(defn- replay [encoding fixtures stride target]
   (let [runtime (show/create-runtime {:model (model fixtures stride target) :batch? true :workers 2 :worker-timeout-ms 10000
                                       :adaptive-keyframes {:enabled? false} :workspace-options nil})]
     (try
@@ -73,7 +103,7 @@
                          (when (or (:error status) (seq fault-events))
                            (throw (ex-info "Moving-head replay failed" {:frame i :status status :faults fault-events})))
                          (when (>= i warmup)
-                           (mapv (partial observed-beam (:universes output)) fixtures)))))
+                           (mapv (partial observed-beam encoding (:universes output)) fixtures)))))
             (range (+ warmup frames)))
       (finally (show/stop! runtime)))))
 
@@ -119,11 +149,11 @@
     (op :vec3 (op :add (axis :x) swing) (op :subtract (axis :y) depth)
         (op :add (axis :z) 0.25))))
 
-(defn- midpoint-comparison [fixtures limit]
+(defn- midpoint-comparison [encoding fixtures limit]
   ;; At 120 BPM this continuous orbit completes one cycle in four output frames.
   ;; Sample the same first four fixtures used by the footprint recording.
-  (let [reference (replay fixtures 1 fast-orbit)
-        candidate (replay fixtures 4 fast-orbit)]
+  (let [reference (replay encoding fixtures 1 fast-orbit)
+        candidate (replay encoding fixtures 4 fast-orbit)]
     (into {}
           (for [j (range 4)]
             (let [radii (map #(get (displacement (nth %1 j) (nth %2 j)) :footprint-radii)
@@ -136,9 +166,9 @@
                                                                       (> (:worst %) limit)) windows))}])))))
 
 (defn measure [limit]
-  (let [fixtures (rig) reference (replay fixtures 1 program)
+  (let [encoding (calibrated-encoding) fixtures (rig) reference (replay encoding fixtures 1 program)
         lanes (into {} (for [stride [1 2 4 8]]
-                         (let [candidate (replay fixtures stride program)]
+                         (let [candidate (replay encoding fixtures stride program)]
                            [stride (cond-> {:errors (compare-frames reference candidate)}
                                      (= stride 4) (assoc :footprints (trace candidate)))])))]
     (doseq [g groups]
@@ -149,7 +179,7 @@
                      (> (p95 [:near 5.0]) (p95 [:near 40.0]) (p95 [:far 40.0])))
         (throw (ex-info "Fixture optics or the moving target did not affect the replay" {}))))
     {:movers (count fixtures) :frames frames :bpm 120 :period-ms frame-ms :groups groups
-     :radius-budget limit :midpoint-comparison (midpoint-comparison fixtures limit)
+     :axis-encoding encoding :radius-budget limit :midpoint-comparison (midpoint-comparison encoding fixtures limit)
      :first-bar-policy (compare-calibrated lanes limit)
      :fixture-positions (mapv :position (subvec fixtures 0 4))
      :reference-footprints (trace reference) :lanes lanes}))
@@ -159,8 +189,10 @@
     (when-not (and limit (Double/isFinite limit) (pos? limit))
       (throw (ex-info "Provide a positive finite fraction of the reference footprint radius" {})))
     (try
-      (let [result (measure limit)]
+      (let [fork (io/file (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))
+            result (cond-> (measure limit)
+                     (.exists (io/file fork ".git")) (assoc :afterglow-revision (bench/revision fork)))]
         (io/make-parents output)
         (spit output (str (pr-str result) "\n"))
-        (prn (select-keys result [:movers :frames :radius-budget :first-bar-policy :midpoint-comparison])))
+        (prn (select-keys result [:movers :frames :afterglow-revision :axis-encoding :radius-budget :first-bar-policy :midpoint-comparison])))
       (finally (shutdown-agents)))))

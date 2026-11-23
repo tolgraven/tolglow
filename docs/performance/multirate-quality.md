@@ -147,8 +147,19 @@ fixtures follow the same lateral orbit and phase. Their targets are either
 0.7 or 6 metres below the lens, and their full beam angles are either 5° or
 40°. The lens radius is 5 mm. The show emits a frame every 25 ms at 120 BPM.
 
-The replay decodes each fixture's 16-bit pan and tilt from the actual DMX
-universes. Afterglow applies the mount calibration, reconstructs the world
+Before reading the show, the replay sends six known pan and tilt values through
+the paired Afterglow packer, including a pan fine slot in the next universe.
+It checks the actual bytes and verifies the decoded angle input to within half
+a code step. The report records the encoding, raw probe bytes and Afterglow Git
+revision. At half and full travel these two verified packers emit the following
+coarse/fine bytes.
+
+| Afterglow revision | Half | Full | Decode to normalized travel |
+| --- | --- | --- | --- |
+| [`3fd49ef`](https://github.com/tolgraven/afterglow/commit/3fd49ef6877cac57dbc5f0e185fedd2dc7607f39) | `7F 80` | `FF 00` | `(255 × coarse + fine) / 65025` |
+| [`68f87b2`](https://github.com/tolgraven/afterglow/commit/68f87b2bd58e67ca695631b05e7258c4bffac89c) | `80 00` | `FF FF` | `(256 × coarse + fine) / 65535` |
+
+Afterglow applies the mount calibration, reconstructs the world
 direction and intersects the lens cone with the floor. For every fixture and
 frame, compare aim angle, angle as a fraction of the beam's half-angle, floor
 displacement in metres, and displacement in units of the original projected
@@ -162,28 +173,29 @@ fits the given fraction. The report then shows its worst second-bar error.
 This offline comparison uses the projected optical footprint and DMX commands.
 Actuator latency and physical response require separate hardware measurements.
 
-Across 160 measured frames, both independent full-rate runs agreed. At a
-four-frame interval the measured p95 angular error was 3.424° for the near
-target and 0.623° for the far target. The physical size of the expected
-spot changed the visible significance of those angles.
+Across 160 frames at four-frame intervals, both calibrated packers measured
+3.438° near-target p95 angular error. Far-target p95 was 0.626° in
+`3fd49ef` and 0.627° in `68f87b2`. Each p95 column below gives projected
+spot radii in that same revision order.
 
-| Target depth | Full beam angle | p95 displacement at stride 2 | At stride 4 | At stride 8 | Stride admitted by the first bar at a 0.25-radius budget |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 0.7 m | 5° | 0.334 | 1.295 | 4.788 | 1 |
-| 0.7 m | 40° | 0.054 | 0.205 | 0.701 | 4 |
-| 6 m | 5° | 0.064 | 0.245 | 0.897 | 2 |
-| 6 m | 40° | 0.009 | 0.034 | 0.124 | 8 |
+| Target depth | Beam angle | Two-frame p95 | Four-frame p95 | Eight-frame p95 | Chosen stride at a 0.25-radius budget |
+| --- | --- | --- | --- | --- | --- |
+| 0.7 m | 5° | 0.335 / 0.335 | 1.299 / 1.300 | 4.801 / 4.801 | 1 |
+| 0.7 m | 40° | 0.055 / 0.055 | 0.206 / 0.206 | 0.704 / 0.704 | 4 |
+| 6 m | 5° | 0.065 / 0.065 | 0.246 / 0.246 | 0.899 / 0.899 | 2 |
+| 6 m | 40° | 0.009 / 0.009 | 0.034 / 0.034 | 0.124 / 0.124 | 8 |
 
-All displacement columns use reference spot radii. Admission uses the maximum,
+Admission uses the maximum,
 so the narrow far beam chose stride two even though its stride-four p95 was
 below the cap. The worst second-bar displacement for these choices was 0,
-0.210, 0.068 and 0.138 radii respectively. A changing movement program or zoom
+0.211, 0.068 and 0.138 radii respectively. A changing movement program or zoom
 can invalidate a calibrated interval. An online policy would have to detect
 that change or resample before relying on earlier measurements.
 
 A second replay exercises a continuous sine orbit with a four-frame period.
 For the 5° near beam, sampling only the midpoint of each four-frame window
 would report less than 0.001 radii of error on all 40 windows. The full
-physical command stream puts the worst intermediate centre 10.78 radii away.
+command stream shows worst intermediate displacements of 10.818 radii on
+`3fd49ef` and 10.817 on `68f87b2`.
 All 40 midpoint checks would falsely admit the window at the example budget.
 The report includes these false admissions for each optical configuration.
