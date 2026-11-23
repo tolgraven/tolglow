@@ -32,6 +32,7 @@ struct AudienceView: View {
                         LabeledContent("Steps", value: String(session.totalSteps))
                         if !session.message.isEmpty { Text(session.message).foregroundStyle(.secondary) }
                         #if !APPCLIP
+                        if let room, client.offersCompute { GuestComputeControl(client: client, room: room) }
                         Toggle("Keep sharing Watch input when iPhone locks", isOn: $session.allowLockedWatch)
                         #endif
                         Button("Leave stage", role: .destructive) { client.leave() }

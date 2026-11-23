@@ -332,7 +332,7 @@
     (cond-> (-> frame
                 (update :groups into (group-rows model key entry weights))
                 (assoc-in [:overrides (:id instance)] (select-keys values (keys (:sources spec))))
-                (assoc-in [:members key] (set (keys weights)))
+                (assoc-in [:members key] (into #{} (keys weights)))
                 (assoc-in [:views key] (cond-> view error (assoc :error error))))
       aims (assoc-in [:aims (:id instance)] aims))))
 

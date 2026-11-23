@@ -1,0 +1,73 @@
+#view-assistant .chat-layout {
+  gap: 12px;
+}
+
+.chat-layout.assistant-setup {
+  grid-template-columns: minmax(0, 1.25fr) minmax(250px, 1fr);
+  grid-template-areas:
+    "connection conversation"
+    "connection context";
+  grid-template-rows: min-content 1fr;
+}
+.assistant-setup .provider-setup { grid-area: connection; }
+.assistant-setup .connection-status { padding: 14px 18px; }
+.assistant-setup .connection-status button { min-height: 44px; }
+.assistant-setup .chat-panel { grid-area: conversation; min-height: 0; }
+.assistant-setup .chat-settings { grid-area: context; grid-template-columns: 1fr; gap: 10px; }
+.assistant-setup .chat-log { height: auto; max-height: 340px; }
+.assistant-setup .chat-compose { border-top: 0; }
+.assistant-setup .chat-compose textarea { min-height: 100px; }
+
+#view-assistant .provider-intro { padding: 16px 18px 0; }
+#view-assistant .provider-intro h2 { font-size: 20px; line-height: 1.2; margin: 0 0 5px; }
+#view-assistant .provider-fields {
+  display: grid; gap: 12px;
+  padding: 16px 18px;
+}
+#view-assistant .provider-fields label {
+  margin: 0; min-width: 0; gap: 5px;
+  font-size: 13px; line-height: 1.4;
+}
+.provider-fields .provider-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+  gap: 12px;
+}
+#view-assistant .provider-fields :is(select,input:not([type="checkbox"])) {
+  width: 100%; min-height: 44px; min-width: 0; font-size: 14px;
+}
+#view-assistant .provider-advanced > summary {
+  min-height: 44px; display: flex; align-items: center; flex-direction: row; padding: 0;
+  color: var(--muted); font-size: 13px; font-weight: 500;
+}
+#view-assistant .provider-advanced > summary::after,
+#view-assistant .chat-settings .provider-panel > summary::after {
+  content: "⌄"; margin-left: auto;
+}
+#view-assistant .provider-advanced[open] > summary::after,
+#view-assistant .chat-settings .provider-panel[open] > summary::after { transform: rotate(180deg); }
+#view-assistant .provider-fields .provider-clear {
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+}
+#view-assistant .provider-clear input { width: 18px; height: 18px; }
+.provider-save {
+  border-top: 1px solid var(--line); padding-top: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+}
+.provider-save .button { min-height: 44px; }
+.provider-save p { flex: 1 1 160px; margin: 0; line-height: 1.45; }
+#view-assistant .chat-settings .provider-panel > summary {
+  min-height: 48px; display: flex; align-items: center; flex-direction: row; flex-wrap: wrap;
+  gap: 6px 12px; font-size: 12px; padding: 8px 14px; overflow-wrap: anywhere;
+}
+#view-assistant .chat-settings .provider-panel > summary .section-label { margin: 0; }
+#view-assistant .provider-panel .chat-error { margin: 0; padding: 8px; }
+@media (max-width: 760px) {
+  .chat-layout.assistant-setup {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "connection" "conversation" "context";
+    grid-template-rows: auto;
+  }
+  #view-assistant .provider-fields :is(select,input:not([type="checkbox"])) { font-size: 16px; }
+  #view-assistant .provider-intro { padding: 14px 14px 0; }
+  #view-assistant .provider-fields { padding: 13px 14px; gap: 10px; }
+}

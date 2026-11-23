@@ -28,6 +28,62 @@ The native host replay allowed a two-second compute deadline to measure both imp
 
 A separate six-frame scalar-to-native comparison found eight DMX slot differences in total, each one byte step. The maximum difference in the selected emitted-color components was 4.94e-9. At the 12 ms deadline that replay used CPU fallback on all 96 requests and matched the scalar packets and preview. Preserve both the exact same-backend oracle and a cross-backend precision check when promoting changes.
 
+### Independent physical output
+
+Each physical completion passes from a renderer-owned byte array to an immutable packet and then to transport-owned buffers. Sampling the independent clock on a 20,000-pixel sculpture found boxed doubles in the validation of signed and unsigned DMX values. Integer comparisons and a direct primitive store reduced allocation during publication. Both runs in each pair compared their entire output with a third show running the scalar renderer. Each measurement used 64 moving heads, 18 warmup frames, 32 timed frames, two workers and a manually stepped physical clock.
+
+| Pixels | Universes | Allocated per frame, p50 | Publication p95 | Whole-show p95 | Frames over 25 ms |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 80 | 14.56 → 7.21 MB | 5.72 → 1.73 ms | 38.61 → 29.22 ms | 6 → 2 |
+| 20,000 | 158 | 27.10 → 12.59 MB | 34.50 → 10.20 ms | 96.45 → 98.13 ms | 32 → 23 |
+
+Every ArtDMX byte matched in all 50 frames at each size. The independent packet validation also runs on edited packets at admission or conversion to transport buffers. The slowest whole-show frames include work on the shared host outside publication. [Afterglow #81 and captured traces](https://github.com/tolgraven/afterglow/pull/81)
+
+#### Clojure 1.12 at the JVM array boundary
+
+The effect model and physical packet retain Clojure values. The renderer uses locally owned primitive arrays to blend fields and encode DMX. Keep coercion, bounds checks and writes together in a small packing function. Callers should be able to see whether they receive an immutable packet or a transport-owned buffer. The Clojure style guide makes room for primitive arrays on performance-sensitive paths. [Clojure style guide](https://github.com/bbatsov/clojure-style-guide/blob/37e55f657d75d7e4da26523cfe5672e5ee97c02d/README.adoc#avoid-java-arrays)
+
+| Boundary on Afterglow `9b8762f` | Applicable Clojure idiom | How to assess a change |
+| --- | --- | --- |
+| Art-Net and OLA payloads, GPU positions and compact pan/tilt history | `(bytes? payload)` identifies a primitive byte array. For other component types, Clojure 1.12 accepts `(instance? double/1 values)` and `(instance? boolean/1 valid)`. The same symbols can mark function arguments. Existing `^doubles` and `^bytes` hints are valid. | Exercise arrays, vectors, empty and invalid inputs. Several namespace-level class constants allocate a zero-length array once on load. Moving those checks to a literal is primarily a readability change. [GPU position inputs](https://github.com/tolgraven/afterglow/blob/9b8762f1c5f5902b390a8375738f558b1c59a473/src/afterglow/render/gpu/expressions.clj#L9) · [Clojure array class syntax](https://clojure.org/reference/java_interop#_class_access) |
+| Dense emission, physical field packing and transport conversion | A known `^double/1` receiver and `(aset values index (double level))` select the double overload. For DMX use `(aset buffer index (unchecked-byte level))` on a known byte array after validating the protocol range. | Compiling these two forms with Clojure 1.12.7 selected `RT.aset(double[], int, double)` and `RT.aset(byte[], int, byte)`. The corresponding `aset-double` and `aset-byte` forms invoked an `IFn` with boxed arguments. Preserve the numeric coercion and the return value if the caller uses it. [Core definitions](https://github.com/clojure/clojure/blob/435bdf34790c852a0bc6daf1d05e8959e081b607/src/clj/clojure/core.clj#L3970) · [Dense emission](https://github.com/tolgraven/afterglow/blob/9b8762f1c5f5902b390a8375738f558b1c59a473/src/afterglow/render/emission/dense.clj#L77) |
+| Bulk fill or copy, OpenGL readback | Keep `Arrays/fill`, `System/arraycopy` and typed JOGL calls in their owning kernels or driver. These calls express the buffer operation directly. Clojure 1.12's qualified method values can simplify callbacks that only invoke a Java method. Overloaded method values need parameter tags to select a signature. | Verify identical row order and ownership across callers. Measure complete physical output before changing range fills, buffer copies or shader readback. [Native field expansion](https://github.com/tolgraven/afterglow/blob/9b8762f1c5f5902b390a8375738f558b1c59a473/src/afterglow/render/gpu/expressions.clj#L151) · [Qualified methods](https://clojure.org/reference/java_interop#methodvalues) |
+
+In the 158-universe materialization control, validation improvements alone used 1.77 MB and 4.39 ms median CPU. Adding typed transport stores and a transducer for the universe entries reduced that to 0.28 MB and 2.04 ms over 56 samples. The full rig results above include the separate rendering and publication costs. They supply the acceptance check for this change. The same comparison is still needed before rewriting the other kernels in the table. [Measurements and standalone replay](https://github.com/tolgraven/afterglow/pull/81)
+
+### Uniform fields at the physical fixture packer
+
+On the mixed-UV sculpture, shader fusion eliminated seven of fourteen uniform result expansions. The remaining seven repeated 341,600 scalar components, or 2.73 MB per frame. The local native renderer now passes one detached tuple per uniform field into physical packing. A unit-opacity normalized replacement can fill head slots from this tuple after checking the value once. Cue gain with different eligibility across heads expands that field before blending.
+
+A 20,000-pixel show with 64 movers, four moving optical volumes and eight stacked washes compared 40 measured pairs after 16 warmups. The reference used the released packing functions from `844198c`. The complete code change reduced median frame allocation from 114.53 to 107.24 MB and physical render p95 from 241.40 to 92.21 ms. Whole-frame p95 fell from 411.98 to 310.02 ms, while whole-frame p50 rose from 202.73 to 205.97 ms and median worker plus coordinator CPU rose from 192.12 to 206.49 ms. All 158 universes, model and intents matched. Selected continuous fixture previews agreed within 1e-9. Both hosts issued the same 345 draws with no CPU fallbacks on Mesa llvmpipe.
+
+The 10,000-pixel CPU-only control matched the scalar oracle across 52 frames. Median allocation fell from 14.54 to 13.75 MB, and p95 rose from 60.18 to 68.15 ms. The native captures used a 60-second diagnostic deadline and the same CPU moving-head solver in both lanes. All native samples exceeded 25 ms. The eight-frame follow-up on the reviewed gain change also matched every packet. [Afterglow #82 and runnable captures](https://github.com/tolgraven/afterglow/pull/82)
+
+### Fixture entry and exit events
+
+Four moving volumes generated 3,162 fixture entry and exit events on the 10,000-pixel rig. Filtering changed IDs before computing their sort keys reduced median allocation inside the transition calculation from 6.68 to 0.40 MB per frame. Its CPU time fell from 2.94 to 1.40 ms at the median and from 16.10 to 3.99 ms at p95. The two hosts emitted identical ordered event maps and ArtDMX bytes across 14 warmups and 28 timed frames.
+
+Whole-frame p95 on the 10,000-pixel rig fell from 545 to 424 ms. On the 20,000-pixel rig, median allocation fell from 114.69 to 101.10 MB while whole-frame p95 rose from 495 to 502 ms over 32 measured pairs. Both rigs had 64 moving heads and ran under software OpenGL with an extended compute deadline. [Afterglow #83 and raw event comparisons](https://github.com/tolgraven/afterglow/pull/83)
+
+### Combined fixture packing, publication and spatial events
+
+The same mixed-UV show exercised the three changes together against Afterglow `844198c`. The paired capture uses commits `4769e27` for packet publication, `c83375f` for uniform fixture fields and `252e546` for spatial events. The default Afterglow revision for a Tolglow CI run is recorded in the [performance workflow](../../.github/workflows/performance.yml).
+
+Each rig ran for 16 warmups and 36 measured frame pairs. All ordered entry and exit events, effect intents, committed models and ArtDMX packets matched. Both hosts issued 477 native requests and 321 draws per rig without a CPU fallback at the extended deadline.
+
+| Pixels plus 64 movers | Allocated per frame, p50 | CPU per frame, p50 | Whole-frame p50 | Whole-frame p95 |
+| ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 59.95 → 42.63 MB | 161.77 → 161.26 ms | 219 → 215 ms | 822 → 861 ms |
+| 20,000 | 114.59 → 79.16 MB | 236.64 → 205.26 ms | 353 → 291 ms | 2,661 → 1,567 ms |
+
+The 20,000-pixel coordinator spent 1,904 and 1,036 ms runnable in the two frames at p95. Neither frame overlapped a GC pause. At 10,000 pixels those waits were 25 and 462 ms on the respective p95 frames. Host contention accounts for a substantial part of the wall-time variation. All measured frames missed 25 ms on this software renderer. The archive includes the ordered-frame checks, CPU and scheduler observations, GC recordings, Clojure array bytecode and replay commands. [Download the paired rig measurements](../benchmarks/master-performance/render-packet-and-membership.zip)
+
+#### Publishing weighted fixture membership
+
+Each spatial cue exposes the fixture IDs in its weight map as a Clojure set. Across four moving volumes on the 20,000-pixel rig, the median frame contained 36,913 membership entries. Building each set with `(into #{} (keys weights))` reduced median allocation for this projection from 8.74 to 1.84 MB. Its CPU p95 fell from 20.86 to 10.83 ms. Both hosts emitted matching model, event and packet data over 18 warmups and 40 measured pairs.
+
+Whole-show median allocation fell from 80.10 to 73.23 MB. Median elapsed time rose from 553 to 600 ms, while p95 fell from 1,797 to 1,681 ms. A separate trial using a transient set and `reduce-kv` saved another 0.29 MB inside the projection. Reusing a previous set helped isolated nearly stationary volumes, but cost more CPU when a volume changed all its members. The host uses the single `into` expression for every volume. [Projection comparisons and playback commands](../benchmarks/master-performance/render-packet-and-membership.zip)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
