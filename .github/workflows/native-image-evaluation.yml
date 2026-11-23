@@ -8,6 +8,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 70
     steps:
+      - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v4
         with:
           name: studio-runtime
@@ -27,16 +28,18 @@ jobs:
           unzip -p studio.jar tolglow/agents/credentials.clj | sed 's/\.toAbsolutePath (if/.toAbsolutePath ^Path (if/' > override/tolglow/agents/credentials.clj
           unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
           unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
+          java -cp dev:studio.jar clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
+          cp src/tolglow/native_resources.clj override/tolglow/native_resources.clj
           cat > override/tolglow/fixed_image.clj <<'CLOJURE'
           (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.studio] [tolglow.application :as app]))
+            (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
           (defn -main [& args]
             (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
             (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
                  (catch Throwable failure (.printStackTrace failure) (throw failure)))
             (apply app/-main args))
           CLOJURE
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.fixed-image]] (compile ns))"
+          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.native-resources tolglow.fixed-image]] (compile ns))"
           jar uf studio.jar -C override .
           if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
             mkdir -p tracing/META-INF/native-image/tolglow/studio
@@ -75,7 +78,7 @@ jobs:
           METADATA
             jar uf studio.jar -C tracing META-INF
           fi
-          native-image -H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings --no-fallback -J-Dtolglow.native.build=true --initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.fixed_image 2>&1 | tee native-build.log
+          native-image -H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings --no-fallback -J-Dtolglow.native.build=true --initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|gpu/.*|js/compute/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.fixed_image 2>&1 | tee native-build.log
           ./studio-native --port 0 >native-start.log 2>&1 &
           child=$!
           trap 'kill "$child" || true' EXIT
@@ -105,6 +108,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 70
     steps:
+      - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v4
         with:
           name: studio-runtime
@@ -128,16 +132,20 @@ jobs:
           unzip -p studio.jar tolglow/agents/credentials.clj | sed 's/\.toAbsolutePath (if/.toAbsolutePath ^Path (if/' > override/tolglow/agents/credentials.clj
           unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
           unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
+          java -cp dev:studio.jar clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
+          cp src/tolglow/native_resources.clj override/tolglow/native_resources.clj
           cat > override/tolglow/fixed_image.clj <<'CLOJURE'
           (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.studio] [tolglow.application :as app]))
+            (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
           (defn -main [& args]
             (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
             (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
                  (catch Throwable failure (.printStackTrace failure) (throw failure)))
-            (apply app/-main args))
+            (if (= "runtime" (System/getProperty "org.graalvm.nativeimage.imagecode"))
+              (app/-main "--host" "127.0.0.1" "--port" "8500")
+              (apply app/-main args)))
           CLOJURE
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.fixed-image]] (compile ns))"
+          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.native-resources tolglow.fixed-image]] (compile ns))"
           jar uf studio.jar -C override .
           if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
             mkdir -p tracing/META-INF/native-image/tolglow/studio
@@ -187,6 +195,7 @@ jobs:
             </dependencies>
             <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
             <configuration><target>ios</target><releaseConfiguration><skipSigning>true</skipSigning></releaseConfiguration><mainClass>tolglow.fixed_image</mainClass><nativeImageArgs>
+              <nativeImageArg>-H:IncludeResources=studio/.*|gpu/.*|js/compute/.*|tolglow/.*\.edn|tolglow\.edn</nativeImageArg>
               <nativeImageArg>-H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings</nativeImageArg>
               <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
               <nativeImageArg>-J-Dtolglow.native.build=true</nativeImageArg>
@@ -196,7 +205,8 @@ jobs:
           POM
           mkdir -p target/classes
           mvn -B com.gluonhq:gluonfx-maven-plugin:1.0.29:build 2>&1 | tee ios-build.log
-          result="$(find target/gluonfx -type d -name '*.app' | head -1)"
+          mvn -B com.gluonhq:gluonfx-maven-plugin:1.0.29:package 2>&1 | tee ios-package.log
+          result="$(find target/gluonfx -maxdepth 3 -type d -name '*.app' | head -1)"
           test -n "$result"
           executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$result/Info.plist")"
           file "$result/$executable"
