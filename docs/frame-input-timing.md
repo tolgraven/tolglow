@@ -14,6 +14,60 @@ Two workers can process disjoint head and channel sets from the same snapshot. S
 
 The browser can advance fog, the camera, and presentation-only motion at display refresh. When a show subscribes to a browser-generated value, deliver timestamped changes at the requested sampling rate. Local events can update app-db and let re-frame reactions feed the affected components. Releasing the last consumer should stop any dedicated sampling or readback. A browser paint never establishes the physical publication clock.
 
+## Running the 40 Hz capture
+
+The release host starts Afterglow’s producer and publisher on a common physical
+clock. It maps the time remaining to each slot onto the current show clock
+under the owner lock. Every effect in that frame sees the same input map and
+target beat. A command waiting when the render slot expires stays queued for
+the next frame. A Link seek, pause, resume or show replacement invalidates
+previously prepared source frames.
+
+Inspect timing from the REPL with `(afterglow.output.scheduler/status
+(:publisher running))`. The `:render-timing` and `:output-timing` maps give
+nominal slot, actual render entry, input capture start, show time, beat,
+handoff, actual send call, return and lower source input age at the sink.
+
+```sh
+AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run -m \
+  tolglow.perf.output-deadlines /tmp/output-deadlines.edn 120 240
+```
+
+The EDN contains every render, physical publisher wake, transport call, sampled
+fixture bytes and cold and warm statistics. It compares measured lead against
+reserving a full frame period for every render. The eight-moving-head scene
+runs Ember and Slow Sweep with a six-millisecond injected wait in Ember to
+exercise a known lower bound. The other scene patches 1,024 RGBW pixels and
+128 movers and runs spatial wash, world-space aim and pulse without a delay.
+Each case uses two effect workers and full universe buffers in a capture
+sink. Actual Art-Net or OLA interface latency requires a separate run.
+
+### Recorded local result
+
+On the 1,024-pixel, 128-mover rig, 215 of 240 nominal slots produced a full
+render within 25 ms. The sender visited 237 slots and handed the current
+slot's sample to its capture sink 205 times. The other sends held the last
+eligible source. The two-worker mixed rig ran for six measured seconds after
+three seconds of warmup. Percentiles use the nearest rank. Render duration
+includes render start through universe-buffer freezing and handoff.
+
+| Rig and lead policy | Complete within 25 ms / 240 | Current source sent / 240 | Render p95 | Median input age at target | Lower source age at actual send p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Eight movers with the six-millisecond Ember wait, measured lead | 128 | 121 | 120.45 ms | 12.17 ms | 989.06 ms |
+| Eight movers, full-period lead | 203 | 202 | 16.47 ms | 24.37 ms | 75.62 ms |
+| 1,024 pixels and 128 movers, full-period lead | 202 | 199 | 21.67 ms | 24.50 ms | 74.73 ms |
+| 1,024 pixels and 128 movers, measured lead | 215 | 205 | 21.75 ms | 16.33 ms | 61.85 ms |
+
+Host contention varied sharply between the four sequential runs on this
+four-vCPU Linux environment. For example, the eight-mover measured run took
+53.91 ms at p95 for publication including packing, while the dense rig took
+1.87 ms. These wall times include scheduling pauses. The isolated paired CI
+job records its own traces. The replay checks that every transmitted lighting
+source completed by its deadline, source times stayed ordered, and physical
+send calls remained at least half a nominal frame apart, allowing 0.01 ms
+for floating-point rounding. The raw trace retains cold startup.
+[Measured timeline and replay files](https://github.com/tolgraven/afterglow/pull/89)
+
 ## Measuring the scheduler
 
 Start with an explicit reserve on a cold show. Adjust it using observed completion costs, worker and packing time, and wake-up jitter. Take more lead after a miss and recover gradually. If the work cannot fit, skip expired scheduling slots and apply the configured late-frame policy. Prevent a late completion or an old show epoch from overwriting newer output.

@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [tolglow.show :as show]
             [tolglow.demo :as demo]
+            [afterglow.sync.session :as sync-session]
             [afterglow.output.scheduler :as scheduler]))
 
 (defn- bytes-copy [universes]
@@ -53,4 +54,96 @@
         (is (= :accepted (:status @good)))
         (is (= {:mode :buffered-interpolation :latency-ms 25}
                (get-in (show/export-show runtime) [:model :settings :output :presentation]))))
+      (finally (show/stop! runtime)))))
+
+(deftest physical-slot-freezes-the-latest-input-and-target-beat-across-workers
+  (let [physical (atom 39.0)
+        captured (atom {}) entered (java.util.concurrent.CountDownLatch. 2)
+        resume (promise) sent (atom []) observe? (atom true)
+        scene (-> (demo/model)
+                  (assoc-in [:registry :effects :ember :targets] [:head-1])
+                  (assoc-in [:registry :effects :ice :targets] [:head-2])
+                  (update-in [:registry :effects :ember] dissoc :envelope)
+                  (update-in [:registry :effects :ice] dissoc :envelope))
+        base (show/create-runtime {:model scene :workers 2 :worker-timeout-ms 5000 :workspace-options nil
+                                   :physical-now-ms #(deref physical) :independent-output? true
+                                   :sink {:send! (fn [u id] (swap! sent conj [id (bytes-copy u)]))}})
+        runtime (assoc base :compile
+                       (fn [definition]
+                         (let [step ((:compile base) definition)]
+                           (fn [{:keys [frame] :as context}]
+                             (when @observe?
+                               (swap! captured assoc (:id definition)
+                                      (assoc (select-keys frame [:time-ms :transport :variables])
+                                             :worker (.getId (Thread/currentThread))))
+                               (.countDown entered)
+                               (deref resume 5000 nil))
+                             (step context)))))
+        audio! (:features! (show/audio-callbacks runtime))
+        slot (fn [i start due] {:slot i :started-at-ms start :deadline-ms due})]
+    (try
+      (with-redefs [show/now-ms (fn [_] (+ 1000.0 @physical))]
+        (doseq [cue [:ember :ice]] (show/submit! runtime {:op :cue/launch :cue-id cue}))
+        (audio! {:audio/energy 0.25})
+        (let [frame (future (show/render-slot! runtime (slot 2 39.0 50.0)))]
+          (is (.await entered 4 java.util.concurrent.TimeUnit/SECONDS))
+          (reset! physical 43.0)
+          (audio! {:audio/energy 0.8})
+          (deliver resume true)
+          (is (not= :timeout (deref frame 5000 :timeout))))
+        (let [[ember ice] (map @captured [:ember :ice])]
+          (is (= #{:ember :ice} (set (keys @captured))))
+          (is (not= (:worker ember) (:worker ice)))
+          (is (identical? (:variables ember) (:variables ice)))
+          (is (= 0.25 (get-in ember [:variables :audio/energy])))
+          (is (every? #(= [1050.0 2.1] [(:time-ms %) (get-in % [:transport :beat])]) [ember ice])))
+        (is (= 39.0 (:inputs-at-ms @(:ready (:publisher runtime)))))
+        (reset! physical 50.0)
+        (scheduler/publish! (:publisher runtime) 50.0)
+        (let [[_ packet] (last @sent)]
+          (is (pos? (get-in packet [1 1])) "Fixture one emits Ember red")
+          (is (pos? (get-in packet [1 15])) "Fixture two emits Ice blue"))
+        (reset! observe? false)
+        (let [command (show/submit! runtime {:op :master/set :value 0.4})]
+          (reset! physical 77.0)
+          (show/render-slot! runtime (slot 3 69.0 75.0))
+          (is (not (realized? command)) "Expired work must leave one-shot commands queued")
+          (is (= 1050.0 (get-in @(:state runtime) [:model :time-ms])))
+          (show/render-slot! runtime (slot 4 77.0 100.0))
+          (is (= :accepted (:status @command)))
+          (is (= 0.8 (get-in @(:state runtime) [:model :variables :audio/energy])))
+          (is (= 1100.0 (get-in @(:state runtime) [:model :time-ms])))))
+      (finally (deliver resume true) (show/stop! runtime)))))
+
+(deftest link-seek-pause-and-show-restart-retire-buffered-source-frames
+  (let [physical (atom 0.0) beat (atom 32.0) playing? (atom true)
+        runtime (show/create-runtime {:independent-output? true :workspace-options nil
+                                      :physical-now-ms #(deref physical)})
+        owner (:publisher runtime)
+        tick (fn [t] (reset! physical t) (show/tick! runtime t) (:generation @(:gate owner)))
+        external (fn [_ time-ms] {:selected-source :link :follow-transport? true
+                                   :clock {:time-ms time-ms :beat @beat :bpm 120.0
+                                           :source-epoch 15 :playing? @playing?}})]
+    (try
+      (with-redefs [sync-session/clock-at external]
+        (show/submit! runtime :settings {:scope :output :values {:presentation {:mode :buffered-interpolation}}})
+        (show/submit! runtime {:op :cue/launch :cue-id :ember})
+        (let [g1 (tick 0.0)]
+          (reset! beat 32.05)
+          (is (= g1 (tick 25.0)))
+          (let [live (scheduler/publish! owner)]
+            (is (some? (:time-ms live))))
+          ;; A backwards Link sample can arrive from the same peer/source epoch.
+          (reset! beat 3.0)
+          (let [after-seek (tick 50.0)]
+            (is (> after-seek g1))
+            (is (get-in (scheduler/publish! owner) [:presentation :waiting?]))
+            (reset! playing? false)
+            (let [paused (tick 75.0)]
+              (is (> paused after-seek))
+              (reset! playing? true)
+              (is (> (tick 100.0) paused)))))
+        (let [previous (:generation @(:gate owner))]
+          (show/submit! runtime {:op :show/restart})
+          (is (> (tick 125.0) previous))))
       (finally (show/stop! runtime)))))
