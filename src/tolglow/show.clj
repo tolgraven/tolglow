@@ -121,7 +121,7 @@
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
-  (let [sources (parameter-sources/source-index model parameter-samples)
+  (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
         responses? (some #(not= false (:enabled? %)) (:responses model))
         resolve-inputs (waveforms/resolved-inputs snapshot)
         optics (reflections/plan-for (:optics-plan runtime) (:rig model))
