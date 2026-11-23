@@ -162,7 +162,7 @@
   ([definition bind-pure match-plan rig]
   (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
-        positions (when block-plan (blocks/positions rig))
+        fixture-index (when block-plan (blocks/fixture-index rig))
         select-fixtures (fixture-selector rig selected)]
     (cond->
      (fn [{:keys [frame instance state] :as context}]
@@ -211,7 +211,8 @@
                             (when (or (nil? targets) (some #{(:id fixture)} targets))
                               (let [value (try
                                             (if frame-only? sampled-value
-                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0]))))
+                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
+                                                                 :surface-uv (:surface-uv fixture))))
                                             (catch clojure.lang.ExceptionInfo cause
                                               (throw (ex-info "Effect evaluation failed"
                                                               {:definition-id (:id definition) :fixture-id (:id fixture)
@@ -228,7 +229,7 @@
                              rows))))
                     fixtures))]
         (-> context
-            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
+            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % [])))))
