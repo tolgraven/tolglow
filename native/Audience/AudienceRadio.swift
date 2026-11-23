@@ -8,6 +8,8 @@ enum AudienceRadio {
     static let hello = CBUUID(string: "7D609C70-47EC-4457-8568-D443C43B9703")
     static let samples = CBUUID(string: "7D609C70-47EC-4457-8568-D443C43B9704")
 
+    static let computeGrant = CBUUID(string: "7D609C70-47EC-4457-8568-D443C43B9705")
+
     static func key(_ local: P256.KeyAgreement.PrivateKey, _ remote: Data, challenge: Data) throws -> SymmetricKey {
         guard challenge.count == 16 else { throw CocoaError(.coderInvalidValue) }
         let peer = try P256.KeyAgreement.PublicKey(x963Representation: remote)
