@@ -142,6 +142,8 @@
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
+   :prefabs (settings-module :prefabs {})
+   :variable-blocks (settings-module :variable-blocks {})
    :expressive (settings-module :expressive {}) :agents configure-agents
    :lighting-capacity (settings-module :lighting-capacity {:enabled? true})
    :spatial (settings-module :spatial {:enabled? true})

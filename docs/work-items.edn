@@ -31,6 +31,11 @@
    :depends-on [:foundation/tests]
    :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
    :evidence ["Afterglow #65 and Tolglow #108. Six fragment shaders and two native field programs were compared with the JVM on Mesa and SwiftShader. The focused host tests launch real effects, trace scalar and batched values, check per-frame variable resolution and reload the Transit show. A running Ring Studio release and the passive Push webview provided the visual recordings. Physical hardware and the shared UV/world fixture-input follow-up are tracked separately."]}
+  {:id :effects/show-prefabs :title "Reuse registered materials across effects and variable chains"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/effects/prefabs.clj"] :depends-on [:effects/composable-blocks]
+   :acceptance ["Publish one material, use it in independent effects and preserve each captured revision through a show file."]
+   :evidence ["In the release Studio, two independently published effects selected the same custom material by name. The show runtime tests compare live globals with pinned effect observations and reload the captured definitions from Transit. The screenshot and ten-step recording accompany the change."]}
   {:id :studio/global-variable-blocks :title "Edit and inspect a shared show variable’s material chain"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/variable_blocks.cljs" "tolglow/src/tolglow/effects/variable_edit.clj"]

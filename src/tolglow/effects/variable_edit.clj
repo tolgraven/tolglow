@@ -44,6 +44,6 @@
                           :message "This binding changed in another session. Reload the current binding before saving."}}
       :else
       (let [updated (assoc settings :bindings (if (= :put op) (assoc bindings path binding) (dissoc bindings path)))
-            _ (blocks/compile-settings updated)
             next-model (-> model (assoc-in [:settings :variable-blocks] updated) (update :revision inc))]
+        (blocks/compile-model next-model)
         {:model next-model :ack {:status :accepted :revision (:revision next-model)}}))))
