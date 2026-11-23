@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+ [{:id :native/apple-show-studio :title "Run the selected show in a standalone Apple Studio and present the live canvas"
+   :kind :implementation :status :in-progress :owner "Apple Studio native bundle and external playback"
+   :paths ["tolglow/native/macOS" "tolglow/native/Packaging" "tolglow/.github/workflows/apple-studio.yml"
+           "tolglow/src/studio/tolglow/studio/preview_playback.cljs" "tolglow/js/preview/preview-activity.js"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Open a selected show folder in a standalone app, execute its Clojure code and render real Studio assets. Prove each platform's execution and presentation modes separately."]}
+  {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
            "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"

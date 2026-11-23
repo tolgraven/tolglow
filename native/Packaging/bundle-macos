@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${JAVA_HOME:?Use the GraalVM Community JDK for the target Mac architecture}"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+jar="${1:?Pass the release Studio standalone jar}"
+dest="${2:?Pass an empty output directory}"
+test -s "$jar"
+test ! -e "$dest/Tolglow Studio.app"
+"$JAVA_HOME/bin/java" -version 2>&1 | grep -qi graalvm
+mkdir -p "$dest"
+(cd "$root/native" && xcodegen generate)
+xcodebuild -project "$root/native/Tolglow.xcodeproj" -scheme TolglowStudio \
+  -configuration Release -destination "platform=macOS,arch=$(uname -m)" \
+  -derivedDataPath "$root/native/DerivedData" CODE_SIGNING_ALLOWED=NO build
+app="$dest/Tolglow Studio.app"
+ditto "$root/native/DerivedData/Build/Products/Release/TolglowStudio.app" "$app"
+resources="$app/Contents/Resources"
+mkdir -p "$resources/runtime"
+# Keep the JIT compiler, supported charsets, MIDI and the standard modules
+# available to live-coded shows. Exclude development-time Native Image tooling.
+rsync -a --exclude=/jmods --exclude=/include --exclude=/man --exclude=/demo \
+  --exclude=/lib/src.zip --exclude=/lib/svm --exclude=/lib/static \
+  "$JAVA_HOME/" "$resources/runtime/"
+cp "$jar" "$resources/studio.jar"
+"$resources/runtime/bin/java" -version
+# Sign the assembled shell ad hoc for development on this Mac architecture.
+codesign --force --sign - "$app"
