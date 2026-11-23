@@ -811,6 +811,9 @@
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]
     (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
+                           :bloom (and (number? value) (<= 0 value 2))
+                           :grain (and (number? value) (<= 0 value 0.08))
+                           :exposure (and (number? value) (<= 0 value 3))
                            :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
                            :lighting-mode (#{"hold" "interpolate"} value)
                            :camera (contains? #{"audience" "overview"} value) false)]

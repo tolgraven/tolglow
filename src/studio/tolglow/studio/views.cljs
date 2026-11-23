@@ -279,6 +279,18 @@
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
      (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
 
+(defn- preview-film-controls [settings]
+  [:details.preview-film
+   [:summary "Image"]
+   (for [[key label high step default] [[:exposure "Exposure" 3 0.01 0.85]
+                                         [:bloom "Bloom" 2 0.01 0.28]
+                                         [:grain "Grain" 0.08 0.001 0.0015]]]
+     ^{:key key}
+     [:label label
+      [:input {:type "range" :min 0 :max high :step step :value (get settings key default)
+               :aria-label (str "Preview " label)
+               :on-change #(when-let [v (number-value %)] (input! [:studio/preview-setting key v]))}]])])
+
 (defn- preview-panel [db]
   [:section#preview-panel.preview-panel.panel {:aria-label "Live fixture preview"
                                               :class (when (get-in db [:ui :preview-expanded?]) "expanded")}
@@ -307,7 +319,8 @@
         [:option {:value "interpolate"} "Smooth · one frame delay"]]]
       [:select {:aria-label "Preview camera" :value (get-in db [:ui :preview-settings :camera] "audience")
                  :on-change #(input! [:studio/preview-setting :camera (input-value %)])}
-       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]])
+       [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]
+      [preview-film-controls (get-in db [:ui :preview-settings])]])
    [:div.fog-controls [:label {:html-for "fog-density"} "Atmosphere "
                         [:span.muted
                          (if-let [air (get-in db [:show :output :atmosphere])]

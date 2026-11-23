@@ -48,3 +48,7 @@ dialog{color:var(--text);background:#1d251a;border:1px solid #536348;border-radi
 .layer-transform code { overflow-wrap: anywhere; }
 .layer-transforms > .layer-targets { display: flex; align-items: center; gap: .5rem; min-height: 44px; }
 .layer-targets input[type=checkbox] { width: 1.2rem; height: 1.2rem; flex: none; }
+
+.preview-film summary{min-height:44px;display:list-item;align-content:center;cursor:pointer}
+.preview-film[open]{grid-column:1/-1}
+.preview-film label{min-height:44px;display:flex;align-items:center;gap:.65rem}

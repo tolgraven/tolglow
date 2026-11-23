@@ -603,6 +603,17 @@
               "Five actual browser transport/recovery workflows passed, page errors empty"
               "1000 fixture / 1012 cue measurement: full 450198 bytes median vs delta 4280; HTTP delta median 2.295ms"
               "docs/web-state-deltas.md"]}
+  {:id :preview/physical-pixel-presentation
+   :title "Resolve venue edges and present HDR lighting at the display pixel density"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/js/preview/render-quality.js" "tolglow/js/preview/film.js"
+           "tolglow/test/js/preview/render-quality.test.mjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Preserve panel pixels while reducing geometry and fog work under load"
+                "Resolve HDR silhouette coverage and negotiate extended display output"
+                "Compare identical camera geometry against a supersampled reference"]
+   :evidence ["Matched 1020x521 audience view and actual 3840x2160 software presentation"
+              "docs/architecture/preview-scene-contract.md"]}
   {:id :preview/camera-navigation-v1
    :title "Explore the rig with keyboard and touch and follow active fixtures automatically"
    :kind :implementation :status :done :owner nil
