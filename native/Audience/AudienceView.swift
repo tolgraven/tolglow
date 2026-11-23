@@ -59,8 +59,10 @@ struct AudienceView: View {
                         introduction
                         #if !APPCLIP
                         if room != nil {
-                            Button("Browse without this invitation") { client.browseWithoutInvitation() }
-                                .frame(minHeight: 44)
+                            Button { client.browseWithoutInvitation() } label: {
+                                Text("Browse without this invitation")
+                                    .frame(minHeight: 44).contentShape(Rectangle())
+                            }
                         }
                         #endif
                     }
@@ -266,9 +268,7 @@ struct AudienceView: View {
             primary("Browse without this invitation", symbol: "dot.radiowaves.left.and.right") { client.browseWithoutInvitation() }
             #endif
         } else if client.reconnecting {
-            Button("Cancel reconnection") { client.leave() }
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .buttonStyle(.bordered)
+            cancelButton("Cancel reconnection")
         } else if client.joined {
             if session.input == .touch {
                 primary("Tap a step", symbol: "hand.tap.fill") { session.tap() }
@@ -277,15 +277,20 @@ struct AudienceView: View {
                 Text("Leave stage").frame(maxWidth: .infinity, minHeight: 46).contentShape(Rectangle())
             }
         } else if client.looking || client.connecting {
-            Button { client.leave() } label: {
-                Text("Cancel").frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
-            }.buttonStyle(.bordered)
+            cancelButton("Cancel")
         } else {
             primary("Find a stage", symbol: "dot.radiowaves.left.and.right") {
                 attemptedJoin = true
                 client.discover(room: room)
             }
         }
+    }
+
+    private func cancelButton(_ title: String) -> some View {
+        Button { client.leave() } label: {
+            Text(title).frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
     }
 
     private func primary(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
