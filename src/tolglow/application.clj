@@ -7,6 +7,7 @@
             [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.show :as show]
+            [tolglow.rig.rdm :as rdm]
             [tolglow.fixtures.patch :as patch]
             [tolglow.agents :as agents]
             [tolglow.connections :as connections]))
@@ -128,6 +129,13 @@
     (when (seq options) (agents/configure! manager options))
     {:value manager}))
 
+(defn- start-rdm [context options]
+  (let [runtime (need-show context)
+        manager (:rdm runtime)
+        identity ((:identity! manager))]
+    {:value (rdm/connect! manager options identity)
+     :stop! #(rdm/disconnect! manager)}))
+
 (def registry
   {:show start-show :web-server start-web :show-state show-state :clock-sync start-sync
    :audio start-audio :osc start-osc :sensor-osc start-sensor-osc :sensors configure-sensors :waveforms install-waveforms
@@ -141,7 +149,7 @@
    :lighting-activity (settings-module :lighting-activity {:enabled? true})
    :fog-control (settings-module :fog-control {:enabled? true})
    :lighting-scenes install-lighting-scenes
-   :fixtures install-fixtures :cue-pages install-cue-pages})
+   :rdm start-rdm :fixtures install-fixtures :cue-pages install-cue-pages})
 
 (defn start!
   "Launch a show using :init stages and per-module :enabled options. Supply a

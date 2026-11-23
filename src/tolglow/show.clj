@@ -228,12 +228,15 @@
          compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
+         rdm-state (rdm/session-state)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! effect-keyframes/register! (spatial/register! nil)))))
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
+                                                                             effect-keyframes/register!
+                                                                             (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
                           (catch Exception error (connections/close! owned) (throw error)))]
@@ -273,7 +276,7 @@
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
-                             {:model! #(get @(:state @runtime-ref) :model)
+                             {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
                                             {:runtime-id (:id runtime) :expected-epoch (get-in @(:state runtime) [:model :epoch])})
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
@@ -1459,7 +1462,7 @@
                        {:runtime-id (:id runtime) :expected-epoch epoch}))]
       (case operation
         :connect (rdm/connect! (:rdm runtime) (:config payload {}) identity)
-        :disconnect (rdm/disconnect! (:rdm runtime))
+        :disconnect (rdm/disconnect-session! (:rdm runtime) (:session-id payload))
         :cancel (rdm/cancel! (:rdm runtime) (:job-id payload))
         (:associate :unassociate :adopt)
         (deref (submit! runtime :rdm-update (merge payload identity {:operation operation})) 5000 {:status :pending})

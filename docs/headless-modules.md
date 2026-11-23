@@ -11,7 +11,7 @@ A show file, a MIDI surface and the web controller work with the same show model
 | Inspect mappings for the selected device and cue | `tolglow.expressive` | `preview` reads the cue registry and shared Afterglow mapper |
 | Read and write complete show documents | `tolglow.persistence` | `freeze`, `write-string`, `read-string`, `thaw` |
 | Configure providers, conversations and credentials | `tolglow.agents`, `tolglow.agents.credentials` | `configure!`, `start-chat!`, `history`, `cancel-all!` |
-| Work with fixtures, patching and RDM | `tolglow.rig`, `tolglow.rig.rdm`, `tolglow.fixtures.library` | Rig transitions and explicit service managers |
+| Work with fixtures, patching and RDM | `tolglow.rig`, `tolglow.rig.rdm`, `tolglow.fixtures.library` | Rig transitions and explicit service managers. The optional `:rdm` module selects OLA or a direct Art-Net gateway |
 | Connect show signals, compose cues and publish DMX | `tolglow.routing`, `tolglow.composition`, `afterglow.output.scheduler` | Patchbay transitions, composition and output sinks |
 
 For example, record a bounded waveform summary directly from a PCM source:
