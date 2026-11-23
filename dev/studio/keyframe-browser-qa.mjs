@@ -39,7 +39,7 @@ try {
   const open = async () => {
     const summary = card.locator('summary').filter({hasText:'Keyframe timing'});
     if (!await summary.isVisible()) await card.getByRole('button',{name:/Expand .* controls/}).tap();
-    if (!await card.getByLabel('Keyframe interval',{exact:true}).isVisible()) await summary.tap();
+    if (!await card.getByRole('checkbox',{name:'Sample at a fixed interval'}).isVisible()) await summary.tap();
   };
   await open();
   const interval = card.getByLabel('Keyframe interval',{exact:true});
@@ -48,9 +48,12 @@ try {
   await card.getByLabel('Tween curve',{exact:true}).selectOption('cubic-bezier');
   const editor = card.locator('.keyframe-editor');
   const graph = editor.locator('svg');
-  const capture = async i => {
-    if (captures) await editor.screenshot({path:captures + '/' + String(i).padStart(2,'0') + '.png',animations:'disabled'});
+  // Capture the viewport, whose lifetime spans effect hot reloads. Saving an
+  // element screenshot can race React replacing that element on publication.
+  const take = async name => {
+    if (captures) await page.screenshot({path:captures+'/'+name+'.png',animations:'disabled'});
   };
+  const capture = i => take(String(i).padStart(2,'0'));
   await editor.evaluate(el => el.scrollIntoView({block:'center',behavior:'instant'}));
   await capture(0);
   const handle = await graph.locator('circle.hit').first().boundingBox();
@@ -63,7 +66,7 @@ try {
   await touch('touchStart',[start]);
   for (let i=1;i<=10;i++) {
     await touch('touchMove',[{x:start.x+(end.x-start.x)*i/10,y:start.y+(end.y-start.y)*i/10}]);
-    await capture(i);
+    if ([3,6,10].includes(i)) await capture(i);
   }
   await touch('touchEnd',[]);
   const x = Number(await editor.getByLabel('First X',{exact:true}).inputValue());
@@ -75,10 +78,9 @@ try {
   await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
   const response = await published;
   assert.ok(response.ok(),await response.text());
-  await page.waitForFunction(async ({id}) => {
-    const state = await (await fetch('/api/state',{headers:{accept:'application/json'}})).json();
-    return state.instances.find(x=>x.id===id)?.['effect-version']===2;
-  },{id:launch['instance-id']});
+  // The new definition remounts the timing panel. Wait for the pushed
+  // Studio revision before opening it, rather than racing an HTTP read.
+  await card.getByText(/^v2 ·/).waitFor();
   await open();
   const updated = (await request('/api/state')).instances.find(x=>x.id===launch['instance-id']);
   assert.equal(updated.definition.keyframes.curve.type,'cubic-bezier');
@@ -88,8 +90,29 @@ try {
   assert.match(await card.locator('.keyframe-sample').innerText(),/origin/i);
   assert.match(await card.locator('.keyframe-sample').innerText(),/target/i);
   assert.match(await card.locator('.keyframe-sample').innerText(),/result/i);
-  if (captures) await card.locator('details[open]').filter({has:page.locator('.keyframe-editor')}).last()
-    .screenshot({path:captures+'/published.png'});
+  await take('published');
+  const ceilingToggle = editor.locator('label').filter({hasText:'Limit automatic slowdown'});
+  assert.ok((await ceilingToggle.boundingBox()).height>=44,'The entire ceiling label is a touch target');
+  await ceilingToggle.tap();
+  assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
+  await capture(11);
+  await editor.locator('label').filter({hasText:'Sample at a fixed interval'}).tap();
+  await interval.waitFor({state:'hidden'});
+  await capture(12);
+  const savedCap = page.waitForResponse(r=>r.url().endsWith('/api/definition') && r.request().method()==='POST');
+  await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
+  assert.ok((await savedCap).ok());
+  await card.getByText(/^v3 ·/).waitFor();
+  await open();
+  assert.equal(await interval.count(),0);
+  assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
+  assert.equal(await editor.getByRole('checkbox',{name:'Limit automatic slowdown'}).isChecked(),true);
+  assert.equal(await editor.getByRole('checkbox',{name:'Sample at a fixed interval'}).isChecked(),false);
+  const capOnly = (await request('/api/state')).instances.find(x=>x.id===launch['instance-id']).definition.keyframes;
+  assert.equal(capOnly.interval,undefined);
+  assert.equal(capOnly['max-interval'].beats,0.125);
+  await editor.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+  await take('ceiling-published');
   assert.deepEqual(errors,[]);
-  console.log('Touch drag, exact beat fractions, spring edit, published v2 and live native values verified.');
+  console.log('Touch drag, fractional intervals, native values and cap-only hot reload verified through v3.');
 } finally {await browser.close();}

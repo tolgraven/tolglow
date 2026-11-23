@@ -34,7 +34,8 @@ def walk(value):
     elif isinstance(value, dict):
         if "exportedFileName" in value: yield value
         for v in value.values(): yield from walk(v)
-labels = ("01-paired-phone", "02-stage-picker", "03-paired-again", "04-pulse-consent")
+labels = ("01-paired-phone", "02-stage-picker", "03-paired-again", "04-pulse-consent",
+          "04-interrupted-stage", "05-reconnection-cancelled")
 for item in walk(manifest):
     name = item.get("suggestedHumanReadableName", "")
     for label in labels:

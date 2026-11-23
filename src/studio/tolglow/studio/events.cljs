@@ -41,6 +41,7 @@
     "/api/fixtures/publish" "/api/fixtures/patch"
     "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff" "/api/sync/arrange" "/api/sync/learn-parameter" "/api/sync/forget-parameter"
     "/api/audio/start" "/api/audio/stop"
+    "/api/sensors/stage/start" "/api/sensors/stage/stop"
     "/api/sensors/audience-zone" "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
     "/api/patch/save" "/api/patch/enabled"
@@ -205,6 +206,10 @@
                                      (get-in db [:server-presentation :connection-status])))))
            (conj [:dispatch [:connections/pushed]])
            runtime-changed? (conj [:dispatch [:terminal/runtime-change]] [:dispatch [:application-agents/runtime-change]])
+           (and (nil? (:show db)) (get-in updated [:application-agents :open?]))
+           (conj [:dispatch [:application-agents/list]])
+           (and (nil? (:show db)) (get-in updated [:ui :workspace :open?]))
+           (conj [:dispatch [:workspace/list]])
            (or epoch-changed? (not (:settings-loaded? db)))
            (conj [:dispatch [:studio/settings-received (or (:settings show) {})]]))}))
 

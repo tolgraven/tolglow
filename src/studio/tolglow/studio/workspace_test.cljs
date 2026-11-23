@@ -37,10 +37,10 @@
 
 (deftest restored-develop-view-waits-for-initial-runtime-before-starting-list-request
   (let [before (transition (assoc base :show nil) [:workspace/list])
-        after (transition base (get-in before [:dispatch-later 0 :dispatch]))
+        after (transition base [:workspace/list])
         closed (transition (assoc-in base [:ui :workspace :open?] false) [:workspace/list])]
     (is (nil? (:studio/http before)))
-    (is (= 200 (get-in before [:dispatch-later 0 :ms])))
+    (is (nil? (:dispatch-later before)))
     (is (= "/api/workspaces" (get-in after [:studio/http :path])))
     (is (empty? closed))))
 
@@ -133,18 +133,18 @@
     (is (= "ready" (get-in result [:db :ui :workspace :statuses "lighting" :preview :status])))
     (is (nil? (get-in result [:db :ui :workspace :statuses "lighting" :preview :url])))))
 
-(deftest polling-has-one-request-and-obsolete-timers-cannot-create-extra-loops
-  (let [requested (transition base [:workspace/status "lighting"])
-        duplicate (transition (:db requested) [:workspace/status "lighting"])
-        received (success requested {:id "lighting" :state "ready"})
-        refreshed (transition (:db received) [:workspace/status "lighting"])
-        stale-timer (transition (:db refreshed) (get-in received [:dispatch-later 0 :dispatch]))
-        closed (transition (:db refreshed) [:workspace/close])
-        completed (transition (:db closed) (conj (get-in refreshed [:studio/http :on-success]) {:id "lighting"}))]
-    (is (empty? duplicate))
-    (is (= 1500 (get-in received [:dispatch-later 0 :ms])))
-    (is (empty? stale-timer))
-    (is (nil? (:dispatch-later completed)))))
+(deftest selection-uses-the-shared-status-subscription
+  (let [local {:selected-id "lighting" :statuses {"lighting" {:state :starting}}}
+        ready {:id "lighting" :state :ready :running-checks {}}
+        selected (transition base [:workspace/select "lighting"])]
+    (is (= ready (get-in (workspace/with-status local {:value ready}) [:statuses "lighting"])))
+    (is (= local (workspace/with-status local nil)))
+    (is (= local (workspace/with-status local {:value (assoc ready :id "other")})))
+    (is (nil? (get-in (workspace/with-status local {:value nil}) [:statuses "lighting"])))
+    (is (string? (get-in (workspace/with-status local {:error :unavailable}) [:errors [:status "lighting"]])))
+    (is (= [:workspace/tree 0] (:dispatch selected)))
+    (is (nil? (:dispatch-later selected)))
+    (is (nil? (:studio/http selected)))))
 
 (deftest runtime-replacement-invalidates-results-but-keeps-unsaved-local-text
   (let [db (assoc-in editing [:ui :workspace :files active-key :source] "keep my draft")

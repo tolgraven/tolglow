@@ -8,7 +8,7 @@
 
 (def key "workspace/tolglow")
 (def base {:show {:runtime-id "server-one" :epoch 0}
-           :terminals {key (merge terminal/defaults {:mounted? true :session-id "owned-pty" :status "running"})}})
+           :terminals {key (merge terminal/defaults {:mounted? true :session-id "owned-pty" :workspace-id "workspace" :repo :tolglow :status "running"})}})
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
@@ -35,26 +35,28 @@
     (is (false? (:sending? (terminal/state (:db failed) key))))
     (is (nil? (:dispatch-later failed)))))
 
-(deftest polling-is-owned-and-terminal-tail-drains-after-process-exit
-  (let [sent (transition base [:terminal/poll key])
-        overlap (transition (:db sent) [:terminal/poll key])
-        captured (terminal/token base key)
-        first (transition (:db sent) [:terminal/output key captured {:state "exited" :cursor 100 :available-cursor 150
-                                                                    :data "eA==" :dropped? true}])
-        tail (transition (:db first) [:terminal/poll key])
-        final (transition (:db tail) [:terminal/output key captured {:state "exited" :cursor 150 :available-cursor 150 :data "eQ=="}])]
-    (is (some? (:studio/http sent)))
-    (is (nil? (:studio/http overlap)))
+(deftest subscribed-tail-drains-after-exit-and-an-expired-page-is-not-written-twice
+  (let [capture (terminal/token base key)
+        send (fn [db cursor next available]
+               (transition db [:terminal/output key capture cursor
+                               {:value {:session-id "owned-pty" :state "exited" :cursor next
+                                        :available-cursor available :data "eA==" :dropped? true}}]))
+        first (send base 0 100 150)
+        duplicate (send (:db first) 0 100 150)
+        final (send (:db first) 100 150 150)]
+    (is (= [:development/terminal-output "workspace" :tolglow "owned-pty" 0]
+           (terminal/output-query (terminal/state base key))))
     (is (:dropped? (:terminal/write first)))
-    (is (some? (:studio/http tail)))
+    (is (nil? (:terminal/write duplicate)))
+    (is (= 100 (peek (terminal/output-query (terminal/state (:db first) key)))))
     (is (= 150 (:cursor (terminal/state (:db final) key))))
-    (is (nil? (:dispatch-later final)))))
+    (is (nil? (terminal/output-query (terminal/state (:db final) key))))))
 
 (deftest remount-and-runtime-replacement-reject-stale-output
   (let [old (terminal/token base key)
         unmounted (:db (transition base [:terminal/unmount key]))
         mounted (:db (transition unmounted [:terminal/mount key]))
-        stale (transition mounted [:terminal/output key old {:state "running" :cursor 999 :data "eA=="}])
+        stale (transition mounted [:terminal/output key old 0 {:value {:session-id "owned-pty" :state "running" :cursor 999 :data "eA=="}}])
         reset (:db (transition base [:terminal/runtime-change]))]
     (is (nil? (:terminal/write stale)))
     (is (= 0 (:cursor (terminal/state mounted key))))
