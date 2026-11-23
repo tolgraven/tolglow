@@ -5,3 +5,7 @@ DerivedData/
 iOS/Info.plist
 watchOS/Info.plist
 .DS_Store
+AppClip/Info.plist
+AppClip/TolglowAudienceClip.entitlements
+iOS/TolglowPhone.entitlements
+watchOS/TolglowWatch.entitlements

@@ -208,3 +208,5 @@ The server challenge must identify the Tolglow Studio realm. **Forget saved
 password** removes the local credential for the selected origin. Existing
 browser sessions expire on their normal schedule. OSC pairing for the phone
 and Watch stays separate. See [Studio network setup](../docs/studio-ui.md).
+
+The [nearby Dance floor guide](../docs/nearby-audience.md) covers Bluetooth stage discovery, phone and Watch participation and the lightweight QR App Clip.

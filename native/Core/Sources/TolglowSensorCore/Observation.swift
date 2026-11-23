@@ -11,8 +11,8 @@ public struct Gesture: Codable, Equatable, Sendable {
     public let id: String
     public let type: String
     public let phase: String
-    public init(id: String = UUID().uuidString) {
-        self.id = id; type = "primary-action"; phase = "pulse"
+    public init(id: String = UUID().uuidString, type: String = "primary-action") {
+        self.id = id; self.type = type; phase = "pulse"
     }
 }
 
@@ -56,7 +56,7 @@ public struct Observation: Codable, Equatable, Sendable {
               timeMS.isFinite, timeMS >= 0,
               values.count <= 32, values.allSatisfy({ $0.key.range(of: "^[a-z][a-z0-9-]{0,63}$", options: .regularExpression) != nil && $0.value.isFinite }),
               gestures.count <= 8,
-              gestures.allSatisfy({ bounded($0.id, 128) && $0.type == "primary-action" && $0.phase == "pulse" }),
+              gestures.allSatisfy({ bounded($0.id, 128) && ["primary-action", "dance-step"].contains($0.type) && $0.phase == "pulse" }),
               Set(gestures.map(\.id)).count == gestures.count,
               referenceFrame.map({ bounded($0, 128) }) ?? true,
               calibrationID.map({ bounded($0, 128) }) ?? true,
