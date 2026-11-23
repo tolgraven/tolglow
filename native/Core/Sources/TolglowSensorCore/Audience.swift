@@ -73,7 +73,7 @@ public struct AudienceLevels {
 
 /// The host owns receipt time. Each live phone contributes a single vote.
 public struct AudienceFloor {
-    private struct Guest { var sample: AudienceSample; var time: Double }
+    private struct Guest { var sample: AudienceSample; var time: Double; var stepCredit: Double }
     private var guests: [UUID: Guest] = [:]
     private var pendingSteps = 0
     public let capacity: Int
@@ -92,17 +92,20 @@ public struct AudienceFloor {
 
     @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double) -> Bool {
         guard time.isFinite else { return false }
+        var credit = 2.0
         if let previous = guests[id], time - previous.time < timeout {
             let sequence = sample.serial &- previous.sample.serial
             let added = sample.steps &- previous.sample.steps
+            credit = min(2.0 + 4 * timeout, previous.stepCredit + max(0, time - previous.time) * 4)
             guard time >= previous.time, sequence > 0, sequence < (1 << 31),
-                  added <= UInt32(ceil(max(0, time - previous.time) * 4) + 1) else { return false }
+                  Double(added) <= credit else { return false }
+            credit = min(2.0, credit - Double(added))
             pendingSteps += Int(added)
         } else {
             expire(at: time)
             guard guests.count < capacity else { return false }
         }
-        guests[id] = Guest(sample: sample, time: time)
+        guests[id] = Guest(sample: sample, time: time, stepCredit: credit)
         return true
     }
 
