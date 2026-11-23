@@ -186,6 +186,10 @@ try {
     });
     const settingsBefore = await settings();
     const before = await state();
+    const plumeWarmup = emitPlumes ? await page.evaluate(() => {
+      const receipt = window.roomPlumeSample, warmup = {accepted: receipt.accepted, rejected: receipt.rejected};
+      receipt.accepted = 0; receipt.rejected = 0; return warmup;
+    }) : null;
     const [measured, middle] = await Promise.all([page.evaluate(measureRoom, 20000), delay(7100).then(state)]);
     const after = await state();
     const settingsAfter = await settings();
@@ -195,7 +199,7 @@ try {
         const {timer, ...receipt} = window.roomPlumeSample;
         clearInterval(timer); delete window.roomPlumeSample; return receipt;
       });
-      Object.assign(measured.plumes, {options: plume, intervalMs: 4000});
+      Object.assign(measured.plumes, {options: plume, intervalMs: 4000, warmup: plumeWarmup});
       if (measured.plumes.rejected || measured.plumes.accepted < 5)
         measured.invalid.push('the production preview did not accept repeated local plumes');
       if (!measured.policySamples.some(s => s.fogMaximumDensity > .35))
