@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {fogTransmission} from './fog-optics.generated.js';
 import {DEFAULT_EXTINCTION_PER_M} from './show-atmosphere.js';
 import {apertureRadius} from './optics.js';
 
@@ -19,7 +20,7 @@ export function incidentTransmission(field, amount, origin, hit, extinctionPerM 
     const z = (origin.z + (hit.z - origin.z) * t) / d + .5;
     density += field.sample(x * nx - .5, y * ny - .5, z * nz - .5);
   }
-  return Math.exp(-extinctionPerM * amount * origin.distanceTo(hit) * density / steps);
+  return fogTransmission(extinctionPerM, amount * density / steps, origin.distanceTo(hit));
 }
 
 function candidate(entry, light, footprint) {

@@ -31,13 +31,16 @@
       (doseq [[id material] entries]
         (validate-material! id material)))))
 
+(defn shared-ids [bindings local]
+  (into #{} (comp (mapcat :stages) (map :block) (remove #(contains? local %)))
+        (vals bindings)))
+
 (defn capture
   "Snapshot shared stages used by this revision. Local definitions take
   precedence. An imported effect can supply materials absent from the show."
   [entries {:keys [blocks prefabs imported-prefabs] :as definition}]
   (if (seq blocks)
-    (let [used (into #{} (comp (mapcat :stages) (map :block)) (vals blocks))
-          wanted (remove #(contains? prefabs %) used)]
+    (let [wanted (shared-ids blocks prefabs)]
       ;; An empty snapshot also matters: an intervening library edit must not
       ;; replace a published built-in when this revision is later restored.
       (assoc definition :imported-prefabs

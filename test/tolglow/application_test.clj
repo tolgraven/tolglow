@@ -211,3 +211,17 @@
       (let [runtime (app/start! (assoc cfg :show-state {:load-file (.getPath backup)}))]
         (try (wait-for 2) (is (= 2 @clocks @captures)) (finally (app/stop! runtime))))
       (finally (.delete backup)))))
+
+(deftest startup-modules-apply-the-show-material-library-before-its-variable-consumers
+  (let [config (assoc (app/default-config)
+                      :web-server false
+                      :prefabs {:enabled true
+                                :definitions {:show/filter {:name "Filter" :inputs {} :mode :multiply :glsl "0.5"}}}
+                      :variable-blocks {:enabled true
+                                        :bindings {[:variables :transmission]
+                                                   {:base 0.8 :stages [{:block :show/filter}]}}})
+        runtime (app/start! config)]
+    (try
+      (is (= [:show :prefabs :variable-blocks] (get-in runtime [:application :loaded-components])))
+      (is (= 0.4 (:transmission (show/variables runtime))))
+      (finally (app/stop! runtime)))))

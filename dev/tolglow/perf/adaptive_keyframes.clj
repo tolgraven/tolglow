@@ -1,6 +1,7 @@
 (ns tolglow.perf.adaptive-keyframes
   "Compare per-frame and adaptive samples on two spatial fields and a one-head control."
   (:require [afterglow.control.model :as control]
+            [clojure.java.io :as io]
             [tolglow.bench-show :as bench]
             [tolglow.effects.cadence :as cadence]
             [tolglow.show :as show]))
@@ -66,14 +67,22 @@
                         :over-25ms (count (filter #(< 25.0 %) ms))}})
       (finally (show/stop! runtime)))))
 
+(defn- measurements [pixels warmup samples]
+  (let [model (scene (:fixtures (bench/corpus pixels 0 :sculpture)))
+        full (capture model 1 warmup samples nil)
+        adaptive (capture model 8 warmup samples (:frames full))]
+    {:pixels pixels :warmup warmup :samples samples :headroom (:headroom policy)
+     :runs [(:measurements full) (:measurements adaptive)]}))
+
 (defn -main [& args]
-  (let [[pixels warmup samples :as counts] (mapv parse-long (or (seq args) ["4000" "24" "80"]))]
-    (when-not (and (= 3 (count counts)) (every? pos-int? counts))
-      (throw (ex-info "Expected positive pixel, warmup frame and measured frame counts" {:args args})))
+  (let [args (or (seq args) ["4000" "24" "80"])
+        [pixels warmup samples :as counts] (mapv parse-long (take 3 args))
+        output (nth args 3 nil)]
+    (when-not (and (<= 3 (count args) 4) (every? pos-int? counts))
+      (throw (ex-info "Expected positive pixel, warmup and frame counts followed by an optional EDN file" {:args args})))
     (try
-      (let [model (scene (:fixtures (bench/corpus pixels 0 :sculpture)))
-            full (capture model 1 warmup samples nil)
-            adaptive (capture model 8 warmup samples (:frames full))]
-        (prn {:pixels pixels :warmup warmup :samples samples :headroom (:headroom policy)
-              :runs [(:measurements full) (:measurements adaptive)]}))
+      (let [report (measurements pixels warmup samples)]
+        (if output
+          (do (io/make-parents output) (spit output (str (pr-str report) "\n")))
+          (prn report)))
       (finally (shutdown-agents)))))

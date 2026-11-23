@@ -5,7 +5,7 @@
   '[tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
     tolglow.clock-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
-    tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
+    tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test tolglow.effects.variable-edit-test tolglow.compiler.batch-test tolglow.predictive-keyframes-test
     tolglow.spatial.actions-test tolglow.spatial-cues-test tolglow.spatial-host-test tolglow.authoring.output-patch-test
     tolglow.composition.tween-test tolglow.composition.envelope-test
     tolglow.composition.sequence-test tolglow.composition.macro-test
@@ -20,7 +20,7 @@
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
-    tolglow.venue-fog-test tolglow.fog-calibration-test tolglow.venue-performance-test
+    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.composition-test tolglow.agents-test
     tolglow.persistence-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
