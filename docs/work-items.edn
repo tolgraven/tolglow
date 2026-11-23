@@ -39,6 +39,13 @@
    :depends-on [:foundation/tests]
    :acceptance ["Sample continuous effect output at a projected musical clock, inspect or modulate the tween, and restore it at the same point."]
    :evidence ["Afterglow #62 tests future transport projection, native typed fields, faults, parallel workers and actual DMX. Tolglow exercises scalar and batch compilers, a reversing progress source, live reactive inspection, and full Transit save and restore. The 834-pixel Studio touch capture edits both Bézier coordinates, publishes an exact quarter-beat interval, and verifies all three live values. See docs/effect-keyframes.md."]}
+  {:id :control/physical-parameter-readouts :title "Use actual DMX resolution for parameter readouts and fine encoder edits"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/control/resolution.cljc" "tolglow/src/tolglow/studio/parameter_precision.clj"
+           "tolglow/src/studio/tolglow/studio/numeric_display.cljs" "tolglow/docs/parameter-widget-parity.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["A Studio or Push inspector distinguishes adjacent values from a patched 8-bit or 16-bit channel. Preserve full floating-point authoring and effect evaluation. Verify Shift turns and the fine-byte carry with an isolated show."]
+   :evidence ["The shared control model follows physical output expressions and fixture targets. Projection tests cover repatching, stale device views and untouched model values. ClojureScript tests enumerate all 256 and 65,536 normalized display labels. The preview-only browser capture is reproducible through tolglow.qa.parameter-precision."]}
   {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
