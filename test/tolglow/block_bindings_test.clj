@@ -135,3 +135,18 @@
         trace #(runtime/observe % [[:outputs :focus] :near])]
     (is (= 0.5 (:base (trace scalar)) (:base (trace typed))))
     (is (= (* 0.5 0.825) (:result (trace scalar)) (:result (trace typed)) (:value (first (:assignments scalar)))))))
+
+(deftest invalid-read-holds-last-good-variable-until-recovery
+  (let [path [:variables :dimmer] plan (variable-blocks/compile-settings {:bindings {path {:stages []}}})
+        model {:epoch 1 :variables {:dimmer 0.75}}
+        read (fn [m before] (variable-blocks/sample plan m 25.0 before))
+        good (read model nil)
+        bad-model (assoc-in model path :broken)
+        failed (read bad-model good)
+        held (read bad-model failed)
+        recovered (read (assoc-in model path 0.2) held)]
+    (is (= 0.75 (get-in (variable-blocks/resolved bad-model failed) path)
+           (get-in (variable-blocks/resolved bad-model held) path)))
+    (is (:held? (variable-blocks/inspect held path)))
+    (is (= 0.2 (get-in (variable-blocks/resolved model recovered) path)))
+    (is (nil? (:held? (variable-blocks/inspect (read (assoc bad-model :epoch 2) held) path))))))
