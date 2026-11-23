@@ -204,6 +204,18 @@ jobs:
           else
             echo 'native=true' >> "$GITHUB_OUTPUT"
           fi
+      - name: Run portable sensor and camera analysis tests
+        if: steps.paths.outputs.native == 'true'
+        env:
+          TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
+        run: swift test --package-path native/Core
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-camera-pose-trace
+          path: ${{ runner.temp }}/audience-pose.csv
+          if-no-files-found: error
+          retention-days: 10
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'

@@ -34,7 +34,8 @@ Report limits and measured error alongside time saved for each device. A faster 
   and 128 moving heads, stride two saved 0.27–0.66 ms per wash frame and cost
   0.20–0.24 ms per shared-aim frame. The default threshold kept the aim at
   full rate. A zero threshold admitted it in both repeat runs.
-  [Admission experiment and capture](keyframe-admission.md)
+  On 512 movers a shallow spatial aim lost time at stride two and saved
+  time at four in both trials. [Admission and interval measurements](keyframe-admission.md)
 
 * **Count the whole interpolation window.** Cheap interpolation frames can hide
   expensive endpoint preparation. On a 1,024-pixel and 64-mover show,
