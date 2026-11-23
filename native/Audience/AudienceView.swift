@@ -79,9 +79,13 @@ struct AudienceView: View {
     }
 
     private var introduction: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let layout = wide
+            ? AnyLayout(HStackLayout(alignment: .top, spacing: 26))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 18))
+        return layout {
             Text("Send your steps and movement intensity to the stage lights over Bluetooth.")
                 .font(.title3).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: wide ? 235 : .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(AudienceInput.allCases.enumerated()), id: \.element) { index, input in
                     if index > 0 { Divider() }
@@ -115,7 +119,7 @@ struct AudienceView: View {
     private func detail(_ input: AudienceInput) -> String {
         switch input {
         case .touch: return "Send one step with each tap."
-        case .camera: return "Estimate steps on this device. Camera images stay private."
+        case .camera: return "Estimate steps from camera images that stay on this device."
         #if !APPCLIP
         case .motion: return "Measure movement with your phone. Sharing individual motion axes is optional."
         #endif
@@ -162,6 +166,8 @@ struct AudienceView: View {
                     Toggle("Phone acceleration and rotation", isOn: $session.shareMotionAxes).frame(minHeight: 48)
                 }
                 Toggle("Watch input while iPhone is locked", isOn: $session.allowLockedWatch).frame(minHeight: 48)
+                Text("Choose whether to share pulse in the Watch app.")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
             .padding(16).background(surface, in: RoundedRectangle(cornerRadius: 14))
             #endif
