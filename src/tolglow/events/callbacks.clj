@@ -11,21 +11,40 @@
                   (newThread [_ runnable]
                     (doto (Thread. runnable "tolglow-event-callback") (.setDaemon true))))]
     {:pool (ThreadPoolExecutor. 2 2 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. 32) factory)
-     :jobs (atom {}) :sources (atom {}) :handlers (atom (or callbacks {}))
+     :jobs (atom {}) :sources (atom {}) :handlers (atom (or callbacks {})) :inline-handlers (atom {})
      :trusted-source? trusted-source? :timeout-ms timeout-ms}))
 
-(defn register! [service id handler]
+(defn register!
+  "Register a named host callback."
+  [service id handler]
   (when-not (and (keyword? id) (fn? handler)) (throw (ex-info "Expected callback id and function" {})))
   (swap! (:handlers service) assoc id handler)
   id)
 
-(defn- resolve-handler [service implementation]
+(defn- inline-key [subscriber-id {:keys [type callback-id]}]
+  (when (= :inline type) [subscriber-id callback-id]))
+
+(defn- retain-inline! [service {:keys [subscribers runs]} registrations]
+  (let [handlers (:inline-handlers service)
+        available (into @handlers registrations)]
+    (when (seq available)
+      (let [steps (concat (map (juxt :id :actions) subscribers) (map (juxt :subscriber :steps) runs))
+            referenced (fn [[id actions]]
+                         (keep #(when-let [key (inline-key id (:implementation %))]
+                                  (find available key))
+                               actions))]
+        (reset! handlers (into {} (mapcat referenced) steps))))))
+
+(defn- resolve-handler [service implementation inline-handler]
   (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
                                              {:trusted-source? true})]
     (cond
+      (= :inline (:type implementation))
+      (or inline-handler (throw (ex-info "Process-local callback unavailable. Re-register the middleware in this runtime." {})))
+
       (= :registered (:type implementation))
       (or (get @(:handlers service) (:id implementation))
-          (throw (ex-info "Register this callback in the current runtime" {})))
+          (throw (ex-info "Register this named callback in the current host's :event-callback-options :callbacks" {})))
 
       (not (:trusted-source? service))
       (throw (ex-info "Trusted callback source or Var execution is disabled on this host" {}))
@@ -41,10 +60,9 @@
 
       :else (resolve-fn))))
 
-(defn- invoke [service model run]
+(defn- invoke [service model run implementation inline-handler]
   (try
-    (let [implementation (get-in run [:steps (:index run) :implementation])
-          handler (resolve-handler service implementation)
+    (let [handler (resolve-handler service implementation inline-handler)
           context {:show model :event (:event run) :variables (:variables model {}) :actions []}
           output (handler context (:event run))
           variables (:variables output)
@@ -66,14 +84,20 @@
       {:error (or (.getMessage error) "Event callback failed") :diagnostic (subscribers/error-details error)})))
 
 (defn- start! [service model run]
-  (let [task (FutureTask. ^Callable (reify Callable (call [_] (invoke service model run))))]
+  (let [implementation (get-in run [:steps (:index run) :implementation])
+        ;; A queued job holds the exact closure it was started with even if a
+        ;; later commit retires its registration and cancels the job.
+        inline-handler (when-let [key (inline-key (:subscriber run) implementation)]
+                         (get @(:inline-handlers service) key))
+        task (FutureTask. ^Callable (reify Callable (call [_] (invoke service model run implementation inline-handler))))]
     (try
       (.execute ^ThreadPoolExecutor (:pool service) task)
       {:task task :started (System/nanoTime)}
       (catch RejectedExecutionException _ {:result {:error "Event callback worker queue is full"}}))))
 
-(defn publish! [service model]
+(defn publish! [service model registrations]
   ;; Only called after the committing owner has installed this exact model.
+  (retain-inline! service (:event-subscribers model) registrations)
   (let [jobs @(:jobs service)
         waiting (into {} (keep #(when (:waiting? %) [(subscribers/callback-token model %) %]))
                       (get-in model [:event-subscribers :runs]))]
@@ -100,4 +124,5 @@
 (defn close! [service]
   (doseq [{:keys [task]} (vals @(:jobs service)) :when task] (.cancel ^FutureTask task true))
   (reset! (:jobs service) {})
+  (reset! (:inline-handlers service) {})
   (.shutdownNow ^ThreadPoolExecutor (:pool service)))

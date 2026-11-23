@@ -44,7 +44,11 @@ A callback receives an immutable context and the original event. Return that con
                   :form "(fn [context event] (assoc-in context [:variables :last-accent] (* gain (get-in event [:data :confidence] 1))))"}}
 ```
 
-A named function can use `{:type :var :symbol "my.show/on-accent"}`. Host-provided functions use `{:type :registered :id :accent}` with `:event-callback-options {:callbacks {:accent on-accent}}`. The REPL accepts a map with `:middleware #'my.show/on-accent` or `:middleware (fn [context event] ...)`. A Var and an explicit source form can be restored in another process. Use `reg-event-subscriber!` to capture a REPL function in a show file. List any closed-over values in the binding map. A closure passed as an already constructed function to `register-event-subscriber!` needs its implementation registered again after process restart.
+A named function can use `{:type :var :symbol "my.show/on-accent"}`. Host-provided functions use `{:type :registered :id :accent}` with `:event-callback-options {:callbacks {:accent on-accent}}`. If a restored named callback is unavailable, configure that name on the host. Existing `:registered` descriptors continue to look up host callback names.
+
+The REPL also accepts `:middleware #'my.show/on-accent` or an already constructed function in `register-event-subscriber!`. For a raw function, the show file saves a reference to the exact subscriber and callback. Restoring the file into the same runtime reuses the closure while that registration is active. Removing or replacing the callback, loading a show without its reference, or stopping the runtime releases the closure. If the saved callback is unavailable, re-register the middleware for that subscriber in the REPL. Studio shows these callbacks as **Process-local REPL function**.
+
+A Var and an explicit source form can be restored in another process. Use `reg-event-subscriber!` to capture a literal REPL function as source in a show file. List closed-over values in the binding map.
 
 ```clojure
 (let [intensity 0.8]

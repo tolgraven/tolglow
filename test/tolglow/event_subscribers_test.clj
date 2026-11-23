@@ -198,6 +198,93 @@
       (is (= 1 (count (:instances (show/snapshot runtime)))))
       (finally (deliver release true) (show/stop! runtime)))))
 
+(defn- play-kick! [runtime]
+  (let [model #(:model @(:state runtime))
+        start (:time-ms (model))]
+    (is (true? ((:events! (show/audio-callbacks runtime)) [kick])))
+    (show/tick! runtime (inc start))
+    (loop [n 2]
+      (if (and (< n 150) (seq (get-in (model) [:event-subscribers :runs])))
+        (do (show/tick! runtime (+ start n)) (Thread/sleep 5) (recur (inc n)))
+        (model)))))
+
+(deftest transit-restores-only-the-exact-runtime-owned-event-callback
+  (let [calls (atom [])
+        middleware (fn [owner]
+                     (fn [context _]
+                       (swap! calls conj owner)
+                       (assoc-in context [:variables :callback-owner] owner)))
+        runtime (fn [id callbacks]
+                  (show/create-runtime {:model (assoc (demo/model) :show-id id)
+                                        :workspace-options nil
+                                        :event-callback-options {:callbacks callbacks}}))
+        a (runtime :closures/a {:kicks (middleware :named)})
+        b (runtime :closures/b {})]
+    (try
+      (doseq [[current owner] [[a :a] [b :b]]]
+        (let [reply (show/register-event-subscriber! current (assoc (listener []) :middleware (middleware owner)))]
+          (show/tick! current 0)
+          (is (= :accepted (:status (deref reply 1000 {}))))))
+      (let [source-a (show/export-show-source a)
+            source-b (show/export-show-source b)
+            definition (fn [source] (get-in (files/read-string source) [:model :event-subscribers :subscribers 0]))
+            a-definition (definition source-a)
+            b-definition (definition source-b)
+            implementation #(get-in % [:actions 0 :implementation])
+            import! (fn [source] (show/submit! a :import {:source source}))]
+        (is (= :kicks (:id a-definition) (:id b-definition)))
+        (is (= :inline (:type (implementation a-definition)) (:type (implementation b-definition))))
+        (is (not= (:callback-id (implementation a-definition)) (:callback-id (implementation b-definition))))
+
+        (testing "The same runtime can reimport its callback, including when a competing import is rejected"
+          (let [own (import! source-a)
+                stale (import! source-b)]
+            (is (not (realized? stale)))
+            (show/tick! a 1)
+            (is (= :accepted (:status (deref own 1000 {}))))
+            (let [receipt (deref stale 1000 {})]
+              (is (= :rejected (:status receipt)))
+              (is (re-find #"previous show session" (:message receipt ""))))
+            (is (= :a (get-in (play-kick! a) [:variables :callback-owner])))
+            (is (= [:a] @calls))))
+
+        (testing "A different subscriber cannot reuse the reference in the same runtime"
+          (let [reply (show/submit! a :event-subscriber {:op :save :subscriber (assoc a-definition :id :copy)})]
+            (show/tick! a 20)
+            (is (= :accepted (:status (deref reply 1000 {}))))
+            (let [model (play-kick! a)]
+              (is (= :copy (get-in model [:event-subscribers :last-error :subscriber-id])))
+              (is (= [:a :a] @calls)))))
+
+        (testing "A different show's reference stays visible and fails without calling either implementation"
+          (let [foreign (import! source-b)]
+            (show/tick! a 30)
+            (is (= :accepted (:status (deref foreign 1000 {}))))
+            (let [catalog ((studio/handler a) {:uri "/api/event-subscribers" :request-method :get
+                                              :headers {"accept" "application/transit+json"}})]
+              (is (= [b-definition] (:subscribers (wire/decode (:body catalog))))))
+            (let [model (play-kick! a)
+                  fault (get-in (show/snapshot a) [:event-subscribers :last-error])]
+              (is (= :closures/b (:show-id model)))
+              (is (nil? (get-in model [:variables :callback-owner])))
+              (is (= [:a :a] @calls))
+              (is (= {:type :event/handler-failed :subscriber-id :kicks}
+                     (select-keys fault [:type :subscriber-id])))
+              (is (re-find #"Process-local callback unavailable.*Re-register" (:message fault "")))
+              (is (empty? @(get-in a [:event-callbacks :inline-handlers]))))))
+
+        (testing "An explicitly named reference still finds the host callback with the same name"
+          (let [registration (listener [{:op :callback :implementation {:type :registered :id :kicks}}])
+                saved (show/register-event-subscriber! b registration)]
+            (show/tick! b 1)
+            (is (= :accepted (:status (deref saved 1000 {}))))
+            (let [named (import! (show/export-show-source b))]
+              (show/tick! a 40)
+              (is (= :accepted (:status (deref named 1000 {}))))
+              (is (= :named (get-in (play-kick! a) [:variables :callback-owner])))
+              (is (= [:a :a :named] @calls))))))
+      (finally (show/stop! a) (show/stop! b)))))
+
 (deftest all-selection-chunks-preserve-chosen-targets-and-save-cursor
   (let [model (-> (configured [{:op :cue/launch :select {:pick :all}}])
                   (assoc-in [:registry :cues]

@@ -81,9 +81,13 @@
   (when (= op :instance/opacity)
     (check (and (registry/finite-number? value) (<= 0 value 1)) "Opacity must be between zero and one" {}))
   (when (= op :callback)
-    (if (= :registered (:type implementation))
-      (check (and (only-keys? implementation #{:type :id}) (keyword? (:id implementation)))
-             "A registered callback needs a keyword id" {})
+    (case (:type implementation)
+      :registered (check (and (only-keys? implementation #{:type :id}) (keyword? (:id implementation)))
+                         "A registered callback needs a keyword id" {})
+      :inline (let [id (:callback-id implementation)]
+                (check (and (only-keys? implementation #{:type :callback-id}) (string? id)
+                            (= id (some-> (parse-uuid id) str)))
+                       "A process-local callback needs a UUID" {}))
       (reactive/validate-definition {:kind :fx :id ::callback :implementation implementation})))
   action)
 
