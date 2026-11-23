@@ -30,8 +30,9 @@
         model (-> (demo/model)
                   (assoc-in [:registry :effects :ramp] effect)
                   (assoc-in [:registry :cues :ramp] {:id :ramp :version 1 :effect-id :ramp}))
-        host (show/create-runtime {:model model :workspace-options nil :batch? true
-                                   :adaptive-keyframes {:enabled? true :max-stride 1}})]
+        host (assoc (show/create-runtime {:model model :workspace-options nil :batch? true
+                                         :adaptive-keyframes {:enabled? true :max-stride 1}})
+                    :capture-effect-samples? true)]
     (try
       (let [receipt (show/submit! host {:op :cue/launch :cue-id :ramp})
             observe (fn [at]
@@ -46,6 +47,43 @@
         (is (= :endpoint (:outcome start)))
         (is (= :interpolated (:outcome tween)))
         (is (pos? (:evaluations start)))
+        (is (= (:evaluations start) (:calls-this-render start)))
+        (is (zero? (:calls-this-render tween)))
         (is (= (:evaluations start) (:evaluations tween)))
         (is (< dark brighter)))
+      (finally (show/stop! host)))))
+
+(deftest final-worker-call-survives-in-the-frame-report
+  (let [effect {:id :one-shot :version 1 :outputs {:color [1 1 1] :dimmer 1}}
+        model (-> (demo/model)
+                  (assoc-in [:registry :effects :one-shot] effect)
+                  (assoc-in [:registry :cues :one-shot] {:id :one-shot :version 1 :effect-id :one-shot}))
+        calls (atom 0)
+        host (show/create-runtime {:model model :workers 2 :workspace-options nil
+                                   :adaptive-keyframes {:enabled? true}})
+        compile-step (:compile host)
+        work (assoc host :capture-effect-samples? true
+                    :compile (fn [definition]
+                               (let [step (compile-step definition)]
+                                 (fn [ctx]
+                                   (swap! calls inc)
+                                   (assoc (step ctx) :done? true)))))]
+    (try
+      (let [launch (show/submit! work {:op :cue/launch :cue-id :one-shot})]
+        (show/tick! work 0)
+        (let [id (:instance-id (deref launch 1000 nil))
+              state @(:state work)
+              row (samples/capture {:ready-at-ms 0} state)]
+          (is (= 1 @calls))
+          (is (nil? (get-in state [:model :instances id])))
+          (is (= 255 (bit-and 255 (aget ^bytes (get-in state [:output :universes 1]) 0))))
+          (is (= {:effect-id :one-shot :outcome :retired-sampled :calls-this-render 1}
+                 (get-in row [:effect-sampling id])))
+          (is (= {:one-shot {:retired-sampled 1}} (samples/summarize [row])))
+          (is (empty? (:effect-sampling
+                       (samples/capture {:ready-at-ms 0}
+                                        (assoc-in state [:cadence :observed-samples :samples] {})))))
+          (show/tick! work 25)
+          (is (nil? (get-in (samples/capture {:ready-at-ms 25} @(:state work))
+                            [:effect-sampling id])))))
       (finally (show/stop! host)))))

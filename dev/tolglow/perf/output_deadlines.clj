@@ -121,7 +121,8 @@
       (observe! (:timeline owner) :last renders #(samples/capture % @(:state host)))
       (observe! (:timeline owner) :last-missed-wake missed-wakes)
       (observe! (:status owner) :output-timing outputs)
-      (scheduler/start! owner 25 #(show/render-slot! work %))
+      (let [observed-host (assoc work :capture-effect-samples? true)]
+        (scheduler/start! owner 25 #(show/render-slot! observed-host %)))
       (Thread/sleep (long (* 25 (+ last-slot 3))))
       (scheduler/close! owner)
       (let [delivered (match-sink-entries @outputs @sends)]

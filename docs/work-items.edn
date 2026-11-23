@@ -4,12 +4,13 @@
  [{:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
-   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/dev/tolglow/perf/effect_samples.clj" "tolglow/test/tolglow/perf/effect_samples_test.clj" "tolglow/docs/browser-observations.md"]
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/src/tolglow/effects/cadence.clj" "tolglow/dev/tolglow/perf/effect_samples.clj" "tolglow/test/tolglow/perf/effect_samples_test.clj" "tolglow/docs/browser-observations.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
                 "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
                 "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."]
    :evidence ["Afterglow PR 89 and the paired host use a phase-locked producer and publisher, a measured render and wake-up reserve, and strict direct or delayed buffered completion windows. The host regression captures two effect workers, audio input, a Link seek, pause, resume and restart. The paired performance job records full release-clock timing and actual sink calls for 1,024 pixels and 128 movers. Tolglow PR 181 replays independent and conflicting effect groups against serial packets, states and events."
+              "A two-worker one-shot emits its final full-bright DMX frame, retires, and retains its actual step count in the physical replay. Persistent wash, aim and pulse observations distinguish direct samples, future endpoint sampling, and interpolation."
               "The browser observation rehearsal compares the actual worker and main-thread presented pixels with a consumer's show graph value. It covers zero-demand reads, producer epochs, presented show frame IDs, distinct-value transport and final disposal. Physical GPU timing remains open."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"

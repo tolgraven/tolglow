@@ -218,11 +218,17 @@ selecting and preparing output before dropping the packet. Slot 143 had a
 CPU-intensive calculation, a wait for CPU time, or a garbage collection
 pause requires a trace from the same frame. [Timing chart and raw captures](https://github.com/tolgraven/afterglow/pull/89)
 
-The release replay explicitly enables adaptive keyframes. In its EDN output,
-each completed render records each instance's cumulative real evaluation count,
-the observed outcome, its active window in beats or milliseconds, and the stride
-selected for the next frame. An endpoint samples effect code. Interpolation uses
-an existing window without calling that code. A direct sample evaluates the
-current frame. The narrow pulse in this show keeps direct sampling to preserve
-its edges. The summary counts outcomes over the measured slots after warmup.
-A slot skipped entirely has no effect sample.
+The release replay enables adaptive keyframes and records actual calls per
+instance on each completed render. A direct sample evaluates the current
+frame. An endpoint samples a future target and may also sample a new origin.
+Interpolation reads an existing window and makes zero worker calls. In the
+1,024-pixel scene the wash, aim and pulse effects all persist. The pulse keeps
+direct sampling to preserve its narrow edges.
+
+Surviving instances also report their cumulative evaluation count, active
+window and next stride. A one-shot that runs and finishes in the same frame
+appears as `:retired-sampled` with its actual call count for that render.
+Ending an instance before its step runs adds no sample. These counters measure
+invocations, including a call that throws. Packet delivery is recorded
+separately at the sink. The summary counts outcomes per instance per completed
+render after warmup. Skipped slots have no effect observations.

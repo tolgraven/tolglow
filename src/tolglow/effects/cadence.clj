@@ -45,19 +45,24 @@
             intervals (when (= (:epoch model) (:epoch state))
                         (requested-intervals (:effects state) ids period (:max-stride options) (:limits limits)))
             observer (cadence/observer)]
-        {:config config :options options :previous state :quality quality :ceilings limits :samples (:samples observer)
-         :epoch (:epoch model) :period-ms period
-         :inputs {:keyframe-intervals intervals :measure-effect (:measure-effect observer)}}))))
+        (cond-> {:config config :options options :previous state :quality quality :ceilings limits :samples (:samples observer)
+                 :epoch (:epoch model) :period-ms period
+                 :inputs {:keyframe-intervals intervals :measure-effect (:measure-effect observer)}}
+          (:capture-effect-samples? runtime) (assoc :source-versions ids))))))
 
 (defn finish [session model elapsed-ms]
   (let [{:keys [options epoch period-ms previous samples config]} session
         ids (versions model)
         quality (quality/prepare (:quality session) epoch ids (:instances model))
         limits (stride-limits (:ceilings session) (:ceilings quality) (:transport model) period-ms (:max-stride options))
+        measured @samples
         timings {:defer-live-slowdown? (:defer-live-slowdown? session)
-                 :epoch epoch :versions ids :max-strides (:limits limits) :samples (quality/protect @samples (:protected quality))
+                 :epoch epoch :versions ids :max-strides (:limits limits) :samples (quality/protect measured (:protected quality))
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
-    {:options options :config config :quality quality :ceilings limits :state (cadence/advance previous timings options)}))
+    (cond-> {:options options :config config :quality quality :ceilings limits :state (cadence/advance previous timings options)}
+      (:source-versions session)
+      (assoc :observed-samples {:versions (:source-versions session) :samples measured
+                                :frame-number (:frame-number model)}))))
 
 (defn status
   "Read the diagnostic ranking on demand, outside the frame publication loop."
