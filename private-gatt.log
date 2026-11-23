@@ -1,0 +1,18 @@
+:repositories detected in user-level profiles! [:user] 
+See https://wiki.leiningen.org/Repeatability
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+
+lein test tolglow.linux.audience.admission-test
+Participants 1
+Paired UDP trace: fresh session armed, :accent launched, one GATT-write to receipt observation 31.32 ms
+BlueZ private-bus trace: 4 GATT objects, 81-byte identity, 65-byte hello, 39-byte encrypted samples, 1 admitted step
+
+lein test tolglow.linux.audience.bluez-test
+BlueZ private-bus trace: 4 GATT objects, 81-byte identity, 65-byte hello, 39-byte encrypted samples, 1 admitted step
+
+lein test tolglow.linux.audience.floor-test
+
+Ran 7 tests containing 58 assertions.
+0 failures, 0 errors.
