@@ -274,6 +274,27 @@ exit does not mean the target rate passed. The owned host stopped and the reused
 tab returned to a blank page with zero workers. No CI guest or native GPU test
 overlapped these samples.
 
+The first synchronized GPU clock comparison at `ad9f29e` retained two valid
+20-second samples with matching recorded camera positions, work light, fog, and frozen Auto
+raster. A cached display image retained the output-size blit, GPU fence and
+bitmap delivery. The counter join conservatively retained 17 whole intervals
+per sample, excluding windows near the browser boundaries. The GPU counters
+are system-wide.
+
+| Pass | Presented Hz | Worker median, ms | Fence median, ms | Median active clock, MHz | Median GPU activity |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full moving haze | 56.345 | 11.295 | 9.275 | 607.3 | 82.1% |
+| Cached display image | 59.997 | 5.770 | 5.580 | 549.6 | 65.9% |
+
+The valid full sample's one-second active clock means ranged from 499.8 to
+679.7 MHz. The hardware spent brief periods at 1,056 MHz. Low Power Mode was
+off, power was AC, and thermal pressure was nominal. The cached path kept up
+with the display at a lower clock; these measurements do not identify the
+reason for the GPU's frequency selection. Camera movement invalidated the
+no-fog, cached-shadows and second full samples. The first two samples establish
+the presentation ceiling; attribution to fog or shadow refresh needs a repeat
+with the same camera and controls for the entire sequence.
+
 ## Native Metal translation
 
 The existing Mac window embeds `WKWebView`, which uses ANGLE's GLSL-to-MSL

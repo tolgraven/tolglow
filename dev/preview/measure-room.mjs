@@ -117,7 +117,7 @@ const server = spawn(process.env.LEIN || 'lein', [...leinPrefix, 'run', '-m', 't
 {cwd: source, env: {...process.env, AFTERGLOW_ROOT: fork}, detached: true, stdio: ['ignore', 'pipe', 'pipe']});
 const log = createWriteStream(join(outputDir, 'host.log'));
 server.stderr.pipe(log, {end: false}); server.stdout.pipe(log, {end: false});
-let page, closing, probeWorker, frozenPolicy, completed = false;
+let page, closing, probeWorker, frozenPolicy, comparisonView, completed = false;
 const keepPage = process.env.ROOM_KEEP_PAGE === '1';
 function stopServer() {
   if (server.pid && server.exitCode == null) {
@@ -220,6 +220,13 @@ try {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, String(v));
       element.dispatchEvent(new Event('input', {bubbles: true}));
     }, value);
+  }
+  function viewChanged(before, after) {
+    return ['camera', 'target'].some(key => {
+      const a = before[key], b = after[key];
+      return !Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3 ||
+        a.some((value, i) => !Number.isFinite(value) || !Number.isFinite(b[i]) || Math.abs(value - b[i]) > 1e-6);
+    });
   }
   async function scenario(name, fog, moving, pass = null, emitPlumes = false) {
     await checkDesktop('before-scenario-'+name+'-'+(pass || 'production'));
@@ -329,8 +336,13 @@ try {
     }
     if ([settingsBefore, settingsAfter].some(s => s.quality !== quality || s.lightingMode !== lightingMode || s.workLight !== workLight || s.fog !== fog))
       measured.invalid.push('preview controls differ from the requested benchmark settings');
-    if (measured.start.camera.some((v, i) => Math.abs(v - measured.end.camera[i]) > 1e-6))
+    if (viewChanged(measured.start, measured.end))
       measured.invalid.push('camera changed during the controlled sample');
+    if (controlledComparison) {
+      comparisonView ??= measured.start;
+      if (viewChanged(comparisonView, measured.start))
+        measured.invalid.push('camera differs from the first comparison sample');
+    }
     if (pass) {
       measured.pass = pass;
       if (!measured.passDiagnostic) throw new Error('Browser sample did not return its prepared diagnostic collector');
