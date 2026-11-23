@@ -29,11 +29,16 @@ curl -fsS "http://127.0.0.1:$port/studio/js/main.js" -o /dev/null
 sleep 6
 window="$("$out/window-id" "$app_pid")"
 test -n "$window"
-screencapture -x -o -l "$window" "$out/studio.png"
 for ((i=0; i<12; i++)); do
+  case "$i" in
+    2) python3 native/Tests/capture_cue.py "http://127.0.0.1:$port" ember ;;
+    6) python3 native/Tests/capture_cue.py "http://127.0.0.1:$port" breathe ;;
+    9) python3 native/Tests/capture_cue.py "http://127.0.0.1:$port" orchid ;;
+  esac
   screencapture -x -o -l "$window" "$out/frame-$i.png"
   sleep 0.25
 done
+cp "$out/frame-10.png" "$out/studio.png"
 python3 -m venv "$out/tools"
 "$out/tools/bin/pip" -q install pillow==12.0.0
 "$out/tools/bin/python" - "$out" <<'PY'
@@ -47,5 +52,6 @@ for i in range(12):
     assert max(ImageStat.Stat(image).stddev) > 15, "Captured window has no visible Studio"
     image.thumbnail((1080, 720))
     frames.append(image)
+assert len({frame.tobytes() for frame in frames}) >= 3, "Expected visible cue launches in the captured window"
 frames[0].save(root / "studio.gif", save_all=True, append_images=frames[1:], duration=250, loop=0)
 PY
