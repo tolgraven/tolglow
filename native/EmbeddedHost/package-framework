@@ -23,6 +23,9 @@ info = {"CFBundleExecutable": "TolglowRuntime", "CFBundleIdentifier": "org.tolgl
 with (Path(directory) / "Info.plist").open("wb") as file:
     plistlib.dump(info, file)
 PY
+if [[ "$platform" == iPhoneSimulator ]]; then
+  codesign --force --sign - "$framework"
+fi
 xcrun nm -gjU "$framework/TolglowRuntime" > "$output/runtime-symbols.txt"
 for symbol in _graal_create_isolate _graal_tear_down_isolate _tolglow_open_local _tolglow_close_local; do
   grep -Fxq "$symbol" "$output/runtime-symbols.txt"

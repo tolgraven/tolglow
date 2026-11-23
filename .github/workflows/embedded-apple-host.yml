@@ -3,6 +3,9 @@ on:
   push:
     branches: [codex/apple-embedded-native-host]
 permissions: {contents: read, actions: read}
+concurrency:
+  group: embedded-local-studio-${{ github.ref_name }}
+  cancel-in-progress: true
 jobs:
   ipad:
     runs-on: macos-15-intel
@@ -89,6 +92,7 @@ jobs:
           <project xmlns="http://maven.apache.org/POM/4.0.0">
             <modelVersion>4.0.0</modelVersion><groupId>org.tolglow</groupId><artifactId>ios-host</artifactId><version>1</version>
             <dependencies>
+              <dependency><groupId>org.graalvm.sdk</groupId><artifactId>graal-sdk</artifactId><version>22.1.0</version></dependency>
               <dependency><groupId>io.github.willena</groupId><artifactId>sqlite-jdbc</artifactId><version>3.49.0.0</version></dependency>
               <dependency><groupId>org.tolglow</groupId><artifactId>studio-host</artifactId><version>1</version></dependency>
               <dependency><groupId>com.github.clj-easy</groupId><artifactId>graal-build-time</artifactId><version>1.0.6</version></dependency>
