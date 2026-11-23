@@ -241,3 +241,14 @@ input produces zero frames, and mounts a second hidden preview for both render
 paths. Its mixed-gate check dispatches window blur/focus events. The unit suite
 simulates tab visibility, window focus and page lifecycle changes. Physical
 macOS and iPadOS window switching and display refresh need device verification.
+
+## Comparing the preview with a private camera reference
+
+Use the operator's privately supplied iPhone Cinematic footage as a continuing visual reference for changes to the room renderer. Review the original locally. Keep the footage, extracted stills, identifying metadata and recreations of private artwork out of repositories, CI artifacts and review posts. Public evidence can use a synthetic venue with the same lighting conditions. The supplied clip has been decoded and inspected privately. The matched renderer comparison and hardware measurement remain open.
+
+1. Select a short passage and record its start and end presentation timestamps in the private notes. Preserve the source timebase and variable frame timing where available. If timing or optical metadata is absent, mark it unknown.
+2. Compare scene properties first. Where the reference makes a property visible, inspect the emitting aperture, footprint and edge softness, lit surfaces, extinction through the room and how those change in motion. Compare the neutral render before adding a camera treatment.
+3. Treat the phone image as a camera rendering. Record known lens or zoom selection, focus changes, exposure and tone mapping separately. Cinematic focus blur or exposure adaptation can change apparent beam width and brightness. Keep uncertain observations explicit before using them to tune a fixture or the fog model.
+4. Compare a matched still **and** moving playback over the same interval and framing. Look for temporal aliasing, unstable edges, steps in motion and exposure drift that a still cannot reveal. For the rendered side record revision, rig and cue, hardware, browser, display refresh, output dimensions, internal raster dimensions and quality settings. Report actual presentations per second and frame-interval spread over the passage. Record the physical fixture output cadence separately.
+
+For the next renderer review, retain the private time range and observations locally. Publish only non-identifying observations and evidence from the synthetic rig, including the rendered still, recording and measured performance. Update the result when a change improves one property at the expense of another. The existing Air measurements provide a reproducible performance comparison. [Physical MacBook Air qualification](../performance/macbook-air.md)

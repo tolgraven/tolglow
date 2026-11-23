@@ -2618,7 +2618,8 @@
     "tolglow/resources/studio/preview.js"],
    :acceptance
    ["Match actual runtime aim/fixture/rig data"
-    "Actual rendered visual review, no AAA claim from source tests"],
+    "Actual rendered visual review, no AAA claim from source tests"
+    "Compare the preview privately against the operator’s iPhone Cinematic reference at source timestamps when available. Review a still and motion, separate lens, focus and exposure from scene optics, and retain actual presentation rates and raster dimensions for the rendered side. Use synthetic venue footage for public evidence."],
    :title
    "Replace rudimentary preview with shared-model Three scene and fixture optics",
    :status :planned,
