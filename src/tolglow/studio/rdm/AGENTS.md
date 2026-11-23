@@ -5,7 +5,7 @@ deadline with DMX output. Requiring these namespaces and reading status are iner
 An explicit session and action are required for discovery, GET and SET. Bound
 jobs, RPC messages and device enumeration. Close sockets on timeout/cancellation.
 
-The OLA protocol and PID references are linked in `docs/rdm.md`. Do not invent
+The Art-Net specification, OLA protocol and PID references are linked in `docs/rdm.md`. Do not invent
 protocol fields or hardware capabilities. Preserve NACK/ACK_TIMER information,
 validate request/reply identity and retain raw parameter bytes for unknown PIDs.
 Persist configuration/bindings/observations, never sockets, workers or arming.

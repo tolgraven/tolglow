@@ -4,12 +4,17 @@ import fs from 'node:fs';
 const connection=JSON.parse(fs.readFileSync(process.env.RDM_QA_CONNECTION_FILE || 'target/rdm-qa.json','utf8'));
 if (connection['loopback-peer'] !== true || !/^http:\/\/127\.0\.0\.1:\d+$/.test(connection['studio-url'])) throw new Error('Expected owned loopback QA connection');
 const base=connection['studio-url'];
+const direct = process.env.RDM_QA_TRANSPORT === 'art-net';
 const artifacts=process.env.RDM_QA_ARTIFACTS || 'target/rdm-browser';
 fs.mkdirSync(artifacts,{recursive:true});
 const browser=await chromium.launch({executablePath:process.env.STUDIO_CHROMIUM || '/usr/bin/chromium',headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
 const report={checks:[],errors:[],screenshots:[]};
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 page.on('pageerror',e=>report.errors.push(e.message));
+let statusFetches = 0;
+page.on('request', request => {
+  if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/rdm') statusFetches++;
+});
 const check=(name,ok)=>{if(!ok)throw new Error(name);report.checks.push(name)};
 try {
  await page.goto(`${base}/rig`);
@@ -17,7 +22,25 @@ try {
  await panel.waitFor();
  await page.getByRole('button',{name:'Enable RDM',exact:true}).waitFor();
  check('passive initial status', (await page.request.get(`${base}/api/rdm`).then(r=>r.json())).jobs.length===0);
- await page.getByLabel('OLA TCP port',{exact:true}).fill(String(connection['ola-port']));
+ if (direct) {
+   const config = connection['art-net'];
+   await page.getByLabel('RDM transport').selectOption('art-net');
+   await page.getByLabel('Gateway IPv4 address').fill(config.host);
+   await page.getByLabel('Gateway UDP port').fill(String(config.port));
+   await page.getByLabel('Controller UID').fill(config['controller-uid']);
+   await page.getByText('Connection settings', {exact: true}).click();
+   await page.getByLabel('Local UDP port').fill('0');
+   const form = panel.locator('.rdm-session');
+   for (const [name, width, height] of [['ipad', 1024, 768], ['phone', 390, 844]]) {
+     await page.setViewportSize({width, height});
+     await form.scrollIntoViewIfNeeded();
+     await form.screenshot({path: `${artifacts}/gateway-${name}.png`});
+     check(`${name} gateway form fits`, await form.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+   }
+   await page.setViewportSize({width: 1440, height: 1000});
+ } else {
+   await page.getByLabel('OLA TCP port',{exact:true}).fill(String(connection['ola-port']));
+ }
  await page.getByRole('button',{name:'Enable RDM',exact:true}).click();
  await page.getByRole('button',{name:'Disable RDM',exact:true}).waitFor();
  await page.getByRole('button',{name:'Discover',exact:true}).click();
@@ -49,9 +72,9 @@ try {
  await panel.getByText('Front left',{exact:true}).waitFor();
  check('device label write and readback',true);
  await page.getByRole('button',{name:'Identify on',exact:true}).click();
- await page.waitForFunction(async()=>{const s=await fetch('/api/rdm').then(r=>r.json());return Object.values(s.observations||{}).some(o=>o.fields?.identify?.value===true)});
+ await panel.getByLabel('Observed identify').filter({hasText: /^On$/}).waitFor();
  await page.getByRole('button',{name:'Identify off',exact:true}).click();
- await page.waitForFunction(async()=>{const s=await fetch('/api/rdm').then(r=>r.json());return Object.values(s.observations||{}).some(o=>o.fields?.identify?.value===false)});
+ await panel.getByLabel('Observed identify').filter({hasText: /^Off$/}).waitFor();
  check('identify toggles and readback',true);
  await panel.getByText('Advanced GET / SET',{exact:true}).click();
  await page.getByLabel('Parameter ID',{exact:true}).fill('0x9999');
@@ -68,6 +91,7 @@ try {
  await page.getByRole('button',{name:'Disable RDM',exact:true}).click();
  await page.getByRole('button',{name:'Enable RDM',exact:true}).waitFor();
  check('explicit disconnect',true);
+ check('all Rig status changes arrived by push', statusFetches === 0);
  check('no component errors',report.errors.length===0);
  console.log(`Passed ${report.checks.length} RDM browser checks; report: ${artifacts}/report.json`);
 } finally {fs.writeFileSync(`${artifacts}/report.json`,JSON.stringify(report,null,2));await browser.close();}

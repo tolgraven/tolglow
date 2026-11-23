@@ -560,14 +560,27 @@
               "Actual Ring/Chromium loopback workflow: 14 checks passed, no component errors or horizontal overflow at desktop/iPad/phone widths"
               "dev/tolglow/rdm_qa.clj and test/studio/rdm_browser.mjs reproduce browser evidence; no physical olad/USB fixture or Safari qualification"]}
   {:id :rig/direct-artnet-rdm
-   :title "Add direct ArtTod discovery and ArtRdm device control"
-   :kind :implementation :status :planned :owner nil
-   :paths ["tolglow/src/tolglow/studio/rdm/artnet.clj"
-           "tolglow/test/tolglow/studio/rdm_artnet_test.clj"]
+   :title "Discover and configure fixtures over direct Art-Net with pushed rig feedback"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/rdm" "afterglow/test/afterglow/rdm"
+           "tolglow/src/tolglow/rig/rdm.clj" "tolglow/src/studio/tolglow/studio/rdm.cljs"
+           "tolglow/src/studio/tolglow/studio/rdm_test.cljs" "tolglow/test/tolglow/studio/state_stream_test.clj"
+           "tolglow/test/tolglow/rig/rdm_gateway.clj" "tolglow/docs/rdm.md"]
    :depends-on [:rig/rdm-device-management]
    :acceptance ["Verify ArtTod and ArtRdm formats against the published Art-Net specification"
-                "Reuse explicit sessions, bounded jobs and separate physical readback without sharing the DMX deadline transport"
-                "Qualify discovery and controls against protocol peers, then separately selected real nodes"]
+                "Use explicit sessions and bounded jobs for both transports and restore observations offline"
+                "Register headless RDM config and drive the Rig tab with a leased Transit subscription"]
+   :evidence ["Afterglow #58 implements the Art-Net 4 wire path and tests independent gateway packets on loopback"
+              "Headless module and real Ring to UDP to WebSocket diff and Transit restore in state_stream_test.clj"
+              "Chromium passed 15 OLA and 17 Art-Net checks including discovery, SET/readback, patch adoption and zero Rig status fetches"
+              "Optimized Studio build produced 204 files with zero compiler warnings. Physical qualification is tracked separately."]}
+  {:id :rig/rdm-gateway-qualification
+   :title "Qualify RDM readback on physical USB and Art-Net gateways"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/rdm.md"]
+   :depends-on [:rig/direct-artnet-rdm]
+   :acceptance ["Record gateway and fixture models and versions during a selected physical session"
+                "Verify discovery, readback, identification and restore using the physical interfaces"]
    :evidence []}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
   {:id :runtime/effect-fault-isolation
