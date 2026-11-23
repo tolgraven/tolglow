@@ -16,3 +16,4 @@ xcodebuild -project Tolglow.xcodeproj -scheme TolglowAudienceBridge \
   -destination 'platform=macOS' -derivedDataPath "$native_root/DerivedData" CODE_SIGNING_ALLOWED=NO build
 xcodebuild -project Tolglow.xcodeproj -scheme TolglowAudienceClip \
   -destination 'generic/platform=iOS Simulator' -derivedDataPath "$native_root/DerivedData" CODE_SIGNING_ALLOWED=NO build
+"$native_root/AudienceCompute/check_mac.sh"

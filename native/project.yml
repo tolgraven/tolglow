@@ -23,6 +23,8 @@ targets:
         excludes: ["**/AGENTS.md"]
       - Shared
       - Audience
+      - AudienceCompute/Shared
+      - AudienceCompute/Phone
     entitlements:
       path: iOS/TolglowPhone.entitlements
       properties:
@@ -32,6 +34,7 @@ targets:
       properties:
         CFBundleDisplayName: Tolglow
         UILaunchScreen: {}
+        NSBonjourServices: ["_tolglow-cmp._tcp"]
         NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.
         NSCameraUsageDescription: Estimate dance movement locally or measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you conduct lights, preview sensors, or hold a fixed sightline for fog or reflectance measurements.
@@ -80,7 +83,7 @@ targets:
     type: tool
     platform: macOS
     deploymentTarget: '13.0'
-    sources: [AudienceBridge, Audience/AudienceRadio.swift]
+    sources: [AudienceBridge, Audience/AudienceRadio.swift, AudienceCompute/Shared, AudienceCompute/Stage]
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

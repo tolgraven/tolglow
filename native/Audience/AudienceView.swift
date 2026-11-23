@@ -31,6 +31,9 @@ struct AudienceView: View {
                         ProgressView(value: session.effort)
                         LabeledContent("Steps", value: String(session.totalSteps))
                         if !session.message.isEmpty { Text(session.message).foregroundStyle(.secondary) }
+                        #if !APPCLIP
+                        if let room, client.offersCompute { GuestComputeControl(client: client, room: room) }
+                        #endif
                         Button("Leave stage", role: .destructive) { client.leave() }
                     } else {
                         Text("Join a nearby stage over Bluetooth. Your activity contributes to the lighting mix.").foregroundStyle(.secondary)
