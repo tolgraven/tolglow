@@ -91,3 +91,16 @@ the mover interval reduced its peak error fourfold. On this scene the selective
 CPU lane cost more than full rate. A live governor should protect measured
 transients, slow only costly predictable inputs under sustained pressure, and
 recover in steps when the delivery deadline allows it.
+
+## Continuous evidence
+
+The existing master performance workflow retains `multirate-quality.edn` and
+`transient-scheduling.edn` with the measured Tolglow and Afterglow commit IDs.
+A change to either replay or to the adaptive scheduler triggers the PR job. The
+existing master push and weekly jobs use the same CPU replay. Manual revision
+comparisons record both reports for each revision that contains their source.
+Timing percentiles are recorded for comparison. The fidelity assertions use
+frame-by-frame reference output and run independently of host speed.
+
+[Master performance workflow](../../.github/workflows/performance.yml) ·
+[Flash recovery experiment](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
