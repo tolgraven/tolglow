@@ -20,6 +20,8 @@ jobs:
         with: {repository: tolgraven/tolglow, run-id: 45203669721, name: studio-runtime, github-token: '${{ github.token }}', path: build/release}
       - name: Exercise the phone's Gluon 17 metadata and show folder on Linux
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libfreetype-dev
           toolchain="$RUNNER_TEMP/gluon-linux"
           mkdir -p "$toolchain"
           curl -fLsS --retry 3 https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-linux-gluon-22.1.0.1-Final.tar.gz -o "$toolchain/graal.tgz"
