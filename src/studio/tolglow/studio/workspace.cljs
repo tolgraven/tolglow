@@ -73,7 +73,25 @@
   (valid-source source)
   (if (get-in s [:files key]) (-> s (assoc-in [:files key :source] source) (update :errors dissoc [:file key])) s))
 
-(rf/reg-sub :workspace/state (fn [db _] (state db)))
+(defn with-status [local result]
+  (let [id (:selected-id local)
+        status (:value result)]
+    (cond
+      (nil? result) local
+      (and id (= id (:id status))) (assoc-in local [:statuses id] status)
+      (nil? status) (-> local (update :statuses dissoc id)
+                        (assoc-in [:errors [:status id]] "Workspace status is unavailable."))
+      :else local)))
+
+(rf/reg-sub :workspace/local (fn [db _] (state db)))
+(rf/reg-sub-raw :workspace/state
+  (fn [_ _]
+    (let [local (rf/subscribe [:workspace/local])]
+      (r/reaction
+        (let [{:keys [open? selected-id] :as s} @local]
+          (if (and open? selected-id)
+            (with-status s @(rf/subscribe [:studio/remote-result [:development/workspace selected-id]]))
+            s))))))
 (rf/reg-sub :workspace/token (fn [db _] (token db)))
 (rf/reg-event-db :workspace/set
   (fn [db [_ path value]]
@@ -85,13 +103,13 @@
 (rf/reg-event-fx :workspace/runtime-change
   (fn [{:keys [db]} _]
     (cond-> {:db (store db (-> (state db) (update :generation inc)
-                              (assoc :pending {} :errors {} :runner-ready? false :profiles [] :notice nil)))}
+                              (assoc :pending {} :errors {} :statuses {} :runner-ready? false :profiles [] :notice nil)))}
       (:open? (state db)) (assoc :dispatch [:workspace/list]))))
 (rf/reg-event-fx :workspace/list
   (fn [{:keys [db]} _]
     (cond
       (not (:open? (state db))) {}
-      (nil? (get-in db [:show :runtime-id])) {:dispatch-later [{:ms 200 :dispatch [:workspace/list]}]}
+      (nil? (get-in db [:show :runtime-id])) {}
       (get-in (state db) [:pending :list]) {}
       :else (request db :list nil {} nil {}))))
 (rf/reg-event-fx :workspace/create
@@ -106,12 +124,12 @@
   (fn [{:keys [db]} [_ id]]
     (let [id (wire id)]
       {:db (store db (assoc (state db) :selected-id id :active-file nil :filter "" :notice nil))
-       :fx [[:dispatch [:workspace/tree 0]] [:dispatch [:workspace/status id]]]})))
+       :dispatch [:workspace/tree 0]})))
 (rf/reg-event-fx :workspace/review-task
   (fn [{:keys [db]} [_ id]]
     (let [id (wire id)]
       {:db (store db (assoc (state db) :selected-id id :active-file nil :pane :diff :filter "" :notice nil))
-       :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/status id]] [:dispatch [:workspace/diff]]]})))
+       :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/diff]]]})))
 (rf/reg-event-fx :workspace/repository
   (fn [{:keys [db]} [_ repo]]
     {:db (store db (assoc (state db) :repo (wire repo) :active-file nil :filter "")) :dispatch [:workspace/tree 0]}))
@@ -120,14 +138,6 @@
     (let [s (state db) id (:selected-id s) repo (:repo s) key [:tree id repo]]
       (if (or (nil? id) (get-in s [:pending key])) {}
         (request db key :tree {:id id :repo repo :offset offset :limit 500} nil {:id id :repo repo :offset offset})))))
-(rf/reg-event-fx :workspace/status
-  (fn [{:keys [db]} [_ id]]
-    (let [s (state db) key [:status id]]
-      (if (or (not (:open? s)) (not= id (:selected-id s)) (get-in s [:pending key])) {}
-        (request (store db (assoc s :poll-id nil)) key :status {:id id} nil {:id id})))))
-(rf/reg-event-fx :workspace/poll-status
-  (fn [{:keys [db]} [_ id serial]]
-    (if (= [id serial] (:poll-id (state db))) {:dispatch [:workspace/status id]} {})))
 (rf/reg-event-fx :workspace/open-file
   (fn [{:keys [db]} [_ path]]
     (let [s (state db) key (file-key (:selected-id s) (:repo s) path)
@@ -240,12 +250,9 @@
           nil (cond-> {:db (store db (-> s (assoc :workspaces (:workspaces data []) :profiles (profiles (:profiles data []))
                                                  :runner-ready? (true? (:runner-ready? data)) :closed? (:closed? data))
                                         (update :statuses merge (into {} (map (juxt :id identity) (:workspaces data))))))}
-                (:selected-id s) (assoc :dispatch [:workspace/status (:selected-id s)])
                 (and (nil? (:selected-id s)) (seq (:workspaces data))) (assoc :dispatch [:workspace/select (:id (first (:workspaces data)))]))
           :create {:db (store db (-> s (assoc-in [:statuses (:id data)] data) (assoc :notice "Paired workspace created.")))
                    :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/navigate [:workspace/select (:id data)]]]]}
-          :status {:db (store db (-> s (assoc-in [:statuses id] data) (assoc :poll-id [id serial])))
-                   :dispatch-later (when (and (:open? s) (= id (:selected-id s))) [{:ms 1500 :dispatch [:workspace/poll-status id serial]}])}
           :tree (let [previous (get-in s [:trees [id repo] :entries])
                       entries (if (zero? offset) (:entries data) (vec (vals (into (sorted-map) (map (juxt :path identity) (concat previous (:entries data)))))))]
                   {:db (store db (assoc-in s [:trees [id repo]] (assoc data :entries entries)))})
@@ -255,21 +262,17 @@
                                  (-> (update-in [:files file-key] merge (select-keys data [:hash :size :revision]))
                                      (assoc-in [:files file-key :baseline] source)
                                      (assoc-in [:files file-key :disk] nil))))
-                  :fx [[:dispatch [:workspace/status (first file-key)]] [:dispatch [:workspace/tree 0]] [:dispatch [:workspace/diff]]]}
+                  :fx [[:dispatch [:workspace/tree 0]] [:dispatch [:workspace/diff]]]}
           :diff {:db (store db (assoc-in s [:diffs id] data))}
-          :check {:db (store db (assoc-in s [:statuses id :running-checks profile] data)) :dispatch [:workspace/status id]}
-          :stage {:db (store db (-> s (assoc-in [:statuses id :preview] data) (assoc :notice "Review candidate prepared from the checked files.")))
-                  :dispatch [:workspace/status id]}
+          :check {:db (store db (assoc-in s [:statuses id :running-checks profile] data))}
+          :stage {:db (store db (-> s (assoc-in [:statuses id :preview] data) (assoc :notice "Review candidate prepared from the checked files.")))}
           {:db (store db s)})))))
 (rf/reg-event-fx :workspace/failure
   (fn [{:keys [db]} [_ t key serial error]]
     (if-not (and (current? db t) (= serial (get-in (state db) [:pending key]))) {}
-      (let [status? (and (vector? key) (= :status (first key)))
-            s (cond-> (-> (state db) (update :pending dissoc key) (assoc-in [:errors key] (events/error-message error)))
-                status? (assoc :poll-id [(second key) serial]))]
-        {:db (store db s)
-         :dispatch-later (when (and (vector? key) (= :status (first key)) (:open? s) (= (second key) (:selected-id s)))
-                           [{:ms 3000 :dispatch [:workspace/poll-status (second key) serial]}])}))))
+      {:db (store db (-> (state db)
+                         (update :pending dissoc key)
+                         (assoc-in [:errors key] (events/error-message error))))})))
 
 (def neovim
   (r/create-class

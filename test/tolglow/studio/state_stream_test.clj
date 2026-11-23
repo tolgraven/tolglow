@@ -2,6 +2,8 @@
   (:require [afterglow.reactive :as rx]
             [afterglow.sync :as sync]
             [tolglow.connections :as connections]
+            [tolglow.development.workspace :as workspace]
+            [tolglow.development.workspace-test :as fixture]
             [tolglow.application :as app]
             [tolglow.rig.rdm-gateway :as gateway]
             [tolglow.rig.rdm-test :as rdm-peer]
@@ -433,3 +435,48 @@
           (is (nil? (get-in restored (conj qpath :session-id))))
           (is (= prev @requests))))
       (finally (.abort ^WebSocket (:socket client)) (.stop server) (app/stop! runtime) (close!)))))
+
+(deftest workspace-check-status-is-pushed-without-advancing-the-show
+  (fixture/with-workspace {}
+    (fn [{:keys [root first second]}]
+      (let [finish (promise)
+            runtime (show/create-runtime
+                      {:workspace-options
+                       {:repositories {:tolglow (str first) :afterglow (str second)}
+                        :workspace-parent (str (.resolve ^java.nio.file.Path root "studio-workspaces"))
+                        :check-profiles {:unit {:repo :tolglow :argv ["git" "status" "--porcelain"]}}
+                        :runner (fn [request] (deref finish 3000 nil) (workspace/run-trusted-process! request))}})
+            manager (get-in runtime [:development :workspaces])
+            _ (workspace/create! manager {:id "lighting"})
+            server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+            client (connect server "workspace&view=queries")
+            query [:development/workspace "lighting"]
+            cursor [:subscriptions query :value]
+            initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager)))]
+        (try
+          (acknowledge client (receive client))
+          (send-control client {:op :queries :queries [query]})
+          (let [initial (receive client)
+                initial-status (get-in (:view initial) cursor)]
+            (is (= "lighting" (:id initial-status)))
+            (is (empty? (:running-checks initial-status)))
+            (is (= (inc initial-watches) (count (.getWatches ^clojure.lang.Atom (:state manager)))))
+            (acknowledge client initial)
+            (let [run (workspace/check! manager "lighting" :unit)
+                  running (receive client)
+                  running-view (apply-patch (:view initial) running)]
+              (is (= :running (get-in running-view (into cursor [:running-checks :unit :status]))))
+              (acknowledge client running)
+              (deliver finish true)
+              (let [done (receive client)
+                    done-view (apply-patch running-view done)]
+                (is (= :passed (get-in done-view (into cursor [:checks :unit :status]))))
+                (is (= (:frame-number (:view initial)) (:frame-number done-view)))
+                (is (= (:run-id run) (get-in done-view (into cursor [:checks :unit :run-id]))))
+                (acknowledge client done))))
+          (send-control client {:op :queries :queries []})
+          (let [released (receive client)]
+            (is (empty? (get-in released [:view :subscriptions])))
+            (is (= initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager))))))
+          (finally (deliver finish true) (.abort ^WebSocket (:socket client))
+                   (.stop server) (show/stop! runtime)))))))

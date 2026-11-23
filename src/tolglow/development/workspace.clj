@@ -165,6 +165,23 @@
   ([manager] {:closed? (:closed? @(:state manager)) :workspaces (mapv public-workspace (sort-by :id (vals (:workspaces @(:state manager)))))})
   ([manager id] (public-workspace (owned manager id))))
 
+(defn status-source
+  "Watch the selected public status. Projection is deferred to the reader.
+  A paused show still wakes on check completion or on a change from the REPL."
+  [manager id]
+  (if-not (and manager (id? id))
+    {:result (delay {:error :unavailable})}
+    (let [state (:state manager)
+          token (Object.)
+          select (fn [state] (when-not (:closed? state) (get-in state [:workspaces id])))
+          latest (fn [] (select @state))]
+      {:source! latest
+       :sample! #(when % (public-workspace %))
+       :observe! (fn [wake!]
+                   (add-watch state token (fn [_ _ old new]
+                                            (when-not (identical? (select old) (select new)) (wake!))))
+                   #(remove-watch state token))})))
+
 (defn- ensure-parent! [manager]
   (let [parent ^Path (:parent manager)]
     (loop [current parent]

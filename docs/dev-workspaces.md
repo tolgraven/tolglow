@@ -96,6 +96,8 @@ terminal lifecycle suite, the checkpoint is **22 tests / 139 assertions**.
 
 ## Checks and candidate readiness
 
+The Develop panel subscribes to `[:development/workspace "lighting"]` for the selected workspace, on Studio’s existing operator-authenticated Transit WebSocket. It receives the initial status followed by changes to running checks, their results, the worktree revision and preview readiness. An edit or a completed check in another client or at the REPL also updates the panel, even while the lighting clock is paused. Switching workspaces, hiding the page or leaving Develop releases the observer when its last client leaves. Reconnecting requests the current status. The one-time workspace list supplies available check profiles. REPL and HTTP callers can still request a status snapshot directly.
+
 Only named host-configured argv profiles can run. Without a runner, `check!`
 rejects the operation explicitly. The default application uses the
 [Docker runner](terminal.md). The exported `run-trusted-process!` helper is for
