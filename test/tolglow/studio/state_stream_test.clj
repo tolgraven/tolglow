@@ -466,6 +466,10 @@
         (let [started (next-view client base) grant (get (grants started) source)]
           (is (= :center-rgb (:sampler grant)))
           (send-control other (packet grant [99 99 99]))
+          (send-control other {:op :resync})
+          (next-view other backup)
+          (rx/publish! system)
+          (is (nil? @(:signal reader)) "A second socket cannot borrow the first socket's grant")
           (send-control client (packet grant [12 34 56]))
           ;; A :resync is ordered behind its preceding observation on this same
           ;; socket. The show can stay paused while producers join and leave.

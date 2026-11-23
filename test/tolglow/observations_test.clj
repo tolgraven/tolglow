@@ -23,6 +23,7 @@
                                               :frame-number 0 :sampled-ms (- ms 1) :completed-ms ms :value v}))]
     (try
       (is (nil? (grant a scene)))
+      (is (thrown? clojure.lang.ExceptionInfo (obs/scope-query (conj demand "chosen-by-client"))))
       (is (= "tolglow.observations/latest-observation"
              (get-in (rx/export-registry system) [:registrations 0 :implementation :symbol])))
       (let [one (rx/acquire! system query #(swap! changes conj %))
