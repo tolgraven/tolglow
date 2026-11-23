@@ -1,9 +1,15 @@
 import SwiftUI
+#if APPCLIP
+import StoreKit
+#endif
 
 struct AudienceView: View {
     @ObservedObject var session: AudienceSession
     @ObservedObject private var client: AudienceClient
     @Environment(\.scenePhase) private var phase
+    #if APPCLIP
+    @State private var showFullApp = false
+    #endif
     let room: String?
 
     init(session: AudienceSession, room: String? = nil) {
@@ -53,6 +59,12 @@ struct AudienceView: View {
                             Button("Find nearby stages") { client.discover(room: room) }.buttonStyle(.borderedProminent)
                         }
                     }
+                    #if APPCLIP
+                    Button("Use iPhone or Watch motion in Tolglow") { showFullApp = true }
+                        .appStoreOverlay(isPresented: $showFullApp) {
+                            SKOverlay.AppClipConfiguration(position: .bottom)
+                        }
+                    #endif
                 }.padding()
             }.navigationTitle("Dance floor")
         }
