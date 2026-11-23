@@ -28,6 +28,25 @@ The native host replay allowed a two-second compute deadline to measure both imp
 
 A separate six-frame scalar-to-native comparison found eight DMX slot differences in total, each one byte step. The maximum difference in the selected emitted-color components was 4.94e-9. At the 12 ms deadline that replay used CPU fallback on all 96 requests and matched the scalar packets and preview. Preserve both the exact same-backend oracle and a cross-backend precision check when promoting changes.
 
+### Independent physical output
+
+Each physical completion passes from a renderer-owned byte array to an immutable packet and then to transport-owned buffers. Sampling the independent clock on a 20,000-pixel sculpture found boxed doubles in the validation of signed and unsigned DMX values. Integer comparisons and a direct primitive store reduced allocation during publication. Both runs in each pair compared their entire output with a third show running the scalar renderer. Each measurement used 64 moving heads, 18 warmup frames, 32 timed frames, two workers and a manually stepped physical clock.
+
+| Pixels | Universes | Allocated per frame, p50 | Publication p95 | Whole-show p95 | Frames over 25 ms |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 80 | 14.56 → 7.21 MB | 5.72 → 1.73 ms | 38.61 → 29.22 ms | 6 → 2 |
+| 20,000 | 158 | 27.10 → 12.59 MB | 34.50 → 10.20 ms | 96.45 → 98.13 ms | 32 → 23 |
+
+Every ArtDMX byte matched in all 50 frames at each size. The independent packet validation also runs on edited packets at admission or conversion to transport buffers. The slowest whole-show frames include work on the shared host outside publication. [Afterglow #81 and captured traces](https://github.com/tolgraven/afterglow/pull/81)
+
+### Uniform fields at the physical fixture packer
+
+On the mixed-UV sculpture, shader fusion eliminated seven of fourteen uniform result expansions. The remaining seven repeated 341,600 scalar components, or 2.73 MB per frame. The local native renderer now passes one detached tuple per uniform field into physical packing. A unit-opacity normalized replacement can fill head slots from this tuple after checking the value once. Cue gain with different eligibility across heads expands that field before blending.
+
+A 20,000-pixel show with 64 movers, four moving optical volumes and eight stacked washes compared 40 measured pairs after 16 warmups. The reference used the released packing functions from `844198c`. The complete code change reduced median frame allocation from 114.53 to 107.24 MB and physical render p95 from 241.40 to 92.21 ms. Whole-frame p95 fell from 411.98 to 310.02 ms, while whole-frame p50 rose from 202.73 to 205.97 ms and median worker plus coordinator CPU rose from 192.12 to 206.49 ms. All 158 universes, model and intents matched. Selected continuous fixture previews agreed within 1e-9. Both hosts issued the same 345 draws with no CPU fallbacks on Mesa llvmpipe.
+
+The 10,000-pixel CPU-only control matched the scalar oracle across 52 frames. Median allocation fell from 14.54 to 13.75 MB, and p95 rose from 60.18 to 68.15 ms. The native captures used a 60-second diagnostic deadline and the same CPU moving-head solver in both lanes. All native samples exceeded 25 ms. The eight-frame follow-up on the reviewed gain change also matched every packet. [Afterglow #82 and runnable captures](https://github.com/tolgraven/afterglow/pull/82)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
