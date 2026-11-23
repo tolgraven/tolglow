@@ -14,6 +14,7 @@ export class CanvasPlayback {
     this.changed = changed;
     this.failed = failed;
     this.state = 'idle';
+    this.external = false;
     this.abort = new AbortController();
     const options = {signal: this.abort.signal};
     const onEnter = () => {
@@ -32,6 +33,8 @@ export class CanvasPlayback {
   set(state) { this.state = state; this.changed(state); }
 
   publish(visible) {
+    if (this.external === visible) return;
+    this.external = visible;
     this.canvas.dispatchEvent(new CustomEvent('tolglow-preview-external', {detail: visible}));
   }
 

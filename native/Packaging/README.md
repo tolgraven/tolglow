@@ -40,6 +40,8 @@ For AirPlay, select **Screen Mirroring** in Control Center and fullscreen the Ro
 
 iPhone and iPad use the existing **Studio** tab to open an enrolled host. The local native calibration, Watch relay and sensor controls remain available. They require their ordinary permissions. The Mac host bundle cannot run as an iOS subprocess.
 
+Foreground browser work follows the app's lifecycle. iOS and iPadOS may suspend the WebKit process after a window moves to the background. Picture in Picture and an external display do not guarantee continuous JavaScript execution. A host using a phone or tablet for opt-in computation must recover from a missing client locally. Low Power Mode, thermal pressure and display refresh adjustments can reduce throughput before suspension. Physical devices are needed to measure these cases.
+
 ## Build and verify
 
 The workflow builds release assets on Linux and opens them on an Apple Silicon runner with the Xcode SDK. For a Mac development build, install XcodeGen, the version of Leiningen specified in the project, Node and the paired Afterglow checkout. Set `JAVA_HOME` to the desired Apple Silicon GraalVM Community JDK, then run the following from the Tolglow repository.
@@ -58,4 +60,6 @@ The Mac release executes JVM bytecode using GraalVM's runtime compiler. Native I
 - [GraalVM Native Image compatibility](https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/)
 - [GluonFX iOS device and simulator toolchains](https://docs.gluonhq.com/#_platforms)
 - [Apple Picture in Picture](https://developer.apple.com/documentation/avkit/adopting-picture-in-picture-in-a-standard-player)
+- [Apple app background states](https://developer.apple.com/documentation/uikit/managing-your-app-s-life-cycle)
+- [Apple thermal state](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.property)
 - [Apple AirPlay screen mirroring](https://support.apple.com/en-us/102661)

@@ -2,11 +2,17 @@
  :updated "2026-11-23",
  :items
  [{:id :native/apple-show-studio :title "Run the selected show in a standalone Apple Studio and present the live canvas"
-   :kind :implementation :status :in-progress :owner "Apple Studio native bundle and external playback"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/macOS" "tolglow/native/Packaging" "tolglow/.github/workflows/apple-studio.yml"
            "tolglow/src/studio/tolglow/studio/preview_playback.cljs" "tolglow/js/preview/preview-activity.js"]
    :depends-on [:foundation/tests]
-   :acceptance ["Open a selected show folder in a standalone app, execute its Clojure code and render real Studio assets. Prove each platform's execution and presentation modes separately."]}
+   :acceptance ["Run a selected show folder in the macOS app, execute its namespaces, retain editable paired source branches, and present the real canvas through the system PiP API."]
+   :evidence ["Apple Silicon run 45145873580 opened the packaged window, ran Clojure in the embedded GraalVM, fetched the release re-frame code from Ring, created worktrees from both bundled Git revisions, and recorded three accepted cue launches. The browser regression reads changed pixels from a live captured track and exercises the system PiP window on supported Chromium desktops."]}
+  {:id :native/apple-on-device-show :title "Compile the show host for on-device iPad and iPhone execution"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/native/Packaging" "tolglow/native/iOS/WebStudioView.swift"]
+   :depends-on [:native/apple-show-studio]
+   :acceptance ["Launch the native-compiled Clojure show, read the chosen show folder and render a production Studio frame without a remote host. Preserve supported editing and foreground/suspend behavior on real hardware."]}
   {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
