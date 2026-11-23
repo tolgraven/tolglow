@@ -52,6 +52,17 @@ jobs:
         run: |
           python3 -m unittest discover -s dev/model-lab
           python3 -m unittest discover -s dev/model-lab/code
+      - name: Preserve conversation request IDs from the PR base
+        if: github.event_name == 'pull_request' && matrix.suite == 'pure' && matrix.java == '17'
+        working-directory: tolglow
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_COMMIT"
+          if git cat-file -e "$BASE_COMMIT:docs/request-coverage.md"; then
+            git show "$BASE_COMMIT:docs/request-coverage.md" > "$RUNNER_TEMP/previous-requests.md"
+            echo "TOLGLOW_PREVIOUS_REQUESTS=$RUNNER_TEMP/previous-requests.md" >> "$GITHUB_ENV"
+          fi
       - name: Validate work tracking
         if: matrix.suite == 'pure'
         working-directory: tolglow
