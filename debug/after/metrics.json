@@ -1,0 +1,20 @@
+{
+  "phone": {
+    "visible": 10,
+    "firstEvent": 277,
+    "rowHeight": 47,
+    "overflow": 0
+  },
+  "ipad": {
+    "visible": 9,
+    "firstEvent": 256,
+    "rowHeight": 47,
+    "overflow": 0
+  },
+  "desktop": {
+    "visible": 11,
+    "firstEvent": 266,
+    "rowHeight": 47,
+    "overflow": 0
+  }
+}
