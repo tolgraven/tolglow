@@ -4,11 +4,18 @@
  [{:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
    :kind :implementation :status :in-progress :owner "Nearby audience participation"
    :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge"]
-   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["PRs 130 and 139 implement nearby iPhone, App Clip, paired and direct Watch routes. PRs 138 and 141 integrate authenticated multi-zone effort, step events, optional six-axis motion and pulse. Three minutes with 96 simulated dancers delivered 34,560 mapped cue commands. Hardware radio, real workout accuracy and signed QR distribution still need venue qualification."]}
+   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Watch can also enroll as a solo Bluetooth guest. AudienceCrowdTests exercises per-person effort and steps with 96 identities, replay, packet loss, rejoin and expiry for a three-minute virtual song. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md." "Tolglow PRs 135 and 136 and Afterglow PR 78 add separate full-app GPU consent and strict or redundant field verification. The bundled iOS shader on Linux matched 3,723 complete 40 Hz Art-Net frames. The macOS encrypted loopback returned 16 KiB in 0.407 ms median. Physical radio and thermal qualification remain open."
+              "PR 141 carries signed acceleration and rotation for consenting phone and Watch participants. The multi-zone OSC tests cover contributor weighting and withdrawal."]}
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
    :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
+  {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
+   :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
+   :paths ["tolglow/linux/audience"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Interoperate with Apple's encrypted v1/v2 frames and paired OSC gesture admission. Exercise ATT/BlueZ hardware and physical capacity on a Pi."]
+   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. Physical Bluetooth controller and Apple device qualification pending."]}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]

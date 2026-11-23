@@ -132,3 +132,76 @@ frame-by-frame reference output and run independently of host speed.
 
 [Master performance workflow](../../.github/workflows/performance.yml) ·
 [Flash recovery experiment](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
+
+## Aim error relative to a projected spot
+
+```sh
+lein run -m tolglow.perf.beam-fidelity target/quality/beam-fidelity.edn 0.25
+```
+
+A direction error of one degree is easy to see in a pencil beam. The same
+angular error in a broad wash can leave its projected spot mostly in place.
+This replay quantifies the displacement on a planar floor. Sixteen groups of
+four moving heads sit six metres above the receiver. Within each group the
+fixtures follow the same lateral orbit and phase. Their targets are either
+0.7 or 6 metres below the lens, and their full beam angles are either 5° or
+40°. The lens radius is 5 mm. The show emits a frame every 25 ms at 120 BPM.
+
+Before reading the show, the replay sends six known pan and tilt values through
+the paired Afterglow packer, including a pan fine slot in the next universe.
+It checks the actual bytes and verifies the decoded angle input to within half
+a code step. The report records the encoding, raw probe bytes and Afterglow Git
+revision. At half and full travel these two verified packers emit the following
+coarse/fine bytes.
+
+| Afterglow revision | Half | Full | Decode to normalized travel |
+| --- | --- | --- | --- |
+| [`3fd49ef`](https://github.com/tolgraven/afterglow/commit/3fd49ef6877cac57dbc5f0e185fedd2dc7607f39) | `7F 80` | `FF 00` | `(255 × coarse + fine) / 65025` |
+| [`68f87b2`](https://github.com/tolgraven/afterglow/commit/68f87b2bd58e67ca695631b05e7258c4bffac89c) | `80 00` | `FF FF` | `(256 × coarse + fine) / 65535` |
+
+Afterglow applies the mount calibration, reconstructs the world
+direction and intersects the lens cone with the floor. For every fixture and
+frame, compare aim angle, angle as a fraction of the beam's half-angle, floor
+displacement in metres, and displacement in units of the original projected
+ellipse. An ellipse-relative distance of one places the candidate spot centre
+on the reference spot boundary along that direction.
+
+The EDN report includes two bars of reference and four-frame footprint traces
+for one representative fixture in each group. The optional positive radius
+budget selects the longest interval whose worst observed first-bar displacement
+fits the given fraction. The report then shows its worst second-bar error.
+This offline comparison uses the projected optical footprint and DMX commands.
+Actuator latency and physical response require separate hardware measurements.
+
+Across 160 frames at four-frame intervals, both calibrated packers measured
+3.438° near-target p95 angular error. Far-target p95 was 0.626° in
+`3fd49ef` and 0.627° in `68f87b2`. Each p95 column below gives projected
+spot radii in that same revision order.
+
+| Target depth | Beam angle | Two-frame p95 | Four-frame p95 | Eight-frame p95 | Chosen stride at a 0.25-radius budget |
+| --- | --- | --- | --- | --- | --- |
+| 0.7 m | 5° | 0.335 / 0.335 | 1.299 / 1.300 | 4.801 / 4.801 | 1 |
+| 0.7 m | 40° | 0.055 / 0.055 | 0.206 / 0.206 | 0.704 / 0.704 | 4 |
+| 6 m | 5° | 0.065 / 0.065 | 0.246 / 0.246 | 0.899 / 0.899 | 2 |
+| 6 m | 40° | 0.009 / 0.009 | 0.034 / 0.034 | 0.124 / 0.124 | 8 |
+
+Admission uses the maximum,
+so the narrow far beam chose stride two even though its stride-four p95 was
+below the cap. The worst second-bar displacement for these choices was 0,
+0.211, 0.068 and 0.138 radii respectively. A changing movement program or zoom
+can invalidate a calibrated interval. An online policy would have to detect
+that change or resample before relying on earlier measurements.
+
+A second replay exercises a continuous sine orbit with a four-frame period.
+For the 5° near beam, sampling only the midpoint of each four-frame window
+would report less than 0.001 radii of error on all 40 windows. The full
+command stream shows worst intermediate displacements of 10.818 radii on
+`3fd49ef` and 10.817 on `68f87b2`.
+All 40 midpoint checks would falsely admit the window at the example budget.
+The report includes these false admissions for each optical configuration.
+
+For the fixed-depth sine orbits in this rig, the report also evaluates an
+analytic error bound from the cue expression and fixture optics. It admits
+strides 1, 2, 2 and 8 before reading the measured frames. Every decoded
+full-rate comparison stayed inside its predicted limit.
+[Curvature assumptions and derivation](aim-curvature.md)
