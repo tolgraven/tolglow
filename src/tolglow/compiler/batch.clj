@@ -179,6 +179,7 @@
                     (when enabled? fixtures))
          {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
+             positions (when block-plan (blocks/positions fixtures))
              scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
              envelope-attributes (set envelope-attributes)]
          (with-meta
@@ -211,7 +212,7 @@
                               (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]
                (if exact? (scalar-step context)
                    (-> context
-                       (blocks/observed block-plan env frame)
+                       (blocks/observed block-plan env frame positions)
                        (assoc :state state :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))

@@ -16,9 +16,12 @@
       (variable-blocks/inspect (::variables (meta model)) path)
       (runtime/observe (get-in model [:instances instance-id]) [path target]))))
 
+(def ^:private builtin-summaries (update-vals blocks/library #(select-keys % [:name :mode :inputs])))
+
 (defn library [context [_ effect-id]]
   (let [custom (get-in @(:db context) [:registry :effects effect-id :prefabs])]
-    (update-vals (merge blocks/library custom) #(select-keys % [:name :mode :inputs]))))
+    (if (seq custom) (merge builtin-summaries (update-vals custom #(select-keys % [:name :mode :inputs])))
+        builtin-summaries)))
 
 (defn register! [system]
   (graph/reg-sub! system :runtime/block-library library

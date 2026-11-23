@@ -154,6 +154,7 @@
   ([definition bind-pure match-plan rig]
   (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
+        positions (when block-plan (blocks/positions rig))
         select-fixtures (fixture-selector rig selected)]
     (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
@@ -217,7 +218,7 @@
                              rows))))
                     fixtures))]
         (-> context
-            (blocks/observed block-plan env frame)
+            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
             (update :intents #(or % []))))))))
