@@ -11,7 +11,7 @@
    :evidence ["docs/repl-studio-parity.md follows the Ember cue across both surfaces and records a scoped scheduling gap. R94 applies to future changes."]}
   {:id :web/studio-type-alignment :title "Align Studio navigation, transport, cue pads and instrument labels"
    :kind :implementation :status :in-progress :owner "Studio shell and live card design owners"
-   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/dev/studio/shell-alignment-qa.mjs"]
+   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/src/shared/tolglow/studio/page_routes.cljc" "tolglow/src/studio/tolglow/studio/views.cljs" "tolglow/dev/studio/shell-alignment-qa.mjs"]
    :depends-on [:foundation/tests]
    :acceptance ["Inspect rendered labels, controls and baselines on phone, iPad and desktop. Measure their bounds, exercise the controls and retain comparable before/after releases."] :evidence []}
   {:id :runtime/publication-clock
