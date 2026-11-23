@@ -46,6 +46,12 @@
         (let [result (fixture/advance manager model @now 1)
               m (:model result)]
           (is (= {:audience-count 12 :dance-effort 0.25 :pulse-count 4 :pulse-bpm 90.0} (levels m)))
+          (let [public (sensors/audience-status manager (assoc m :time-ms @now))]
+            (is (= {:audience-count 12 :dance-effort 0.25 :pulse-count 4} (:levels public)))
+            (is (= #{:armed} (set (map :status (:zones public)))))
+            (is (every? #(= #{:id :label :status :session-id} (set (keys %))) (:zones public)))
+            (is (= {:audience-count 0 :dance-effort 0.0 :pulse-count 0}
+                   (:levels (zones/operator-view m {})))))
           (is (= 2 (count (:commands result))) "Each zone keeps its own gesture identity")
           (is (= (levels m) (levels (audience/project (assoc-in m [:variables :audience :gateways] ["front" "balcony" "front"])))))
           (reset! now 1300)
