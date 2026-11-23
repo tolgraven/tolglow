@@ -9,7 +9,6 @@ devices = json.load(sys.stdin)["devices"]
 print(next(d["udid"] for runtime,group in sorted(devices.items(), reverse=True) if ".iOS-" in runtime for d in group if d["name"].startswith("iPhone")))')"
 xcrun simctl boot "$device" || xcrun simctl bootstatus "$device" -b
 xcrun simctl bootstatus "$device" -b
-xcrun simctl status_bar "$device" override --time 21:00
 clip="$native_root/DerivedData/Build/Products/Debug-iphonesimulator/TolglowAudienceClip.app"
 xcrun simctl install "$device" "$clip"
 xcrun simctl io "$device" recordVideo "$output_dir/audience-clip.mp4" >/dev/null 2>&1 &
