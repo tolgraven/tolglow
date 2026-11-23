@@ -26,8 +26,13 @@ on:
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
       - 'dev/tolglow/perf/adaptive_keyframes.clj'
+      - 'dev/tolglow/perf/multirate_*.clj'
+      - 'dev/tolglow/perf/transient_scheduling.clj'
+      - 'dev/tolglow/perf/sampling_cost.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'src/tolglow/effects/cadence.clj'
+      - 'src/tolglow/effects/sampling_quality.clj'
       - 'bin/profile-*'
       - '.github/workflows/performance.yml'
   push:
@@ -44,6 +49,9 @@ on:
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
       - 'dev/tolglow/perf/adaptive_keyframes.clj'
+      - 'dev/tolglow/perf/multirate_*.clj'
+      - 'dev/tolglow/perf/transient_scheduling.clj'
+      - 'dev/tolglow/perf/sampling_cost.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-master'
@@ -155,6 +163,24 @@ jobs:
         run: |
           lein with-profile +benchmark run -m tolglow.perf.adaptive-keyframes 4000 24 80 \
             ../performance-artifact/adaptive-keyframes.edn
+      - name: Verify full-rate color, aim and discrete output across sampling policies
+        if: hashFiles('tolglow/dev/tolglow/perf/multirate_quality.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein run -m tolglow.perf.multirate-quality ../performance-artifact/multirate-quality.edn 1024 64 80 160 cpu
+      - name: Verify flash fidelity and smooth-effect recovery under injected pressure
+        if: hashFiles('tolglow/dev/tolglow/perf/transient_scheduling.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein run -m tolglow.perf.transient-scheduling ../performance-artifact/transient-scheduling.edn
+      - name: Compare worker CPU on direct, endpoint and interpolated frames
+        if: hashFiles('tolglow/dev/tolglow/perf/sampling_cost.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein run -m tolglow.perf.sampling-cost ../performance-artifact/sampling-cost.edn
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:
@@ -229,6 +255,12 @@ jobs:
               ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
                 --warmup 40 --samples 120 --period-ms 25 --output "$artifact_root/subscribers.edn" \
                 2>&1 | tee "$artifact_root/subscribers.log"
+              if [[ -f dev/tolglow/perf/multirate_quality.clj ]]; then
+                lein run -m tolglow.perf.multirate-quality "$artifact_root/multirate-quality.edn" 1024 64 80 160 cpu
+              fi
+              if [[ -f dev/tolglow/perf/transient_scheduling.clj ]]; then
+                lein run -m tolglow.perf.transient-scheduling "$artifact_root/transient-scheduling.edn"
+              fi
               if [[ -f dev/tolglow/perf/compound_layers.clj ]]; then
                 lein with-profile +benchmark run -m tolglow.perf.compound-layers > "$artifact_root/compound-layers.edn"
               fi
