@@ -200,3 +200,35 @@ that the late packet retains its original sample timestamp. Additional tests
 cover immutable buffer ownership, bounded completion storage, epoch/blackout/close
 fencing and saved settings. This establishes functional concurrency, not a
 physical-device latency guarantee.
+
+## Reading the physical timing capture
+
+At 40 Hz there is one opportunity to send light levels every 25 ms. Rendering
+for a slot and getting the packet to the output driver have separate deadlines.
+In the original six-second capture with 1,024 RGBW pixels and 128 moving heads,
+the producer completed 169 renders for 240 slots. Of those 169, 141 took at
+most 25 ms and 28 took longer. Starting early let 151 finish by their target.
+Only 112 of those reached the sender in their own slot. For 37 of the other 39, there was no recorded publication
+attempt for the slot. Two packets expired during preparation.
+
+Slot 142 illustrates the distinction. Its render took 11.79 ms and finished
+20.56 ms early. The sender woke 17.83 ms late and spent another 53.54 ms
+selecting and preparing output before dropping the packet. Slot 143 had a
+62.15 ms render. The original recording measured elapsed time. Identifying a
+CPU-intensive calculation, a wait for CPU time, or a garbage collection
+pause requires a trace from the same frame. [Timing chart and raw captures](https://github.com/tolgraven/afterglow/pull/89)
+
+The release replay enables adaptive keyframes and records actual calls per
+instance on each completed render. A direct sample evaluates the current
+frame. An endpoint samples a future target and may also sample a new origin.
+Interpolation reads an existing window and makes zero worker calls. In the
+1,024-pixel scene the wash, aim and pulse effects all persist. The pulse keeps
+direct sampling to preserve its narrow edges.
+
+Surviving instances also report their cumulative evaluation count, active
+window and next stride. A one-shot that runs and finishes in the same frame
+appears as `:retired-sampled` with its actual call count for that render.
+Ending an instance before its step runs adds no sample. These counters measure
+invocations, including a call that throws. Packet delivery is recorded
+separately at the sink. The summary counts outcomes per instance per completed
+render after warmup. Skipped slots have no effect observations.
