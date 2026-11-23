@@ -65,6 +65,8 @@ Store reusable definitions under `[:settings :prefabs :definitions]`. In Studio,
     :glsl "mix(1.0, 0.5 + 0.5 * cos(6.2831853 * (position.x - phase)), depth)"}}}}
 ```
 
+The same maps work in the application's EDN config. Enable `:prefabs` and `:variable-blocks` in the default config to register the materials before installing the variable bindings. A show file stores their effective settings alongside the published effects.
+
 For example, place `{:block :venue/copper-ripple}` in the color stages of two independent effects. Each published revision captures the shared definitions it uses under `:imported-prefabs`. A later library edit takes effect in global variable chains on the next frame. Republish an effect to adopt the edit there. Pinned and archived revisions keep their original look across Transit saves and reloads. An effect can override a shared material by providing the same ID in its own `:prefabs` map.
 
 ## Shared variables
