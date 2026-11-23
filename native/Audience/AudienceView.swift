@@ -59,7 +59,7 @@ struct AudienceView: View {
                         introduction
                         #if !APPCLIP
                         if room != nil {
-                            Button { client.browseWithoutInvitation() } label: {
+                            Button(action: browseWithoutInvitation) {
                                 Text("Browse without this invitation")
                                     .frame(minHeight: 44).contentShape(Rectangle())
                             }
@@ -265,7 +265,7 @@ struct AudienceView: View {
     @ViewBuilder private var dockControls: some View {
         if client.invalidInvitation {
             #if !APPCLIP
-            primary("Browse without this invitation", symbol: "dot.radiowaves.left.and.right") { client.browseWithoutInvitation() }
+            primary("Browse without this invitation", symbol: "dot.radiowaves.left.and.right", action: browseWithoutInvitation)
             #endif
         } else if client.reconnecting {
             cancelButton("Cancel reconnection")
@@ -285,6 +285,13 @@ struct AudienceView: View {
             }
         }
     }
+
+    #if !APPCLIP
+    private func browseWithoutInvitation() {
+        attemptedJoin = true
+        client.browseWithoutInvitation()
+    }
+    #endif
 
     private func cancelButton(_ title: String) -> some View {
         Button { client.leave() } label: {

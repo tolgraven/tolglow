@@ -106,7 +106,8 @@ public struct AudienceFloor {
         guests = guests.filter { time - $0.value.time < timeout }
     }
 
-    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double) -> Bool {
+    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double,
+                                                     reserveSteps: (Int) -> Bool = { _ in true }) -> Bool {
         guard time.isFinite else { return false }
         var credit = 2.0
         if let previous = guests[id], time - previous.time < timeout {
@@ -114,7 +115,7 @@ public struct AudienceFloor {
             let added = sample.steps &- previous.sample.steps
             credit = min(2.0 + 4 * timeout, previous.stepCredit + max(0, time - previous.time) * 4)
             guard time >= previous.time, sequence > 0, sequence < (1 << 31),
-                  Double(added) <= credit else { return false }
+                  Double(added) <= credit, reserveSteps(Int(added)) else { return false }
             credit = min(2.0, credit - Double(added))
             pendingSteps += Int(added)
         } else {
@@ -125,16 +126,21 @@ public struct AudienceFloor {
         return true
     }
 
+    /// Drain accepted counter deltas independently of the slower level snapshot.
+    public mutating func takeSteps() -> Int {
+        defer { pendingSteps = 0 }
+        return pendingSteps
+    }
+
     public mutating func drain(at time: Double) -> AudienceLevels {
         expire(at: time)
         let pulses = guests.values.compactMap { $0.sample.pulse }
         let motion = guests.values.compactMap { $0.sample.motion }
-        let levels = AudienceLevels(count: guests.count, motionCount: motion.count, motion: AudienceMotion.mean(motion), pulseCount: pulses.count,
+        let steps = takeSteps()
+        return AudienceLevels(count: guests.count, motionCount: motion.count, motion: AudienceMotion.mean(motion), pulseCount: pulses.count,
             effort: guests.values.reduce(0) { $0 + $1.sample.effort } / Double(max(1, guests.count)),
             pulse: pulses.isEmpty ? nil : Double(pulses.reduce(0,+)) / Double(pulses.count),
-            steps: pendingSteps)
-        pendingSteps = 0
-        return levels
+            steps: steps)
     }
 }
 
@@ -147,8 +153,8 @@ public struct AudienceSteps {
         guard count >= 0, count <= limit - pending else { throw SensorError.invalid("Audience gesture queue overflow") }
         pending += count
     }
-    public mutating func takeBatch() -> Int {
-        let batch = min(8, pending)
+    public mutating func takeBatch(upTo allowance: Int = 8) -> Int {
+        let batch = min(8, pending, max(0, allowance))
         pending -= batch
         return batch
     }
