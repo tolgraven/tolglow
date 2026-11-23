@@ -1,46 +1,62 @@
-name: Inspect compiled Apple products
+name: Inspect Native Image logging
 on:
   push:
     branches: [codex/rehearse-apple-compiled-products]
-permissions: {contents: read, actions: read}
+permissions: {contents: read}
 jobs:
-  archived-native-restore:
-    runs-on: macos-15
-    timeout-minutes: 15
+  logger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: {mode: [runtime-init, image-init]}
     steps:
-      - uses: actions/download-artifact@v4
-        with: {repository: tolgraven/tolglow, run-id: 45173152463, name: Tolglow-compiled-Studio-arm64, github-token: '${{ github.token }}', path: product}
-      - name: Restore a synthetic show on the previous standalone Apple Silicon build
+      - uses: actions/checkout@v7.0.1
+        with: {ref: 85231c28fc417f19cdafce433a0e17eb13d77371}
+      - uses: graalvm/setup-graalvm@v1.6.10
+        with: {distribution: graalvm-community, java-version: '25'}
+      - run: .github/scripts/install-lein
+      - name: Compile the application logger dependencies
         run: |
-          archive="$(find product -name Tolglow-compiled-Studio-arm64.zip -print -quit)"
-          ditto -x -k "$archive" product/unpacked
+          mkdir -p probe/src/logging probe/resources/META-INF/native-image/diagnostics
+          cd probe
+          cat > project.clj <<'CLJ'
+          (defproject org.tolglow/native-logger-check "0"
+            :dependencies [[org.clojure/clojure "1.12.7"] [org.slf4j/slf4j-api "2.0.20"]
+                           [com.taoensso/timbre "6.8.0"] [com.fzakaria/slf4j-timbre "0.4.1"]
+                           [com.github.clj-easy/graal-build-time "1.0.6"]]
+            :aot [slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider logging.probe]
+            :main logging.probe)
+          CLJ
+          cat > src/logging/probe.clj <<'CLJ'
+          (ns logging.probe (:gen-class)
+            (:import [com.github.fzakaria.slf4j.timbre TimbreServiceProvider]
+                     [org.slf4j LoggerFactory]))
+          (defn -main [& _]
+            (let [factory (LoggerFactory/getILoggerFactory)]
+              (println "SLF4J selected" (class factory))
+              (try (let [p (TimbreServiceProvider.)]
+                     (.initialize p)
+                     (println "Direct provider" (class (.getLoggerFactory p))))
+                   (catch Throwable failure (.printStackTrace failure)))
+              (.info (LoggerFactory/getLogger "tolglow.native.probe") "Application logging active")
+              (when-not (= "com.github.fzakaria.slf4j.timbre.TimbreLoggerFactory" (.getName (class factory)))
+                (System/exit 1))))
+          CLJ
           python3 - <<'PY'
-          import subprocess, tempfile, time, urllib.request, urllib.error
+          import json
           from pathlib import Path
-          executable = next(Path("product/unpacked").rglob("TolglowNativeHost")).resolve()
-          with tempfile.TemporaryDirectory() as raw:
-              folder = Path(raw)
-              (folder / "tolglow.edn").write_text("{:hz 40 :init {:components [:show] :modules [:web-server]}}")
-              ready = folder / "port"
-              with subprocess.Popen([str(executable), str(folder), str(ready)], stdin=subprocess.PIPE) as proc:
-                  try:
-                      t=time.monotonic()
-                      while not ready.exists():
-                          assert proc.poll() is None and time.monotonic()-t < 70, "Host failed to start"
-                          time.sleep(.1)
-                      origin="http://127.0.0.1:" + ready.read_text().strip()
-                      with urllib.request.urlopen(origin + "/api/export") as response:
-                          src=response.read()
-                          mime=response.headers.get_content_type()
-                          print("Exported synthetic show", len(src), mime, flush=True)
-                      for payload, content in [(src, mime), (__import__("json").dumps({"source":src.decode()}).encode(), "application/json")]:
-                          req=urllib.request.Request(origin + "/api/import", data=payload, headers={"Content-Type":content})
-                          try:
-                              with urllib.request.urlopen(req, timeout=20) as result:
-                                  print(content, result.status, result.read(3000).decode(), flush=True)
-                          except urllib.error.HTTPError as err:
-                              print(content, err.status, err.read(3000).decode(), flush=True)
-                  finally:
-                      proc.stdin.close()
-                      proc.wait(timeout=20)
+          classes = ['com.github.fzakaria.slf4j.timbre.'+c for c in ['TimbreServiceProvider','TimbreLoggerFactory','TimbreLoggerAdapter']]
+          Path('resources/META-INF/native-image/diagnostics/reflect-config.json').write_text(json.dumps([
+            {'name':c,'allDeclaredConstructors':True,'allPublicMethods':True,'allDeclaredMethods':True,'allDeclaredFields':True} for c in classes]))
           PY
+          lein uberjar
+      - name: Run the native logger and emit its cause
+        env: {MODE: '${{ matrix.mode }}'}
+        run: |
+          cd probe
+          flags=()
+          if [[ "$MODE" == image-init ]]; then flags+=(--initialize-at-build-time=com.github.fzakaria.slf4j.timbre); fi
+          native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses "${flags[@]}" \
+            -H:IncludeResources='.*\.clj[cs]?' -jar "$(find target -name '*-standalone.jar' -print -quit)" logger
+          ./logger
