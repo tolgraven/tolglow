@@ -1,0 +1,29 @@
+.block-inspector {margin:.45rem 0;border-top:1px solid #777c6b55}
+.block-inspector-controls {display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .9rem;margin:.4rem 0}
+.block-inspector-controls label,.block-trace-tools label {display:flex;align-items:center;gap:.45rem;color:#b3beaf;font-size:.8rem}
+.block-inspector-controls select {min-height:40px;max-width:100%;background:#191e1a;color:#e5e9dc;border:1px solid #586150;border-radius:4px;padding:0 .5rem}
+.block-trace {--trace-dry:#b4c4d2;--trace-offset:#f1ab75;--trace-stage:#a39be0;--trace-final:#b5e69c;box-sizing:border-box;width:100%;background:#121613;border:1px solid #4c5849;border-radius:6px;padding:.65rem .75rem}
+.block-trace-tools,.block-trace-legend {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem}
+.block-trace-grid {display:grid;grid-template-columns:3.3em 1fr;gap:.3rem;align-items:stretch;margin:.4rem 0}
+.block-trace-scale {display:flex;flex-direction:column;justify-content:space-between;align-items:end;font:10px monospace;color:#abb4a4}
+.block-trace svg {width:100%;height:88px;overflow:visible;background:repeating-linear-gradient(0deg,transparent,transparent calc(25% - 1px),#8ea48218 calc(25% - 1px),#8ea48218 25%)}
+.block-trace svg polyline {stroke:currentColor;stroke-width:1.75;fill:none}
+.block-trace svg circle {fill:currentColor}
+.block-trace-zero {stroke:#c0caba4d;stroke-dasharray:3 4}
+.block-trace-base {color:var(--trace-dry)}
+.block-trace-base polyline {stroke-dasharray:5 3}
+.block-trace-offset {color:var(--trace-offset)}
+.block-trace-offset polyline {stroke-dasharray:3 2}
+.block-trace-stage {color:var(--trace-stage)}
+.block-trace-stage polyline {stroke-dasharray:8 4}
+.block-trace-result {color:var(--trace-final)}
+.block-trace-legend {justify-content:flex-start;gap:.35rem 1rem;font:11px system-ui;font-variant-numeric:tabular-nums}
+.block-trace-legend i {display:inline-block;width:.75rem;margin-right:.3rem;vertical-align:middle;border-top:2px solid}
+.block-trace-empty {margin:.35rem;color:#b9c4b4}
+#push-display .block-trace {grid-row:2/-1;grid-column:1/-1;border-radius:0;padding:4px 10px}
+#push-display .block-trace-tools {height:17px;color:#d7decd;font-size:11px}
+#push-display .block-trace-grid {margin:1px 0}
+#push-display .block-trace svg {height:83px}
+#push-display .block-trace-legend {gap:18px}
+
+.block-trace-viewport {width:100%;min-height:150px}

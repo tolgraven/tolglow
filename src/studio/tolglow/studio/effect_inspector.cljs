@@ -3,6 +3,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.authoring.output-patch :as patch]
+            [tolglow.studio.block-inspector :as block-inspector]
             [tolglow.studio.events :as events]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -184,6 +185,8 @@
      [:header [:strong (or (:name definition) (wire (:effect-id instance)))]
       [:small (str "v" (:effect-version instance) " · " (widgets/label (:reload-policy instance)))]]
      (for [[i fault] (map-indexed vector (faults-for faults instance))] ^{:key i} [fault-details fault])
+     (when (seq (:blocks definition))
+       [block-inspector/inspector (:id instance) (:blocks definition)])
      (for [{:keys [ref attribute value] :as row} (patch/rows definition)
            :let [parameters (patch/sources value)]]
        ^{:key (pr-str [(:version definition) ref])}

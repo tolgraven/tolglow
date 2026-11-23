@@ -3,6 +3,7 @@
   no HTTP, timers, show commands, WebGL or device acquisition."
   (:require [re-frame.core :as rf]
             [reagent.core :as r]
+            [tolglow.studio.block-trace :as trace]
             [tolglow.studio.parameter-widgets :as widgets]))
 
 (defn normalize-view [view]
@@ -20,7 +21,19 @@
         (assoc :parameters (vec (take 8 (:parameters view)))
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
-(rf/reg-event-db :push-display/update (fn [db [_ view]] (assoc db :push-display (normalize-view view))))
+(defn observe-view [previous view]
+  (let [next (normalize-view view)
+        {:keys [binding-path target-id sample]} (:block-trace view)
+        identity [(:runtime-id view) (:epoch view) (:instance-id view) (:definition-version view) binding-path target-id]]
+    (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
+      (let [history (when (= identity (:trace-identity previous)) (:trace-samples previous))]
+        (assoc next :trace-identity identity
+               :trace-options (select-keys (:block-trace view) [:binding-path :stage-index :component-index])
+               :trace-samples (trace/append-sample (or history []) sample)))
+      next)))
+
+(rf/reg-event-db :push-display/update
+  (fn [db [_ view]] (update db :push-display observe-view view)))
 (rf/reg-sub :push-display/view (fn [db _] (:push-display db)))
 
 (defn install-api! []
@@ -152,6 +165,7 @@
        (cond (:blackout? view) "BLACKOUT" (:releasing? cue) "RELEASE" active? "PLAYING" :else (widgets/label (:status view)))]]
      (cond
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
+       (contains? #{:block-trace "block-trace"} (:display-mode view)) [trace/plot (:trace-samples view) true (:trace-options view)]
        audio? [:<> [:section.push-audio {:aria-label "Captured audio display"} [widgets/audio-waveform (:audio-waveform view)]]
         [parameters view true]]
        :else [:<> [parameters view false]
