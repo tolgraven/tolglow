@@ -78,3 +78,50 @@ to the configured loopback URL's origin. With direct Jetty TLS, set the
 capture `:url` to the HTTPS loopback endpoint and configure a certificate
 trusted by the local Chromium with the matching name. A loopback listener
 behind a public HTTPS proxy can keep the default HTTP capture URL.
+
+## Venue and rig views
+
+Use the simulator to watch the committed show output from the device display. The
+rig view adds a work light, fixture markers and the selected head’s aim line.
+Both views use the Studio room renderer, including its fixture meshes, fog field,
+lit receiver surfaces and active optical volumes.
+
+With a Push controller profile that supports display modes, press **Layout** for
+the simulator or **Shift + Layout** for the rig. **Mix** cycles through the camera
+positions. In the rig view, **Page left/right** selects a fixture. **Device** returns
+to parameters. You can also set the initial view and lens in the show settings.
+
+```clojure
+{:settings {:controllers {:push-display {:mode :rig
+                                        :camera :fit
+                                        :selected-fixture :head-4}}}}
+```
+
+| Camera | What appears on the display |
+| --- | --- |
+| Fit rig | Frames both ends of each truss, patched fixture positions and the downstage floor. |
+| Panorama | A 136° cylindrical audience view distributes pixels by horizontal angle. Vertical correction keeps shapes near the center in proportion. |
+| Audience | An ordinary perspective view with a 100° horizontal field of view. |
+
+The display draws at 960 × 160. Cold entry can use the configured browser startup
+deadline to compile shaders. Warm captures retain the ordinary capture deadline.
+A frame already in progress finishes before the worker reads back its PNG.
+Switching back to parameters or the target picker releases the scene and WebGL
+context. Each capture consumes the latest committed lighting values. It performs
+no additional effect evaluations and opens no Studio state socket.
+
+The device view samples up to 32 fixture bodies across moving and fixed lights,
+16 trusses, 16 receiver planes, 12 fog sources and four optical volumes. The
+Studio renderer illuminates up to 16 local lights per view. Page through the
+whole patch in rig mode. Selecting a fixture outside the sample replaces one
+of the sampled fixtures so that you can see the selection in context.
+
+To reproduce the headless capture, build Studio and pass an empty output directory
+and an installed Chromium executable. The test drives a disconnected show with
+eight moving heads and a fogger through the normal renderer, Ring and device
+capture worker. It records 24 PNGs and checks renderer teardown.
+
+```sh
+npm run studio:build
+lein run -m tolglow.qa.push-scene /tmp/tolglow-device-venue /usr/bin/chromium
+```

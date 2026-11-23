@@ -126,7 +126,7 @@
      (fn []
        (let [owned (atom (merge (worker-file! worker-script)
                                {:lock (Object.) :request-lock (Object.) :closed? (atom false)
-                                :ipc-thread (atom nil) :opened-at (System/nanoTime)
+                                :ipc-thread (atom nil) :scene-mode? (volatile! false) :opened-at (System/nanoTime)
                                 :shutdown-timeout-ms shutdown-timeout-ms}))]
          (try
            (let [process (.start (doto (ProcessBuilder. ^java.util.List
@@ -147,17 +147,20 @@
                (close-process! @owned)
                (throw diagnostic))))))
      :capture!
-     (fn [{:keys [request-lock closed? reader writer executor counter] :as handle} view]
+     (fn [{:keys [request-lock closed? reader writer executor counter scene-mode?] :as handle} view]
        (locking request-lock
          (when @closed? (throw (ex-info "Display capture is closed" {})))
-         (let [id (inc @counter) request (json/write-str {:id id :view view})]
+         (let [id (inc @counter) request (json/write-str {:id id :view view})
+               scene? (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view))
+               budget (if (and scene? (not @scene-mode?)) (max startup-timeout-ms capture-timeout-ms) capture-timeout-ms)]
            (when (> (alength (.getBytes ^String request StandardCharsets/UTF_8)) 70000)
              (throw (ex-info "Display request exceeds its bound" {})))
            (reset! counter id)
            (try
              (let [response (await! executor #(do (.write ^BufferedWriter writer request)
                                                   (.newLine ^BufferedWriter writer) (.flush ^BufferedWriter writer)
-                                                  (read-response! reader)) capture-timeout-ms)]
+                                                  (read-response! reader)) budget)]
+               (vreset! scene-mode? scene?)
                (when-not (and (= id (:id response)) (= "captured" (:status response))
                               (= width (:width response)) (= height (:height response)) (string? (:png response)))
                  (throw (ex-info "Invalid offscreen display response" {:response (dissoc response :png)})))

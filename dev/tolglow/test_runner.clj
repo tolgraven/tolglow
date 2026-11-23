@@ -36,7 +36,7 @@
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
-    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test])
+    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test])
 
 (def suites
   {"pure" pure-tests

@@ -58,6 +58,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
+            [tolglow.show.push-scene :as push-scene]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
@@ -1382,13 +1383,14 @@
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)]
+  (let [cache (waveforms/create-cache) scene-cache (push-scene/create-cache)]
     (display/browser-display
      (assoc options :project! (fn [view]
                                 (let [snapshot @(:state runtime)
                                       audio (audio/waveform (connections/audio (:connections runtime)))]
                                   (->> (waveforms/project-display cache snapshot view audio)
-                                       (block-trace/project-display (:id runtime) (:model snapshot)))))))))
+                                       (block-trace/project-display (:id runtime) (:model snapshot))
+                                       (push-scene/project-display scene-cache snapshot))))))))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is

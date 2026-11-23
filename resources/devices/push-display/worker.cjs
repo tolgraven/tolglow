@@ -35,7 +35,7 @@ async function createWorker(options, launch) {
     if (!password) throw new Error("Studio operator token environment variable is unset");
     httpCredentials = { username: "studio", password, origin: new URL(url).origin };
   }
-  let browser, context, page, busy = false, closed = false;
+  let browser, context, page, busy = false, closed = false, previousScene = false;
   async function close() {
     if (closed) return;
     closed = true;
@@ -62,12 +62,18 @@ async function createWorker(options, launch) {
       if (Buffer.byteLength(JSON.stringify(view)) > 65536) throw new Error("Display view exceeds 64 KiB");
       busy = true;
       const started = performance.now();
+      const scene = ["simulator", "rig"].includes(view["display-mode"]);
+      // Entering the venue compiles the same shaders as Studio on this browser.
+      // Once warm, every frame returns to the normal capture deadline.
+      const budget = scene && !previousScene ? Math.max(timeout, startupTimeout) : timeout;
       try {
         const png = await deadline((async () => {
           await page.evaluate(value => globalThis.tolglowPushDisplay.update(value), view);
           await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-          return page.screenshot({ type: "png", animations: "disabled", clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } });
-        })(), timeout, "Display capture");
+          await page.evaluate(() => globalThis.tolglowPushDisplay.frameReady?.());
+          return page.screenshot({ type: "png", timeout: budget, animations: "disabled", clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } });
+        })(), budget, "Display capture");
+        previousScene = scene;
         if (png.length > 2 * 1024 * 1024) throw new Error("Display PNG exceeds 2 MiB");
         return { width: WIDTH, height: HEIGHT, png: png.toString("base64"), "capture-ms": performance.now() - started };
       } catch (error) { await close(); throw error; }

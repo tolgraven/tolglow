@@ -115,3 +115,22 @@ test("an extracted worker resolves the installed module from the launch director
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("scene capture waits for the lazy renderer and uses startup time only on entry", async () => {
+  const marks = [];
+  const h = harness({
+    async evaluate(fn) {
+      if (String(fn).includes("frameReady")) {
+        await new Promise(resolve => setImmediate(resolve));
+        marks.push("drawn");
+      }
+    },
+    async screenshot(options) {marks.push(options.timeout); return Buffer.from("png");}
+  });
+  const worker = await createWorker({...options, captureTimeoutMs: 300, startupTimeoutMs: 600}, h.launch);
+  try {
+    for (const mode of ["parameters", "simulator", "rig", "parameters", "rig"])
+      await worker.capture({"display-mode": mode});
+    assert.deepEqual(marks, ["drawn", 300, "drawn", 600, "drawn", 300, "drawn", 300, "drawn", 600]);
+  } finally {await worker.close();}
+});

@@ -10,3 +10,5 @@ export class RoomPreview {
   }
 }
 export {SceneRenderer};
+
+export {PushScene} from './push-scene.js';
