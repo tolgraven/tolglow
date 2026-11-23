@@ -40,6 +40,15 @@ Give each Bluetooth gateway its own enrolled sensor ID, credential and zone QR. 
 
 Configure each source with `tolglow.sensors.audience/gateway-mapping` and arm its observed session. In the initial show model, select the zones with `(assoc-in model [:variables :audience :gateways] ["front" "balcony"])`. The renderer and Studio subscriptions can read `[:variables :audience :levels]`. The dance-effort mean weights each gateway by its participating dancers. The pulse mean weights only the wearers with fresh, shared readings. Leaving or disarming a zone removes its contribution. Configure step gestures on the individual gateway sensor mappings to retain distinct events. Capacity and handoff across physical radios need a venue test.
 
+A software rehearsal sends the same dance step from 96 people on each beat at 120 BPM. Four zones group steps into packets of at most eight gestures. Over three minutes of show time the host decoded 6,484 OSC observations and emitted 34,560 mapped cue launches. Its queue finished empty, with zero admission rejections or overflows. This measures the host using encoded packets and a deterministic clock. Radio capacity, UDP delivery and physical timing require separate measurements.
+
+Run the rehearsal with the paired Afterglow checkout selected as for the test suite.
+
+```bash
+lein with-profile +test run -m clojure.main -e \
+  "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
+```
+
 ## Publish a scannable Clip
 
 Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
