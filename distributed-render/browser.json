@@ -1,0 +1,32 @@
+[
+  {
+    "phase": "active",
+    "counts": {
+      "prepared": 2,
+      "results": 167,
+      "dropped": 1,
+      "errors": 0,
+      "firstResultMs": 1249.089999973774,
+      "programIds": [
+        "cbe7965e-7571-4ada-bf1c-48a37f7f0902",
+        "e3a900b5-7907-40db-bef0-f8bd4144aef4"
+      ],
+      "dropNext": false
+    }
+  },
+  {
+    "phase": "active",
+    "counts": {
+      "prepared": 3,
+      "results": 190,
+      "dropped": 0,
+      "errors": 0,
+      "firstResultMs": 1643.175000011921,
+      "programIds": [
+        "cbe7965e-7571-4ada-bf1c-48a37f7f0902",
+        "e3a900b5-7907-40db-bef0-f8bd4144aef4",
+        "33220089-fc6c-4cd9-8c38-841f3ad73328"
+      ]
+    }
+  }
+]
