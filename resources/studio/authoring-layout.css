@@ -1,0 +1,53 @@
+#view-compose .compose-layout { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:12px; }
+#view-compose .form-body { padding:12px; }
+#view-compose .composition-editor>.panel-top { height:44px; padding:0 12px; }
+#view-compose .composition-editor>.panel-top button { min-width:44px; min-height:44px; }
+.compose-catalog { display:flex; gap:6px; padding:7px 12px; overflow-x:auto; border-bottom:1px solid var(--line); }
+.compose-catalog .list-card { display:flex; flex:none; align-items:center; gap:8px; padding:0 5px 0 9px; margin:0; border:1px solid var(--line); border-radius:6px; }
+.compose-catalog .list-card :is(strong,p) { margin:0; font-size:10px; }
+.compose-catalog .list-card button { appearance:none; background:transparent; min-height:44px; min-width:44px; border:0; color:var(--accent); }
+.compose-settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(115px,100%),1fr)); align-items:end; gap:6px 10px; }
+.compose-settings>label { display:grid; gap:2px; font-size:11px; color:var(--muted); min-width:0; }
+.compose-settings input,.compose-settings select { width:100%; min-width:0; height:44px; padding-inline:7px; }
+.compose-settings>label.layer-opacity { display:grid; grid-template-columns:1fr auto; align-items:center; }
+.compose-settings .layer-opacity input { grid-column:1/-1; grid-row:2; }
+.compose-settings .layer-opacity output { grid-column:2; grid-row:1; }
+#view-compose .slots-heading { display:flex; flex-direction:row; align-items:center; flex-wrap:wrap; gap:6px; margin:10px 0 5px; }
+.slots-heading h2 { font-size:16px; }
+#view-compose .slots-heading .add-slot { display:flex; gap:5px; margin:0 0 0 auto; }
+#view-compose .add-slot select { width:min(36vw,200px); min-height:44px; }
+#view-compose .add-slot button,#view-compose .button-row button { min-height:44px; }
+#view-compose .composition-slots { gap:5px; }
+#view-compose .composition-slot { padding:3px 6px; gap:0 7px; grid-template-columns:22px minmax(80px,1.4fr) minmax(140px,.9fr) auto; }
+#view-compose .composition-slot.macro-slot { grid-template-columns:22px minmax(80px,1fr) auto; }
+#view-compose .slot-number { text-align:center; font-variant-numeric:tabular-nums; }
+#view-compose .slot-actions { grid-column:auto; }
+#view-compose .slot-actions button,#view-compose .slot-editors summary { min-width:44px; min-height:44px; }
+#view-compose .composition-slot>label { display:block; font-size:10px; }
+#view-compose .duration-control input,#view-compose .duration-control select { min-height:44px; }
+.slot-editors { display:flex; flex-wrap:wrap; align-items:flex-start; gap:0 12px; grid-column:2/-1; }
+.slot-editors .slot-parameter-editor { margin:0; padding:0; border:0; }
+.slot-editors .slot-parameter-editor>summary { align-content:center; padding:4px 0; font-size:11px; }
+.slot-editors .slot-parameter-editor[open] { flex:1 1 100%; }
+#view-compose .composition-slots .empty-state { padding:12px; text-align:start; color:var(--muted); }
+#view-compose .button-row { margin:9px 0 0; gap:5px; }
+.rig-editor:is([data-tool=navigate],[data-tool=move],[data-tool=rotate]) .rig-editor-layout { grid-template-columns:minmax(0,1fr); }
+.rig-editor:is([data-tool=navigate],[data-tool=move],[data-tool=rotate]) .rig-editor-scene { border-inline-end:0; }
+.rig-editor .rig-editor-toolbar { padding:4px 9px; gap:2px 9px; }
+.rig-editor .rig-editor-tools { gap:3px; }
+.rig-editor-toolbar .button { padding:5px 8px; }
+.rig-editor-scene { padding:8px; }
+@media(max-width:600px) {
+  #view-compose .form-body { padding:8px; }
+  .compose-settings { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .compose-settings .layer-opacity { grid-column:1/-1; }
+  .compose-settings>label.layer-opacity { display:flex; gap:8px; flex-direction:row; white-space:nowrap; }
+  .compose-settings .layer-opacity input { width:auto; min-width:0; flex:1; }
+  #view-compose .composition-slot { grid-template-columns:18px minmax(0,1fr) auto; }
+  #view-compose .composition-slot>label { grid-column:2/-1; grid-row:2; }
+  #view-compose .composition-slot .duration-control input { flex:0 1 70px; }
+  #view-compose .slot-actions { grid-column:3; grid-row:1; }
+  #view-compose .slot-editors { grid-column:2/-1; }
+  .rig-editor .rig-editor-tools { display:flex; flex-wrap:nowrap; max-width:100%; overflow:auto; scrollbar-width:thin; }
+  .rig-editor .rig-editor-tools .button { white-space:nowrap; }
+}
