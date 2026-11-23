@@ -1,5 +1,8 @@
 # Native iPhone and Apple Watch foundation
 
+[Package and run standalone Mac Studio](Packaging/README.md).
+
+
 This is an iOS 18 / watchOS 11 SwiftUI client and a shared pure Swift package.
 [macOS CI](https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227)
 verified **seven Swift tests and unsigned iOS/watchOS simulator builds** with
