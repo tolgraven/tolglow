@@ -147,9 +147,9 @@
                           out fields))
              sources (or overrides {})))
 
-(defn source-index [model {:keys [sources spatial-overrides live-routing]}]
+(defn source-index [model {:keys [sources spatial-overrides live-routing diagnostics]}]
   (let [writers (-> {} (patch-sources model) (live-destinations model live-routing))
-        random (merge-with (partial merge-with into) writers (modulation/source-index model))
+        random (merge-with (partial merge-with into) writers (modulation/source-index model diagnostics))
         waveforms (reduce-kv (fn [result id inputs]
                                (reduce-kv (fn [out param entry] (append out id param entry)) result inputs))
                              random (or sources {}))]

@@ -3,6 +3,7 @@
             [afterglow.control.params :as params]
             [clojure.test :refer [deftest is]]
             [tolglow.effects.parameter-sources :as sources]
+            [tolglow.modulation :as modulation]
             [tolglow.modulation-test :as fixture]
             [tolglow.show :as show]
             [tolglow.signals :as signals]
@@ -136,3 +137,19 @@
     (is (= 0.25 (get-in first-output [:overrides "0:1" :level])))
     (is (= (:overrides first-output) (:overrides captured)))
     (is (= 0.7 (get-in updated [:overrides "0:1" :level])))))
+
+(deftest random-sources-only-drive-after-an-actual-valid-sample
+  (let [model (fixture/model fixture/all-types)
+        start (fixture/start {:params [:unbounded :level]})
+        initial (modulation/advance start model (fixture/frame 0))
+        index #(sources/source-index (assoc model :modulation (:state %)) {:diagnostics (:diagnostics %)})
+        source (fn [result param] (get-in (index result) ["0:1" param 0]))
+        held (modulation/hold (:state initial) {:instance-id "0:1" :params [:level]})
+        resume (modulation/release-hold held "0:1" [:level])
+        between (modulation/advance resume model (fixture/frame 1/2))]
+    (is (true? (:pending? (source initial :unbounded))))
+    (is (string? (:error (source initial :unbounded))))
+    (is (nil? (:pending? (source initial :level))))
+    (is (true? (:held? (source {:state held} :level))))
+    (is (true? (:pending? (source between :level))))
+    (is (nil? (:pending? (source (modulation/advance (:state between) model (fixture/frame 1)) :level))))))

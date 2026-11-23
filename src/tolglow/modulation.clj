@@ -302,14 +302,20 @@
     (constrain schema (tween/interpolate from to fraction))
     (if (< fraction 0.5) from to)))
 
-(defn source-index [model]
-  (reduce (fn [result controller]
-            (reduce (fn [out {:keys [instance-id param]}]
-                      (update-in out [instance-id param] (fnil conj [])
-                                 {:type :random :controller-id (:id controller)
-                                  :held? (boolean (get-in model [:modulation :holds instance-id param]))}))
-                    result (targets model controller)))
-          {} (sort-by (juxt #(get-in % [:config :priority]) :order) (get-in model [:modulation :controllers]))))
+(defn source-index [model diagnostics]
+  (let [errors (into {} (for [{:keys [controller-id instance-id param message]} diagnostics
+                              :when message] [[controller-id instance-id param] message]))]
+    (reduce (fn [result controller]
+              (reduce (fn [out {:keys [instance-id param]}]
+                        (let [id (:id controller) held? (boolean (get-in model [:modulation :holds instance-id param]))
+                              cell (get-in controller [:values instance-id param])
+                              error (get errors [id instance-id param])]
+                          (update-in out [instance-id param] (fnil conj [])
+                                     (cond-> {:type :random :controller-id id :held? held?}
+                                       (not (or held? cell)) (assoc :pending? true)
+                                       error (assoc :error error)))))
+                      result (targets model controller)))
+            {} (sort-by (juxt #(get-in % [:config :priority]) :order) (get-in model [:modulation :controllers])))))
 
 (defn- sample-cell [schema cell beat]
   (if (and (= :glide (:mode cell)) (numeric-types (:type schema)))
