@@ -125,8 +125,9 @@
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))]
-    (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
+    (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :frame-number (get model :frame-number 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))

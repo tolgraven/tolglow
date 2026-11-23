@@ -103,12 +103,15 @@
                             (select-keys (grant! manager provider show id) [:token :show]))]))
       {})))
 
-(defn provider-lease [{:keys [state lock version] :as manager} provider]
+(defn provider-lease [{:keys [state lock version] :as manager} current-model provider]
   (locking lock
     (let [n (inc (:serial @state))]
       (swap! state #(-> % (assoc :serial n) (assoc-in [:providers provider] n)))))
-  {:version version
-   :sample! (fn [source] (locking lock (instructions! manager provider (identity-of (:model source)))))
+  {:source! #(deref version)
+   :observe! (fn [changed!]
+               (add-watch version provider (fn [_ _ _ _] (changed!)))
+               #(remove-watch version provider))
+   :sample! (fn [_] (locking lock (instructions! manager provider (identity-of (current-model)))))
    :close! #(drop-provider! manager provider)})
 
 (defn accept!

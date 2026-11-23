@@ -148,7 +148,10 @@
       (let [model (:model source)
             identity (assoc (select-keys model [:epoch :show-id]) :runtime-id (:runtime-id hub))]
         (when-not (and (= identity (identity-of (:view base))) (= values (get-in base [:view :subscriptions])))
-          (new-target (merge identity (select-keys model [:frame-number :revision]) {:subscriptions values}))))
+          (new-target (assoc identity
+                             :revision (:revision model)
+                             :frame-number (get model :frame-number 0)
+                             :subscriptions values))))
 
       (empty? wanted) @common
 

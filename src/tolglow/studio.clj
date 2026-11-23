@@ -19,6 +19,7 @@
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.studio.debug-stream :as debug-stream]
             [tolglow.development :as development]
+            [tolglow.development.workspace :as workspace]
             [tolglow.expressive :as expressive]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.studio.projection :as projection]
@@ -44,7 +45,12 @@
                       :release-query! (partial observations/drop-provider! (:browser-observations runtime))
                       :observation! (fn [producer message]
                                       (observations/accept! (:browser-observations runtime) (:model @(:state runtime)) producer message))
-                      :surfaces {observations/demand-query (partial observations/provider-lease (:browser-observations runtime))
+                      :surfaces {observations/demand-query
+                                 (partial observations/provider-lease (:browser-observations runtime) #(get @(:state runtime) :model))
+                                 :development/workspace
+                                 (fn [[_ id & extra]]
+                                   (workspace/status-source (get-in runtime [:development :workspaces])
+                                                            (when (empty? extra) id)))
                                  cue-pads/query-id
                                  (fn [query]
                                    (let [lease (Object.) service (:cue-pad-previews runtime)]

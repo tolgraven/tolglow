@@ -15,9 +15,10 @@
         changes (atom [])
         upstream (obs/scope-query demand)
         alternate (obs/scope-query demand)
-        a (obs/provider-lease manager upstream)
-        b (obs/provider-lease manager alternate)
-        grant (fn [lease model] (get ((:sample! lease) {:model model}) source))
+        model (atom scene)
+        a (obs/provider-lease manager #(deref model) upstream)
+        b (obs/provider-lease manager #(deref model) alternate)
+        grant (fn [lease current] (reset! model current) (get ((:sample! lease) nil) source))
         report (fn [g seq ms v] (merge (select-keys g [:show :token]) {:source source :sequence seq
                                               :sampled-ms (- ms 1) :completed-ms ms :value v}))]
     (try
