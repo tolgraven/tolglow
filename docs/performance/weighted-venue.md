@@ -75,3 +75,49 @@ scalar host and all resulting DMX bytes throughout their respective runs.
 Origin-only membership counts agreed across versions.
 
 [Download the full baseline and candidate reports with source provenance](../benchmarks/master-performance/weighted-venue-host.zip).
+
+## Fixed emitters and receiver planes
+
+A second comparison fixes the host at the sources from Tolglow `4dfedb8`.
+The initial baseline uses the optical implementation from Afterglow `868f4a5`.
+A repeat pins the entire Afterglow source tree to `40ff676`, which contains
+the same optical code and the predictive runtime.
+Afterglow `582d7bf` caches fixed emitter poses, skips the redundant
+cone/box pre-test for analytic spheres, merges weights in one pass, and
+calculates receiver-plane distances using primitive numbers. The command
+above with `host-beam` reproduces this workload.
+
+| 20,000 RGBW pixels, 64 moving heads and four beam-aware cues | Initial baseline | Pinned repeat | Fixed emitters |
+| --- | ---: | ---: | ---: |
+| Median coordinator and worker CPU, ms | 1,051.42 | 943.79 | 416.37 |
+| Median allocated bytes, MB | 1,069.67 | 1,131.17 | 239.81 |
+| Median complete frame, ms | 4,389.71 | 2,572.88 | 2,375.25 |
+| p95 complete frame, ms | 5,208.92 | 3,698.54 | 2,766.48 |
+| Frames over 25 ms | 5 of 5 | 5 of 5 | 5 of 5 |
+| Median field/head pairs | 38,072 | 38,072 | 38,072 |
+
+The pinned repeat and candidate generated identical packet digests throughout
+the complete comparison and timed replay. Two further full hosts ran an identical
+five-frame cue sequence, one using the original beam/field sampler and one
+using the revised sampler. The full models, intents, projected lights and all
+158 universes of ArtDMX agreed at every tick. The five packet sets have
+SHA-256 `8428fc799de597610a755a428fbc65dda4d032c9ec6d04b23bbcdc97133d8ee0`.
+
+For the per-stage comparison, 10,000 pixels and 64 movers used the same
+committed light levels and five room receivers. Nine interleaved measurement
+pairs verified all returned weights and aim targets. With four fields, median
+owner CPU fell from 427.39 to 167.81 ms and allocation from 475.88 to 60.99 MB.
+That measurement predates the primitive receiver change. Its separate
+20,000-segment assay compared all visibility decisions and reduced median
+owner CPU from 10.83 to 3.34 ms and allocation from 16.58 to 0.13 MB across
+24 pairs.
+
+Two additional paired assays separate costs outside the optical solver.
+Across 80 pairs on the 20,000-pixel rig, the Y/Z pruning and transient accumulation
+for four fields agree with the original X index on every position weight.
+Median CPU was 25.60 vs 23.65 ms, allocation 14.23 vs 6.50 MB. Across 24
+pairs reading each of 20,064 rows four times, the scoped compact reader used
+22.03 ms median CPU and 8.30 MB. Eager projection consumed 37.43 ms and
+13.36 MB. Every requested attribute in every row agreed.
+
+[Download the optical and whole-host captures](../benchmarks/master-performance/fixed-emitter-field.zip).
