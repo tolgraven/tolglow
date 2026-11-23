@@ -1,118 +1,17 @@
-name: Evaluate full hosted Studio Native Image
+name: Diagnose startup of the compiled Studio Native Image
 on:
   push:
     branches: [codex/apple-full-native-image-evaluation]
 permissions: {contents: read, actions: read}
 jobs:
-  evaluate:
-    runs-on: macos-15
-    timeout-minutes: 40
+  startup:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          name: studio-runtime
-          repository: tolgraven/tolglow
-          run-id: 45142899389
-          github-token: ${{ github.token }}
-      - uses: graalvm/setup-graalvm@v1.6.10
-        with: {java-version: '25', distribution: 'graalvm-community'}
-      - name: Build the full application with direct Clojure initialization
-        shell: bash
-        run: |
-          curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
-          echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
-          curl -fLsS https://repo.maven.apache.org/maven2/io/github/willena/sqlite-jdbc/3.49.0.0/sqlite-jdbc-3.49.0.0.jar -o sqlite.jar
-          echo '8240639e54a1270fbc11cd56b5f5f0d0ea4aab839a9b80c791978aef4522e01e  sqlite.jar' | shasum -a 256 -c -
-          mkdir -p override/tolglow override/thi/ng/math
-          unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
-          unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
-          cat > override/tolglow/fixed_image.clj <<'CLOJURE'
-          (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.studio] [tolglow.application :as app]))
-          (defn -main [& args]
-            (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
-            (apply app/-main args))
-          CLOJURE
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.persistence tolglow.fixed-image]] (compile ns))"
-          jar uf studio.jar -C override .
-          native-image --no-fallback -J-Dtolglow.native.build=true --initialize-at-build-time=com.cognitect.transit.impl --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.fixed_image 2>&1 | tee native-build.log
-          ./studio-native --port 0 >native-start.log 2>&1 &
-          child=$!
-          trap 'kill "$child" || true' EXIT
-          for ((i=0; i<90; i++)); do
-            if grep -q 'Tolglow Studio listening on' native-start.log; then break; fi
-            kill -0 "$child"
-            sleep 1
-          done
-          origin="$(sed -n 's/Tolglow Studio listening on //p' native-start.log)"
-          curl -fsS "$origin/studio/js/main.js" -o /dev/null
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
         with:
           name: native-image-diagnostics
-          path: |
-            *.log
-            reports/
-
-  ios:
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: studio-runtime
           repository: tolgraven/tolglow
-          run-id: 45142899389
+          run-id: 45149622090
           github-token: ${{ github.token }}
-      - name: Cross-compile the full Ring application for iOS using GluonFX
-        shell: bash
-        run: |
-          url='https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-darwin-m1-gluon-22.1.0.1-Final.tar.gz'
-          curl -fLsS --retry 3 "$url" -o "$RUNNER_TEMP/gluon.tgz"
-          echo "847b549a616f47687625e77a044ed3e162e96850f227f852db57b04528d09024  $RUNNER_TEMP/gluon.tgz" | shasum -a 256 -c -
-          mkdir "$RUNNER_TEMP/gluon"
-          tar -xf "$RUNNER_TEMP/gluon.tgz" --strip-components 1 -C "$RUNNER_TEMP/gluon"
-          export GRAALVM_HOME="$(dirname "$(dirname "$(find "$RUNNER_TEMP/gluon" -type f -name java -path '*/bin/java' | head -1)")")"
-          export JAVA_HOME="$GRAALVM_HOME" PATH="$GRAALVM_HOME/bin:$PATH"
-          java -version
-          curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
-          echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
-          mkdir -p override/tolglow override/thi/ng/math
-          unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
-          unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
-          cat > override/tolglow/fixed_image.clj <<'CLOJURE'
-          (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.studio] [tolglow.application :as app]))
-          (defn -main [& args]
-            (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
-            (apply app/-main args))
-          CLOJURE
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.persistence tolglow.fixed-image]] (compile ns))"
-          jar uf studio.jar -C override .
-          mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=studio.jar -DgroupId=org.tolglow -DartifactId=studio-host -Dversion=1 -Dpackaging=jar
-          mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=graal-build-time.jar -DgroupId=com.github.clj-easy -DartifactId=graal-build-time -Dversion=1.0.6 -Dpackaging=jar
-          cat >pom.xml <<'POM'
-          <project xmlns="http://maven.apache.org/POM/4.0.0">
-            <modelVersion>4.0.0</modelVersion><groupId>org.tolglow</groupId><artifactId>ios-host</artifactId><version>1</version>
-            <dependencies>
-              <dependency><groupId>io.github.willena</groupId><artifactId>sqlite-jdbc</artifactId><version>3.49.0.0</version></dependency>
-              <dependency><groupId>org.tolglow</groupId><artifactId>studio-host</artifactId><version>1</version></dependency>
-              <dependency><groupId>com.github.clj-easy</groupId><artifactId>graal-build-time</artifactId><version>1.0.6</version></dependency>
-            </dependencies>
-            <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
-            <configuration><target>ios</target><mainClass>tolglow.fixed_image</mainClass><nativeImageArgs>
-              <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
-              <nativeImageArg>-J-Dtolglow.native.build=true</nativeImageArg>
-              <nativeImageArg>--initialize-at-build-time=com.cognitect.transit.impl</nativeImageArg>
-            </nativeImageArgs></configuration></plugin></plugins></build>
-          </project>
-          POM
-          mkdir -p target/classes
-          mvn -B com.gluonhq:gluonfx-maven-plugin:1.0.29:compile 2>&1 | tee ios-build.log
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: ios-native-image-diagnostics
-          path: |
-            *.log
-            target/gluonfx/*/gvm/log/
+      - name: Read the application process startup trace
+        run: head -60 native-start.log
