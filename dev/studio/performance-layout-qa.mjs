@@ -1,6 +1,7 @@
 // Test a release build served by tolglow.qa.performance-layout.
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {checkCardAlignment} from './live-card-alignment.mjs';
 import {join} from 'node:path';
 import {chromium, devices, webkit} from 'playwright-core';
 
@@ -235,6 +236,11 @@ try {
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
+    await checkCardAlignment(page, name, directory, measurements[name]);
+    if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1') {
+      await page.close();
+      continue;
+    }
     if(process.env.STUDIO_SHELL_ONLY==='1') {
       await verifyShellActions(page,name,touch);
       assert.deepEqual(errors,[]);
