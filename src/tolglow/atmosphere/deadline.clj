@@ -34,6 +34,13 @@
                                         (not= target-id (get-in memory [:latest slot :target-id]))))]
                      [slot off])))
 
+(defn next-cutoff [assignments checked-at-ms]
+  (reduce (fn [nearest {:keys [until-ms]}]
+            (if (and (< checked-at-ms until-ms) (or (nil? nearest) (< until-ms nearest)))
+              until-ms
+              nearest))
+          nil assignments))
+
 (defn guard [memory packet frame now]
   (if-not memory packet
     (let [known? (contains? (:frames memory) frame)
