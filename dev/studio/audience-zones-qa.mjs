@@ -52,10 +52,21 @@ try {
   const state = await (await fetch(origin + '/api/state')).json();
   assert.equal(state.status.output.type, 'preview');
   const pages = new Map();
+  const delayed = [];
+  let holdUpdates = false;
   const errors = [];
   for (const [name,width,height] of devices) {
     const page = await browser.newPage({ viewport: { width,height }, hasTouch: name !== 'desktop' });
     page.on('pageerror',error => errors.push(error.message));
+    if (name === 'ipad') {
+      await page.routeWebSocket('**/api/state/stream*', route => {
+        const host = route.connectToServer();
+        host.onMessage(data => {
+          if (holdUpdates) delayed.push(() => route.send(data));
+          else route.send(data);
+        });
+      });
+    }
     await page.goto(origin + '/connections');
     await page.getByText(/Enroll a gateway with/).waitFor();
     pages.set(name,page);
@@ -73,8 +84,22 @@ try {
   await card.locator('[data-zone="balcony"][data-status="ready"]').waitFor();
   await capture();
   for (const label of ['Dance floor','Balcony']) {
-    await card.getByRole('checkbox',{ name:'Include '+label+' in audience mix' }).click();
-    await card.getByRole('checkbox',{ name:'Include '+label+' in audience mix', checked:true }).waitFor();
+    const inclusion = card.getByRole('checkbox',{ name:'Include '+label+' in audience mix' });
+    const answer = ipad.waitForResponse(response => new URL(response.url()).pathname === '/api/sensors/audience-zone');
+    holdUpdates = true;
+    await inclusion.click();
+    const response = await answer;
+    assert.equal(response.status(),200);
+    await response.finished();
+    await ipad.waitForTimeout(120);
+    assert.equal(await inclusion.isChecked(),true,'The accepted selection survives a late projection');
+    assert.equal(await inclusion.isDisabled(),true,'The earlier state cannot accept a second click');
+    holdUpdates = false;
+    for (const release of delayed.splice(0)) release();
+    await ipad.waitForFunction(name => {
+      const checkbox = [...document.querySelectorAll('#audience-zones input')].find(el => el.getAttribute('aria-label') === name);
+      return checkbox?.checked && !checkbox.disabled;
+    }, 'Include '+label+' in audience mix');
     await card.getByRole('button',{ name:'Arm '+label,exact:true }).click();
     await card.getByRole('button',{ name:'Disarm '+label,exact:true }).waitFor();
     await capture();

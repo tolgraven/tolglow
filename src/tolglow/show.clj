@@ -421,6 +421,10 @@
         (assoc-in current [:devices id] values))
       :else (lighting/edit-settings scope current values))))
 
+(defn- sensor-edit [model]
+  (let [updated (update model :revision inc)]
+    {:model updated :ack {:status :accepted :revision (:revision updated)}}))
+
 (defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
@@ -450,8 +454,7 @@
                      (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
                                               (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!])))))
     :sensor-audience-zone
-    {:model (audience-zones/select-zone model (:device-id payload) (:included? payload))
-     :ack {:status :accepted}}
+    (sensor-edit (audience-zones/select-zone model (:device-id payload) (:included? payload)))
     :sensor-configure
     {:model (apply-sensor-result
              (sensors/configure model (:device-id payload)
@@ -459,9 +462,8 @@
                                 (or (:pairing payload) (get-in model [:sensors :sources (:device-id payload) :pairing]))) time-ms)
      :ack {:status :accepted}}
     :sensor-arm
-    {:model (apply-sensor-result (sensors/arm! (connections/sensors (:connections runtime)) model
-                                             (:device-id payload) (:session-id payload) (:armed? payload)) time-ms)
-     :ack {:status :accepted}}
+    (sensor-edit (apply-sensor-result (sensors/arm! (connections/sensors (:connections runtime)) model
+                                                   (:device-id payload) (:session-id payload) (:armed? payload)) time-ms))
     :sensor-calibrate
     {:model (apply-sensor-result (sensors/calibrate (connections/sensors (:connections runtime)) model (:device-id payload)) time-ms)
      :ack {:status :accepted}}

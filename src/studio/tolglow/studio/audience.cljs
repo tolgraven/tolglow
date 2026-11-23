@@ -9,9 +9,15 @@
 (defn- session [db]
   [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (get-in db [:connections :generation])])
 
-(defn- operations [db]
-  (let [operation (get-in db [:connections :audience-operations])]
-    (when (= (session db) (:session operation)) (:entries operation))))
+(defn operations [db]
+  (let [operation (get-in db [:connections :audience-operations])
+        view (get-in db [:server-projection :view])
+        revision (when (get-in view [:connection-status :audience]) (:revision view))]
+    (when (= (session db) (:session operation))
+      (into {} (remove (fn [[_ entry]]
+                         (when-let [accepted (and (map? entry) (:revision entry))]
+                           (and (some? revision) (>= revision accepted)))))
+            (:entries operation)))))
 
 (rf/reg-sub ::operations (fn [db _] (operations db)))
 
@@ -23,9 +29,12 @@
                      :on-success [::complete token id] :on-failure [::failed token id]}})))
 
 (rf/reg-event-db ::complete
-  (fn [db [_ token id _]]
+  (fn [db [_ token id receipt]]
     (if (= token (session db))
-      (update-in db [:connections :audience-operations :entries] dissoc id)
+      (let [path [:connections :audience-operations :entries id]]
+        (if-let [revision (:revision receipt)]
+          (assoc-in db (conj path :revision) revision)
+          (assoc-in db path (or (:message receipt) "Waiting for host confirmation."))))
       db)))
 
 (rf/reg-event-db ::failed
