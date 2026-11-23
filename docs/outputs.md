@@ -109,8 +109,7 @@ on the same stream would corrupt framing. Reopening is explicit. Successful
 local writes do **not** acknowledge daemon acceptance or physical fixture
 delivery. OLA's streaming RPC has no response; check daemon/device diagnostics
 when commissioning a rig. This differs from the previous Afterglow client's
-acknowledged `UpdateDmxData` operation. There is no automatic reconnect, port
-patching, RDM management or daemon-discovery UI in this slice.
+acknowledged `UpdateDmxData` operation. The operator controls reconnect and port patching. The Rig tab manages RDM fixtures through its own connection. [RDM fixture management](rdm.md)
 
 The small encoder covers only OLA's output message, with no dependency on the
 old client's global atoms or lifecycle. Wire definitions come from the pinned

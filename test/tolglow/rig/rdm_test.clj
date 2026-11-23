@@ -176,3 +176,15 @@
         (wait-until #(empty? @(:active manager)))
         (is (empty? @(:active manager))))
       (finally (deliver release true) (rdm/close! manager) ((:close! peer))))))
+
+(deftest stale-connect-and-disconnect-cannot-retire-a-replacement-session
+  (let [identity {:runtime-id "current" :expected-epoch 1}
+        manager (rdm/create {:model! (constantly {}) :identity! (constantly identity)
+                             :publish! (constantly nil)})]
+    (try
+      (let [old (:session-id (rdm/connect! manager {} identity))
+            new (:session-id (rdm/connect! manager {} identity))]
+        (is (thrown? clojure.lang.ExceptionInfo (rdm/disconnect-session! manager old)))
+        (is (thrown? clojure.lang.ExceptionInfo (rdm/connect! manager {} (assoc identity :expected-epoch 0))))
+        (is (= new (:session-id (rdm/status manager)))))
+      (finally (rdm/close! manager)))))
