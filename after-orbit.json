@@ -1,0 +1,486 @@
+[
+  {
+    "width": 323,
+    "height": 183,
+    "volume": [
+      161,
+      91
+    ],
+    "offset": 0,
+    "density": 0.08,
+    "extinction": 1.25,
+    "samples": [
+      {
+        "angle": 5,
+        "roomPath": 12.030558700346779,
+        "corePath": 6.144950389789231,
+        "raw": 0.1409912109375,
+        "repeated": null,
+        "composited": 0.1409912109375,
+        "transmittance": 0.300537109375,
+        "historical": 0.495849609375,
+        "fixed": 0.006450653076171875,
+        "fixedHistorical": 0.0229034423828125
+      },
+      {
+        "angle": 25,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.9914977254860666,
+        "raw": 0.04248046875,
+        "repeated": null,
+        "composited": 0.04248046875,
+        "transmittance": 0.277587890625,
+        "historical": 0.11798095703125,
+        "fixed": 0.006450653076171875,
+        "fixedHistorical": 0.0179443359375
+      },
+      {
+        "angle": 45,
+        "roomPath": 15.31370849898476,
+        "corePath": 1.146701125781985,
+        "raw": 0.027618408203125,
+        "repeated": null,
+        "composited": 0.027618408203125,
+        "transmittance": 0.2164306640625,
+        "historical": 0.05010986328125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.01166534423828125
+      },
+      {
+        "angle": 65,
+        "roomPath": 12.827023351699935,
+        "corePath": 0.8875994549785728,
+        "raw": 0.0203857421875,
+        "repeated": null,
+        "composited": 0.0203857421875,
+        "transmittance": 0.277587890625,
+        "historical": 0.0235443115234375,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.007381439208984375
+      },
+      {
+        "angle": 90,
+        "roomPath": 12,
+        "corePath": 0.8026773766835906,
+        "raw": 0.0183868408203125,
+        "repeated": 0.0183868408203125,
+        "composited": 0.0183868408203125,
+        "transmittance": 0.301513671875,
+        "historical": 0.0129241943359375,
+        "fixed": 0.006443023681640625,
+        "fixedHistorical": 0.004505157470703125
+      },
+      {
+        "angle": 115,
+        "roomPath": 12.827023351699934,
+        "corePath": 0.8875994549785973,
+        "raw": 0.02032470703125,
+        "repeated": null,
+        "composited": 0.02032470703125,
+        "transmittance": 0.277587890625,
+        "historical": 0.0098419189453125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.0031108856201171875
+      },
+      {
+        "angle": 135,
+        "roomPath": 15.31370849898476,
+        "corePath": 1.1467011257819717,
+        "raw": 0.0277252197265625,
+        "repeated": null,
+        "composited": 0.0277252197265625,
+        "transmittance": 0.2164306640625,
+        "historical": 0.01093292236328125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.002529144287109375
+      },
+      {
+        "angle": 155,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.9914977254860502,
+        "raw": 0.04229736328125,
+        "repeated": null,
+        "composited": 0.04229736328125,
+        "transmittance": 0.277587890625,
+        "historical": 0.01462554931640625,
+        "fixed": 0.0064544677734375,
+        "fixedHistorical": 0.002223968505859375
+      },
+      {
+        "angle": 175,
+        "roomPath": 12.030558700346779,
+        "corePath": 7.153416952915295,
+        "raw": 0.161865234375,
+        "repeated": null,
+        "composited": 0.161865234375,
+        "transmittance": 0.300537109375,
+        "historical": 0.052947998046875,
+        "fixed": 0.0064544677734375,
+        "fixedHistorical": 0.002105712890625
+      }
+    ]
+  },
+  {
+    "width": 323,
+    "height": 183,
+    "volume": [
+      161,
+      91
+    ],
+    "offset": 0.21,
+    "density": 0.08,
+    "extinction": 1.25,
+    "samples": [
+      {
+        "angle": 5,
+        "roomPath": 12.030558700346779,
+        "corePath": 5.527615643695754,
+        "raw": 0.08404541015625,
+        "repeated": null,
+        "composited": 0.08404541015625,
+        "transmittance": 0.300537109375,
+        "historical": 0.29638671875,
+        "fixed": 0.006427764892578125,
+        "fixedHistorical": 0.0227203369140625
+      },
+      {
+        "angle": 25,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.7118616104209932,
+        "raw": 0.033172607421875,
+        "repeated": null,
+        "composited": 0.033172607421875,
+        "transmittance": 0.277587890625,
+        "historical": 0.0924072265625,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.017822265625
+      },
+      {
+        "angle": 45,
+        "roomPath": 15.31370849898476,
+        "corePath": 0.9790483642916135,
+        "raw": 0.021087646484375,
+        "repeated": null,
+        "composited": 0.021087646484375,
+        "transmittance": 0.2164306640625,
+        "historical": 0.0384521484375,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.0115966796875
+      },
+      {
+        "angle": 65,
+        "roomPath": 12.827023351699935,
+        "corePath": 0.7567065092721679,
+        "raw": 0.016632080078125,
+        "repeated": null,
+        "composited": 0.016632080078125,
+        "transmittance": 0.277587890625,
+        "historical": 0.0191650390625,
+        "fixed": 0.006420135498046875,
+        "fixedHistorical": 0.00734710693359375
+      },
+      {
+        "angle": 90,
+        "roomPath": 12,
+        "corePath": 0.6840255631477947,
+        "raw": 0.01517486572265625,
+        "repeated": 0.01517486572265625,
+        "composited": 0.01517486572265625,
+        "transmittance": 0.301513671875,
+        "historical": 0.01065826416015625,
+        "fixed": 0.006420135498046875,
+        "fixedHistorical": 0.004489898681640625
+      },
+      {
+        "angle": 115,
+        "roomPath": 12.827023351699934,
+        "corePath": 0.7567065092721674,
+        "raw": 0.0165557861328125,
+        "repeated": null,
+        "composited": 0.0165557861328125,
+        "transmittance": 0.277587890625,
+        "historical": 0.00800323486328125,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.0030994415283203125
+      },
+      {
+        "angle": 135,
+        "roomPath": 15.31370849898476,
+        "corePath": 0.9790483642915828,
+        "raw": 0.0207977294921875,
+        "repeated": null,
+        "composited": 0.0207977294921875,
+        "transmittance": 0.2164306640625,
+        "historical": 0.0081787109375,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.002521514892578125
+      },
+      {
+        "angle": 155,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.7118616104209465,
+        "raw": 0.032562255859375,
+        "repeated": null,
+        "composited": 0.032562255859375,
+        "transmittance": 0.277587890625,
+        "historical": 0.01125335693359375,
+        "fixed": 0.006427764892578125,
+        "fixedHistorical": 0.0022182464599609375
+      },
+      {
+        "angle": 175,
+        "roomPath": 12.030558700346779,
+        "corePath": 6.533630032361048,
+        "raw": 0.083984375,
+        "repeated": null,
+        "composited": 0.083984375,
+        "transmittance": 0.300537109375,
+        "historical": 0.0274658203125,
+        "fixed": 0.00643157958984375,
+        "fixedHistorical": 0.0020999908447265625
+      }
+    ]
+  },
+  {
+    "width": 31,
+    "height": 19,
+    "volume": [
+      15,
+      9
+    ],
+    "offset": 0,
+    "density": 0.08,
+    "extinction": 1.25,
+    "samples": [
+      {
+        "angle": 5,
+        "roomPath": 12.030558700346779,
+        "corePath": 6.144950389789231,
+        "raw": 0.1409912109375,
+        "repeated": null,
+        "composited": 0.1409912109375,
+        "transmittance": 0.300537109375,
+        "historical": 0.495849609375,
+        "fixed": 0.006450653076171875,
+        "fixedHistorical": 0.0229034423828125
+      },
+      {
+        "angle": 25,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.9914977254860666,
+        "raw": 0.04248046875,
+        "repeated": null,
+        "composited": 0.04248046875,
+        "transmittance": 0.277587890625,
+        "historical": 0.11798095703125,
+        "fixed": 0.006450653076171875,
+        "fixedHistorical": 0.0179443359375
+      },
+      {
+        "angle": 45,
+        "roomPath": 15.31370849898476,
+        "corePath": 1.146701125781985,
+        "raw": 0.027618408203125,
+        "repeated": null,
+        "composited": 0.027618408203125,
+        "transmittance": 0.2164306640625,
+        "historical": 0.05010986328125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.01166534423828125
+      },
+      {
+        "angle": 65,
+        "roomPath": 12.827023351699935,
+        "corePath": 0.8875994549785728,
+        "raw": 0.0203857421875,
+        "repeated": null,
+        "composited": 0.0203857421875,
+        "transmittance": 0.277587890625,
+        "historical": 0.0235443115234375,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.007381439208984375
+      },
+      {
+        "angle": 90,
+        "roomPath": 12,
+        "corePath": 0.8026773766835906,
+        "raw": 0.0183868408203125,
+        "repeated": 0.0183868408203125,
+        "composited": 0.0183868408203125,
+        "transmittance": 0.301513671875,
+        "historical": 0.0129241943359375,
+        "fixed": 0.006443023681640625,
+        "fixedHistorical": 0.004505157470703125
+      },
+      {
+        "angle": 115,
+        "roomPath": 12.827023351699934,
+        "corePath": 0.8875994549785973,
+        "raw": 0.02032470703125,
+        "repeated": null,
+        "composited": 0.02032470703125,
+        "transmittance": 0.277587890625,
+        "historical": 0.0098419189453125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.0031108856201171875
+      },
+      {
+        "angle": 135,
+        "roomPath": 15.31370849898476,
+        "corePath": 1.1467011257819717,
+        "raw": 0.0277252197265625,
+        "repeated": null,
+        "composited": 0.0277252197265625,
+        "transmittance": 0.2164306640625,
+        "historical": 0.01093292236328125,
+        "fixed": 0.00644683837890625,
+        "fixedHistorical": 0.002529144287109375
+      },
+      {
+        "angle": 155,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.9914977254860502,
+        "raw": 0.04229736328125,
+        "repeated": null,
+        "composited": 0.04229736328125,
+        "transmittance": 0.277587890625,
+        "historical": 0.01462554931640625,
+        "fixed": 0.0064544677734375,
+        "fixedHistorical": 0.002223968505859375
+      },
+      {
+        "angle": 175,
+        "roomPath": 12.030558700346779,
+        "corePath": 7.153416952915295,
+        "raw": 0.161865234375,
+        "repeated": null,
+        "composited": 0.161865234375,
+        "transmittance": 0.300537109375,
+        "historical": 0.052947998046875,
+        "fixed": 0.0064544677734375,
+        "fixedHistorical": 0.002105712890625
+      }
+    ]
+  },
+  {
+    "width": 31,
+    "height": 19,
+    "volume": [
+      15,
+      9
+    ],
+    "offset": 0.21,
+    "density": 0.08,
+    "extinction": 1.25,
+    "samples": [
+      {
+        "angle": 5,
+        "roomPath": 12.030558700346779,
+        "corePath": 5.527615643695754,
+        "raw": 0.08404541015625,
+        "repeated": null,
+        "composited": 0.08404541015625,
+        "transmittance": 0.300537109375,
+        "historical": 0.29638671875,
+        "fixed": 0.006427764892578125,
+        "fixedHistorical": 0.0227203369140625
+      },
+      {
+        "angle": 25,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.7118616104209932,
+        "raw": 0.033172607421875,
+        "repeated": null,
+        "composited": 0.033172607421875,
+        "transmittance": 0.277587890625,
+        "historical": 0.0924072265625,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.017822265625
+      },
+      {
+        "angle": 45,
+        "roomPath": 15.31370849898476,
+        "corePath": 0.9790483642916135,
+        "raw": 0.021087646484375,
+        "repeated": null,
+        "composited": 0.021087646484375,
+        "transmittance": 0.2164306640625,
+        "historical": 0.0384521484375,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.0115966796875
+      },
+      {
+        "angle": 65,
+        "roomPath": 12.827023351699935,
+        "corePath": 0.7567065092721679,
+        "raw": 0.016632080078125,
+        "repeated": null,
+        "composited": 0.016632080078125,
+        "transmittance": 0.277587890625,
+        "historical": 0.0191650390625,
+        "fixed": 0.006420135498046875,
+        "fixedHistorical": 0.00734710693359375
+      },
+      {
+        "angle": 90,
+        "roomPath": 12,
+        "corePath": 0.6840255631477947,
+        "raw": 0.01517486572265625,
+        "repeated": 0.01517486572265625,
+        "composited": 0.01517486572265625,
+        "transmittance": 0.301513671875,
+        "historical": 0.01065826416015625,
+        "fixed": 0.006420135498046875,
+        "fixedHistorical": 0.004489898681640625
+      },
+      {
+        "angle": 115,
+        "roomPath": 12.827023351699934,
+        "corePath": 0.7567065092721674,
+        "raw": 0.0165557861328125,
+        "repeated": null,
+        "composited": 0.0165557861328125,
+        "transmittance": 0.277587890625,
+        "historical": 0.00800323486328125,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.0030994415283203125
+      },
+      {
+        "angle": 135,
+        "roomPath": 15.31370849898476,
+        "corePath": 0.9790483642915828,
+        "raw": 0.0207977294921875,
+        "repeated": null,
+        "composited": 0.0207977294921875,
+        "transmittance": 0.2164306640625,
+        "historical": 0.0081787109375,
+        "fixed": 0.0064239501953125,
+        "fixedHistorical": 0.002521514892578125
+      },
+      {
+        "angle": 155,
+        "roomPath": 12.827023351699935,
+        "corePath": 1.7118616104209465,
+        "raw": 0.032562255859375,
+        "repeated": null,
+        "composited": 0.032562255859375,
+        "transmittance": 0.277587890625,
+        "historical": 0.01125335693359375,
+        "fixed": 0.006427764892578125,
+        "fixedHistorical": 0.0022182464599609375
+      },
+      {
+        "angle": 175,
+        "roomPath": 12.030558700346779,
+        "corePath": 6.533630032361048,
+        "raw": 0.083984375,
+        "repeated": null,
+        "composited": 0.083984375,
+        "transmittance": 0.300537109375,
+        "historical": 0.0274658203125,
+        "fixed": 0.00643157958984375,
+        "fixedHistorical": 0.0020999908447265625
+      }
+    ]
+  }
+]
