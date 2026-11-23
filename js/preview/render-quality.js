@@ -8,6 +8,13 @@ export const TIERS = {
   high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128},
 };
 
+// Auto may use low's spatial budget on a hardware GPU while still presenting
+// faster than 10 Hz. Manual low and software rendering retain their explicit cap.
+export function presentationHz(tier, choice, software, displayHz) {
+  const limit = tier === 'low' && choice === 'auto' && !software && displayHz ? TIERS.mobile.fps : TIERS[tier].fps;
+  return Math.min(limit, displayHz || limit);
+}
+
 export function rasterSizes(width, height, dpr, tier, scale, maxDimension) {
   const native = Math.min(dpr || 1, Math.sqrt(UHD / (width * height)), maxDimension / Math.max(width, height));
   const internal = Math.min(native, tier.dpr, Math.sqrt(tier.maxPixels / (width * height))) * scale;
