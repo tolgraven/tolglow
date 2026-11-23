@@ -4,7 +4,7 @@
             [reagent.ratom :as ratom]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.fixture-picker :as picker]
-            [tolglow.studio.spatial-preview :refer [watch-visibility]]))
+            [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (rf/reg-sub-raw ::history
   (fn [db [_ query]]

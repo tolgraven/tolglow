@@ -3,6 +3,7 @@
             [afterglow.render.frame :as frame]
             [afterglow.runtime :as runtime]
             [afterglow.runtime.engine :as engine]
+            [afterglow.runtime.events :as events]
             [clojure.test :refer [deftest is]]
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
@@ -150,3 +151,51 @@
     (is (:held? (variable-blocks/inspect held path)))
     (is (= 0.2 (get-in (variable-blocks/resolved model recovered) path)))
     (is (nil? (:held? (variable-blocks/inspect (read (assoc bad-model :epoch 2) held) path))))))
+
+(deftest a-scalar-source-parent-releases-its-failing-binding
+  (let [path [:variables :weather :density]
+        plan (variable-blocks/compile-settings {:bindings {path {:base 0.4 :stages []}
+                                                           [:variables :healthy] {:base 0.8 :stages []}}})
+        model {:epoch 1 :variables {:weather {:density 0.2}}}
+        changed (assoc-in model [:variables :weather] 0.7)
+        tick #(variable-blocks/sample plan %1 25.0 %2)
+        good (tick model nil)
+        failed (tick changed good)
+        same (tick changed failed)
+        recovered (tick model same)
+        reported #(mapv :event (events/pending (variable-blocks/collect-events (events/begin model) %1 %2)))]
+    (is (= {:weather 0.7 :healthy 0.8} (:variables (variable-blocks/resolved changed failed))))
+    (is (= 0.7 (get-in (variable-blocks/resolved changed good) [:variables :weather])))
+    (is (string? (:error (variable-blocks/inspect failed path))))
+    (is (nil? (:held? (variable-blocks/inspect failed path))))
+    (is (= {:type :variable-block/failed :held? false :path path}
+           (select-keys (first (reported good failed)) [:type :held? :path])))
+    (is (empty? (reported failed same)))
+    (is (= [{:type :variable-block/recovered :path path}] (reported same recovered)))
+    (is (= 0.4 (get-in (variable-blocks/resolved model recovered) path)))))
+
+(deftest restored-mismatched-source-shapes-keep-rendering-the-show
+  (let [model (-> (control/new-show {:registry {:effects {:lamp {:id :lamp :version 1 :outputs {:red 1.0}}}}})
+                  (assoc :rig {:fixtures rig})
+                  (assoc-in [:variables :weather] 0.7)
+                  (assoc-in [:settings :variable-blocks :bindings]
+                            {[:variables :weather :density] {:base 0.4 :stages []}
+                             [:variables :healthy] {:base 0.8 :stages []}}))
+        launch (command model :launch :effect/launch :effect-id :lamp :time-ms 0)
+        rt (show/create-runtime {:model (:model launch)})
+        inspect-frame (fn [t]
+                        (show/tick! rt t)
+                        (let [{:keys [status output variable-observation]} @(:state rt)]
+                          (is (nil? (:error status)))
+                          (is (= 255 (bit-and 255 (first (get (:universes output) 1)))))
+                          (is (= {:weather 0.7 :healthy 0.8}
+                                 (select-keys (show/variables rt) [:weather :healthy])))
+                          (is (contains? (:errors variable-observation) [:variables :weather :density]))))]
+    (try
+      (is (= :accepted (get-in launch [:ack :status])))
+      (inspect-frame 25.0)
+      (let [restore (show/submit! rt :import {:source (show/export-show-source rt)})]
+        (show/tick! rt 50.0)
+        (is (= :accepted (:status (deref restore 1000 nil)))))
+      (inspect-frame 75.0)
+      (finally (show/stop! rt)))))
