@@ -104,7 +104,9 @@
                                      (and (bytes? values) (<= (alength ^bytes values) (* 4 max-result-floats)))))
                     (throw (ex-info "Unexpected compute response" {})))
                   (when-not (= op :keepalive)
-                    (pool/receive! (:pool hub) id (select-keys packet [:op :id :job :values]))))
+                    (pool/receive! (:pool hub) id (select-keys packet [:op :id :job :values])))
+                  (when-not (pool/connected? (:pool hub) id)
+                    (throw (ex-info "Worker lease ended" {}))))
                 (admit! hub socket client packet))))))
       (catch Exception _ (retire! hub socket 1008 "Compute session rejected")))))
 

@@ -62,4 +62,10 @@
         (send! {:op :result :job 2 :values "untyped"})
         (is (= 1008 (take!)))
         (is (zero? (:workers (pool/status coordinator)))))
+      (let [{:keys [take! send!]} (connect server)]
+        (send! (assoc hello :token token))
+        (is (= {:op :welcome} (take!)))
+        (pool/disconnect! coordinator (first (keys @(:peers coordinator))))
+        (send! {:op :keepalive})
+        (is (= 1008 (take!))))
       (finally (workers/close! hub) (.stop server)))))
