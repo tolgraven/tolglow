@@ -11,10 +11,10 @@ jobs:
         with:
           name: native-image-diagnostics
           repository: tolgraven/tolglow
-          run-id: 45155788576
+          run-id: 45157631334
           github-token: ${{ github.token }}
       - name: Read startup training and native compilation diagnostics
         run: |
-          for log in training.log native-start.log native-build.log; do
+          for log in native-start.log; do
             if test -f "$log"; then echo "$log"; tail -80 "$log"; fi
           done
