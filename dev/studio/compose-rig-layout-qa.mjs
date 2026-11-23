@@ -25,11 +25,12 @@ try {
     const name='Evening drift · '+label;
     await page.locator('#composition-name').fill(name);
     await page.locator('#composition-id').fill('layout-'+label);
-    for(const id of ['ember','sweep','breathe','orbital']) {
+    const slots=page.locator('.composition-slot');
+    for(const [index,id] of ['ember','sweep','breathe','orbital'].entries()) {
       await page.locator('#slot-cue').selectOption(id);
       await page.locator('#add-slot').click();
+      await slots.nth(index).waitFor();
     }
-    const slots=page.locator('.composition-slot');
     assert.equal(await slots.count(),4);
     await page.getByLabel('Step 1 duration value').fill('2');
     await page.getByLabel('Step 1 duration unit').selectOption('bars');
@@ -37,9 +38,9 @@ try {
     await page.screenshot({path:join(directory,label+'-compose.png')});
     results[label]={steps:await measure(page,'.composition-slot')};
     await page.locator('#composition-mode').selectOption('macro');
-    assert.equal(await slots.locator('.duration-control').count(),0);
+    await slots.locator('.duration-control').first().waitFor({state:'detached'});
     await slots.nth(1).getByRole('button',{name:'Move earlier: step 2'}).click();
-    assert.equal(await slots.first().locator('.slot-title').innerText(),'Slow sweep');
+    await slots.first().locator('.slot-title').filter({hasText:'Slow sweep'}).waitFor();
     await page.locator('#save-composition').click();
     const saved=page.locator('#composition-library .list-card').filter({hasText:name});
     await saved.getByRole('button',{name:'Open'}).click();
@@ -50,7 +51,7 @@ try {
     await page.locator('a[data-view=rig]').click();
     const rig=page.locator('.rig-editor');
     await rig.getByRole('button',{name:'Explore',exact:true}).click();
-    assert.equal(await rig.locator('.rig-path-form').count(),0);
+    await rig.locator('.rig-path-form').waitFor({state:'detached'});
     const canvas=rig.locator('canvas');
     await canvas.scrollIntoViewIfNeeded();
     results[label].explore=await measure(page,'.rig-editor canvas');
@@ -58,7 +59,7 @@ try {
     await rig.getByLabel('Duration',{exact:true}).waitFor();
     results[label].draw=await measure(page,'.rig-editor canvas');
     await rig.getByRole('button',{name:'Explore',exact:true}).click();
-    assert.equal(await rig.locator('.rig-path-form').count(),0);
+    await rig.locator('.rig-path-form').waitFor({state:'detached'});
     assert.deepEqual(errors,[]);
     await page.close();
   }
