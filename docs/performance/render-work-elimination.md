@@ -65,6 +65,17 @@ Four moving volumes generated 3,162 fixture entry and exit events on the 10,000-
 
 Whole-frame p95 on the 10,000-pixel rig fell from 545 to 424 ms. On the 20,000-pixel rig, median allocation fell from 114.69 to 101.10 MB while whole-frame p95 rose from 495 to 502 ms over 32 measured pairs. Both rigs had 64 moving heads and ran under software OpenGL with an extended compute deadline. [Afterglow #83 and raw event comparisons](https://github.com/tolgraven/afterglow/pull/83)
 
+### Combined fixture packing, publication and spatial events
+
+The same mixed-UV show exercised the three changes together against Afterglow `844198c`. Each rig ran for 16 warmups and 36 measured frame pairs. All ordered entry and exit events, effect intents, committed models and ArtDMX packets matched. Both hosts issued 477 native requests and 321 draws per rig without a CPU fallback at the extended deadline.
+
+| Pixels plus 64 movers | Allocated per frame, p50 | CPU per frame, p50 | Whole-frame p50 | Whole-frame p95 |
+| ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 59.95 → 42.63 MB | 161.77 → 161.26 ms | 219 → 215 ms | 822 → 861 ms |
+| 20,000 | 114.59 → 79.16 MB | 236.64 → 205.26 ms | 353 → 291 ms | 2,661 → 1,567 ms |
+
+The 20,000-pixel coordinator spent 1,904 and 1,036 ms runnable in the two frames at p95. Neither frame overlapped a GC pause. At 10,000 pixels those waits were 25 and 462 ms on the respective p95 frames. Host contention accounts for a substantial part of the wall-time variation. All measured frames missed 25 ms on this software renderer. The archive includes the ordered-frame checks, CPU and scheduler observations, GC recordings, Clojure array bytecode and replay commands. [Download the paired rig measurements](../benchmarks/master-performance/render-packet-and-membership.zip)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
