@@ -67,7 +67,9 @@ Whole-frame p95 on the 10,000-pixel rig fell from 545 to 424 ms. On the 20,000-p
 
 ### Combined fixture packing, publication and spatial events
 
-The same mixed-UV show exercised the three changes together against Afterglow `844198c`. Each rig ran for 16 warmups and 36 measured frame pairs. All ordered entry and exit events, effect intents, committed models and ArtDMX packets matched. Both hosts issued 477 native requests and 321 draws per rig without a CPU fallback at the extended deadline.
+The same mixed-UV show exercised the three changes together against Afterglow `844198c`. The paired capture uses commits `4769e27` for packet publication, `c83375f` for uniform fixture fields and `252e546` for spatial events. The default Afterglow revision for a Tolglow CI run is recorded in the [performance workflow](../../.github/workflows/performance.yml).
+
+Each rig ran for 16 warmups and 36 measured frame pairs. All ordered entry and exit events, effect intents, committed models and ArtDMX packets matched. Both hosts issued 477 native requests and 321 draws per rig without a CPU fallback at the extended deadline.
 
 | Pixels plus 64 movers | Allocated per frame, p50 | CPU per frame, p50 | Whole-frame p50 | Whole-frame p95 |
 | ---: | ---: | ---: | ---: | ---: |
