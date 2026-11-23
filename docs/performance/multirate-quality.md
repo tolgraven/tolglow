@@ -199,3 +199,9 @@ command stream shows worst intermediate displacements of 10.818 radii on
 `3fd49ef` and 10.817 on `68f87b2`.
 All 40 midpoint checks would falsely admit the window at the example budget.
 The report includes these false admissions for each optical configuration.
+
+For the fixed-depth sine orbits in this rig, the report also evaluates an
+analytic error bound from the cue expression and fixture optics. It admits
+strides 1, 2, 2 and 8 before reading the measured frames. Every decoded
+full-rate comparison stayed inside its predicted limit.
+[Curvature assumptions and derivation](aim-curvature.md)
