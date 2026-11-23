@@ -10,6 +10,7 @@
             [tolglow.effects.material-design :as materials]
             [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.connections :as connections]
+            [tolglow.visualization.cue-pads :as cue-pads]
             [tolglow.agents :as agents]
             [tolglow.rig.calibration :as calibration]
             [tolglow.rig.venue-scan :as venue-scan]
@@ -38,6 +39,11 @@
             stream (state-stream/create #(stream-view runtime %) #(show/heartbeat! runtime %)
                      {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
                       :get-graph #(show/reactions runtime)
+                      :surfaces {cue-pads/query-id
+                                 (fn [query]
+                                   (let [lease (Object.) service (:cue-pad-previews runtime)]
+                                     {:sample! #(cue-pads/present! service lease % query)
+                                      :close! #(cue-pads/release! service lease)}))}
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
