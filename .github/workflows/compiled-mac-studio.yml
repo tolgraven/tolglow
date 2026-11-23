@@ -4,7 +4,20 @@ on:
   push:
     branches: [codex/apple-native-mac-runtime]
   pull_request:
-    paths: ['native/EmbeddedHost/build-macos', 'native/EmbeddedHost/prepare-jar', 'native/EmbeddedHost/src/tolglow/native/desktop.clj', '.github/workflows/compiled-mac-studio.yml']
+    paths:
+      - 'native/EmbeddedHost/build-macos'
+      - 'native/EmbeddedHost/prepare-jar'
+      - 'native/EmbeddedHost/register-callbacks.clj'
+      - 'native/EmbeddedHost/src/**'
+      - 'src/tolglow/fixed_host.clj'
+      - 'src/tolglow/native_resources.clj'
+      - 'native/macOS/**'
+      - 'native/Packaging/bundle-macos'
+      - 'native/Tests/capture-compiled-mac'
+      - 'native/Tests/check_compiled_studio.py'
+      - 'native/Tests/check-state-stream.mjs'
+      - '.github/workflows/apple-resources.yml'
+      - '.github/workflows/compiled-mac-studio.yml'
 permissions: {contents: read}
 concurrency:
   group: compiled-mac-studio-${{ github.head_ref || github.ref_name }}
