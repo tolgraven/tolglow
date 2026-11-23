@@ -27,7 +27,7 @@ import WatchConnectivity
         }, errorHandler: nil)
     }
 
-    var audienceReceive: ((Double, UInt32, Int?) -> Bool)?
+    var audienceReceive: ((AudienceSample, Double?) -> Bool)?
     var audienceEnded: (() -> Void)?
     private var audienceSession: UUID?
     private var audienceSending = false
@@ -104,7 +104,7 @@ import WatchConnectivity
         audienceSession = UUID()
     }
 
-    func sendAudience(_ sample: AudienceSample) {
+    func sendAudience(_ sample: AudienceSample, motionAge: Double) {
         guard let id = audienceSession else { return }
         guard active, WCSession.default.isReachable else { fail("Open your joined audience session on iPhone"); return }
         // The next 200 ms tick carries the newest effort and the cumulative steps.
@@ -115,8 +115,9 @@ import WatchConnectivity
             guard let self, self.audienceSession == id, self.audienceSending else { return }
             self.fail("Audience relay timed out")
         }
-        let message: [String: Any] = ["audience-session": id.uuidString,
+        var message: [String: Any] = ["audience-session": id.uuidString,
                                       "sample": sample.bytes, "sent": Date().timeIntervalSince1970]
+        if sample.motion != nil { message["motion-age"] = motionAge }
         WCSession.default.sendMessage(message, replyHandler: { [weak self] reply in
             let accepted = reply["received"] as? Bool == true
             Task { @MainActor in
@@ -186,9 +187,13 @@ import WatchConnectivity
                 replyHandler(["phone-audience-active": active()])
             } else if self.active, let audienceID, let sample, let sent {
                 let previous = self.audienceReceiver.current
-                let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: Date().timeIntervalSince1970)
+                let received = Date().timeIntervalSince1970
+                let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: received)
+                let measured = AudienceMotion.wristTimestamp(ageAtSend: message["motion-age"] as? Double,
+                                                             sent: sent, received: received,
+                                                             uptime: ProcessInfo.processInfo.systemUptime)
                 if accepted, let previous, previous != audienceID { self.audienceEnded?() }
-                replyHandler(["received": accepted && self.audienceReceive?(sample.effort, sample.steps, sample.pulse) == true])
+                replyHandler(["received": accepted && self.audienceReceive?(sample, measured) == true])
             } else if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
                 self.discoveredDeviceID = device
                 replyHandler(["received": true])
