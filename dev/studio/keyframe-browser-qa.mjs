@@ -48,18 +48,18 @@ try {
   await card.getByLabel('Tween curve',{exact:true}).selectOption('cubic-bezier');
   const editor = card.locator('.keyframe-editor');
   const graph = editor.locator('svg');
-  await graph.scrollIntoViewIfNeeded();
-  const handle = await graph.locator('circle.hit').first().boundingBox();
-  const bounds = await graph.boundingBox();
-  const start = {x:handle.x + handle.width / 2,y:handle.y + handle.height / 2};
-  const end = {x:start.x + bounds.width * .31,y:start.y - bounds.height * .38};
   const capture = async i => {
-    if (captures) await editor.screenshot({path:captures + '/' + String(i).padStart(2,'0') + '.png'});
+    if (captures) await editor.screenshot({path:captures + '/' + String(i).padStart(2,'0') + '.png',animations:'disabled'});
   };
-  // Chromium's touch sequence dispatches actual pointer capture and move events.
+  await editor.evaluate(el => el.scrollIntoView({block:'center',behavior:'instant'}));
+  await capture(0);
+  const handle = await graph.locator('circle.hit').first().boundingBox();
+  const start = {x:handle.x + handle.width / 2,y:handle.y + handle.height / 2};
+  assert.ok(await page.evaluate(({x,y}) => document.elementFromPoint(x,y)?.classList.contains('hit'), start),
+    'The touch must start over the visible handle');
+  const end = {x:start.x+70,y:start.y-57};
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points) => cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points});
-  await capture(0);
   await touch('touchStart',[start]);
   for (let i=1;i<=10;i++) {
     await touch('touchMove',[{x:start.x+(end.x-start.x)*i/10,y:start.y+(end.y-start.y)*i/10}]);
@@ -68,7 +68,7 @@ try {
   await touch('touchEnd',[]);
   const x = Number(await editor.getByLabel('First X',{exact:true}).inputValue());
   const y = Number(await editor.getByLabel('First Y',{exact:true}).inputValue());
-  assert.ok(x > .40 && y > .40, 'Touch drag must change both control point coordinates');
+  assert.ok(x > .40 && y > .40, `Touch drag must change both control point coordinates (x=${x}, y=${y})`);
   await interval.fill('1/4');
   await interval.press('Tab');
   const published = page.waitForResponse(r=>r.url().endsWith('/api/definition') && r.request().method()==='POST');

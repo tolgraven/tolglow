@@ -122,8 +122,9 @@
         normalized (time/normalize-duration (:source duration) (:meter duration))]
     (check! (= normalized duration) (conj path :duration) "Timer duration does not match its source and captured meter")))
 
-(defn- validate-instance! [r id instance]
-  (let [path [:instances id]
+(defn- validate-instance! [model id instance]
+  (let [r (:registry model)
+        path [:instances id]
         definition (:definition instance)]
     (check! (and (string? id) (= id (:id instance)) (map? instance)
                  (or (identifier? (:cue-id instance)) (and (contains? instance :cue-id) (nil? (:cue-id instance))))
@@ -140,7 +141,7 @@
     (compiler/compile-effect definition)
     (system/validate-state instance)
     (when-let [window (:tolglow.effects.keyframes/saved instance)]
-      (try (keyframe-storage/restore window [] 0)
+      (try (keyframe-storage/restore window (get-in model [:rig :fixtures]) (:epoch model))
            (catch Exception e (fail! (conj path :keyframes) (.getMessage e)))))
     (registry/resolve-params (:params definition {}) (:params instance))
     (when-let [recorded (or (get-in r [:versions [:effects (:effect-id instance) (:effect-version instance)]])
@@ -285,7 +286,7 @@
     (check! (and (natural? (get-in model [:control key]))
                  (or (not= key :history-limit) (pos? (get-in model [:control key]))))
             [:control key] "Invalid control counter/history limit"))
-  (doseq [[id instance] (:instances model)] (validate-instance! (:registry model) id instance))
+  (doseq [[id instance] (:instances model)] (validate-instance! model id instance))
   (let [orders (map :order (vals (:instances model)))]
     (check! (= (count orders) (count (distinct orders))) [:instances] "Instance launch orders must be unique"))
   (doseq [[id page] (:pages model)]
