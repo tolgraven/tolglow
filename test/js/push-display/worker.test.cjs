@@ -127,10 +127,10 @@ test("scene capture waits for the lazy renderer and uses startup time only on en
     },
     async screenshot(options) {marks.push(options.timeout); return Buffer.from("png");}
   });
-  const worker = await createWorker({...options, captureTimeoutMs: 300, startupTimeoutMs: 600}, h.launch);
+  const worker = await createWorker({...options, captureTimeoutMs: 300, sceneCaptureTimeoutMs: 400, sceneStartupTimeoutMs: 600}, h.launch);
   try {
     for (const mode of ["parameters", "simulator", "rig", "parameters", "rig"])
-      await worker.capture({"display-mode": mode});
-    assert.deepEqual(marks, ["drawn", 300, "drawn", 600, "drawn", 300, "drawn", 300, "drawn", 600]);
+      await worker.capture({"display-mode": mode, scene: mode !== "parameters" ? {} : null});
+    assert.deepEqual(marks, ["drawn", 300, "drawn", 600, "drawn", 400, "drawn", 300, "drawn", 600]);
   } finally {await worker.close();}
 });

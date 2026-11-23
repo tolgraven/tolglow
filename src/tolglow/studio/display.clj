@@ -109,16 +109,19 @@
   For authenticated Studio, :auth-token-env names its operator token variable.
   No resource lookup, extraction, browser download or process occurs before :open!."
   [{:keys [url browser-executable node-executable worker-script playwright-module no-sandbox? auth-token-env
-           startup-timeout-ms capture-timeout-ms shutdown-timeout-ms]
+           startup-timeout-ms capture-timeout-ms scene-startup-timeout-ms scene-capture-timeout-ms shutdown-timeout-ms]
     :or {url "http://127.0.0.1:8500/push-display" node-executable "node"
-         startup-timeout-ms 10000 capture-timeout-ms 2000 shutdown-timeout-ms 1000}}]
+         startup-timeout-ms 10000 capture-timeout-ms 2000 scene-startup-timeout-ms 45000
+         scene-capture-timeout-ms 10000 shutdown-timeout-ms 1000}}]
   (doseq [[field value] [[:startup-timeout-ms startup-timeout-ms] [:capture-timeout-ms capture-timeout-ms]
+                         [:scene-startup-timeout-ms scene-startup-timeout-ms] [:scene-capture-timeout-ms scene-capture-timeout-ms]
                          [:shutdown-timeout-ms shutdown-timeout-ms]]]
     (positive-ms! value field))
   (when-not (and (string? browser-executable) (seq browser-executable))
     (throw (ex-info "Configure an installed Chromium executable explicitly" {})))
   (let [config (cond-> {:url url :executablePath browser-executable
                         :startupTimeoutMs startup-timeout-ms :captureTimeoutMs capture-timeout-ms
+                        :sceneStartupTimeoutMs scene-startup-timeout-ms :sceneCaptureTimeoutMs scene-capture-timeout-ms
                         :noSandbox (boolean no-sandbox?)}
                  playwright-module (assoc :playwrightModule playwright-module)
                  auth-token-env (assoc :authTokenEnv auth-token-env))]
@@ -151,8 +154,10 @@
        (locking request-lock
          (when @closed? (throw (ex-info "Display capture is closed" {})))
          (let [id (inc @counter) request (json/write-str {:id id :view view})
-               scene? (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view))
-               budget (if (and scene? (not @scene-mode?)) (max startup-timeout-ms capture-timeout-ms) capture-timeout-ms)]
+               scene? (boolean (and (:scene view) (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view))))
+               budget (cond (not scene?) capture-timeout-ms
+                            @scene-mode? scene-capture-timeout-ms
+                            :else (max scene-startup-timeout-ms scene-capture-timeout-ms))]
            (when (> (alength (.getBytes ^String request StandardCharsets/UTF_8)) 70000)
              (throw (ex-info "Display request exceeds its bound" {})))
            (reset! counter id)

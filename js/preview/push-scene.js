@@ -38,6 +38,20 @@ export function fitCamera(camera, controls, bounds, room) {
   controls.update();
 }
 
+// Stand inside the audience cutaway. The panorama follows the hanging rig;
+// the separate full-rig lens also includes the floor and its receiver patches.
+export function panoramaCamera(camera, controls, bounds, room) {
+  const [width, height, depth] = room;
+  const low = bounds?.min || [-width / 3, 0, -depth / 4];
+  const high = bounds?.max || [width / 3, height * .8, 0];
+  const x = (low[0] + high[0]) / 2, z = (low[2] + high[2]) / 2;
+  const distance = Math.max(depth * .24, (high[0] - low[0]) / (2 * Math.tan(Math.PI * .265)));
+  camera.position.set(x, height * .38, z + distance);
+  controls.target.set(x, low[1] + (high[1] - low[1]) * .74, z);
+  camera.far = Math.max(100, distance + width + depth);
+  controls.update();
+}
+
 // Apply the lens after the regular tone map, fog and editor overlays. This
 // samples one rendered view and avoids rerendering the whole space per sector.
 class CylindricalLens {
@@ -67,14 +81,14 @@ class CylindricalLens {
 export class PushScene {
   constructor(canvas) {
     this.canvas = canvas;
-    this.engine = new SceneRenderer(canvas, null, {worker: true, autoStart: false,
+    this.engine = new SceneRenderer(canvas, null, {worker: true, autoStart: false, coarsePointer: true,
       reducedMotion: false, viewport: {width, height, pixelRatio: 1}});
     if (this.engine.error || !this.engine.renderer) {
       const reason = this.engine.error || 'Venue graphics are unavailable';
       this.dispose();
       throw new Error(reason);
     }
-    this.engine.setQuality('mobile');
+    this.engine.setQuality(this.engine.softwareRenderer ? 'low' : 'mobile');
     this.engine.setLightingMode('interpolate');
   }
 
@@ -94,6 +108,7 @@ export class PushScene {
       if (lens === 'panorama') Object.assign(camera, cylindricalCamera(bend, aspect));
       else {camera.aspect = aspect; camera.fov = 2 * Math.atan(Math.tan(rectilinearWidth/2)/aspect)*180/Math.PI;}
       if (lens === 'fit') fitCamera(camera, engine.controls, frame.bounds, engine.room);
+      else if (lens === 'panorama') panoramaCamera(camera, engine.controls, frame.bounds, engine.room);
       else cameraPreset(camera, engine.controls, engine.room, 'audience');
       camera.updateProjectionMatrix();
       this.camera = lens; this.framedRig = this.rig;

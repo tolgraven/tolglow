@@ -9,7 +9,7 @@ async function captureShow([url, directory, executablePath]) {
   const frames = JSON.parse(readFileSync(join(directory, 'frames.json')));
   let page;
   const errors = [], requests = [], samples = [];
-  const worker = await createWorker({url, executablePath, noSandbox: true, startupTimeoutMs: 60000, captureTimeoutMs: 60000},
+  const worker = await createWorker({url, executablePath, noSandbox: true, startupTimeoutMs: 60000, sceneStartupTimeoutMs: 60000, sceneCaptureTimeoutMs: 60000},
     async options => {
       const browser = await chromium.launch({...options, args: [...options.args, '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
       return {
@@ -37,7 +37,8 @@ async function captureShow([url, directory, executablePath]) {
         const canvas = document.querySelector('.push-scene canvas'), e = canvas?.tolglowPreview;
         if (!e?.ready) throw Error(document.querySelector('.push-scene-status')?.textContent || 'no rendered scene');
         window.lastVenue = e;
-        return {draws: e.draws, lights: e.lightEntries.length, width: canvas.width, height: canvas.height,
+        return {draws: e.draws, lights: e.lightEntries.length, width: canvas.clientWidth, height: canvas.clientHeight,
+                drawingBuffer: [canvas.width, canvas.height], device: e.deviceRenderer,
                 mode: e.snapshot.editor?.tool || 'simulator', camera: e.snapshot.camera};
       });
       assert.equal(sample.width, 960); assert.equal(sample.height, 160); assert(sample.lights >= 8);

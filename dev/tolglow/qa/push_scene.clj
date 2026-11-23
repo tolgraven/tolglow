@@ -20,8 +20,11 @@
    (get-in model [:rig :fixtures])))
 
 (defn- scenic-show []
-  (let [base (demo/model)
-        jet {:id :jet :universe 1 :address 200 :position [0 0 -2] :channels {:fog 1}
+  (let [base (-> (demo/model)
+                 (assoc-in [:rig :room :width] 19)
+                 (assoc-in [:rig :trusses 0 :length] 15)
+                 (update-in [:rig :fixtures] #(mapv (fn [fixture] (update-in fixture [:position 0] * 1.8)) %)))
+        jet {:id :jet :universe 1 :address 200 :position [-7.3 0.45 -0.7] :channels {:fog 1}
              :fogger {:flow-m3-min 140 :mixing-seconds 4}}
         effects (cons {:id :haze :version 1 :name "Stage haze" :targets [:jet] :params {} :outputs {:fog 1}} (looks base))]
     (reduce (fn [model {:keys [id] :as effect}]

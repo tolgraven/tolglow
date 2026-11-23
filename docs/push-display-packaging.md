@@ -103,8 +103,10 @@ to parameters. You can also set the initial view and lens in the show settings.
 | Panorama | A 136° cylindrical audience view distributes pixels by horizontal angle. Vertical correction keeps shapes near the center in proportion. |
 | Audience | An ordinary perspective view with a 100° horizontal field of view. |
 
-The display draws at 960 × 160. Cold entry can use the configured browser startup
-deadline to compile shaders. Warm captures retain the ordinary capture deadline.
+The device receives a 960 × 160 image. Hardware rendering uses the mobile quality
+tier at native resolution. Software rasterizers use the low tier. Cold entry has a shader compilation deadline of 45 seconds
+(`:scene-startup-timeout-ms`). Subsequent scene captures have a 10-second ceiling
+(`:scene-capture-timeout-ms`). Parameter controls retain their own capture deadline.
 A frame already in progress finishes before the worker reads back its PNG.
 Switching back to parameters or the target picker releases the scene and WebGL
 context. Each capture consumes the latest committed lighting values. It performs
@@ -125,3 +127,8 @@ capture worker. It records 24 PNGs and checks renderer teardown.
 npm run studio:build
 lein run -m tolglow.qa.push-scene /tmp/tolglow-device-venue /usr/bin/chromium
 ```
+
+The 24-frame software Chromium check took 25.3 seconds for cold shader compilation
+and first capture. Warm captures had a 3.86-second median and a 6.18-second maximum
+on the shared SwiftShader host. These are software rendering measurements. Hardware
+GPU throughput and transfer to a physical Push remain unmeasured.

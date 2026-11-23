@@ -23,9 +23,10 @@ function deadline(promise, milliseconds, label) {
 async function createWorker(options, launch) {
   const url = localDisplayUrl(options.url), timeout = options.captureTimeoutMs || 2000;
   const startupTimeout = options.startupTimeoutMs || 10000;
+  const sceneStartup = options.sceneStartupTimeoutMs ?? 45000, sceneCapture = options.sceneCaptureTimeoutMs ?? 10000;
   if (typeof options.executablePath !== "string" || !options.executablePath.length)
     throw new Error("Configure the Chromium executable explicitly; no browser is downloaded");
-  for (const value of [timeout, startupTimeout])
+  for (const value of [timeout, startupTimeout, sceneStartup, sceneCapture])
     if (!Number.isInteger(value) || value < 10 || value > 60000) throw new Error("Display deadlines must be integers in 10..60000 milliseconds");
   let httpCredentials;
   if (options.authTokenEnv !== undefined) {
@@ -62,10 +63,10 @@ async function createWorker(options, launch) {
       if (Buffer.byteLength(JSON.stringify(view)) > 65536) throw new Error("Display view exceeds 64 KiB");
       busy = true;
       const started = performance.now();
-      const scene = ["simulator", "rig"].includes(view["display-mode"]);
+      const scene = !!view.scene && ["simulator", "rig"].includes(view["display-mode"]);
       // Entering the venue compiles the same shaders as Studio on this browser.
-      // Once warm, every frame returns to the normal capture deadline.
-      const budget = scene && !previousScene ? Math.max(timeout, startupTimeout) : timeout;
+      // Once warm, every frame returns to the warm scene deadline.
+      const budget = scene ? (previousScene ? sceneCapture : Math.max(sceneStartup, sceneCapture)) : timeout;
       try {
         const png = await deadline((async () => {
           await page.evaluate(value => globalThis.tolglowPushDisplay.update(value), view);
