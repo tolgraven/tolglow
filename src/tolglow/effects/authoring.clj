@@ -21,7 +21,7 @@
                               (if (nil? targets) row
                                 (when-let [ids (seq (filter selected targets))]
                                   (assoc row :targets (vec ids)))))) outputs)
-        definition (assoc (select-keys candidate [:name :params :envelope])
+        definition (assoc (select-keys candidate [:name :params :envelope :ui/layout])
                           :id (:effect-id request) :version 1 :auto? false
                           :targets (vec (:fixture-ids request)) :outputs rows
                           :performance-owner (:owner-id request))]

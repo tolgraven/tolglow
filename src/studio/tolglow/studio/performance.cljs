@@ -4,6 +4,8 @@
   (:require [clojure.string :as str]
             [clojure.set :as set]
             [re-frame.core :as rf]
+            [reagent.core :as r]
+            [tolglow.authoring.parameter-layout :as layout]
             [tolglow.studio.events :as events]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.effect-inspector :as inspect]
@@ -19,13 +21,6 @@
 (defn card-definition [show instance]
   (or (:definition instance)
       (some #(when (= (wire (:id %)) (wire (:effect-id instance))) %) (:effects show))))
-(defn card-parameters
-  "Stable ordering keeps controls in place across snapshots. Explicit UI order
-  wins, followed by expressive axes and parameter names. All remain available."
-  [definition expanded?]
-  (let [parameters (sort-by (fn [[id schema]] [(or (:ui/order schema) 100)
-                                             (if (:control/axis schema) 0 1) (wire id)]) (:params definition))]
-    (vec (if expanded? parameters (take 2 parameters)))))
 (defn- state [db] (merge defaults (get-in db [:ui :performance])))
 (defn- store [db value] (assoc-in db [:ui :performance] value))
 (defn request-token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
@@ -296,39 +291,103 @@
          [action-button target "instance/remove" "Remove now" {:class "performance-remove" :title "Remove selected instances immediately."}]]])
      (when error [:p.performance-error {:role "alert"} error])]))
 
+(defn- control-id [{:keys [attribute parameter]}]
+  (wire (or parameter attribute)))
+
+(defn- control-title [{:keys [attribute parameter schema]}]
+  (or (:name schema) (widgets/label (or parameter attribute))))
+
+(defn- xyz-schema [{:keys [attribute components]}]
+  (let [bounds (mapv (comp :bounds second) components)]
+    (cond-> {:type :vector :size 3 :semantic/type attribute}
+      (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds)))))
+
+(defn- effective-control [show instance {:keys [parameter schema components] :as control}]
+  (if components
+    [(xyz-schema control) (:effective (xyz-readings show instance components))]
+    [schema (let [overlay (parameter-overlay show (:id instance) parameter)]
+              (if (some? overlay) overlay (get (:params instance) parameter (:default schema))))]))
+
+(defn- xyz-editor [show instance {:keys [components] :as control} compact?]
+  (let [{:keys [base effective]} (xyz-readings show instance components)
+        title (control-title control)
+        axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (str axis " · " (wire id))))
+                   components ["X" "Y" "Z"])
+        update! (fn [index value]
+                  (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]
+    [:div.param-row {:data-param (control-id control) :class (when compact? "strip-control")}
+     [:label title]
+     [widgets/axes-control title axes base update!]
+     (when-not compact? [visualization/studio (xyz-schema control) effective])]))
+
+(defn- parameter-bank [show instance controls compact? parameter-control]
+  [:div.live-effect-parameters {:class (if compact? "control-strip" "control-detail")
+                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")
+                                :tab-index (when compact? 0)}
+   (for [{:keys [parameter schema components] :as control} controls]
+     ^{:key (control-id control)}
+     (if components
+       [xyz-editor show instance control compact?]
+       [parameter-control instance parameter schema nil {:compact? compact? :strip? compact?}]))])
+
+(defn- viewable? [{:keys [schema components]}]
+  (or (seq components)
+      (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
+
+(defn- resolve-monitor [controls requested preferred]
+  (let [choices (filterv viewable? controls)
+        matching (fn [id] (some #(when (= (control-id %) (wire id)) %) choices))]
+    {:choices choices :selected (or (matching requested) (matching preferred) (first choices))}))
+
+(rf/reg-event-db :performance/monitor-select
+  (fn [db [_ id parameter]] (store db (assoc-in (state db) [:monitor id] parameter))))
+
+(defn- strip-monitor [show instance {:keys [choices selected]}]
+  (when selected
+    (let [id (wire (:id instance))
+          [schema value] (effective-control show instance selected)
+          title (control-title selected)]
+      [:div.strip-monitor
+       [:div.strip-monitor-bar
+        (if (next choices)
+          [:select {:value (control-id selected) :aria-label "Monitored parameter"
+                    :on-change #(rf/dispatch [:performance/monitor-select id (.. % -target -value)])}
+           (for [control choices]
+             ^{:key (control-id control)} [:option {:value (control-id control)} (control-title control)])]
+          [:strong title])
+        [:span (if (visualization/spatial-kind schema) "3D" "4 beats")]]
+       ^{:key (control-id selected)} [visualization/monitor schema value]])))
+
+(defn- resolve-controls [definition cue-layout]
+  (let [{:keys [parameters monitor]} (layout/resolve-layout definition {:ui/layout cue-layout})]
+    {:controls (inspect/xyz-controls definition parameters) :monitor monitor}))
+
 (defn- instance-card [show instance parameter-control]
   (let [id (wire (:id instance)) expanded? @(rf/subscribe [:performance/card-expanded id])
         definition (card-definition show instance)
         faults @(rf/subscribe [:inspect/faults])
         faulted? (seq (inspect/faults-for faults instance))
-        controls (inspect/xyz-controls definition (card-parameters definition true))
         cue (some #(when (= (wire (:id %)) (wire (:cue-id instance))) %) (:cues show))
+        {:keys [controls monitor]} @(r/track resolve-controls definition (:ui/layout cue))
         title (or (:name cue) (:name instance) (widgets/label (:cue-id instance)))
         paused? (get-in instance [:system :paused?])
-        {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])]
+        {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
+        scope (resolve-monitor controls (get-in state [:monitor id]) monitor)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
+                                :data-density (if expanded? "detail" "strip")
+                                :data-wide (boolean (or expanded? (> (count controls) 3)))
                                 :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
      [:header.live-effect-header
-      [:div [:h3 title] [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]]
-      [:button.live-effect-expand {:type "button" :aria-expanded expanded? :aria-label (str "Expand " title " controls")
+      [:div.live-effect-title [:h3 title] [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]]
+      [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]
+      [:button.live-effect-expand {:type "button" :aria-expanded expanded? :aria-label (str (if expanded? "Collapse " "Expand ") title " controls")
                                    :on-click #(rf/dispatch [:performance/card-toggle id])}
-       (if expanded? "Less −" (str "More +" (when (> (count controls) 2) (str " " (- (count controls) 2)))))] ]
-     [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]
-     [:div.live-effect-parameters
-      (for [{:keys [parameter schema attribute components]} (if expanded? controls (take 2 controls))]
-        ^{:key (pr-str (or parameter [attribute components]))}
-        (if components
-          (let [{:keys [base effective]} (xyz-readings show instance components)
-                limits (mapv (comp :bounds second) components)
-                schema (cond-> {:type :vector :size 3 :semantic/type attribute}
-                         (apply = limits) (assoc :bounds (first limits)))]
-            [:div.param-row [:label (widgets/label attribute)]
-             [widgets/axes-control (widgets/label attribute)
-              (mapv (fn [[id schema] label] (assoc schema :axis-label (str label " · " (wire id)))) components ["X" "Y" "Z"])
-              base (fn [i value] (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components i)) value]))]
-             [visualization/studio schema effective]])
-          [parameter-control instance parameter schema nil {:compact? (not expanded?)}]))]
+       (if expanded? "Compact" "Detail")]]
+     (when (seq controls)
+       [:div.live-effect-body
+        [parameter-bank show instance controls (not expanded?) parameter-control]
+        (when-not expanded? [strip-monitor show instance scope])])
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced

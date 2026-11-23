@@ -11,7 +11,7 @@
 
 (defn- scalar [label value] {:name label :type :number :default value :bounds [0 1]})
 
-(def ^:private effect
+(def orbital-effect
   {:id :orbital :name "Orbital wash" :version 1 :categories [:movement :color]
    :outputs {:color {:op :param :key :color} :dimmer {:op :param :key :dimmer}}
    :params {:aim {:type :vector :name "Orbit aim" :default [0.3 0.4 -0.8] :size 3 :bounds [-1 1]}
@@ -45,7 +45,7 @@
 (defn -main [& [directory]]
   (let [dir (io/file (or directory "target/push-parameter-qa"))
         model (-> (demo/model)
-                  (assoc-in [:registry :effects :orbital] effect)
+                  (assoc-in [:registry :effects :orbital] orbital-effect)
                   (assoc-in [:registry :cues :orbital] {:id :orbital :name "Orbital wash" :effect-id :orbital
                                                         :version 1 :swatch "#b6df91"})
                   (assoc-in [:pages :main :cells [0 2]] :orbital))

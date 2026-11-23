@@ -38,6 +38,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Spatial cue actions](spatial-show.md) | Select live fixture targets, observe volume contacts and run owned cues |
 | [Headless show modules](headless-modules.md) | Use the show APIs from code and controllers |
 | [Feature parity inventory](feature-parity-inventory.md) | Source-linked operator and authoring behaviors from Afterglow, Tolglow effects and tolglow-web, with acceptance cases |
+| [Studio control layouts](studio-control-layouts.md) | Mix running instances with compact controls, live scopes and declarative parameter layouts |
 | [Studio Debug](studio-debug.md) | Live event and DMX inspection, subscriber editing and musical action sequences |
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |

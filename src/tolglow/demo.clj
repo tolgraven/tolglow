@@ -30,12 +30,12 @@
 (defn definitions []
   (into
    (mapv (fn [[id title color swatch]]
-           {:id id :version 1 :name title :swatch swatch :tags [:color :emission]
+           {:id id :version 1 :name title :swatch swatch :tags [:color :emission] :ui/layout :wash
             :duration {:bars 2} :release-duration {:beats 3/2}
             :params {:level level}
             :outputs {:color (constant color) :dimmer (param :level)}}) colors)
    [{:id :breathe :version 1 :name "Breathe" :swatch "#98d4bc"
-     :tags [:intensity] :duration {:bars 2} :release-duration {:beats 3/2}
+     :tags [:intensity] :ui/layout :pulse :duration {:bars 2} :release-duration {:beats 3/2}
      :params {:level level :period {:type :number :default 8 :bounds [1/2 32] :unit :beats}}
      :outputs {:dimmer {:op :multiply :args [(param :level)
                                       {:op :add :args [(constant 0.5)
@@ -43,17 +43,17 @@
                                                                         {:op :sin :args [{:op :multiply :args [(constant (* 2 Math/PI))
                                                                                                                    {:op :divide :args [{:op :beat} (param :period)]}]}]}]}]}]}}}
     {:id :sweep :version 1 :name "Slow sweep" :swatch "#85b6e0"
-     :tags [:movement] :duration {:bars 4} :release-duration {:beats 1/2}
+     :tags [:movement] :ui/layout {:template :movement :monitor :width} :duration {:bars 4} :release-duration {:beats 1/2}
      :params {:width {:type :number :default 0.3 :bounds [0.0 0.45]}}
      :outputs {:pan {:op :add :args [(constant 0.5)
                                    {:op :multiply :args [(param :width)
                                                     {:op :sin :args [{:op :multiply :args [{:op :bar} (constant (/ Math/PI 2))]}]}]}]}
                :tilt (constant 0.55)}}
-    {:id :spot :version 1 :name "Solitary" :swatch "#e5d5b5" :tags [:color :emission]
+    {:id :spot :version 1 :name "Solitary" :ui/layout :wash :swatch "#e5d5b5" :tags [:color :emission]
      :targets [:head-4] :duration {:beats 5} :release-duration {:beats 2}
      :params {:level (assoc level :default 0.9)}
      :outputs {:color (constant [0.9 0.76 0.55]) :dimmer (param :level)}}
-    {:id :flash :version 1 :name "Flash" :swatch "#e9e5d9" :tags [:emission :transient]
+    {:id :flash :version 1 :name "Flash" :ui/layout :flash :swatch "#e9e5d9" :tags [:emission :transient]
      :duration {:beats 1/4} :release-duration {:beats 1/2}
      :params {:level (assoc level :default 1.0)}
      :outputs {:color (constant [1.0 0.95 0.9]) :dimmer (param :level)}}]))
