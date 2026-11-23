@@ -8,6 +8,9 @@
    :movement {:order [:aim :position :bearing :pan :tilt :width :rate :speed] :monitor :aim}
    :pulse {:order [:level :period :waveform :phase :duty] :monitor :level}
    :flash {:order [:level :rate :duration :release] :monitor :level}
+   :volume {:order [:position :translation :radius :shape :size :strength :color
+                    :scale :velocity :restitution :gravity :inner-m :outer-m]
+            :monitor :position}
    :optics {:order [:focus :iris :zoom :spread] :monitor :focus}})
 
 (defn- id-key [id]
@@ -17,6 +20,7 @@
   (let [tags (into #{} (map id-key) (:tags definition))
         params (into #{} (map id-key) (keys (:params definition)))]
     (cond
+      (or (:spatial-volume definition) (and (params :translation) (params :strength))) :volume
       (or (tags :movement) (some params [:aim :pan :tilt :position])) :movement
       (or (tags :transient) (params :strobe)) :flash
       (some params [:period :phase :waveform]) :pulse

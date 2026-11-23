@@ -23,7 +23,7 @@ An effect definition can contain a template keyword or a map under `:ui/layout`.
             :monitor :color}
 ```
 
-The built-in templates cover wash, movement, pulse, flash and optics. Select them with `:wash`, `:movement`, `:pulse`, `:flash` and `:optics`. A wash prioritizes tint and intensity, a pulse level and period, and movement aim and bearing. The demo library specifies its templates on the definitions, including the sweep's width monitor.
+The built-in templates cover wash, movement, pulse, flash, optics and spatial volumes. Select them with `:wash`, `:movement`, `:pulse`, `:flash` `:optics` and `:volume`. A wash prioritizes tint and intensity, a pulse level and period, and movement aim and bearing. The demo library specifies its templates on the definitions, including the sweep's width monitor. The REPL examples, generated spatial volumes and procedural warm fill and beat pulse definitions also specify their layouts.
 
 For a parameter shared between definitions, put `:ui/order` on its schema. Explicit cue/effect `:order` wins, followed by per-parameter order, expressive axes, the template order and the parameter identifier. Unlisted parameters stay editable. IDs can be namespaced. Unknown or repeated IDs in an authored order have no effect on the remaining controls. Without an authored template the resolver uses effect tags and parameter names, then stable schema ordering. The monitor falls back to the first visualizable parameter if its preferred parameter is unavailable. Enum, boolean and waveform controls retain their native selectors and previews.
 

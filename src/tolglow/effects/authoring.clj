@@ -68,6 +68,7 @@
                         {:attribute attr :targets (mapv :id members)
                          :value (if (== tint 1.0) base {:op :multiply :args [tint base]})}))]
     {:name (if (= domain :activity) "Beat pulse" "Warm fill")
+     :ui/layout (if (= domain :activity) :pulse :wash)
      :params {:level {:type :number :bounds [0 1] :default (max 0.1 (min 1.0 amount))}}
      :outputs (into rows (open-shutters fixtures))}))
 
