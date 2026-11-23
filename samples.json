@@ -1,0 +1,3943 @@
+{
+ "source": "4205d6b1e71cb37f1d74167240608dd4b6032f96",
+ "width": 960,
+ "height": 160,
+ "frames": [
+  {
+   "frame": 0,
+   "clock": {
+    "time-ms": 9518.982968,
+    "beat": 19.037965935999992
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.83,
+      0.0,
+      0.0
+     ],
+     "effective": [
+      0.83,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      85.0,
+      0.0,
+      23.0
+     ],
+     "effective": [
+      85.0,
+      0.0,
+      23.0
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.95,
+      0.5,
+      0.945555739144584
+     ],
+     "effective": [
+      0.95,
+      0.5,
+      0.945555739144584
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.5,
+     "effective": 0.5
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 1,
+   "clock": {
+    "time-ms": 9682.910732,
+    "beat": 19.365821463999993
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.8165902650141408,
+      0.14932505233506574,
+      0.1593363203489835
+     ],
+     "effective": [
+      0.8165902650141408,
+      0.14932505233506574,
+      0.1593363203489835
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      83.62671388699032,
+      12.532070139807692,
+      22.62840493412679
+     ],
+     "effective": [
+      83.62671388699032,
+      12.532070139807692,
+      22.62840493412679
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.9427296617546547,
+      0.5859341952443956,
+      0.9018509343344734
+     ],
+     "effective": [
+      0.9427296617546547,
+      0.5859341952443956,
+      0.9018509343344734
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.5674463403099805,
+     "effective": 0.5674463403099805
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 2,
+   "clock": {
+    "time-ms": 9811.723656,
+    "beat": 19.623447311999993
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.7767943636526858,
+      0.29136034577722947,
+      0.31352406761483004
+     ],
+     "effective": [
+      0.7767943636526858,
+      0.29136034577722947,
+      0.31352406761483004
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      79.55123001262446,
+      24.659196329256297,
+      21.5256269445925
+     ],
+     "effective": [
+      79.55123001262446,
+      24.659196329256297,
+      21.5256269445925
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.9211535706550706,
+      0.6690916319720431,
+      0.8451612752273864
+     ],
+     "effective": [
+      0.9211535706550706,
+      0.6690916319720431,
+      0.8451612752273864
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.6334965283617882,
+     "effective": 0.6334965283617882
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 3,
+   "clock": {
+    "time-ms": 9949.162032,
+    "beat": 19.898324063999993
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.711898205531974,
+      0.4191719932975911,
+      0.45758103257127075
+     ],
+     "effective": [
+      0.711898205531974,
+      0.4191719932975911,
+      0.45758103257127075
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      72.90523791592506,
+      35.98951941571792,
+      19.727299671367955
+     ],
+     "effective": [
+      72.90523791592506,
+      35.98951941571792,
+      19.727299671367955
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.8859689066137209,
+      0.7467852759934943,
+      0.7773185529198643
+     ],
+     "effective": [
+      0.8859689066137209,
+      0.7467852759934943,
+      0.7773185529198643
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.6967833125183813,
+     "effective": 0.6967833125183813
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 4,
+   "clock": {
+    "time-ms": 10101.068337,
+    "beat": 20.20213667399999
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.6239987551869428,
+      0.5265204786223683,
+      0.5868523580546111
+     ],
+     "effective": [
+      0.6239987551869428,
+      0.5265204786223683,
+      0.5868523580546111
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      63.903486976976076,
+      46.15692703800312,
+      17.291531770240585
+     ],
+     "effective": [
+      63.903486976976076,
+      46.15692703800312,
+      17.291531770240585
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.8383125781134028,
+      0.8165046425463071,
+      0.7005149431392887
+     ],
+     "effective": [
+      0.8383125781134028,
+      0.8165046425463071,
+      0.7005149431392887
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.7559966441365478,
+     "effective": 0.7559966441365478
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 5,
+   "clock": {
+    "time-ms": 10223.081558,
+    "beat": 20.446163115999994
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.5159362736646516,
+      0.6081652572930204,
+      0.6971609495684602
+     ],
+     "effective": [
+      0.5159362736646516,
+      0.6081652572930204,
+      0.6971609495684602
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      52.836847303006486,
+      54.83288367392383,
+      14.297029270225284
+     ],
+     "effective": [
+      52.836847303006486,
+      54.83288367392383,
+      14.297029270225284
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.7797244857217991,
+      0.875996916621192,
+      0.6172321713148514
+     ],
+     "effective": [
+      0.7797244857217991,
+      0.875996916621192,
+      0.6172321713148514
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8099107958265923,
+     "effective": 0.8099107958265923
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 6,
+   "clock": {
+    "time-ms": 10373.082186,
+    "beat": 20.746164371999996
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.39120254226420415,
+      0.6601205898635104,
+      0.7849424481276033
+     ],
+     "effective": [
+      0.39120254226420415,
+      0.6601205898635104,
+      0.7849424481276033
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      40.062910954767894,
+      61.73704648194633,
+      10.840552375996019
+     ],
+     "effective": [
+      40.062910954767894,
+      61.73704648194633,
+      10.840552375996019
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.712097763878183,
+      0.9233397473047749,
+      0.5301613215406574
+     ],
+     "effective": [
+      0.712097763878183,
+      0.9233397473047749,
+      0.5301613215406574
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8574097342458076,
+     "effective": 0.8574097342458076
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 7,
+   "clock": {
+    "time-ms": 10470.953396,
+    "beat": 20.941906791999997
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.2538280339539801,
+      0.6798501179551413,
+      0.847360404015559
+     ],
+     "effective": [
+      0.2538280339539801,
+      0.6798501179551413,
+      0.847360404015559
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      25.994437212154594,
+      66.6463239113361,
+      7.033788892700655
+     ],
+     "effective": [
+      25.994437212154594,
+      66.6463239113361,
+      7.033788892700655
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.6376176087702302,
+      0.9570033639634475,
+      0.4421158806130095
+     ],
+     "effective": [
+      0.6376176087702302,
+      0.9570033639634475,
+      0.4421158806130095
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8975102222040059,
+     "effective": 0.8975102222040059
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 8,
+   "clock": {
+    "time-ms": 10601.076973,
+    "beat": 21.202153945999996
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      0.1082516782526608,
+      0.6663906843440602,
+      0.882397929890601
+     ],
+     "effective": [
+      0.1082516782526608,
+      0.6663906843440602,
+      0.882397929890601
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      11.086015242742372,
+      69.40208437341805,
+      2.9997453009773474
+     ],
+     "effective": [
+      11.086015242742372,
+      69.40208437341805,
+      2.9997453009773474
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.5586906689321655,
+      0.9759000071320094,
+      0.35594082691637186
+     ],
+     "effective": [
+      0.5586906689321655,
+      0.9759000071320094,
+      0.35594082691637186
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9293821718630727,
+     "effective": 0.9293821718630727
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 9,
+   "clock": {
+    "time-ms": 10749.027452,
+    "beat": 21.498054904
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.040822572188761376,
+      0.6203993524253607,
+      0.8889228716887665
+     ],
+     "effective": [
+      -0.040822572188761376,
+      0.6203993524253607,
+      0.8889228716887665
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -4.180624862704478,
+      69.91528204293668,
+      -1.1312279040259177
+     ],
+     "effective": [
+      -4.180624862704478,
+      69.91528204293668,
+      -1.1312279040259177
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.47786728013862334,
+      0.9794190768658515,
+      0.27442070173379085
+     ],
+     "effective": [
+      0.47786728013862334,
+      0.9794190768658515,
+      0.27442070173379085
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9523658277153797,
+     "effective": 0.9523658277153797
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 10,
+   "clock": {
+    "time-ms": 10873.172973,
+    "beat": 21.746345946
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.1885777385952621,
+      0.544121329654912,
+      0.8667243914815937
+     ],
+     "effective": [
+      -0.1885777385952621,
+      0.544121329654912,
+      0.8667243914815937
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -19.312178048912386,
+      68.16933416147367,
+      -5.2256481779409985
+     ],
+     "effective": [
+      -19.312178048912386,
+      68.16933416147367,
+      -5.2256481779409985
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.3977590573881109,
+      0.9674468628215337,
+      0.20018963343806773
+     ],
+     "effective": [
+      0.3977590573881109,
+      0.9674468628215337,
+      0.20018963343806773
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9659854236500927,
+     "effective": 0.9659854236500927
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 11,
+   "clock": {
+    "time-ms": 10976.796843,
+    "beat": 21.953593685999998
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.33023946524563025,
+      0.4412803608841551,
+      0.8165197802008107
+     ],
+     "effective": [
+      -0.33023946524563025,
+      0.4412803608841551,
+      0.8165197802008107
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -33.81970427214286,
+      64.22065686972668,
+      -9.151214097168067
+     ],
+     "effective": [
+      -33.81970427214286,
+      64.22065686972668,
+      -9.151214097168067
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.3209545067945378,
+      0.9403702185352687,
+      0.1356462219173054
+     ],
+     "effective": [
+      0.3209545067945378,
+      0.9403702185352687,
+      0.1356462219173054
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9699590314034652,
+     "effective": 0.9699590314034652
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 12,
+   "clock": {
+    "time-ms": 11073.034333,
+    "beat": 22.146068665999998
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.4612302913880085,
+      0.3168969423722782,
+      0.739931280093028
+     ],
+     "effective": [
+      -0.4612302913880085,
+      0.3168969423722782,
+      0.739931280093028
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -47.23442743130208,
+      58.196842254507814,
+      -12.781080363764092
+     ],
+     "effective": [
+      -47.23442743130208,
+      58.196842254507814,
+      -12.781080363764092
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.24993538418722427,
+      0.8990640611737679,
+      0.08287603354156853
+     ],
+     "effective": [
+      0.24993538418722427,
+      0.8990640611737679,
+      0.08287603354156853
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9642043965282956,
+     "effective": 0.9642043965282956
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 13,
+   "clock": {
+    "time-ms": 11173.091503,
+    "beat": 22.346183006
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.5773175609642087,
+      0.1770432309144584,
+      0.6394336658315224
+     ],
+     "effective": [
+      -0.5773175609642087,
+      0.1770432309144584,
+      0.6394336658315224
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -59.12288274934668,
+      50.29253551483884,
+      -15.997956508646748
+     ],
+     "effective": [
+      -59.12288274934668,
+      50.29253551483884,
+      -15.997956508646748
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.18699650309169408,
+      0.8448631006731806,
+      0.04358421106091115
+     ],
+     "effective": [
+      0.18699650309169408,
+      0.8448631006731806,
+      0.04358421106091115
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9488406410768556,
+     "effective": 0.9488406410768556
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 14,
+   "clock": {
+    "time-ms": 11295.95831,
+    "beat": 22.59191662
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.6747501907929087,
+      0.02854661294627677,
+      0.5182742780764329
+     ],
+     "effective": [
+      -0.6747501907929087,
+      0.02854661294627677,
+      0.5182742780764329
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -69.10092315349064,
+      40.76314546668573,
+      -18.69789685329747
+     ],
+     "effective": [
+      -69.10092315349064,
+      40.76314546668573,
+      -18.69789685329747
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.13417158330504952,
+      0.7795187117715593,
+      0.01904037598515751
+     ],
+     "effective": [
+      0.13417158330504952,
+      0.7795187117715593,
+      0.01904037598515751
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.9241857977514231,
+     "effective": 0.9241857977514231
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 15,
+   "clock": {
+    "time-ms": 11485.215772,
+    "beat": 22.970431543999997
+   },
+   "mode": "auto",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.7503798778741606,
+      -0.12134359519537634,
+      0.38036809340810884
+     ],
+     "effective": [
+      -0.7503798778741606,
+      -0.12134359519537634,
+      0.38036809340810884
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -76.84613207145019,
+      29.916591616368112,
+      -20.793659266392403
+     ],
+     "effective": [
+      -76.84613207145019,
+      29.916591616368112,
+      -20.793659266392403
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.09316753609232253,
+      0.7051423425122385,
+      0.010037603793590588
+     ],
+     "effective": [
+      0.09316753609232253,
+      0.7051423425122385,
+      0.010037603793590588
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8907502265659812,
+     "effective": 0.8907502265659812
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 16,
+   "clock": {
+    "time-ms": 11698.256615,
+    "beat": 23.39651323
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 17,
+   "clock": {
+    "time-ms": 11970.915674,
+    "beat": 23.941831347999997
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.938908554091592,
+      0.03054572295420399,
+      -0.938908554091592
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.12443657836336319
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 18,
+   "clock": {
+    "time-ms": 12101.067512,
+    "beat": 24.202135024
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.893185262099247,
+      0.05340736895037651,
+      -0.893185262099247
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.1427258951603012
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 19,
+   "clock": {
+    "time-ms": 12223.791102,
+    "beat": 24.447582203999996
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.3271483513269582,
+      0.3364258243365209,
+      -0.3271483513269582
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.3691406594692167
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 20,
+   "clock": {
+    "time-ms": 12361.807686,
+    "beat": 24.723615371999998
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.5088939915246282,
+      0.7544469957623141,
+      0.5088939915246282
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.7035575966098513
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 21,
+   "clock": {
+    "time-ms": 12455.996893,
+    "beat": 24.911993785999996
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.9025725227546539,
+      0.951286261377327,
+      0.9025725227546539
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.8610290091018616
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 22,
+   "clock": {
+    "time-ms": 12570.931264,
+    "beat": 25.141862527999997
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.9618623058876001,
+      0.9809311529438001,
+      0.9618623058876001
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.8847449223550401
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 23,
+   "clock": {
+    "time-ms": 12695.916551,
+    "beat": 25.391833102
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.4868022947065276,
+      0.7434011473532638,
+      0.4868022947065276
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.694720917882611
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 24,
+   "clock": {
+    "time-ms": 12821.022917,
+    "beat": 25.642045834
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.2740879661240746,
+      0.3629560169379627,
+      -0.2740879661240746
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.3903648135503702
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 25,
+   "clock": {
+    "time-ms": 12955.641347,
+    "beat": 25.911282694000004
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.9016084664319763,
+      0.04919576678401183,
+      -0.9016084664319763
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.13935661342720948
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 26,
+   "clock": {
+    "time-ms": 13072.370335,
+    "beat": 26.144740670000004
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.9593497388363849,
+      0.02032513058180757,
+      -0.9593497388363849
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.11626010446544606
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 27,
+   "clock": {
+    "time-ms": 13171.47297,
+    "beat": 26.342945940000003
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.6147025557522793,
+      0.19264872212386036,
+      -0.6147025557522793
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.2541189776990883
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 28,
+   "clock": {
+    "time-ms": 13295.978659,
+    "beat": 26.591957318000002
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.1199936724718349,
+      0.5599968362359175,
+      0.1199936724718349
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.547997468988734
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 29,
+   "clock": {
+    "time-ms": 13425.141534,
+    "beat": 26.850283068
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.8027172782130965,
+      0.9013586391065482,
+      0.8027172782130965
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.8210869112852386
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 30,
+   "clock": {
+    "time-ms": 13573.126904,
+    "beat": 27.146253807999997
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.9579973261299983,
+      0.9789986630649992,
+      0.9579973261299983
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.8831989304519994
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 31,
+   "clock": {
+    "time-ms": 13663.040124,
+    "beat": 27.326080247999993
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.6556128416183029,
+      0.8278064208091515,
+      0.6556128416183029
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.7622451366473212
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 32,
+   "clock": {
+    "time-ms": 13797.031058,
+    "beat": 27.594062115999993
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.12655564227981897,
+      0.4367221788600905,
+      -0.12655564227981897
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.44937774308807243
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 33,
+   "clock": {
+    "time-ms": 13896.312543,
+    "beat": 27.79262508599999
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.6821506980994362,
+      0.1589246509502819,
+      -0.6821506980994362
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.22713972076022554
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 34,
+   "clock": {
+    "time-ms": 14051.593164,
+    "beat": 28.103186327999985
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "held",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "held",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "held",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 35,
+   "clock": {
+    "time-ms": 14172.376245,
+    "beat": 28.34475248999998
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "held",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "held",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "held",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 36,
+   "clock": {
+    "time-ms": 14298.205354,
+    "beat": 28.596410707999983
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "held",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "held",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "held",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 37,
+   "clock": {
+    "time-ms": 14424.210892,
+    "beat": 28.84842178399998
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.7992164230551313,
+      0.8996082115275656,
+      0.7992164230551313
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.8196865692220525
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 38,
+   "clock": {
+    "time-ms": 14561.453256,
+    "beat": 29.122906511999982
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.9764371096806401,
+      0.9882185548403201,
+      0.9764371096806401
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.890574843872256
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 39,
+   "clock": {
+    "time-ms": 14670.940833,
+    "beat": 29.341881665999985
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      0.6173363427968739,
+      0.8086681713984369,
+      0.6173363427968739
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.7469345371187496
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 40,
+   "clock": {
+    "time-ms": 14801.844912,
+    "beat": 29.60368982399999
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.1564963244355433,
+      0.42175183778222836,
+      -0.1564963244355433
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.4374014702257827
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 41,
+   "clock": {
+    "time-ms": 14900.705729,
+    "beat": 29.801411457999986
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.7020720554268499,
+      0.14896397228657504,
+      -0.7020720554268499
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.21917117782926004
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 42,
+   "clock": {
+    "time-ms": 14923.790806,
+    "beat": 29.84758161199999
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.7976272000798245,
+      0.10118639996008777,
+      -0.7976272000798245
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.18094911996807023
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 43,
+   "clock": {
+    "time-ms": 15197.806586,
+    "beat": 30.39561317199999
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "active",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.4763948714292011,
+      0.26180256428539944,
+      -0.4763948714292011
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "active",
+     "base": 0.8492260502954543,
+     "effective": 0.3094420514283196
+    },
+    {
+     "name": "Focus",
+     "source": "active",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 44,
+   "clock": {
+    "time-ms": 15395.95457,
+    "beat": 30.791909139999984
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 45,
+   "clock": {
+    "time-ms": 15520.942753,
+    "beat": 31.041885505999982
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 46,
+   "clock": {
+    "time-ms": 15620.934461,
+    "beat": 31.241868921999988
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  },
+  {
+   "frame": 47,
+   "clock": {
+    "time-ms": 15748.919419,
+    "beat": 31.497838837999986
+   },
+   "mode": "history",
+   "encoders": [
+    {
+     "name": "Orbit aim",
+     "source": "manual",
+     "base": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ],
+     "effective": [
+      -0.801762829290319,
+      -0.26531004480930903,
+      0.23017122119838865
+     ]
+    },
+    {
+     "name": "Gimbal",
+     "source": "manual",
+     "base": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ],
+     "effective": [
+      -82.10824155382785,
+      18.103354476277758,
+      -22.21752418515342
+     ]
+    },
+    {
+     "name": "Beam tint",
+     "source": "manual",
+     "base": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ],
+     "effective": [
+      0.06530930942091134,
+      0.6241372878373332,
+      0.016866797592781535
+     ]
+    },
+    {
+     "name": "Intensity",
+     "source": "manual",
+     "base": 0.8492260502954543,
+     "effective": 0.8492260502954543
+    },
+    {
+     "name": "Focus",
+     "source": "manual",
+     "base": 0.6,
+     "effective": 0.6
+    },
+    {
+     "name": "Glow",
+     "source": "manual",
+     "base": 0.3,
+     "effective": 0.3
+    },
+    {
+     "name": "Iris",
+     "source": "manual",
+     "base": 0.4,
+     "effective": 0.4
+    },
+    {
+     "name": "Beam width",
+     "source": "manual",
+     "base": 0.45,
+     "effective": 0.45
+    }
+   ]
+  }
+ ]
+}
