@@ -97,6 +97,23 @@ Two show hosts ran four moving optical fields, eight overlapping washes, a mixed
 
 The 20,000-pixel case checked a median of 73,826 weights per frame. A separate run without scan timers saved 14.30 MB per frame. Its elapsed p95 went from 373 to 649 ms with 106 and 222 ms of runnable wait on the coordinator in those two frames. Neither frame overlapped a recorded GC pause. The consistent result across the two runs is lower allocation. The shared machine did not establish a whole-show latency improvement. [Afterglow #85, raw captures and replay](https://github.com/tolgraven/afterglow/pull/85)
 
+#### Checking beam visibility in a moving sphere
+
+None of the 144 measured frames reached the 25 ms lighting deadline on the shared Linux machine. Four overlapping spheres moved through a rig with 64 moving heads and either 10,000 or 20,000 pixels. Each sphere painted fixtures whose origin or emitted beam reached it, with the weight falling toward the edge. The floor, three walls and raised stage could block a beam. If both ends of a beam segment are strictly inside the same cell bounded by those planes, the entire segment stays inside and the renderer can skip the exact receiver test. In three sampled lit frames at 20,000 pixels, it skipped 38,399, 38,316 and 38,235 segment tests. A segment test could inspect up to five surfaces.
+
+| Per-frame measurement, original → changed | 10,000 pixels | 20,000 pixels |
+| --- | ---: | ---: |
+| Frames meeting 25 ms, original and changed | 0/36 and 0/36 | 0/36 and 0/36 |
+| Allocation sampling the four spheres, median | 18.37 → 12.82 MB | 34.75 → 23.64 MB |
+| CPU sampling the four spheres, median | 75 → 71 ms | 133 → 151 ms |
+| CPU sampling the four spheres, p95 | 270 → 245 ms | 531 → 281 ms |
+| Whole-frame allocation, median | 32.28 → 26.57 MB | 56.68 → 45.48 MB |
+| Whole-frame elapsed, p95 | 2,831 → 2,867 ms | 2,826 → 2,321 ms |
+
+P95 is the 35th-shortest of 36 measured frames for each renderer. The original 20,000-pixel frame at elapsed p95 spent 1,939 ms runnable and waiting for CPU. The changed frame at elapsed p95 spent 1,786 ms waiting. Worker CPU and coordinator wait can overlap. Subtracting separately ranked percentiles would mix different frames. The full show state, effect operations, ordered fixture events and captured ArtDMX bytes agreed throughout. The production code also matched the original on 48,000 deterministic sphere/receiver cases, including tilted surfaces and openings beside finite panels. [Afterglow #88, measurements and reproduction](https://github.com/tolgraven/afterglow/pull/88)
+
+The [portable Mac benchmark ZIP](https://raw.githubusercontent.com/tolgraven/afterglow/eb1d5ba2cdec73c2637ba08c6af376e4547443e5/pr-88/macbook-air-lighting-benchmark.zip) runs the same comparison locally. In the extracted directory, `./run.sh all` records a JVM-only show run, native OpenGL readback against a scalar oracle, and a complete show using native material rendering. The GPU lanes report the OpenGL renderer, readback traffic and any fallback. The package checksum is `80121cc031b50cc5b3e8fabaea395488dd13c7e38344598b644f44c66bdd79fe`.
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
