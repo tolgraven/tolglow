@@ -53,24 +53,24 @@ jobs:
             wait "$trainer" || test "$?" = 143
             trap - EXIT
             python3 - <<'METADATA'
-            import json
-            from pathlib import Path
-            directory=Path('tracing/META-INF/native-image/tolglow/studio')
-            prefixes=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.',
-                      'javax.net.', 'org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
-            def retained(entry):
-                name=entry.get('type',entry.get('name',''))
-                return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
-            for path in directory.iterdir():
-                if path.name=='reflect-config.json':
-                    entries=json.loads(path.read_text())
-                    path.write_text(json.dumps([e for e in entries if retained(e)]))
-                elif path.name=='reachability-metadata.json':
-                    tables=json.loads(path.read_text())
-                    path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
-                elif path.is_file():
-                    path.unlink()
-            METADATA
+          import json
+          from pathlib import Path
+          directory=Path('tracing/META-INF/native-image/tolglow/studio')
+          prefixes=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.',
+                    'javax.net.', 'org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
+          def retained(entry):
+              name=entry.get('type',entry.get('name',''))
+              return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
+          for path in directory.iterdir():
+              if path.name=='reflect-config.json':
+                  entries=json.loads(path.read_text())
+                  path.write_text(json.dumps([e for e in entries if retained(e)]))
+              elif path.name=='reachability-metadata.json':
+                  tables=json.loads(path.read_text())
+                  path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
+              elif path.is_file():
+                  path.unlink()
+          METADATA
             jar uf studio.jar -C tracing META-INF
           fi
           native-image --no-fallback -J-Dtolglow.native.build=true --initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.fixed_image 2>&1 | tee native-build.log
@@ -148,24 +148,24 @@ jobs:
             wait "$trainer" || test "$?" = 143
             trap - EXIT
             python3 - <<'METADATA'
-            import json
-            from pathlib import Path
-            directory=Path('tracing/META-INF/native-image/tolglow/studio')
-            prefixes=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.',
-                      'javax.net.', 'org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
-            def retained(entry):
-                name=entry.get('type',entry.get('name',''))
-                return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
-            for path in directory.iterdir():
-                if path.name=='reflect-config.json':
-                    entries=json.loads(path.read_text())
-                    path.write_text(json.dumps([e for e in entries if retained(e)]))
-                elif path.name=='reachability-metadata.json':
-                    tables=json.loads(path.read_text())
-                    path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
-                elif path.is_file():
-                    path.unlink()
-            METADATA
+          import json
+          from pathlib import Path
+          directory=Path('tracing/META-INF/native-image/tolglow/studio')
+          prefixes=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.',
+                    'javax.net.', 'org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
+          def retained(entry):
+              name=entry.get('type',entry.get('name',''))
+              return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
+          for path in directory.iterdir():
+              if path.name=='reflect-config.json':
+                  entries=json.loads(path.read_text())
+                  path.write_text(json.dumps([e for e in entries if retained(e)]))
+              elif path.name=='reachability-metadata.json':
+                  tables=json.loads(path.read_text())
+                  path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
+              elif path.is_file():
+                  path.unlink()
+          METADATA
             jar uf studio.jar -C tracing META-INF
           fi
           mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=studio.jar -DgroupId=org.tolglow -DartifactId=studio-host -Dversion=1 -Dpackaging=jar
