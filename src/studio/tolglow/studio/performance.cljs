@@ -309,10 +309,16 @@
       (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds))
       (and (#{8 16} (first widths)) (apply = widths)) (assoc :dmx-bits (first widths)))))
 
+(defn- xyz-axis-label [axis parameter schema]
+  (let [authored (some-> (:name schema) str str/trim not-empty)
+        description (some #(when (and % (not= axis (str/upper-case %))) %)
+                          [authored (wire parameter)])]
+    (if description (str axis " · " description) axis)))
+
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
   (let [{:keys [base]} (xyz-readings show instance components)
         title (control-title control)
-        axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (str axis " · " (wire id))))
+        axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
                    components ["X" "Y" "Z"])
         update! (fn [index value]
                   (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]

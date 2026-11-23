@@ -16,9 +16,10 @@ const post = (path, body) => read(path, {method:'POST', body:JSON.stringify({...
 const definition = (kind, source) => post('/api/definition', {kind, source});
 const command = (op, body) => post('/api/command', {op, epoch:show.epoch, 'show-id':show['show-id'],
   'command-id':crypto.randomUUID(), source:{adapter:'web', 'session-id':id}, ...body});
-const scalar = '{:type :number :bounds [0 1] :default 0.5}';
-await definition('effects', `{:id :${id} :version 1 :params {:x ${scalar} :y ${scalar} :z ${scalar} :aim-vector {:type :vector :size 3 :bounds [-4 4] :default [0 1 0]}}
-  :outputs {:aim {:op :vec3 :args [{:op :param :key :x} {:op :param :key :y} {:op :param :key :z}]} :dimmer 0.1}}`);
+const scalar = ':type :number :bounds [0 1] :default 0.5';
+await definition('effects', `{:id :${id} :version 1 :params {:x {${scalar}} :lateral {${scalar}} :depth {${scalar} :name "Throw distance"}
+  :aim-vector {:type :vector :size 3 :bounds [-4 4] :default [0 1 0]}}
+  :outputs {:aim {:op :vec3 :args [{:op :param :key :x} {:op :param :key :lateral} {:op :param :key :depth}]} :dimmer 0.1}}`);
 await definition('cues', `{:id :${id} :name "QA geometry" :version 1 :effect-id :${id} :reload-policy :preserve-state}`);
 const launched = await command('cue/launch', {'cue-id':id});
 const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium', args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
@@ -33,21 +34,26 @@ try {
   await card.getByRole('button',{name:'Expand QA geometry controls'}).tap();
   const source = card.getByRole('button',{name:'Attach source for aim',exact:true});
   await source.tap();
-  const editor = card.getByRole('region',{name:/^[xyz] source$/});
+  const editor = card.getByRole('region',{name:/^(x|lateral) source$/});
   await editor.getByRole('heading').and(page.locator(':focus')).waitFor();
   const axis = editor.getByRole('combobox',{name:'Source axis'});
   const editorId = await editor.getAttribute('id');
   await axis.focus();
-  await axis.selectOption('y');
-  await editor.getByRole('heading',{name:'y source',exact:true}).waitFor();
+  await axis.selectOption('lateral');
+  await editor.getByRole('heading',{name:'lateral source',exact:true}).waitFor();
   await axis.and(page.locator(':focus')).waitFor();
   assert.equal(await editor.getAttribute('id'),editorId);
   assert.equal(await source.getAttribute('aria-controls'),editorId);
   await page.keyboard.press('Escape');
   await source.and(page.locator(':focus')).waitFor();
-  await card.getByRole('button',{name:'Edit aim components', exact:true}).tap();
+  const axes = card.getByRole('button',{name:'Edit aim components',exact:true});
+  const labels = ['X', 'Y · lateral', 'Z · Throw distance'];
+  assert.deepEqual(await axes.locator('span > b').allTextContents(), labels);
+  await axes.tap();
   const pop = page.getByRole('dialog',{name:'aim components',exact:true});
-  await pop.getByRole('slider',{name:'aim X · x rotary'}).press('End');
+  await pop.getByRole('spinbutton',{name:'aim Z · Throw distance value',exact:true}).waitFor();
+  assert.deepEqual(await pop.locator('.axis-component > label').allTextContents(), labels);
+  await pop.getByRole('slider',{name:'aim X rotary',exact:true}).press('End');
   await pop.getByRole('button',{name:'Done'}).tap();
   await card.getByRole('button',{name:/Edit aim.vector components/i}).tap();
   const vec = page.getByRole('dialog',{name:/aim.vector components/i});
