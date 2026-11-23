@@ -57,6 +57,14 @@ lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
 
+## Dance-step timing
+
+Tap, camera, phone and wrist motion send their cumulative step count as soon as the input detects an onset. Periodic readings recover a missed counter change. The paired iPhone uses the wrist counter while it is fresh and carries one vote for the person. The Watch relay keeps one acknowledged message in flight and one replaceable sample with its original measurement time.
+
+The bridge takes a fresh effort and pulse snapshot five times per second. It submits onsets on the next 40 Hz show frame. Each OSC observation carries up to eight gestures and one frame admits up to four observations, allowing additional simultaneous steps to spill into the following frames. The bounded backlog reports overflow to the operator. A heartbeat can carry a due onset, and subsequent heartbeats carry zero until another step arrives.
+
+Run `swift test --package-path native/Core --filter AudienceLatencyTests` to exercise detection, bounded host aggregation and the OSC encoder using a deterministic clock. Set `TOLGLOW_AUDIENCE_TIMING_DIR` to an existing directory to save the observed packet times. CI publishes them as `audience-onset-timing`. These measurements end at the encoded datagram. Qualifying physical latency also requires timing the guest’s sensor, WatchConnectivity, BLE, OSC delivery and the receiving show.
+
 ## Publish a scannable Clip
 
 Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)

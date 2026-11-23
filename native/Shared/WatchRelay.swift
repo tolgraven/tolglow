@@ -15,6 +15,7 @@ import WatchConnectivity
     var audienceEnded: (() -> Void)?
     private var audienceSession: UUID?
     private var audienceSending = false
+    private var queuedAudience: (sample: AudienceSample, motionAge: Double, created: Date)?
     private var audienceDeadline: Task<Void, Never>?
     private var audienceReceiver = AudienceWatchReceipt()
     private var active = false
@@ -89,10 +90,15 @@ import WatchConnectivity
     }
 
     func sendAudience(_ sample: AudienceSample, motionAge: Double) {
-        guard let id = audienceSession else { return }
+        guard audienceSession != nil else { return }
+        queuedAudience = (sample, motionAge, Date())
+        flushAudience()
+    }
+
+    private func flushAudience() {
+        guard !audienceSending, let id = audienceSession, let queued = queuedAudience else { return }
         guard active, WCSession.default.isReachable else { fail("Open your joined audience session on iPhone"); return }
-        // The next 200 ms tick carries the newest effort and the cumulative steps.
-        guard !audienceSending else { return }
+        queuedAudience = nil
         audienceSending = true
         audienceDeadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -100,15 +106,16 @@ import WatchConnectivity
             self.fail("Audience relay timed out")
         }
         var message: [String: Any] = ["audience-session": id.uuidString,
-                                      "sample": sample.bytes, "sent": Date().timeIntervalSince1970]
-        if sample.motion != nil { message["motion-age"] = motionAge }
+                                      "sample": queued.sample.bytes, "sent": queued.created.timeIntervalSince1970]
+        if queued.sample.motion != nil { message["motion-age"] = queued.motionAge }
         WCSession.default.sendMessage(message, replyHandler: { [weak self] reply in
             let accepted = reply["received"] as? Bool == true
             Task { @MainActor in
                 guard let self, self.audienceSession == id else { return }
                 self.audienceDeadline?.cancel()
                 self.audienceSending = false
-                if !accepted { self.fail("Join the audience on iPhone first") }
+                if accepted { self.flushAudience() }
+                else { self.fail("Join the audience on iPhone first") }
             }
         }, errorHandler: { [weak self] _ in
             Task { @MainActor in
@@ -121,6 +128,7 @@ import WatchConnectivity
     func endAudience() {
         let session = audienceSession
         audienceSession = nil
+        queuedAudience = nil
         audienceDeadline?.cancel()
         audienceDeadline = nil
         audienceSending = false
