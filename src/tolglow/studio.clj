@@ -80,6 +80,7 @@
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :materials! #(materials/inventory (:model @(:state runtime)))
+            :material-preview! #(materials/preview % (show/variables runtime))
             :variable-sources! #(variable-edit/sources (get-in @(:state runtime) [:model :variables]) (:query %))
             :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))

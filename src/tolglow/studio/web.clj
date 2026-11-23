@@ -269,8 +269,9 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
-                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]}]
+(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent!
+                             sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync!]
+                     :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
    (post-actions "/api/application-agents/" app-agent! ok
@@ -292,7 +293,7 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/" sync! ok {"live" :live})
-   {"/api/materials/preview" #(ok (materials/preview (:json-params %)))
+   {"/api/materials/preview" #(ok (material-preview! (:json-params %)))
     "/api/variable-block/sources" (available variable-sources! "Show variables unavailable" #(ok (variable-sources! (:json-params %))))
     "/api/spatial/search" (available spatial-search! "Spatial search unavailable"
                                       #(ok {:results (spatial-search! (:json-params %))}))

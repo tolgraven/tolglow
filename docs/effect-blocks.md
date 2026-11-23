@@ -89,7 +89,7 @@ Use `{:op :variable :path [...]}` to take a numeric source from the current show
 
 The audio analyzer publishes `:low-rms` and `:audio/energy`. Provide the controller tint as a three-component vector. Paths accept keyword keys, string keys and nonnegative vector indices. A scalar defaults to `:number`. Declare `:vec2`, `:vec3` or `:vec4` on each read of a vector, or on its variable binding. All uses of one path must agree on type. A plan supports up to 64 distinct inputs.
 
-A shared material can put this expression in its `:inputs` defaults and each stage can override it. Effects sample the resolved signal once for a frame and supply it to their numeric fields. The graph inspector uses that frame's captured inputs. Changing a consumed variable refreshes a predicted keyframe. The musical forecast stays in place when an unrelated variable changes. The unmodified source and the material definition are both available after a Transit restore.
+A shared material can put this expression in its `:inputs` defaults and each stage can override it. The material designer takes one snapshot of the running show’s resolved variables for each draft preview. When a source is missing, the draft remains available to save and the preview reports which input it needs. Effects sample the resolved signal once for a frame and supply it to their numeric fields. The graph inspector uses that frame's captured inputs. Changing a consumed variable refreshes a predicted keyframe. The musical forecast stays in place when an unrelated variable changes. The unmodified source and the material definition are both available after a Transit restore.
 
 ## Shared variables
 

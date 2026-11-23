@@ -7,6 +7,15 @@
 (defn catalog [model]
   (get-in model [:settings :prefabs :definitions] {}))
 
+(defn draft-plan
+  "Prepare an isolated stage with the same typed inputs as a published effect.
+  A cue parameter can be type-checked here before its value is available."
+  [id material dry mode]
+  (let [chain {:base dry :stages [{:block id :mode mode}]}
+        definition {:blocks {[:varyings :sample] chain} :prefabs {id material}}
+        parameter (fn [node _ _] (assoc node :type (:type node :number)))]
+    (blocks/prepare definition [] parameter)))
+
 (defn- validate-material! [id material]
   (when-not (and (map? material) (string? (:name material))
                  (not (str/blank? (:name material)))
@@ -14,12 +23,7 @@
                  (#{:replace :add :multiply} (:mode material)) (registry/data? material))
     (throw (ex-info "A material needs a name, input defaults and a stage mode"
                     {:path [:prefabs :definitions id]})))
-  (let [chain {:base 0.0 :stages [{:block id :mode :replace}]}
-        definition {:blocks {[:varyings :sample] chain} :prefabs {id material}}
-        ;; Parameter schema belongs to the consuming effect. Here only its
-        ;; numeric shape is needed to validate the reusable expression.
-        parameter (fn [node _ _] (assoc node :type (:type node :number)))]
-    (blocks/prepare definition [] parameter)))
+  (draft-plan id material 0.0 :replace))
 
 (defn validate! [settings]
   (when (some? settings)

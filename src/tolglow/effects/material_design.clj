@@ -2,6 +2,7 @@
   "Edit one shared material and sample a private draft on the caller's thread."
   (:require [afterglow.render.blocks :as blocks]
             [afterglow.render.ir :as ir]
+            [tolglow.compiler.blocks :as fields]
             [tolglow.effects.prefabs :as prefabs]
             [tolglow.registry :as registry]))
 
@@ -30,13 +31,24 @@
   (let [channels (if (number? v) [v v v] (take 3 (concat v [0.0])))]
     (mapv #(int (Math/round (* 255.0 (min 1.0 (max 0.0 (double %)))))) channels)))
 
-(defn- sample-plane [material beat dry]
-  (let [expression (:expression (blocks/plan {:draft material} {:base dry :stages [{:block :draft}]}))
+(defn- draft-params [plan variables]
+  (let [model {:variables variables}]
+    (doseq [path (keys (:uniforms plan))]
+      (when (nil? (get-in model path))
+        (throw (ex-info (str "Waiting for show variable " (pr-str (subvec path 1))) {:path path}))))
+    (fields/with-variables plan {} model)))
+
+(defn- sample-plane [material beat dry variables]
+  (let [plan (prefabs/draft-plan :draft material dry (:mode material))
+        expression (get-in plan [:expressions [:varyings :sample]])
         sample (ir/compile-expression expression)
-        env {:beat beat :elapsed-beats beat :time-ms (* 500.0 beat) :elapsed-ms (* 500.0 beat)
-             :params {} :meter {:beats-per-bar 4 :bars-per-phrase 4}}
-        at (fn [x y] (sample (assoc env :position [(/ (* 4.0 x) (dec columns))
-                                                    (/ (* 2.0 y) (dec rows)) 0.0])))
+        env (fields/sample-tweens
+             plan {:beat beat :elapsed-beats beat :time-ms (* 500.0 beat) :elapsed-ms (* 500.0 beat)
+                   :params (draft-params plan variables)
+                   :meter {:beats-per-bar 4 :bars-per-phrase 4}})
+        at (fn [x y]
+             (let [u (/ x (double (dec columns))) v (/ y (double (dec rows)))]
+               (sample (assoc env :position [(* 4.0 u) (* 2.0 v) 0.0] :surface-uv [u v]))))
         values (if (some #{[:position]} (ir/input-paths expression))
                  (vec (for [y (range rows) x (range columns)] (at x y)))
                  (repeat (* rows columns) (at 0 0)))
@@ -44,14 +56,16 @@
     {:columns columns :rows rows :rgb (mapv rgb values)
      :min (reduce min channels) :max (reduce max channels) :beat beat}))
 
-(defn preview [{:keys [material beat dry] :or {beat 0.0 dry 1.0}}]
-  (when-not (and (registry/finite-number? beat) (<= 0.0 beat 4.0))
-    (throw (ex-info "Choose a sample from the four-beat bar." {})))
-  (when-not (and (registry/finite-number? dry) (<= 0.0 dry 1.0))
-    (throw (ex-info "Dry level must be between zero and one." {})))
-  (prefabs/validate! {:definitions {:draft material}})
-  ;; The material may legitimately read a cue parameter that has no value in
-  ;; this standalone preview. The show validates the definition again on save.
-  (try (sample-plane material beat dry)
-       (catch clojure.lang.ExceptionInfo error
-         {:unavailable? true :message (str "Draft validated. This sample is unavailable. " (.getMessage error))})))
+(defn preview
+  ([request] (preview request {}))
+  ([{:keys [material beat dry] :or {beat 0.0 dry 1.0}} variables]
+   (when-not (and (registry/finite-number? beat) (<= 0.0 beat 4.0))
+     (throw (ex-info "Choose a sample from the four-beat bar." {})))
+   (when-not (and (registry/finite-number? dry) (<= 0.0 dry 1.0))
+     (throw (ex-info "Dry level must be between zero and one." {})))
+   (prefabs/validate! {:definitions {:draft material}})
+   ;; The material may legitimately read a cue parameter that has no value in
+   ;; this standalone preview. The show validates the definition again on save.
+   (try (sample-plane material beat dry variables)
+        (catch clojure.lang.ExceptionInfo error
+          {:unavailable? true :message (str "Draft validated. This sample is unavailable. " (.getMessage error))}))))
