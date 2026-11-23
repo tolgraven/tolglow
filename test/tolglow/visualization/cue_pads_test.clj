@@ -4,6 +4,7 @@
             [afterglow.control.devices.push-2 :as push-2]
             [afterglow.control.codecs.push-2 :as codec]
             [tolglow.demo :as demo]
+            [tolglow.lighting-match :as matching]
             [tolglow.show :as show]
             [afterglow.control.devices.session :as session]
             [tolglow.visualization.cue-pads :as pads]
@@ -127,3 +128,14 @@
     (is (contains? (see! model) :ember))
     (is (= :head-4 (get-in @(:cache service) [:ember :plan :rig 0 :id])))
     (is (empty? (see! (assoc-in model [:registry :cues :ember :pad-preview :fixture-id] :head-1))))))
+
+(deftest representative-fixture-retains-the-venue-brightness-reference
+  (let [dimmer {:id :weak :universe 1 :address 1 :channels {:dimmer 1} :measured-relative-brightness 0.1}
+        effect {:id :ember :version 1 :scene-owner :scene :brightness-reference :global
+                :params {matching/target-param {:type :number :default 0.1 :bounds [0 1]}}
+                :outputs {:dimmer 1.0}}
+        model (-> (rig) (assoc-in [:registry :effects :ember] effect)
+                  (assoc-in [:registry :cues :ember :swatch] "#ffffff")
+                  (assoc-in [:rig :fixtures] [dimmer (assoc dimmer :id :bright :address 2 :measured-relative-brightness 1.0)]))
+        colors (pads/present! (pads/manager) :page (at model 50) main)]
+    (is (= [1.0 1.0 1.0] (:ember colors)))))

@@ -8,6 +8,7 @@
             [tolglow.compiler :as compiler]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.registry :as registry]
+            [tolglow.lighting-match :as matching]
             [tolglow.spatial.targets :as targets]
             [tolglow.waveforms :as waveforms]))
 
@@ -103,12 +104,15 @@
           attrs (map :attribute (registry/output-entries (:outputs definition)))]
       (when (some (into registry/emitter-attributes #{:color :dimmer}) attrs)
         (when-let [fixture (fixture-for model definition cue selected)]
-          (let [rig [fixture]]
+          (let [rig [fixture]
+                match-plan (when (matching/active? definition)
+                             (matching/prepare (get-in model [:rig :fixtures]) #{(:id fixture)}))]
             {:rig rig :patch (frame/compile-patch rig)
-             :dimmer-tint (when (and (some #{:dimmer} attrs)
+             :dimmer-tint (when (and (every? (:channels fixture) [:red :green :blue])
+                                     (some #{:dimmer} attrs)
                                      (not-any? (conj registry/emitter-attributes :color) attrs))
                             (or (views/swatch-rgb (:swatch cue)) [1.0 1.0 1.0]))
-             :step (compiler/compile-effect definition nil nil rig)}))))))
+             :step (compiler/compile-effect definition nil match-plan rig)}))))))
 
 (defn- interpolate [a b fraction]
   (mapv (fn [x y] (+ x (* fraction (- y x)))) a b))
