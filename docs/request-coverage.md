@@ -1,6 +1,6 @@
 # Conversation request register
 
-Recorded through request **84**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
+Recorded through request **89**. Each number follows the original user messages in order, including the three explicit authorization replies. Lettered rows separate independently verifiable parts of a message. This register covers both Tolglow and Afterglow.
 
 **Open** is a to-do for the exact behavior or verification in that row. A linked milestone can already have shipped one part. **Verified** includes a source or merge receipt for the whole row. **Standing** is a recurring working agreement. The [work ledger](work-items.edn) owns implementation status, dependencies, ownership and evidence. For working branches and hardware gaps see the [handoff](request-handoff.md).
 
@@ -171,3 +171,16 @@ Recorded through request **84**. Each number follows the original user messages 
 | R84a | Discover a nearby venue and send phone or Watch motion without joining venue Wi-Fi. Share dance intensity, individual steps and optional exercise pulse. Merge a person's phone and Watch into one participant, support a soloist or a crowd, expire stale sources and measure latency and churn. | `:sensors/nearby-audience` | Open |
 | R84b | Join by QR with a small sensor-only App Clip and a full-app handoff for restricted sensors. Let consenting full-app devices contribute render work independently of participation. Qualify real radio range, host capacity and energy impact before claiming dancefloor-scale rendering. | `:sensors/nearby-audience`, `:render/distributed-workers` | Open |
 | R84c | Start and stop the nearby stage bridge in the Mac bundle. Export the invitation QR, configure the invocation domain and qualify the embedded App Clip size for physical scans. | `:native/audience-stage-controls` | Open |
+
+
+## Render timing and hardware qualification
+
+| Request | Acceptance or working agreement | Work ledger | Disposition |
+| --- | --- | --- | --- |
+| R85 | Explain large-rig comparisons in show terms. Define the four spheres, the surfaces they test, per-stage and whole-frame costs, variance, and how many complete frames met the 25 ms deadline. | `:performance/master-mixed-rig-profiling` | Verified · [Afterglow paired benchmark and interpretation](https://github.com/tolgraven/afterglow/pull/88) |
+| R86 | Run the same workload on the user's physical MacBook Air. Identify the real chip and renderer, time CPU geometry separately from GPU work and readback, and retain the complete frames and deadline counts. | `:performance/macbook-air-qualification` | Open |
+| R87 | Make the pre-alpha App Clip easy to test before enrolling or publishing a domain. Explain simulator, signed local QR, and later public distribution separately. | `:sensors/nearby-audience` | Verified · [Prototype and release setup guide](https://github.com/tolgraven/tolglow/pull/170) |
+| R88 | Run the Mac benchmark from the local Codex instance without requiring home-network exposure. Preserve a reproducible invocation and a way to return measured results to this project. | `:performance/macbook-air-qualification` | Open |
+| R89a | Evaluate pure effects against immutable per-frame context for the physical publication instant. Include musical position, sampled input timestamps, prior state and typed results. Profile late sampling with a dynamic reserve and skip missed slots. | `:runtime/publication-clock` | Open |
+| R89b | Partition effect work by actual fixture, value and state dependencies. Profile dispatch and deterministic merging; keep evolving show state in the context and presentation-only animation on its display clock. | `:runtime/publication-clock`, `:runtime/coordinator` | Open |
+| R89c | Feed completed browser simulation observations back only for live consumers. Use timestamped samples and changed-value subscriptions, with a slower authoritative lighting clock than the high-refresh preview. | `:runtime/publication-clock`, `:runtime/reactive-v1` | Open |
