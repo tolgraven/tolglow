@@ -1,0 +1,86 @@
+{
+  "phone": {
+    "header": {
+      "top": 96,
+      "height": 636,
+      "width": 366
+    },
+    "agent": {
+      "top": 756,
+      "height": 1115,
+      "width": 366
+    },
+    "repo": {
+      "top": 1897,
+      "height": 93,
+      "width": 364
+    },
+    "tree": {
+      "top": 2050,
+      "height": 372,
+      "width": 364
+    },
+    "editor": {
+      "top": 2584,
+      "height": 440,
+      "width": 332
+    },
+    "overflow": 0
+  },
+  "ipad": {
+    "header": {
+      "top": 72,
+      "height": 340,
+      "width": 836
+    },
+    "agent": {
+      "top": 436,
+      "height": 985,
+      "width": 836
+    },
+    "repo": {
+      "top": 1446,
+      "height": 101,
+      "width": 834
+    },
+    "tree": {
+      "top": 1615,
+      "height": 749,
+      "width": 280
+    },
+    "editor": {
+      "top": 1718,
+      "height": 520,
+      "width": 514
+    },
+    "overflow": 0
+  },
+  "desktop": {
+    "header": {
+      "top": 72,
+      "height": 345,
+      "width": 1252
+    },
+    "agent": {
+      "top": 441,
+      "height": 738,
+      "width": 1252
+    },
+    "repo": {
+      "top": 1204,
+      "height": 101,
+      "width": 1250
+    },
+    "tree": {
+      "top": 1373,
+      "height": 703,
+      "width": 280
+    },
+    "editor": {
+      "top": 1476,
+      "height": 520,
+      "width": 930
+    },
+    "overflow": 0
+  }
+}
