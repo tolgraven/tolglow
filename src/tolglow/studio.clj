@@ -66,7 +66,9 @@
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status #(connections/status-at-commit (:connections runtime))})
-            compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN"))
+            compute (workers/create (get-in runtime [:compute :pool]) (System/getenv "TOLGLOW_COMPUTE_TOKEN")
+                                    {:guest-bridge (System/getenv "TOLGLOW_AUDIENCE_COMPUTE_TOKEN")
+                                     :verification (keyword (or (System/getenv "TOLGLOW_AUDIENCE_VERIFICATION") "full"))})
             projections (projection/create)]
         (state-stream/publish! stream @(:state runtime))
         {:compute-stream compute :debug-stream debug :state-stream stream :browser-projections projections

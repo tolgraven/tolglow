@@ -67,10 +67,10 @@ jobs:
             git show "$BASE_COMMIT:docs/request-coverage.md" > "$RUNNER_TEMP/previous-requests.md"
             echo "TOLGLOW_PREVIOUS_REQUESTS=$RUNNER_TEMP/previous-requests.md" >> "$GITHUB_ENV"
           fi
-      - name: Validate work tracking
-        if: matrix.suite == 'pure'
+      - name: Check archived requests and GitHub Issue links
+        if: matrix.suite == 'pure' && matrix.java == '17'
         working-directory: tolglow
-        run: lein check-roadmap
+        run: lein check-requests
   studio:
     runs-on: ubuntu-latest
     steps:

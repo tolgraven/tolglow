@@ -38,6 +38,12 @@ To use each admitted step to launch a registered accent cue, add the following e
 
 The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
 
+### Stop sharing heart rate during a dance
+
+On Watch, tap **Stop sharing heart rate** during an active dance workout. The Watch ends and discards its workout, clears the displayed BPM and sends the current step count with an empty pulse field. Keep dancing to contribute motion and new steps on the same paired-phone or nearby-stage session. Motion-only sharing uses the foreground Watch app.
+
+The stage receives BPM while sharing is on. A saved show can retain the last aggregate BPM from those readings. When one participant shares pulse, the aggregate is that person’s BPM. Turning sharing off updates the live floor when the new sample arrives. Previously saved shows keep their recorded values.
+
 ### Motion channels
 
 In the App Clip, **Use iPhone or Watch motion in Tolglow** opens the system offer for its parent app. After installation, scan the same stage QR to continue.
@@ -60,8 +66,6 @@ Run the rehearsal with the paired Afterglow checkout selected as for the test su
 lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
-
-The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
 
 ## Dance-step timing
 

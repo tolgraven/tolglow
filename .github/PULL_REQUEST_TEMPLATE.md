@@ -1,6 +1,9 @@
 ## Change
 
 Describe what a show operator or API caller can do after this change.
+Link the existing GitHub issue. Use `Closes #…` when this PR satisfies all its
+acceptance checks. For partial work, use `Refs #…` and describe what remains.
+For a changed show workflow, give the Studio path, a REPL form and their shared command or data. Explain any surface-specific interaction or link an owned parity gap.
 
 ## Visual evidence
 
@@ -11,3 +14,5 @@ Identify the build, input scene or fixture and capture environment. Label simula
 ## Verification
 
 List the tests or measurements run and any remaining hardware or visual qualification.
+Add the tested revision and a link to this evidence on the issue.
+For a changed show workflow, say how you checked an edit from each surface, its committed result and rejection feedback.

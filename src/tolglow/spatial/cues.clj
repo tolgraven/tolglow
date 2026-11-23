@@ -152,9 +152,7 @@
       (:hsl spec) ((juxt :r :g :b) (color/as-rgba (apply color/hsla (map scalar (:hsl spec)))))
       (and (vector? default) (:variable spec)) (get-in (:variables model) (:variable spec) default)
       (and (vector? default) (:cue-id spec))
-      (let [running (filter #(and (= :running (:phase %)) (= (:cue-id spec) (:cue-id %))) (vals (:instances model)))
-            selected (last (sort-by :order running))]
-        (get (:params selected) (:param spec) default))
+      (or (signal/cue-parameter model opts spec) default)
       :else (scalar spec))))
 
 (defn- controls [model instance modulation]
