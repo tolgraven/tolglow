@@ -9,26 +9,29 @@
 (defn- session [db]
   [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (get-in db [:connections :generation])])
 
-(rf/reg-sub ::operations
-  (fn [db _] (get-in db [:connections :audience-operations (session db)])))
+(defn- operations [db]
+  (let [operation (get-in db [:connections :audience-operations])]
+    (when (= (session db) (:session operation)) (:entries operation))))
+
+(rf/reg-sub ::operations (fn [db _] (operations db)))
 
 (rf/reg-event-fx ::change
   (fn [{:keys [db]} [_ id path body]]
     (let [token (session db)]
-      {:db (assoc-in db [:connections :audience-operations token id] body)
+      {:db (assoc-in db [:connections :audience-operations] {:session token :entries (assoc (operations db) id body)})
        :studio/http {:path path :body (assoc body :device-id id) :typed? true
                      :on-success [::complete token id] :on-failure [::failed token id]}})))
 
 (rf/reg-event-db ::complete
   (fn [db [_ token id _]]
     (if (= token (session db))
-      (update-in db [:connections :audience-operations token] dissoc id)
+      (update-in db [:connections :audience-operations :entries] dissoc id)
       db)))
 
 (rf/reg-event-db ::failed
   (fn [db [_ token id error]]
     (if (= token (session db))
-      (assoc-in db [:connections :audience-operations token id] (events/error-message error))
+      (assoc-in db [:connections :audience-operations :entries id] (events/error-message error))
       db)))
 
 (defn- select! [id included?]
