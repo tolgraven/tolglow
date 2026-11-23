@@ -6,7 +6,7 @@ The **Compiled macOS Studio** artifact adds a native Apple Silicon executable to
 
 ## Open a show
 
-Unzip the **Tolglow-Studio-arm64** artifact from the **Packaged Apple Studio** workflow. It contains a development build with an ad hoc signature. Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
+For the full JVM window, unzip **Tolglow-Studio-arm64** from **Packaged Apple Studio**. For the window with both engines, unzip **Tolglow-compiled-Studio-arm64** from **Compiled macOS Studio**. It contains a development build with an ad hoc signature. Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
 
 The runner reads the first available file in this order.
 
@@ -40,7 +40,7 @@ On browsers with video Picture in Picture and canvas capture, use **PiP**, then 
 
 For AirPlay, select **Screen Mirroring** in Control Center and fullscreen the Room panel. On a Mac with an extended AirPlay display, move the Studio window to the external screen before entering fullscreen. Output detail follows the source canvas, GPU budget, negotiated display mode and receiver. A 4K receiver can still negotiate a lower resolution. A captured MediaStream has no receiver-fetchable media URL. Receiver-side video playback independent of screen mirroring requires a separate encoded feed.
 
-iPhone and iPad use the existing **Studio** tab to open an enrolled host. The local native calibration, Watch relay and sensor controls remain available. They require their ordinary permissions. The Mac host bundle cannot run as an iOS subprocess.
+iPhone and iPad use **Studio** to open an enrolled host. The embedded-host build also offers **On this device** for a local show in the selected folder. That host runs in a Native Image isolate inside the application and stops when the app enters the background. Calibration, Watch relay and sensors use their ordinary permissions.
 
 Foreground browser work follows the app's lifecycle. iOS and iPadOS may suspend the WebKit process after a window moves to the background. Picture in Picture and an external display do not guarantee continuous JavaScript execution. A host using a phone or tablet for opt-in computation must recover from a missing client locally. Low Power Mode, thermal pressure and display refresh adjustments can reduce throughput before suspension. Physical devices are needed to measure these cases.
 
