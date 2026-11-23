@@ -1,5 +1,6 @@
 (ns tolglow.effects.variable-edit-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.control.model :as control]
+            [clojure.test :refer [deftest is]]
             [tolglow.effects.variable-edit :as edit]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -50,4 +51,20 @@
       (is (= original (get (settings) second-path)))
       (is (= 200 (first (command :remove first-path updated nil))))
       (is (= {second-path original} (settings)))
+      (finally (show/stop! runtime)))))
+
+
+(deftest variable-specific-material-defaults-survive-guarded-binding-edits
+  (let [material {:name "Dusk transmission" :mode :multiply :inputs {:factor 0.25} :glsl "factor"}
+        model (assoc-in (control/new-show {:show-id "local-materials"})
+                        [:settings :variable-blocks :prefabs :venue/dusk] material)
+        runtime (show/create-runtime {:model model :workspace-options nil})
+        handler (studio/handler runtime)
+        binding {:base 0.8 :stages [{:block :venue/dusk}]}
+        edit {:op :put :path [:variables :wash] :expected nil :binding binding
+              :runtime-id (:id runtime) :expected-epoch 0}]
+    (try
+      (is (= :accepted (get-in (post! runtime handler "/api/variable-block" edit) [1 :status])))
+      (is (< (abs (- 0.2 (:wash (show/variables runtime)))) 1.0e-9))
+      (is (= material (get-in @(:state runtime) [:model :settings :variable-blocks :prefabs :venue/dusk])))
       (finally (show/stop! runtime)))))
