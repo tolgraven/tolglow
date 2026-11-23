@@ -1,0 +1,15 @@
+
+| :song-beat | :clip-beat |      :command | :velocity | :level |
+|------------+------------+---------------+-----------+--------|
+|          0 |          0 |   :cue/launch |           |        |
+|        1/2 |        1/2 |    :param/set |        96 |  0.754 |
+|          1 |          1 |    :param/set |        64 |  0.500 |
+|        3/2 |        3/2 | :instance/end |           |        |
+|          2 |          2 |   :cue/launch |           |        |
+|        5/2 |        5/2 |    :param/set |        96 |  0.754 |
+|        9/2 |        9/2 |    :param/set |       127 |  1.000 |
+|       11/2 |       11/2 | :instance/end |           |        |
+|          6 |          2 |   :cue/launch |           |        |
+|       13/2 |        5/2 |    :param/set |        96 |  0.754 |
+|       17/2 |        9/2 |    :param/set |       127 |  1.000 |
+|       19/2 |       11/2 | :instance/end |           |        |
