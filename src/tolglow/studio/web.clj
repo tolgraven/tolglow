@@ -169,6 +169,7 @@
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
    "/api/variable-block" :variable-block
+   "/api/modulation/bind" :modulation-bind "/api/modulation/unbind" :modulation-unbind
    "/api/modulation/start" :modulation-start "/api/modulation/stop" :modulation-stop
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
    "/api/materials" :material-edit

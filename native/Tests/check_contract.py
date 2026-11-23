@@ -63,7 +63,7 @@ class Contract(unittest.TestCase):
                      "NSHealthUpdateUsageDescription:", "WKBackgroundModes: [workout-processing]"]:
             self.assertIn(item, watch)
         source = (ROOT / "watchOS/DanceWorkout.swift").read_text()
-        self.assertIn("builder?.discardWorkout()", source)
+        self.assertIn("oldBuilder?.discardWorkout()", source)
         self.assertNotIn("finishWorkout", source)
         self.assertIn("config.activityType = .socialDance", source)
         self.assertIn("store.requestAuthorization", source)
