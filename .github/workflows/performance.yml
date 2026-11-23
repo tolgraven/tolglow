@@ -25,6 +25,7 @@ on:
       - 'dev/tolglow/bench_*.clj'
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
+      - 'dev/tolglow/perf/adaptive_keyframes.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-*'
@@ -42,6 +43,7 @@ on:
       - 'dev/tolglow/bench_movers_reference.clj'
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
+      - 'dev/tolglow/perf/adaptive_keyframes.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-master'
@@ -145,6 +147,14 @@ jobs:
             lein with-profile +benchmark run -m tolglow.perf.weighted-venue "$pixels" 3 5 all \
               "../performance-artifact/weighted-venue-$pixels.edn"
           done
+      - name: Measure adaptive sampling against per-frame effect evaluation
+        if: hashFiles('tolglow/dev/tolglow/perf/adaptive_keyframes.clj') != '' && hashFiles('afterglow/src/afterglow/runtime/cadence.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein with-profile +benchmark run -m tolglow.perf.adaptive-keyframes 4000 24 80 \
+            ../performance-artifact/adaptive-keyframes.edn
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:
