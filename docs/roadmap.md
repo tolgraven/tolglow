@@ -1,11 +1,6 @@
 # Delivery roadmap and parallel work
 
-`work-items.edn` is authoritative. `:done` means the named milestone's acceptance
-criteria have evidence, not that every related product requirement is finished.
-Broad roadmap items stay open when a smaller v1 module is delivered. Active
-items need an owner, finished prerequisites and disjoint repository-prefixed
-paths. The validator checks dependency cycles, missing evidence and overlapping
-active claims; directory claims include all descendants and globs are forbidden.
+Use [GitHub Issues](https://github.com/tolgraven/tolglow/issues) for current scope, dependencies, ownership and evidence. The milestones below describe the early architecture on the `effects` branch. Follow the linked issues for later work.
 
 ## Delivered v1 modules
 
@@ -60,18 +55,16 @@ capture and sync callbacks are bounded and tied to the active show/resource
 identity. Beat/response composition and bounded agent sessions have focused
 passing suites; final combined source/manifest counts remain the root's gate.
 
-| Active lane | Exclusive write boundary | Review gate |
+| Early work area | Source boundary | Qualification |
 | --- | --- | --- |
-| Root studio host | Exact host/handler/output/demo/test paths in ledger | Sync clock/record callbacks, routes, restored connection outcomes, final integrated runs |
+| Root studio host | Host, Ring handlers, output, demo and tests | Sync clock/record callbacks, routes, restored connection outcomes, final integrated runs |
 | Connections UI | Named re-frame state/views and specialized UI files | Sync/audio configuration, selected-clock status, fresh browser interactions |
 | Sync boundary | `studio/sync.clj`, `afterglow/control/clock.clj` and tests | Explicit selected source, stale clock behavior, injected MIDI/Beat Link/Live lifecycle |
 | Runtime replay | `afterglow/runtime/replay.clj`, tests and replay document | Captured initial state/clock/commands, deterministic serial/worker output verification |
 | Push 3 research | New source-grounded profile/codecs only if verified | Official capabilities and captured protocol; no inferred Push 2 compatibility |
-| Documentation | Central docs, guidance and retained benchmark evidence | Accurate scoped status, valid ledger and local links |
+| Documentation | Central docs, guidance and retained benchmark evidence | Scoped evidence and working documentation links |
 
-The ledger contains exact paths and current owners. Completed agents are not
-background services; update the ledger when assigning further work. Coordinate
-schema changes across owners before editing shared boundaries.
+Coordinate schema changes with the owners of the affected issues before editing shared boundaries.
 
 ## Remaining functional migration and performance gates
 

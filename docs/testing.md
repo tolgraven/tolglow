@@ -14,7 +14,6 @@ cd /path/to/afterglow
 cd /path/to/tolglow
 ./bin/test pure
 ./bin/test parity
-clojure -M:check-roadmap
 ```
 
 `bin/test` fails on invalid suite names, dependency/loading errors and test
@@ -81,7 +80,7 @@ need their selected runs; pending results must not be inferred from older gates.
 | Tolglow pure and parity | Root pure 244 / 1780 passed before final host/sync additions; final combined/parity runs to record |
 | Frontend production build | Re-frame release129 files / 0 warnings and source 28 / 124 passed; subsequent Connections UI has its own gate |
 | Browser interaction | Restarted-server 9 session + 6 authoring workflows passed with 0 console/page errors; physical Safari and later Connections view pending |
-| Work ledger and documentation links | Validate after final ownership/status updates |
+| Qualification evidence | Link test results and any remaining hardware checks from the corresponding [GitHub issue](https://github.com/tolgraven/tolglow/issues) |
 
 CI defines Java 17/21 lanes, but hosted CI and local Java 17 execution have not
 been observed here. Cross-repository CI must check out the reviewed new
