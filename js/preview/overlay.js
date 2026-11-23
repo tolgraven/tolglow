@@ -1,16 +1,19 @@
 import * as THREE from 'three';
 import {finitePoint, planeAxis} from './editor.js';
+import {SculptGuide} from './sculpt.js';
 import {VolumeOverlay} from './spatial-volumes.js';
 
 /** Graphics-only authoring hints, drawn after fog; never fixture output. */
 export class RigOverlay {
   constructor() {
     this.scene = new THREE.Scene(); this.rig = new THREE.Group(); this.volumes = new VolumeOverlay();
-    this.scene.add(this.rig, this.volumes.group); this.key = null;
+    this.sculpt = new SculptGuide();
+    this.scene.add(this.rig, this.volumes.group, this.sculpt.group); this.key = null;
   }
   clear() {this.rig.traverse(o => {o.geometry?.dispose(); o.material?.dispose();}); this.rig.clear();}
   update(snapshot) {
-    this.volumes.update(snapshot?.['spatial-volumes']);
+    this.volumes.update(snapshot?.['spatial-volumes'], snapshot?.['volume-guides']);
+    this.sculpt.update(snapshot?.['sculpt-guide']);
     const editor = snapshot?.editor, selection = editor?.selection;
     if (!editor) {if (this.key !== null) {this.clear(); this.key = null;} return;}
     if (this.markerRig !== snapshot.rig) {
@@ -54,12 +57,12 @@ export class RigOverlay {
     }
   }
   render(renderer, camera) {
-    if (!this.rig.children.length && !this.volumes.group.children.length) return;
+    if (!this.rig.children.length && !this.volumes.group.children.length && !this.sculpt.group.children.length) return;
     // EffectComposer restores the caller's render target after its screen pass.
     // Authoring hints belong on the presented canvas, not the fog composite.
     const auto = renderer.autoClear, target = renderer.getRenderTarget();
     try {renderer.setRenderTarget(null); renderer.autoClear = false; renderer.clearDepth(); renderer.render(this.scene, camera);}
     finally {renderer.autoClear = auto; renderer.setRenderTarget(target);}
   }
-  dispose() {this.clear(); this.volumes.dispose();}
+  dispose() {this.clear(); this.volumes.dispose(); this.sculpt.dispose();}
 }

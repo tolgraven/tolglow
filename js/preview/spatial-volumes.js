@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {SculptGuide} from './sculpt.js';
 import {finitePoint} from './editor.js';
 
 function centre(spec) {
@@ -39,14 +40,22 @@ function wireGeometry(shape) {
 
 /** Separate guides from the optical pass. A moving ball changes transforms only. */
 export class VolumeOverlay {
-  constructor() { this.group = new THREE.Group(); this.byId = new Map(); }
+  constructor() { this.group = new THREE.Group(); this.byId = new Map(); this.fields = new Map(); }
   remove(id) {
     const obj = this.byId.get(id);
     obj.geometry.dispose(); obj.material.dispose(); this.group.remove(obj); this.byId.delete(id);
   }
-  update(volumes = []) {
-    const seen = new Set();
+  update(volumes = [], guides) {
+    const seen = new Set(), shaped = new Set();
     for (const spec of volumes) {
+      const guide = guides?.[spec.id];
+      if (guide) {
+        let field = this.fields.get(spec.id);
+        if (!field) {field = new SculptGuide(); this.fields.set(spec.id, field); this.group.add(field.group);}
+        field.update(guide);
+        if (guide['moving?']) field.group.position.fromArray(spec.signal?.position || spec.position);
+        shaped.add(spec.id); continue;
+      }
       const pose = volumePose(spec); if (!pose) continue;
       seen.add(spec.id);
       let obj = this.byId.get(spec.id);
@@ -61,6 +70,9 @@ export class VolumeOverlay {
       if (finitePoint(spec.signal?.rotation)) obj.rotation.set(...spec.signal.rotation);
     }
     for (const id of this.byId.keys()) if (!seen.has(id)) this.remove(id);
+    for (const [id, field] of this.fields) if (!shaped.has(id)) {
+      field.dispose(); this.group.remove(field.group); this.fields.delete(id);
+    }
   }
-  dispose() { for (const id of this.byId.keys()) this.remove(id); }
+  dispose() {this.update([]);}
 }

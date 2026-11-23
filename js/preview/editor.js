@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {sculptHandles} from './sculpt.js';
 import {rotateFixture} from './math.js';
 
 export const planeAxis = plane => ({xz: 1, xy: 2, yz: 0}[plane] ?? 1);
@@ -61,9 +62,12 @@ export function pickEditor(snapshot, camera, bounds, x, y) {
     const distance = Math.hypot(p.x - x, p.y - y);
     if (distance <= radius) candidates.push({...selection, position: point, score: distance / radius + p.depth * .001});
   };
-  if (editor.tool === 'volume-select') {
+  if (editor.tool === 'sculpt-volume') {
+    for (const handle of sculptHandles(snapshot['sculpt-guide'])) add(handle.position, handle, 22);
+  } else if (editor.tool === 'volume-select') {
     for (const volume of snapshot['spatial-volumes'] || []) {
-      const center = volume.signal?.position || volume.position || (finitePoint(volume.min) && finitePoint(volume.max)
+      const field = snapshot['volume-guides']?.[volume.id];
+      const center = (field?.['moving?'] ? volume.signal?.position || volume.position : field?.center) || volume.signal?.position || volume.position || (finitePoint(volume.min) && finitePoint(volume.max)
         ? volume.min.map((v, i) => (v + volume.max[i]) / 2) : null);
       if (center) add(center, {kind: 'volumes', id: volume.id}, 32);
     }
@@ -133,6 +137,23 @@ export class RigEditorInput {
       this.canvas.setPointerCapture(event.pointerId); return;
     }
     const bounds = this.canvas.getBoundingClientRect(), hit = pickEditor(this.snapshot, this.engine.camera, bounds, event.clientX, event.clientY);
+    if (e.tool === 'sculpt-volume') {
+      if (!hit) return;
+      const value = hit.position[planeAxis(e.plane)];
+      const point = planePoint(this.engine.camera, bounds, event.clientX, event.clientY, e.plane, value, e.snap);
+      const start = projectPoint(this.engine.camera, bounds, hit.position);
+      const unit = [...hit.position];
+      if (hit.axis != null) unit[hit.axis] += 1;
+      const end = projectPoint(this.engine.camera, bounds, unit);
+      if (!point || !start || !end) {this.emit('unreachable'); return;}
+      const dx = end.x - start.x, dy = end.y - start.y;
+      if (hit.kind === 'stretch' && dx * dx + dy * dy < 4) {this.emit('unreachable'); return;}
+      this.gesture = {token: ++this.sequence, tool: e.tool, pointer: event.pointerId, x: event.clientX, y: event.clientY,
+        axis: hit.axis, extent: hit.extent, value, plane: e.plane, snap: e.snap, dx, dy};
+      this.canvas.setPointerCapture(event.pointerId);
+      this.emit('sculpt-begin', {point});
+      return;
+    }
     if (e.tool === 'volume-select') {if (hit) this.emit('select-volume', {'volume-id': hit.id}); return;}
     if (e.tool !== 'draw' && !hit) {this.emit('select', {selection: null}); return;}
     const value = hit ? hit.position[planeAxis(e.plane)] : e['plane-value'];
@@ -147,6 +168,17 @@ export class RigEditorInput {
     const g = this.gesture; if (!g || event.pointerId !== g.pointer) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (g.tool === 'throw') return;
+    if (g.tool === 'sculpt-volume') {
+      if (g.axis != null) {
+        const distance = ((event.clientX - g.x) * g.dx + (event.clientY - g.y) * g.dy) / (g.dx * g.dx + g.dy * g.dy);
+        const delta = g.snap > 0 ? Math.round(distance / g.snap) * g.snap : distance;
+        this.emit('sculpt-move', {axis: g.axis, delta, 'half-extent': g.extent});
+      } else {
+        const point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, g.plane, g.value, g.snap);
+        if (point) this.emit('sculpt-move', {point});
+      }
+      return;
+    }
     if (g.tool === 'aim') {
       if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 10) g.dragged = true;
       return;
@@ -173,13 +205,14 @@ export class RigEditorInput {
           this.emit('throw', {point: g.point, velocity: velocity.map(v => v * scale)});
         }
       }
-    } else this.emit(cancelled ? 'cancel' : 'end');
+    } else if (g.tool === 'sculpt-volume') this.emit(cancelled ? 'sculpt-cancel' : 'sculpt-end');
+    else this.emit(cancelled ? 'cancel' : 'end');
     const pointer = g.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
   cancel() {
     if (!this.gesture) return;
-    this.emit('cancel'); const pointer = this.gesture.pointer; this.gesture = null;
+    this.emit(this.gesture.tool === 'sculpt-volume' ? 'sculpt-cancel' : 'cancel'); const pointer = this.gesture.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
   dispose() {this.cancel(); this.abort.abort(); if (this.interacting) this.engine.setInteractionActive?.(this.previousInteraction); this.interacting = false; this.canvas.style.cursor = '';}

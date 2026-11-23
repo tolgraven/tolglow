@@ -1,0 +1,61 @@
+(ns tolglow.studio.volume-sculpt-test
+  (:require [cljs.test :refer-macros [deftest is]]
+            [afterglow.spatial.shape :as shape]
+            [tolglow.studio.spatial-drafts :as drafts]
+            [tolglow.studio.volume-geometry :as geo]
+            [tolglow.studio.volume-sculpt :as sculpt]))
+
+(def db {:connection {:connected? true} :ui {:page-id "main"}
+         :server-projection {:view {:runtime-id "runtime" :epoch 3 :show-id :stage :pages [{:id :main}]}}})
+
+(deftest preview-samples-the-actual-rounded-and-combined-distance-field
+  (let [cube (assoc (geo/primitive :rounded-box) :position [0 1 0] :rounding 0.8)
+        union (geo/combine (assoc cube :selection #{:beam} :strength 0.45) :intersection :sphere)
+        sculpted (assoc union :scale [2 1 1] :translation [1 0 0] :falloff {:outer-m 0.2})
+        {:keys [distance]} (shape/prepare sculpted)
+        guide (geo/guides sculpted)]
+    (is (= #{:beam} (:selection union)))
+    (is (= 0.45 (:strength union)))
+    (is (seq (:surface guide)))
+    (is (seq (:outer guide)))
+    (is (every? #(< (abs (distance %)) 0.025) (:surface guide)))
+    (is (every? #(< (abs (- 0.2 (distance %))) 0.025) (:outer guide)))
+    (is (even? (count (:surface guide))))
+    (is (nil? (geo/guides (assoc union :parts [cube (assoc (geo/primitive :sphere) :position [50 0 0])]))))))
+
+(deftest bouncing-attached-geometry-preserves-world-pose-and-field-controls
+  (let [spec (assoc (geo/primitive :rounded-box) :position [2 3 1] :scale [1 2 3] :strength 0.6)
+        ball (geo/moving spec true)
+        unwrapped (geo/moving ball false)]
+    (is (= :ball (:shape ball)))
+    (is (= 0.6 (:strength ball)))
+    (is (= (:bounds (shape/prepare spec)) (:bounds (shape/prepare ball)) (:bounds (shape/prepare unwrapped))))
+    (is (= [2 3 1] (:position ball)))))
+
+(deftest drag-and-undo-stage-once-and-cancel-restores-the-original
+  (let [start (sculpt/gesture db {:type "sculpt-begin" :token 7 :point [0 1 0]})
+        move (sculpt/gesture start {:type "sculpt-move" :token 7 :point [2 1 1]})
+        stretch (sculpt/gesture start {:type "sculpt-move" :token 7 :axis 2 :half-extent 1 :delta 0.5})
+        finish (sculpt/gesture move {:type "sculpt-end" :token 7})
+        cancel (sculpt/gesture move {:type "sculpt-cancel" :token 7})]
+    (is (= [2 0 1] (get-in (sculpt/model finish) [:volume :translation])))
+    (is (= [1 1 1.5] (get-in (sculpt/model stretch) [:volume :scale])))
+    (is (= [(:volume sculpt/initial)] (mapv :volume (:undo (sculpt/model finish)))))
+    (is (= sculpt/initial (sculpt/model cancel)))
+    (is (= move (sculpt/gesture move {:type "sculpt-cancel" :token 9})))
+    (is (= (:server-projection db) (:server-projection move)))))
+
+(deftest spawn-uses-typed-registry-ids-and-fences-repeat-requests
+  (let [draft (assoc sculpt/initial :members [{:cue-id :floor/amber} {:effect-id "main/sweep"}]
+                     :cue-id "geo" :sources {:position [1 2 3] :color {:hsl [0.5 1 0.4]}})
+        staged (drafts/update-ui db assoc :sculpt draft)
+        {next :db request :studio/http} (sculpt/publish staged :cue "request")
+        body (:body request)]
+    (is (= "/api/spatial/cues" (:path request)))
+    (is (true? (:typed? request)))
+    (is (= [:spawn "geo" :main "runtime" 3] (mapv body [:op :id :page-id :runtime-id :expected-epoch])))
+    (is (= (:members draft) (:members body)))
+    (is (= (:sources draft) (:sources body)))
+    (is (nil? (sculpt/publish next :cue "again")))
+    (is (nil? (sculpt/publish (assoc-in db [:connection :connected?] false) :cue "off")))
+    (is (= "/api/settings" (get-in (sculpt/publish staged :volume "save") [:studio/http :path])))))

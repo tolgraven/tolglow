@@ -92,6 +92,12 @@
         intents (get-in show [:status :last-intents])]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
+    (doseq [[k js-key cache] [[:sculpt-guide "sculpt-guide" "sculptGuide"] [:volume-guides "volume-guides" "volumeGuides"]]]
+      (let [guide (get show k)]
+        (when-not (identical? guide (aget this js-key))
+          (aset this js-key guide)
+          (aset this cache (preview-data guide)))
+        (aset frame js-key (aget this cache))))
     (aset frame "rig" js-rig)
     (aset frame "output" (preview-output show))
     (aset frame "cut?" (boolean (or (:cut? show)
