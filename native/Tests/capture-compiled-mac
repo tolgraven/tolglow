@@ -7,7 +7,7 @@ show="$(mktemp -d)/Compiled performance"
 mkdir -p "$show"
 cat > "$show/show.clj" <<'SHOW'
 (ns show)
-(def config {:hz 40 :init {:components [:show] :modules [:web-server]}})
+(def config {:hz 40 :show {:credential-path "credentials.edn"} :init {:components [:show] :modules [:web-server]}})
 SHOW
 xcrun swiftc native/Tests/window-id.swift -o "$out/window-id"
 "$app/Contents/MacOS/TolglowStudio" --compiled-show "$show" > "$out/window.log" 2>&1 &
@@ -45,3 +45,5 @@ for cue in ["ember", "breathe", "orchid"]:
 assert len({frame.tobytes() for frame in frames}) == 3
 frames[0].save(folder / "compiled-studio.gif", save_all=True, append_images=frames[1:], duration=1000, loop=0)
 PY
+xcrun swiftc native/macOS/StudioNavigation.swift native/Tests/capture-stage.swift -o "$out/capture-stage"
+"$out/capture-stage" "$origin" "$out"

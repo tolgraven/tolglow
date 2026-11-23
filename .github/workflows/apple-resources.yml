@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with: {path: tolglow}
+      - name: Verify the deployment tools
+        working-directory: tolglow
+        run: python3 native/Tests/test_apple_distribution.py
       - name: Read the paired revision exercised by the architecture suite
         id: fork
         run: |

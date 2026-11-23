@@ -8,8 +8,7 @@ Ordinary constructors do not start motion, networking, or a show.
 - `Core` is a Foundation-only Swift package. Run `cd Core && swift test` where a
   Swift toolchain is installed. Generated Xcode projects are not source truth;
   edit project.yml and use XcodeGen. Do not claim Apple targets build on Linux.
-- WatchConnectivity is the Watch transport. Apple TN3135 forbids ordinary Watch
-  apps from low-level UDP/TCP; a working simulator socket would not prove support.
+- Route operator controls and paired audience samples through WatchConnectivity. Solo audience enrollment uses the shared Core Bluetooth central. Apple TN3135 restricts ordinary low-level UDP/TCP on Watch.
 - Only SwiftUI's supported primary-action gesture shortcut is used for Double
   Tap. Do not infer raw finger trajectories or promise every Watch supports it.
 - Motion values have explicit SI units and CoreMotion reference/calibration

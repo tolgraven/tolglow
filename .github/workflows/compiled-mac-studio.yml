@@ -50,3 +50,4 @@ jobs:
             build/media/window.log
             build/media/compiled-studio.png
             build/media/compiled-studio.gif
+            build/media/stage-invitation.png

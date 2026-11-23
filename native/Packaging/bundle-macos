@@ -15,6 +15,12 @@ xcodebuild -project "$root/native/Tolglow.xcodeproj" -scheme TolglowStudio \
   -derivedDataPath "$root/native/DerivedData" CODE_SIGNING_ALLOWED=NO build
 app="$dest/Tolglow Studio.app"
 ditto "$root/native/DerivedData/Build/Products/Release/TolglowStudio.app" "$app"
+xcodebuild -project "$root/native/Tolglow.xcodeproj" -scheme TolglowAudienceBridge \
+  -configuration Release -destination "platform=macOS,arch=$(uname -m)" \
+  -derivedDataPath "$root/native/DerivedData" CODE_SIGNING_ALLOWED=NO build
+mkdir -p "$app/Contents/Helpers"
+ditto "$root/native/DerivedData/Build/Products/Release/TolglowAudienceBridge" "$app/Contents/Helpers/TolglowAudienceBridge"
+codesign --force --sign - "$app/Contents/Helpers/TolglowAudienceBridge"
 resources="$app/Contents/Resources"
 mkdir -p "$resources/runtime"
 # Keep the JIT compiler, supported charsets, MIDI and the standard modules

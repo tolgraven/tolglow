@@ -66,11 +66,13 @@ final class LocalShow: ObservableObject {
             try files.createDirectory(at: directory, withIntermediateDirectories: false,
                                       attributes: [.posixPermissions: 0o700])
             child.currentDirectoryURL = folder
+            var environment = ProcessInfo.processInfo.environment
+            let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/TolglowAudienceBridge")
+            environment["TOLGLOW_AUDIENCE_BRIDGE"] = helper.path
             if let sources = ApplicationSources(), sources.installed {
-                var environment = ProcessInfo.processInfo.environment
                 environment["TOLGLOW_APPLICATION_SOURCES"] = sources.directory.path
-                child.environment = environment
             }
+            child.environment = environment
             if (requestedEngine ?? engine) == .native, let nativeHost {
                 child.executableURL = nativeHost
                 child.arguments = [folder.path, ready.path]
