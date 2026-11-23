@@ -96,3 +96,38 @@ The editable rig and Transit show file retain the input properties. Studio
 calculates `:relative-brightness` when a changed rig goes to the preview.
 These properties affect the visual model. Physical channel packing continues
 to use the authored cue and master levels.
+
+## Sculpt a strip in three dimensions
+
+Put the shape next to the ordinary patches in the fixture module. A REPL show
+can submit the same vector under its rig’s `:pixel-layouts` key.
+
+```clojure
+{:fixtures
+ {:patches []
+  :pixel-layouts
+  [{:id :ceiling/ribbon :group :overhead :shape :path
+    :points [[-4 3 -3] [4 3 -3] [4 4 2]] :pixels 256
+    :color-layout :grbw :universe 10 :address 511
+    :position-overrides {127 [2.8 3.1 -3.05]}}]}}
+```
+
+Points use world X, Y and Z in metres. A path spaces pixel centres uniformly
+along its length. Open paths include both ends, a single pixel samples the
+midpoint, and a closed path omits the repeated end. The first head above is
+`:ceiling/ribbon-head-1`. Its green and red slots occupy 10/511 and 10/512,
+and its blue and white slots occupy 11/1 and 11/2. Redrawing the path keeps
+head IDs and wire order. The optional overrides use zero-based wire indices.
+
+A grid uses `:origin`, `:rows`, `:columns`, `:row-step` and `:column-step`.
+Each step is a world vector; `:serpentine?` defaults to true. A helix uses
+`:origin`, `:radius`, `:height`, `:turns` and `:pixels`; its optional
+`:phase-deg` rotates the start around the vertical Y axis. All shapes support
+RGB, GRB, RGBW, GRBW and RGBWA wiring.
+
+Studio samples large drafts sparsely. The host expands the complete rig and
+checks DMX overlaps before admitting it. A stale queued edit is rejected if
+another operation replaced the patch during preparation. Transit show files
+store the shape and sparse per-head metadata when the patch can be rebuilt
+exactly. Independently edited addresses, positions and target order persist
+in full. [3D rig editor](rig-editor.md)

@@ -21,15 +21,24 @@
         (show/tick! runtime 0)
         (is (= :accepted (:status @reply)))
         (is (= :rejected (:status @racing-edit))))
+      (let [launch (show/submit! runtime {:op :cue/launch :cue-id :ember})]
+        (show/tick! runtime 25)
+        (is (= :accepted (:status @launch)))
+        (show/tick! runtime 250))
       (let [committed (rig runtime)
             conflict (assoc initial :fixtures [{:id "blocked" :channels {:red 1} :universe 2 :address 1}])
             rejected (show/submit! runtime :rig conflict)
             source (show/export-show-source runtime)
             file (persistence/read-string source)]
-        (show/tick! runtime 25)
+        (show/tick! runtime 275)
         (is (= :rejected (:status @rejected)))
         (is (= committed (rig runtime)))
         (is (= [1 2] (sort (keys (get-in file [:frame-output :universes])))))
+        (let [u (get-in file [:frame-output :universes])]
+          ;; The first RGBW head spans the split and the next starts at 2/3.
+          (is (pos? (get-in u [1 510])))
+          (is (pos? (get-in u [2 0])))
+          (is (= (get-in u [1 510]) (get-in u [2 2]))))
         (is (= (mapv :id (:fixtures committed)) (get-in file [:frame-output :target-order])))
         (is (= [] (get-in (wire/decode source) [:model :rig :fixtures])))
         (is (= committed (:rig (persistence/thaw (demo/model) file)))))
