@@ -230,16 +230,26 @@
             (update-governor! service))
           (into {} (keep (fn [id] (when-let [color (color-at (get entries id) time)] [id color]))) ids))))))
 
+(defn- push-grid [service lease snapshot page origin]
+  (let [previous @lease]
+    (if (and (identical? snapshot (:source previous))
+             (= page (:page previous)) (= origin (:origin previous)))
+      (:model previous)
+      (let [colors (present! service lease snapshot [query-id page origin 8])
+            model (assoc (:model snapshot) ::views/pad-colors colors)]
+        (vreset! lease {:source snapshot :page page :origin origin :model model})
+        model))))
+
 (defn push-feedback [service snapshot!]
-  {:open! #(Object.)
-   :project!
-   (fn [lease local model]
-     (let [snapshot (snapshot!) latest (:model snapshot)
-           touch (get (:touches local) (peek (:touch-order local)))
-           type (get-in latest [:instances (:instance-id touch) :definition :params (:param touch) :type])]
-       (if (and (:ready? local) (not (:target-picker local)) (not (#{:color :enum} type))
-                (= [(:show-id model) (:epoch model)] [(:show-id latest) (:epoch latest)]))
-         (assoc latest ::views/pad-colors
-                (present! service lease snapshot [query-id (:page-id local) (:origin local) 8]))
-         (do (release! service lease) model))))
-   :close! #(release! service %)})
+  (let [close! (fn [lease] (vreset! lease nil) (release! service lease))]
+    {:open! #(volatile! nil)
+     :project!
+     (fn [lease local model]
+       (let [snapshot (snapshot!) latest (:model snapshot)
+             touch (get (:touches local) (peek (:touch-order local)))
+             type (get-in latest [:instances (:instance-id touch) :definition :params (:param touch) :type])]
+         (if (and (:ready? local) (not (:target-picker local)) (not (#{:color :enum} type))
+                  (= [(:show-id model) (:epoch model)] [(:show-id latest) (:epoch latest)]))
+           (push-grid service lease snapshot (:page-id local) (:origin local))
+           (do (close! lease) model))))
+     :close! close!}))
