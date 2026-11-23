@@ -28,6 +28,16 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     private var retryTimer: DispatchWorkItem?
     private var inForeground = true
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    #if os(iOS) && !APPCLIP
+    @Published private(set) var offersCompute = false
+    private var grantField: CBCharacteristic?
+    private var grantReply: ((Data?) -> Void)?
+    func requestComputeGrant(_ completion: @escaping (Data?) -> Void) {
+        guard grantReply == nil, joined, room != nil, let peer, let grantField else { completion(nil); return }
+        grantReply = completion
+        peer.readValue(for: grantField)
+    }
+    #endif
     private var key: SymmetricKey?
     private var queued: AudienceSample?
     private var pending = false
@@ -47,6 +57,7 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         }
         room = fingerprint
         invalidInvitation = fingerprint == nil
+        refreshComputeAvailability()
     }
 
     func browseWithoutInvitation() {
@@ -118,13 +129,20 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         guard check(error, "Stage service unavailable") else { return }
         guard let service = peripheral.services?.first(where: { $0.uuid == AudienceRadio.service })
         else { failed("Stage service unavailable"); return }
-        peripheral.discoverCharacteristics([AudienceRadio.identity, AudienceRadio.hello, AudienceRadio.samples], for: service)
+        var ids = [AudienceRadio.identity, AudienceRadio.hello, AudienceRadio.samples]
+        #if os(iOS) && !APPCLIP
+        ids.append(AudienceRadio.computeGrant)
+        #endif
+        peripheral.discoverCharacteristics(ids, for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard peer === peripheral else { return }
         guard check(error, "Stage characteristics unavailable") else { return }
         let list = service.characteristics ?? []
+        #if os(iOS) && !APPCLIP
+        grantField = list.first { $0.uuid == AudienceRadio.computeGrant }
+        #endif
         identity = list.first { $0.uuid == AudienceRadio.identity }
         hello = list.first { $0.uuid == AudienceRadio.hello }
         samples = list.first { $0.uuid == AudienceRadio.samples }
@@ -133,7 +151,18 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peer === peripheral, characteristic.uuid == AudienceRadio.identity else { return }
+        guard peer === peripheral else { return }
+        #if os(iOS) && !APPCLIP
+        if characteristic === grantField {
+            let callback = grantReply; grantReply = nil
+            guard error == nil, let key, let packet = characteristic.value,
+                  let sealed = try? AES.GCM.SealedBox(combined: packet),
+                  let clear = try? AES.GCM.open(sealed, using: key, authenticating: Data("guest-compute-v1".utf8))
+            else { callback?(nil); return }
+            callback?(clear); return
+        }
+        #endif
+        guard characteristic === identity else { return }
         guard check(error, "Invalid stage identity") else { return }
         guard let identity = characteristic.value, identity.count == 81, let hello else { failed("Invalid stage identity"); return }
         let publicKey = Data(identity.prefix(65))
@@ -164,6 +193,7 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
             }
             reconnecting = false
             connecting = false; joined = true; status = "Sharing with this stage"
+            refreshComputeAvailability()
             // Starting input may synchronously write its first sample. Only a
             // sample acknowledgement can release that write's in-flight slot.
             onJoin?()
@@ -191,11 +221,22 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         } catch { failed("Failed to send sample") }
     }
 
+    private func refreshComputeAvailability() {
+        #if os(iOS) && !APPCLIP
+        offersCompute = joined && room != nil && grantField != nil
+        #endif
+    }
+
     private func closeTransport() {
         timeout?.cancel(); timeout = nil
         retryTimer?.cancel(); retryTimer = nil
         let old = peer
         peer = nil; joined = false; connecting = false
+        #if os(iOS) && !APPCLIP
+        let complete = grantReply
+        grantReply = nil; grantField = nil; offersCompute = false
+        complete?(nil)
+        #endif
         old?.delegate = nil
         if let old, old.state != .disconnected { manager?.cancelPeripheralConnection(old) }
         key = nil; hello = nil; samples = nil; identity = nil; queued = nil; pending = false

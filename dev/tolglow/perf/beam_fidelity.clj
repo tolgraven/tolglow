@@ -6,12 +6,14 @@
             [clojure.java.io :as io]
             [tolglow.bench-show :as bench]
             [tolglow.perf.multirate-metrics :as metrics]
+            [tolglow.perf.beam-admission :as admission]
             [tolglow.show :as show]))
 
 (def ^:private ground {:id :floor :point [0 0 0] :normal [0 1 0] :u-axis [1 0 0]})
 (def ^:private warmup 40)
 (def ^:private frames 160)
 (def ^:private frame-ms 25)
+(def ^:private bpm 120)
 (def ^:private groups [[:near 5.0] [:near 40.0] [:far 5.0] [:far 40.0]])
 (defn- group-for [i] (nth groups (mod i (count groups))))
 (defn- op [name & args] {:op name :args (vec args)})
@@ -165,8 +167,31 @@
                                :false-admissions (count (filter #(and (<= (:midpoint %) limit)
                                                                       (> (:worst %) limit)) windows))}])))))
 
+(defn- check-upper [plans stride measured]
+  (let [upper (reduce max (map #(admission/max-error % stride (* frame-ms (/ bpm 60000.0))) plans))]
+    (when (or (not (Double/isFinite upper)) (> measured (+ upper 1e-9)))
+      (throw (ex-info "Beam curvature bound failed on the measured replay"
+                      {:stride stride :upper upper :observed measured})))
+    {:upper-radii upper :worst-observed-radii measured}))
+
+(defn- compare-curvature [fixtures encoding lanes alias-results limit]
+  (into {}
+        (for [[depth-class _ :as group] groups]
+          (let [depth (if (= :near depth-class) 0.7 6.0)
+                heads (keep-indexed #(when (= group (group-for %1)) %2) fixtures)
+                plans (fn [program] (mapv #(admission/prepare (program depth) % encoding) heads))
+                orbit (plans program)
+                strides (into (sorted-map)
+                              (for [stride [1 2 4 8]]
+                                [stride (check-upper orbit stride
+                                          (get-in lanes [stride :errors group :all :footprint-radii :max]))]))
+                allowed (keep (fn [[stride result]] (when (<= (:upper-radii result) limit) stride)) strides)]
+            [group {:stride (last allowed) :candidates strides
+                    :fast-orbit (check-upper (plans fast-orbit) 4 (get-in alias-results [group :worst-frame]))}]))))
+
 (defn measure [limit]
   (let [encoding (calibrated-encoding) fixtures (rig) reference (replay encoding fixtures 1 program)
+        alias-results (midpoint-comparison encoding fixtures limit)
         lanes (into {} (for [stride [1 2 4 8]]
                          (let [candidate (replay encoding fixtures stride program)]
                            [stride (cond-> {:errors (compare-frames reference candidate)}
@@ -178,8 +203,9 @@
       (when-not (and (pos? (p95 [:far 40.0]))
                      (> (p95 [:near 5.0]) (p95 [:near 40.0]) (p95 [:far 40.0])))
         (throw (ex-info "Fixture optics or the moving target did not affect the replay" {}))))
-    {:movers (count fixtures) :frames frames :bpm 120 :period-ms frame-ms :groups groups
-     :axis-encoding encoding :radius-budget limit :midpoint-comparison (midpoint-comparison encoding fixtures limit)
+    {:movers (count fixtures) :frames frames :bpm bpm :period-ms frame-ms :groups groups
+     :axis-encoding encoding :radius-budget limit :midpoint-comparison alias-results
+     :curvature-admission (compare-curvature fixtures encoding lanes alias-results limit)
      :first-bar-policy (compare-calibrated lanes limit)
      :fixture-positions (mapv :position (subvec fixtures 0 4))
      :reference-footprints (trace reference) :lanes lanes}))
