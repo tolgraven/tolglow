@@ -9,6 +9,7 @@
             [tolglow.studio.debug :as debug]
             [tolglow.studio.camera-controls :as camera-controls]
             [tolglow.studio.block-builder :as block-builder]
+            [tolglow.studio.material-designer :as materials]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
@@ -649,6 +650,8 @@
     [:section#view-library.view {:hidden (not= :library (:view ui))}
      [heading "MAKE IT YOURS" "Ideas become instruments." "Create declarative effects and cues. Validate, publish, then play."
       [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
+     (when (= :library (:view ui))
+       ^{:key [(:runtime-id show) (:epoch show)]} [materials/panel])
      [:div.definition-layout
       [:aside.panel.definition-library
        [:div.panel-top [:span.section-label "DEFINITIONS"] [button "new-definition" "New +" [:studio/definition-new] "text-button"]]

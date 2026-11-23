@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :effects/show-prefabs :title "Reuse registered materials across effects and variable chains"
+ [{:id :studio/material-designer :title "Design and preview shared show materials"
+   :kind :implementation :status :in-progress :owner "Studio material designer"
+   :paths ["tolglow/src/studio/tolglow/studio/material_designer.cljs" "tolglow/src/tolglow/effects/material_design.clj"]
+   :depends-on [:effects/show-prefabs]
+   :acceptance ["Preview an unpublished material, edit its defaults and safely save or remove it from a touch device."]
+   :evidence []}
+  {:id :effects/show-prefabs :title "Reuse registered materials across effects and variable chains"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/effects/prefabs.clj"] :depends-on [:effects/composable-blocks]
    :acceptance ["Publish one material, use it in independent effects and preserve each captured revision through a show file."]
