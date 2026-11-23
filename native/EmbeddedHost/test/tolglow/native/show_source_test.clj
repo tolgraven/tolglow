@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [tolglow.modules :as modules]
+            [tolglow.fixed-host :as host]
             [tolglow.native.show-source :as source])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -44,3 +45,11 @@
             (spit (io/file folder "show.clj") "(ns show (:require [paid])) (def config {})")
             (is (thrown-with-msg? Exception #"Could not find namespace: paid"
                                   (source/read-show folder {})))))))))
+
+(deftest credentials-and-state-belong-to-the-configured-show-folder
+  (let [config (host/launch-config "/data" "/shows/red"
+                                   {:show {:credential-path "auth.edn"}
+                                    :show-state {:load-file "last.transit" :save-file "/saved/set.transit"}} identity)]
+    (is (= "/shows/red/auth.edn" (get-in config [:show :credential-path])))
+    (is (= {:load-file "/shows/red/last.transit" :save-file "/saved/set.transit"} (:show-state config)))
+    (is (= "/data/credentials.edn" (get-in (host/launch-config "/data" "" {} identity) [:show :credential-path])))))
