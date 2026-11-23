@@ -120,7 +120,7 @@ export class WorkerRoomPreview {
           if (this.bitmapPresenter) this.presenter.transferFromImageBitmap(bitmap);
           else this.presenter.drawImage(bitmap, 0, 0);
           this.presented = true;
-          this.observedFrame?.(this.canvas);
+          this.observedFrame?.(this.canvas, message.showId, message.epoch, message.showFrame);
         });
         this.lastFrame = Math.max(this.lastFrame, message.frameId);
         if (accepted) {

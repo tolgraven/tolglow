@@ -93,7 +93,7 @@
   (let [previous (get-in @state [:grants id])]
     (if (and (= provider (:provider previous)) (= show (:show previous)))
       previous
-      (let [grant {:token (str (UUID/randomUUID)) :provider provider :show show :sequence -1 :completed-ms -1}]
+      (let [grant {:token (str (UUID/randomUUID)) :provider provider :show show :sequence -1 :frame-number -1 :completed-ms -1}]
         (revoke! manager id)
         (swap! state assoc-in [:grants id] grant)
         grant))))
@@ -120,19 +120,20 @@
 (defn accept!
   "The stream supplies a private producer identity for this socket. Keep host
   receipt time and the producer's two monotonic timestamps in separate domains."
-  [{:keys [lock state sources]} current provider {:keys [source token show sequence sampled-ms completed-ms value]}]
+  [{:keys [lock state sources]} current provider {:keys [source token show sequence frame-number sampled-ms completed-ms value]}]
   (locking lock
     (let [grant (get-in @state [:grants source])
           spec (get sources source)]
       (when (and grant (active? spec) (= provider (:provider grant))
                  (= token (:token grant)) (= show (:show grant) (identity-of current))
                  (integer? sequence) (<= 0 sequence 9007199254740991) (> sequence (:sequence grant))
+                 (integer? frame-number) (<= 0 frame-number (:frame-number current 0)) (<= (:frame-number grant) frame-number)
                  (finite? sampled-ms) (finite? completed-ms) (<= 0 sampled-ms completed-ms)
                  (<= (:completed-ms grant) completed-ms) (some? value) ((:valid? spec) value))
-        (swap! state update-in [:grants source] assoc :sequence sequence :completed-ms completed-ms)
+        (swap! state update-in [:grants source] assoc :sequence sequence :frame-number frame-number :completed-ms completed-ms)
         (let [latest (:latest spec)]
           (when-not (= value (:value @latest))
             (reset! latest {:source source :producer (peek provider) :show show :sequence sequence
-                            :sampled-ms sampled-ms :completed-ms completed-ms
+                            :frame-number frame-number :sampled-ms sampled-ms :completed-ms completed-ms
                             :received-ns (System/nanoTime) :value value})))
         true))))

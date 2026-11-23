@@ -53,7 +53,7 @@
                      [id (if (= binding (:binding old-slot)) old-slot
                              {:binding binding :ticket (js-obj) :last-at js/Number.NEGATIVE_INFINITY :sequence 0})]))))))
 
-(defn- finish! [{:keys [slots now send! visible?]} id ticket sampled value]
+(defn- finish! [{:keys [slots now send! visible?]} id ticket sampled frame value]
   (let [{:keys [binding sequence pending?] :as current} (get @slots id)
         [stream query {:keys [show token]}] binding]
     (when (and pending? (identical? ticket (:ticket current)))
@@ -61,21 +61,27 @@
       (when (and (visible?) (some? value) (not= value (:value current)))
         (swap! slots update id assoc :value value)
         (send! stream {:op :observation :query query :source id :show show :token token
-                       :sequence sequence :sampled-ms sampled :completed-ms (now) :value value})))))
+                       :sequence sequence :frame-number frame :sampled-ms sampled :completed-ms (now) :value value})))))
 
-(defn- sample! [{:keys [slots] :as control} id slot read! canvas sampled]
-  (let [complete #(finish! control id (:ticket slot) sampled %)]
+(defn- sample! [{:keys [slots] :as control} id slot read! canvas sampled frame]
+  (let [complete #(finish! control id (:ticket slot) sampled frame %)]
     (swap! slots update id assoc :sequence (inc (:sequence slot)) :pending? true :last-at sampled)
     (try (-> (js/Promise.resolve (read! canvas)) (.then complete) (.catch #(complete nil)))
          (catch :default _ (complete nil)))))
 
-(defn present! [{:keys [slots now visible?] :as control} canvas]
+(defn- presented-show? [show-id epoch grant]
+  (let [expected (get-in grant [:show :show-id])
+        wire-id (if (keyword? expected) (subs (str expected) 1) expected)]
+    (and (= show-id wire-id) (= epoch (get-in grant [:show :epoch])))))
+
+(defn present! [{:keys [slots now visible?] :as control} canvas show-id epoch frame]
   (when (and (seq @slots) (visible?))
     (let [sampled (now)]
       (doseq [[id {:keys [binding last-at pending?] :as slot}] @slots
               :let [spec (last binding) read! (get @samplers (:sampler spec))]
-              :when (and read! (not pending?) (>= (- sampled last-at) (:interval-ms spec)))]
-        (sample! control id slot read! canvas sampled)))))
+              :when (and read! (presented-show? show-id epoch spec) (not pending?)
+                         (>= (- sampled last-at) (:interval-ms spec)))]
+        (sample! control id slot read! canvas sampled frame)))))
 
 (defn bind! [component engine request]
   (let [current (aget component "observationControl")]
@@ -86,4 +92,4 @@
             control (or current (assoc (controller) :visible? active?))]
         (configure! control request)
         (aset component "observationControl" (when request control))
-        (aset engine "observedFrame" (when (seq (:sources request)) #(present! control %)))))))
+        (aset engine "observedFrame" (when (seq (:sources request)) #(present! control %1 %2 %3 %4)))))))

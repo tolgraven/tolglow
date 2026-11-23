@@ -7,13 +7,16 @@
     (let [pending (atom []) sent (atom []) clock (atom 50) visible (atom true)
           control (assoc (obs/controller #(deref clock) #(swap! sent conj [%1 %2])) :visible? #(deref visible))
           request {:stream "socket" :query [:studio/observation-demand :rig]
-                   :sources {:sample {:sampler ::hold :interval-ms 25 :token "grant" :show {:epoch 0}}}}
-          frame! #(obs/present! control nil)
+                   :sources {:sample {:sampler ::hold :interval-ms 25 :token "grant" :show {:show-id :show/club :epoch 0}}}}
+          frame! #(obs/present! control nil "show/club" 0 42)
           turn! #(js/Promise. (fn [resolve _] (js/setTimeout resolve 0)))]
       (obs/register-sampler! ::hold (fn [_] (js/Promise. (fn [resolve _] (swap! pending conj resolve)))))
       (frame!)
       (is (empty? @pending))
       (obs/configure! control request)
+      (obs/present! control nil "previous" 0 101)
+      (obs/present! control nil "show/club" 1 0)
+      (is (empty? @pending) "A stale image never takes a read under a new show grant")
       (frame!)
       (swap! clock + 50)
       (frame!)
@@ -27,6 +30,7 @@
       (-> (turn!)
           (.then (fn []
                    (is (= [[4 5 6]] (mapv (comp :value second) @sent)) "Only the remounted slot can complete")
+                   (is (= 42 (:frame-number (second (first @sent)))))
                    (frame!)
                    (is (= 2 (count @pending)) "The source observes its own minimum interval")
                    (swap! clock + 50)

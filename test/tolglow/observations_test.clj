@@ -20,7 +20,7 @@
         b (obs/provider-lease manager #(deref model) alternate)
         grant (fn [lease current] (reset! model current) (get ((:sample! lease) nil) source))
         report (fn [g seq ms v] (merge (select-keys g [:show :token]) {:source source :sequence seq
-                                              :sampled-ms (- ms 1) :completed-ms ms :value v}))]
+                                              :frame-number 0 :sampled-ms (- ms 1) :completed-ms ms :value v}))]
     (try
       (is (nil? (grant a scene)))
       (is (= "tolglow.observations/latest-observation"
@@ -42,6 +42,7 @@
           (is (nil? (accept (report spec 2 12 [1 1 1]))))
           (is (nil? (accept (report spec 3 5 [1 1 1]))))
           (is (nil? (accept (report spec 3 10 [:oops]))))
+          (is (nil? (accept (assoc (report spec 3 10 [1 2 3]) :frame-number 9))))
           (rx/publish! system scene)
           (is (= [first-value] @changes)))
         ((:close! one))

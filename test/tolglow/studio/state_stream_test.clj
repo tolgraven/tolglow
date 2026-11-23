@@ -457,7 +457,7 @@
         packet (fn [grant rgb]
                  (merge (select-keys grant [:show :token])
                         {:op :observation :query query :source source :sequence 1
-                         :sampled-ms 500 :completed-ms 501 :value rgb}))]
+                         :frame-number 0 :sampled-ms 500 :completed-ms 501 :value rgb}))]
     (try
       (let [base (claim! client)
             backup (claim! other)
