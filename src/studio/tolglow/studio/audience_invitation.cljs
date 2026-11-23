@@ -6,17 +6,23 @@
 (defn- session [db]
   [(get-in db [:show :runtime-id]) (get-in db [:show :epoch])])
 
-(defn- state [db]
-  (let [remote (get-in db [:show :connection-status :stage-invitation])
-        form (get-in db [:connections :stage-form])
-        sources (set (:sources remote))
+(defn view-model [remote form]
+  (let [sources (set (:sources remote))
         selected (:device-id form)]
-    (merge remote {:stage-name "Dance floor" :origin ""} form
-           {:device-id (cond (sources selected) selected
-                             (sources "audience") "audience"
-                             :else (first (:sources remote)))})))
+    (if (:id remote)
+      (merge remote (select-keys form [:pending? :error]))
+      (merge {:stage-name "Dance floor" :origin ""} remote form
+             {:device-id (cond (sources selected) selected
+                               (sources "audience") "audience"
+                               :else (first (:sources remote)))}))))
 
-(rf/reg-sub ::state (fn [db _] (state db)))
+(defn- state [db]
+  (view-model (get-in db [:show :connection-status :stage-invitation])
+              (get-in db [:connections :stage-form])))
+
+(rf/reg-sub ::remote (fn [db _] (get-in db [:show :connection-status :stage-invitation])))
+(rf/reg-sub ::form (fn [db _] (get-in db [:connections :stage-form])))
+(rf/reg-sub ::state :<- [::remote] :<- [::form] (fn [[remote form] _] (view-model remote form)))
 (rf/reg-event-db ::edit
   (fn [db [_ field value]] (assoc-in db [:connections :stage-form field] value)))
 
