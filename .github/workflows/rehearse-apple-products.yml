@@ -4,69 +4,43 @@ on:
     branches: [codex/rehearse-apple-compiled-products]
 permissions: {contents: read, actions: read}
 jobs:
-  evidence:
-    runs-on: ubuntu-latest
+  archived-native-restore:
+    runs-on: macos-15
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
-        with: {repository: tolgraven/tolglow, run-id: 45173152463, name: Tolglow-compiled-Studio-arm64, github-token: '${{ github.token }}', path: build}
-      - run: |
-          find build -name '*.png' -o -name '*.log'
-          cp "$(find build -name compiled-studio.png)" compiled-studio.png
-      - uses: actions/upload-artifact@v7.0.2
-        with: {name: compiled-mac-original-window, path: compiled-studio.png}
-  ipad:
-    runs-on: macos-15-intel
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/download-artifact@v4
-        with: {repository: tolgraven/tolglow, run-id: 45182869110, name: embedded-host-ios-sim, github-token: '${{ github.token }}', path: product}
-      - name: Reuse the previously linked simulator framework
+        with: {repository: tolgraven/tolglow, run-id: 45173152463, name: Tolglow-compiled-Studio-arm64, github-token: '${{ github.token }}', path: product}
+      - name: Restore a synthetic show on the previous standalone Apple Silicon build
         run: |
-          product="$(find product -name embedded-ipad-studio.zip -print -quit)"
-          ditto -x -k "$product" original
-          mkdir -p native/build/embedded
-          framework=native/build/embedded/TolglowRuntime.framework
-          ditto original/TolglowPhone.app/Frameworks/TolglowRuntime.framework "$framework"
-          # Xcode strips development headers/modules from applications when embedding.
-          mkdir -p "$framework/Headers" "$framework/Modules"
-          cp native/EmbeddedHost/TolglowRuntime.h "$framework/Headers/"
-          cp native/EmbeddedHost/module.modulemap "$framework/Modules/"
-          codesign --force --sign - "$framework"
-      - name: Diagnose the linked iOS library entry points inside a real booted simulator
-        run: |
-          set -euo pipefail
-          udid=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;print(next(d["udid"] for k,v in json.load(sys.stdin)["devices"].items() if "iOS" in k for d in v if "iPad" in d["name"] and d["isAvailable"]))')
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          cat > probe.swift <<'SWIFT'
-          import Foundation
-          import TolglowRuntime
-          let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-          try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-          var isolate: OpaquePointer?
-          var thread: OpaquePointer?
-          let created = graal_create_isolate(nil, &isolate, &thread)
-          print("Graal isolate return", created)
-          if created != 0 { exit(2) }
-          let port = tolglow_open_local(thread, home.path, "")
-          print("Ring open return", port)
-          if port > 0 { print("Ring close return", tolglow_close_local(thread)) }
-          print("Tear down return", graal_tear_down_isolate(thread))
-          exit(port > 0 ? 0 : 3)
-          SWIFT
-          framework="$PWD/native/build/embedded"
-          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-          xcrun --sdk iphonesimulator swiftc -sdk "$sdk" -target x86_64-apple-ios17.0-simulator -F "$framework" -framework TolglowRuntime             -Xlinker -rpath -Xlinker "$framework" probe.swift -o "$PWD/probe"
-          codesign --force --sign - "$PWD/probe"
-          mkdir -p result
-          xcrun simctl spawn "$udid" "$PWD/probe" 2>&1 | tee result/probe.log
-          xcrun simctl shutdown "$udid"
-      - run: native/Tests/check-embedded-studio
-      - run: |
-          mkdir -p result
-          xcrun xcresulttool export attachments --path run-ui.xcresult --output-path result
-        if: always()
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with: {name: ipad-window-evidence, path: result}
+          archive="$(find product -name Tolglow-compiled-Studio-arm64.zip -print -quit)"
+          ditto -x -k "$archive" product/unpacked
+          python3 - <<'PY'
+          import subprocess, tempfile, time, urllib.request, urllib.error
+          from pathlib import Path
+          executable = next(Path("product/unpacked").rglob("TolglowNativeHost")).resolve()
+          with tempfile.TemporaryDirectory() as raw:
+              folder = Path(raw)
+              (folder / "tolglow.edn").write_text("{:hz 40 :init {:components [:show] :modules [:web-server]}}")
+              ready = folder / "port"
+              with subprocess.Popen([str(executable), str(folder), str(ready)], stdin=subprocess.PIPE) as proc:
+                  try:
+                      t=time.monotonic()
+                      while not ready.exists():
+                          assert proc.poll() is None and time.monotonic()-t < 70, "Host failed to start"
+                          time.sleep(.1)
+                      origin="http://127.0.0.1:" + ready.read_text().strip()
+                      with urllib.request.urlopen(origin + "/api/export") as response:
+                          src=response.read()
+                          mime=response.headers.get_content_type()
+                          print("Exported synthetic show", len(src), mime, flush=True)
+                      for payload, content in [(src, mime), (__import__("json").dumps({"source":src.decode()}).encode(), "application/json")]:
+                          req=urllib.request.Request(origin + "/api/import", data=payload, headers={"Content-Type":content})
+                          try:
+                              with urllib.request.urlopen(req, timeout=20) as result:
+                                  print(content, result.status, result.read(3000).decode(), flush=True)
+                          except urllib.error.HTTPError as err:
+                              print(content, err.status, err.read(3000).decode(), flush=True)
+                  finally:
+                      proc.stdin.close()
+                      proc.wait(timeout=20)
+          PY
