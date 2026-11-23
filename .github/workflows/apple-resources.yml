@@ -60,4 +60,3 @@ jobs:
           fi
       - uses: actions/upload-artifact@v7.0.2
         with: {name: studio-runtime, path: studio-assets, retention-days: 2}
-
