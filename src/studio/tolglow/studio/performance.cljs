@@ -408,7 +408,7 @@
         (when (and (not expanded?) (:selected scope)) [strip-monitor instance scope])])
      (when-let [schema (get-in definition [:params editing])]
        (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
-         ^{:key [id editing]} [sources/editor instance editing schema group]))
+         ^{:key [id (or (ffirst group) editing)]} [sources/editor instance editing schema group]))
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced
