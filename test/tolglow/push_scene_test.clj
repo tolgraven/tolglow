@@ -46,3 +46,17 @@
       (is (some #(= "7" (:id %)) (get-in focused [:rig :fixtures]))))
     (is (= [19.999 2 0] (get-in scene [:bounds :max])))
     (is (< (count (.getBytes (json/write-str projected) "UTF-8")) 65536))))
+
+(deftest long-shared-fogger-id-prefixes-retain-distinct-stable-sources
+  (let [prefix (apply str (repeat 100 "x"))
+        ids [(str prefix "left") (str prefix "right")]
+        fixtures (mapv #(assoc (first (demo/fixtures)) :id % :fogger {:flow-m3-min 10}) ids)
+        project (fn [fixtures ids]
+                  (let [state {:model {:rig {:fixtures fixtures}}
+                               :output {:atmosphere {:sources (mapv #(hash-map :fixture-id %) ids)}}}]
+                    (mapv :fixture-id (get-in (preview/project-display (preview/create-cache) state {:display-mode :simulator})
+                                             [:scene :output :atmosphere :sources]))))
+        labels (project fixtures ids)]
+    (is (= 2 (count (set labels))))
+    (is (every? #(<= (count %) 80) labels))
+    (is (= labels (reverse (project (vec (reverse fixtures)) (reverse ids)))))))

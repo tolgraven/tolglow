@@ -100,6 +100,12 @@
                        :ipc-stack (when thread (mapv str (take 6 (.getStackTrace thread))))
                        :stderr :inherited}) error))))
 
+(defn frame-request
+  "Encode a passive capture request without collapsing :type and :semantic/type."
+  [id view]
+  (json/write-str {:id id :view view}
+                  :key-fn #(if (keyword? %) (subs (str %) 1) (str %))))
+
 (defn process-capture
   "Construct an inert Node/Chromium capture backend. :browser-executable is
   required. :url defaults to the studio's loopback /push-display page. The bundled
@@ -153,7 +159,7 @@
      (fn [{:keys [request-lock closed? reader writer executor counter scene-mode?] :as handle} view]
        (locking request-lock
          (when @closed? (throw (ex-info "Display capture is closed" {})))
-         (let [id (inc @counter) request (json/write-str {:id id :view view})
+         (let [id (inc @counter) request (frame-request id view)
                scene? (boolean (and (:scene view) (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view))))
                budget (cond (not scene?) capture-timeout-ms
                             @scene-mode? scene-capture-timeout-ms

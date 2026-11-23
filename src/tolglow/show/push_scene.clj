@@ -4,7 +4,10 @@
   when show IDs are long, namespaced, or shared across fixture libraries."
   (:require [afterglow.render.frame :as render]
             [afterglow.render.photometry :as photometry]
-            [tolglow.rig.reflections :as reflections]))
+            [tolglow.rig.reflections :as reflections])
+  (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util HexFormat]))
 
 (def ^:private fixture-limit 32)
 (defn create-cache [] (volatile! nil))
@@ -35,6 +38,11 @@
     (mover? fixture) (assoc :channels {:pan 1 :tilt 1})
     (:pixel-layout-id fixture) (assoc :pixel-layout-id true)))
 
+(defn- stable-id [id]
+  (let [encoded (.getBytes (pr-str id) StandardCharsets/UTF_8)
+        digest (.digest (MessageDigest/getInstance "SHA-256") encoded)]
+    (.formatHex (HexFormat/of) digest)))
+
 (defn- truss-ends [{:keys [position length rotation-deg]}]
   (when position
     (let [[_ y z] (map #(Math/toRadians (double %)) (or rotation-deg [0 0 0]))
@@ -58,6 +66,7 @@
      :ids (delay (into {} (map-indexed (fn [i f] [(wire-id (:id f)) i])) fixtures))
      :bounds (limits (concat (keep :position fixtures) (mapcat truss-ends trusses)))
      :optics (delay (reflections/plan rig))
+     :fog-ids (delay (into {} (keep (fn [{:keys [id fogger]}] (when fogger [id (stable-id id)]))) fixtures))
      :surface-ids (into {:floor "floor" :stage "stage" :back "back" :left "left" :right "right"}
                         (map-indexed (fn [i s] [(:id s) (str i)])) (take 16 surfaces))
      :rig {:room (select-keys room [:width :height :depth])
@@ -98,13 +107,13 @@
                       [slot (cond-> data spot (assoc :beam-footprint spot))]))))
           slots)))
 
-(defn- atmosphere [sample]
+(defn- atmosphere [sample fog-ids]
   (when sample
     (assoc (select-keys sample [:sample-time-ms :epoch :extinction-per-m :reference-path-m
                                 :fog-level :volume-m3 :mixed-m3 :mixed-density])
            :sources (mapv (fn [source] (-> (select-keys source [:position :direction :flow-m3-s :local-m3 :emitted-m3])
-                                           (assoc :fixture-id (subs (str (:fixture-id source)) 0
-                                                                    (min 80 (count (str (:fixture-id source))))))))
+                                           (assoc :fixture-id (or (get @fog-ids (:fixture-id source))
+                                                                  (stable-id (:fixture-id source))))))
                           (take 12 (:sources sample))))))
 
 (defn- drawable-shape [spec]
@@ -177,5 +186,5 @@
                                 :show-id (short-text (:show-id model)) :runtime-id (:runtime-id view)
                                 :optical-signals (optical-signals model)
                                 :time-ms (:last-frame-time-ms model (:time-ms model 0))
-                                :output {:values values :atmosphere (atmosphere (:atmosphere output))}})
+                                :output {:values values :atmosphere (atmosphere (:atmosphere output) (:fog-ids plan))}})
                   editor (assoc :editor editor))}))))

@@ -5,7 +5,8 @@
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
             [tolglow.studio.push-scene :as scene]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-visualization :as visualization]))
 
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
@@ -23,7 +24,7 @@
                :active-effects (vec (take 8 (:active-effects view)))
                :cells (vec (take 8 (:cells view))) :labels (vec (take 8 (:labels view)))))))
 (defn observe-view [previous view]
-  (let [next (normalize-view view)
+  (let [next (visualization/update-push previous (normalize-view view) view)
         {:keys [binding-path target-id sample]} (:block-trace view)
         identity [(:runtime-id view) (:epoch view) (:instance-id view) (:definition-version view) binding-path target-id]]
     (if (and (contains? #{:block-trace "block-trace"} (:display-mode next)) (seq binding-path))
@@ -123,7 +124,7 @@
   [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
    (for [index (range 8) :let [parameter (get (:parameters view) index)
                              touched? (= index (get-in view [:touched-parameter :encoder]))
-                             component (:component-label parameter)]]
+                             component (visualization/component-label parameter)]]
      ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
                    [:div.push-parameter-name [:span.push-encoder (inc index)]
                     [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
@@ -132,7 +133,7 @@
                    (cond
                      (nil? parameter) (when-not compact? [:div.push-empty "·"])
                      compact? [:div.push-compact-value (widgets/value-label (:schema parameter) (if (some? (:effective-value parameter)) (:effective-value parameter) (:value parameter)))]
-                     :else [widgets/typed-display parameter])])])
+                     :else [visualization/push view parameter])])])
 
 (defn- target-choices [{:keys [rows page pages]}]
   [:section.push-targets {:aria-label "Cue launch targets"}

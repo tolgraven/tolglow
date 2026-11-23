@@ -19,7 +19,7 @@ export class WorkerRoomPreview {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.disposed = false;
     this._ready = false; this.presented = false; this.room = [12, 5, 10]; this.snapshot = null;
     this.identity = showIdentity(null); this.visible = false; this.generation = 0; this.paused = false;
-    this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
+    this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
@@ -86,7 +86,7 @@ export class WorkerRoomPreview {
     this.channel.offer({snapshot: this.snapshot, receivedAt: this.receivedAt, lightingMode: this.lightingMode, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
       generation: this.generation, paused: this.paused,
       reducedMotion: this.reducedMotion.matches, coarsePointer: this.coarsePointer.matches,
-      quality: this.qualityChoice, fog: this.fogOverride, workLight: this.workLight,
+      quality: this.qualityChoice, film: this.filmSettings, fog: this.fogOverride, workLight: this.workLight,
       camera: {position: this.camera.position.toArray(), target: this.controls.target.toArray(), up: this.camera.up.toArray(), fov: this.camera.fov, name: this.cameraName},
       actions: this.actions.slice()});
   }
@@ -175,6 +175,11 @@ export class WorkerRoomPreview {
     if (this.fallback) return this.fallback.setFog(this.fogOverride);
     this.sendState();
   }
+  setFilm(settings) {
+    Object.assign(this.filmSettings, settings);
+    if (this.fallback) return this.fallback.setFilm(this.filmSettings);
+    this.sendState();
+  }
   setWorkLight(value) {this.workLight = clamp(Number(value) || 0, 0, 1); if (this.fallback) return this.fallback.setWorkLight(value); this.sendState();}
   burst(options) {
     if (this.fallback) return this.fallback.burst(options);
@@ -235,7 +240,7 @@ export class WorkerRoomPreview {
     if (!this.presenter && !this.startedRendering) {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
       if (this.fallback.error) {this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null; return;}
-      this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogOverride);
+      this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setFilm(this.filmSettings); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogOverride);
       if (this.snapshot) this.fallback.update(this.snapshot);
       this.fallback.camera.position.copy(this.camera.position); this.fallback.controls.target.copy(this.controls.target); this.fallback.controls.update();
       this.camera = this.fallback.camera; this.controls = this.fallback.controls;
