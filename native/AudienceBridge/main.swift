@@ -23,8 +23,10 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var lastCount = 0
     private var timer: Timer?
     private var sending = false
-    private var queue = AudienceSteps()
+    private var onsets = AudienceOnsetFrames()
+    private var frameWork: DispatchWorkItem?
     private var lastLevels: AudienceLevels?
+    private var levelUpdate = false
 
     init(name: String, oscHost: String, port: NWEndpoint.Port?, token: String?, source: String) {
         self.name = name; self.source = source; self.token = token
@@ -167,6 +169,12 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
                     peripheral.respond(to: first, withResult: .unlikelyError); return
                 }
                 peers[id] = (peer.key, time, sample.serial)
+                if connection != nil {
+                    let delta = floor.takeSteps()
+                    do { try onsets.append(delta) }
+                    catch { stop("Gesture queue overflow (\(onsets.pending) pending, \(delta) incoming)."); return }
+                    scheduleFrame(at: time)
+                }
             default: peripheral.respond(to: first, withResult: .writeNotPermitted); return
             }
             peripheral.respond(to: first, withResult: .success)
@@ -181,24 +189,35 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         grants = grants.filter { time - $0.value.1 < 5 }
         let levels = floor.drain(at: time)
         lastLevels = levels
-        if connection != nil {
-            do { try queue.append(levels.steps) }
-            catch {
-                stop("Gesture queue overflow (\(queue.pending) pending, \(levels.steps) incoming).")
-                return
-            }
-        }
         if lastCount != levels.count { print("Participants \(levels.count)") }
         let wasActive = lastCount > 0
-        guard !sending else { return }
         lastCount = levels.count
-        guard levels.count > 0 || wasActive || queue.pending > 0 else { return }
-        send(levels, at: time)
+        if levels.count > 0 || wasActive { levelUpdate = true }
+        flush(at: time)
     }
 
-    private func send(_ levels: AudienceLevels, at time: Double) {
-        guard let connection, let token else { return }
-        let delivered = queue.takeBatch()
+    private func scheduleFrame(at time: Double) {
+        guard frameWork == nil, onsets.needsFrame else { return }
+        let frame = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.frameWork = nil
+            let now = ProcessInfo.processInfo.systemUptime
+            self.onsets.openFrame(at: now)
+            self.flush(at: now)
+            self.scheduleFrame(at: now)
+        }
+        frameWork = frame
+        DispatchQueue.main.asyncAfter(deadline: .now() + (AudienceOnsetFrames.nextBoundary(after: time) - time),
+                                      execute: frame)
+    }
+
+    private func flush(at time: Double) {
+        guard !sending, levelUpdate || onsets.ready, let connection, let token else { return }
+        // The admission packet precedes the first onset. Bootstrap once, then reuse the 5 Hz readings.
+        if lastLevels == nil || (lastLevels?.count == 0 && onsets.ready) { lastLevels = floor.drain(at: time) }
+        guard let levels = lastLevels else { return }
+        levelUpdate = false
+        let delivered = onsets.takeBatch()
         var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
                       "dance-steps": Double(delivered), "pulse-count": Double(levels.pulseCount), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
         values["motion-count"] = Double(levels.motionCount)
@@ -214,15 +233,15 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
                 guard let self else { return }
                 self.sending = false
                 if error != nil { self.stop("OSC send failed with \(delivered) gestures in flight."); return }
-                if self.queue.pending > 0, let latest = self.lastLevels {
-                    self.send(latest, at: ProcessInfo.processInfo.systemUptime)
-                }
+                self.flush(at: ProcessInfo.processInfo.systemUptime)
             })
         } catch { stop("Could not encode audience observation.") }
     }
 
     private func stop(_ reason: String) {
         timer?.invalidate()
+        frameWork?.cancel()
+        frameWork = nil
         radio.stopAdvertising()
         radio.removeAllServices()
         connection?.cancel()

@@ -31,6 +31,8 @@ final class AudienceSession: ObservableObject {
     private var phoneMotion: AudienceMotion?
     @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
+    private var lastPulse: Int?
+    private var lastLevelTime = -Double.infinity
     @Published var allowLockedWatch = false
     private(set) var watchOnlyInBackground = false
     private var generation = UUID()
@@ -62,8 +64,10 @@ final class AudienceSession: ObservableObject {
         message = ""
         let ingest: (Double, Double) -> Void = { [weak self] strength, time in
             guard let self, self.generation == token else { return }
+            let before = self.meter.steps
             self.meter.observe(strength: strength, at: time)
             self.lastInputTime = ProcessInfo.processInfo.systemUptime
+            if self.meter.steps != before { self.phoneOnset() }
         }
         switch input {
         case .touch: break
@@ -96,18 +100,32 @@ final class AudienceSession: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         guard client.joined, input == .touch, now - tapTime >= 0.25 else { return }
         taps &+= 1; tapTime = now
+        phoneOnset()
+    }
+
+    private func phoneOnset() {
+        // The wrist owns the person's counter while its stream is fresh.
+        if let wrist = watch {
+            if ProcessInfo.processInfo.systemUptime - wrist.time <= 2 {
+                lastPhoneSteps = input == .touch ? taps : meter.steps
+                return
+            }
+            endWatch()
+        }
+        publish(refreshLevels: false)
     }
 
     @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
         guard client.joined else { return false }
         let time = ProcessInfo.processInfo.systemUptime
-        if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
+        if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = sample.steps }
         watch = (sample, time, motionTime)
-        if watchOnlyInBackground { publish() }
+        let refresh = watchOnlyInBackground && time - lastLevelTime >= 0.2
+        if refresh || sample.steps != lastWatchSteps { publish(refreshLevels: refresh) }
         return true
     }
     func endWatch() {
-        watch = nil; lastWatchSteps = nil
+        watch = nil; lastWatchSteps = nil; lastPulse = nil
         if watchOnlyInBackground { client.leave() }
     }
 
@@ -125,7 +143,7 @@ final class AudienceSession: ObservableObject {
         startInputs()
     }
 
-    private func publish() {
+    private func publish(refreshLevels: Bool = true) {
         let now = ProcessInfo.processInfo.systemUptime
         let phoneSteps = input == .touch ? taps : meter.steps
         let phoneEffort = input == .touch ? exp(-3 * (now - tapTime)) : (now - lastInputTime <= 0.6 ? meter.effort : 0)
@@ -135,16 +153,17 @@ final class AudienceSession: ObservableObject {
             let delta = data.steps &- (lastWatchSteps ?? data.steps)
             if delta <= 8 { totalSteps &+= delta }
             lastWatchSteps = data.steps
-            effort = max(data.effort, phoneEffort)
+            if refreshLevels { effort = max(data.effort, phoneEffort) }
         } else {
             totalSteps &+= phoneSteps &- (lastPhoneSteps ?? phoneSteps)
-            effort = phoneEffort
+            if refreshLevels { effort = phoneEffort }
         }
         lastPhoneSteps = phoneSteps
+        if refreshLevels { lastPulse = watch?.sample.pulse; lastLevelTime = now }
         let phoneAxes = shareMotionAxes && now - lastInputTime <= 0.6 ? phoneMotion : nil
         let wristAxes = watch.flatMap { $0.sample.motion?.fresh(measured: $0.motionTime, at: now) }
         if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort,
-                                       pulse: watch?.sample.pulse, motion: wristAxes ?? phoneAxes) {
+                                       pulse: lastPulse, motion: wristAxes ?? phoneAxes) {
             client.offer(packet); serial &+= 1
         }
     }
@@ -156,6 +175,7 @@ final class AudienceSession: ObservableObject {
         #endif
         timer?.invalidate(); timer = nil; meter = DanceMeter()
         lastInputTime = -.infinity; tapTime = -.infinity
+        lastLevelTime = -.infinity
     }
 
     func stopInputs() {

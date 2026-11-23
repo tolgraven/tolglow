@@ -4,11 +4,12 @@
  [{:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
-   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md"]
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
                 "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
-                "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."] :evidence []}
+                "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."]
+   :evidence ["The browser observation rehearsal compares the actual worker and main-thread presented pixels with a consumer's show graph value. It covers zero-demand reads, producer epochs, presented show frame IDs, distinct-value transport and final disposal. Physical GPU timing remains open."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"
    :kind :research :status :in-progress :owner "Mixed venue profiling"
@@ -24,7 +25,7 @@
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
-   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first-connection and the remaining general Studio pages are open."]}
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first connection (#156), Definitions (#161), Debug (#163) and Develop (#168) have release-browser coverage. Develop also receives workspace checks, coding-agent progress and terminal bytes by subscription (#173 and #177). The eight-workspace scope, before/after measurements and captures are indexed in docs/studio-ui.md. Perform passed Linux WebKit iPhone/iPad profiles, including keyboard input, held pointer menus and live controls. Physical iPad Safari and direct finger-hold verification are open."]}
   {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
    :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
    :paths ["tolglow/linux/audience"]
