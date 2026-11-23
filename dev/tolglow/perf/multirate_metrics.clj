@@ -32,7 +32,7 @@
                (max peak (reduce max errors)) (max delta d))))))
 
 (defn dmx-error [left right]
-  (when-not (and (= (keys left) (keys right)) (seq left))
+  (when-not (and (= (set (keys left)) (set (keys right))) (seq left))
     (throw (ex-info "DMX universe sets differ" {})))
   (reduce-kv (fn [peak u ^bytes xs]
                (let [^bytes ys (get right u)]

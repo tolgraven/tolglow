@@ -66,9 +66,9 @@
      :lifecycle (mapv (juxt :cue-id :phase :started-at-ms) active)
      :intents (mapv #(select-keys % [:type :cue-id :effect-id :reason]) (:last-intents status))}))
 
-(defn- replay [fixtures pixels rates warmup frames backend]
+(defn- replay [fixtures pixels rates warmup frames backend batch?]
   (let [sink (bench/capture-sink)
-        runtime (show/create-runtime {:model (scene fixtures pixels rates) :workers 2 :batch? true
+        runtime (show/create-runtime {:model (scene fixtures pixels rates) :workers 2 :batch? batch?
                                       :adaptive-keyframes {:enabled? false}
                                       :compute-backend backend :movement-backend backend
                                       :workspace-options nil :worker-timeout-ms 10000 :sink sink})
@@ -100,12 +100,12 @@
         target (:aim expected) observed (:aim actual)]
     (merge (metrics/rgb-error (:rgb expected) (:rgb actual))
            {:dmx-max (metrics/dmx-error (:dmx expected) (:dmx actual))
-     :beam-max-deg (reduce max 0.0 (map metrics/angle origin target observed))
-     :aim-max-m (reduce max 0.0 (map metrics/distance target observed))
-     :missed-pulse? (and (> (:pulse expected) 0.5) (<= (:pulse actual) 0.5))
-     :false-pulse? (and (<= (:pulse expected) 0.5) (> (:pulse actual) 0.5))
-     :shutter-error? (not= (:shutter actual) (:shutter expected))
-     :lifecycle-error? (not= (select-keys actual [:lifecycle :intents]) (select-keys expected [:lifecycle :intents]))})))
+            :beam-max-deg (reduce max 0.0 (map metrics/angle origin target observed))
+            :aim-max-m (reduce max 0.0 (map metrics/distance target observed))
+            :missed-pulse? (and (> (:pulse expected) 0.5) (<= (:pulse actual) 0.5))
+            :false-pulse? (and (<= (:pulse expected) 0.5) (> (:pulse actual) 0.5))
+            :shutter-error? (not= (:shutter actual) (:shutter expected))
+            :lifecycle-error? (not= (select-keys actual [:lifecycle :intents]) (select-keys expected [:lifecycle :intents]))})))
 
 (defn- report [expected run fixtures pixels]
   (let [actual (:samples run)
@@ -113,8 +113,9 @@
         elapsed (map :elapsed-ms actual)
         process-cpu (keep :cpu-ms actual)
         dist (bench/distribution elapsed)
-        count-flag #(count (filter % rows))]
-    {:rgb-rmse (Math/sqrt (/ (reduce + (map :rgb-mse rows)) (count rows)))
+        count-flag #(count (filter % rows))
+        trace {:pulse (mapv :pulse actual) :beam-error-deg (mapv :beam-max-deg rows) :tick-ms (vec elapsed)}]
+    {:trace trace :rgb-rmse (Math/sqrt (/ (reduce + (map :rgb-mse rows)) (count rows)))
      :rgb-max (reduce max (map :rgb-max rows)) :oklab-max (reduce max (map :oklab-max rows))
      :dmx-max (reduce max (map :dmx-max rows))
      :beam-max-deg (reduce max (map :beam-max-deg rows)) :aim-max-m (reduce max (map :aim-max-m rows))
@@ -126,18 +127,31 @@
      :wall-tick-ms dist :p95-headroom-ms (- period-ms (:p95 dist)) :late-frames (count (filter #(> % period-ms) elapsed))
      :compute (:backend run) :movement (:movement run)}))
 
+(defn verify!
+  "Discrete transitions must survive every policy. Continuous error is reported
+  separately. Full-rate and pulse-aware lanes must retain every short flash."
+  [{:keys [lanes] :as result}]
+  (doseq [[lane stats] lanes]
+    (let [checks (cond-> [:shutter-mismatch-frames :lifecycle-mismatch-frames]
+                   (not= lane :uniform-4) (into [:missed-pulse-frames :false-pulse-frames]))]
+      (when-not (and (pos? (:reference-shutter-edges stats)) (every? #(zero? (get stats %)) checks))
+        (throw (ex-info "Discrete output fidelity regression" {:lane lane :stats (select-keys stats checks)})))))
+  result)
+
 (defn measure [pixels movers warmup frames backend]
   (let [{:keys [fixtures]} (bench/corpus pixels movers :sculpture)
         rig (into (subvec fixtures 0 pixels)
                   (map #(assoc-in % [:channels :shutter] 12)) (subvec fixtures pixels))
         [full & rest] policies
-        run! #(replay rig pixels (second %) warmup frames backend)
-        baseline (run! full)
-        reference (:samples baseline)]
+        run! #(replay rig pixels (second %) warmup frames backend true)
+        reference (:samples (replay rig pixels (second full) warmup frames :cpu false))
+        baseline (run! full)]
     (when-not (and (seq (filter #(> (:pulse %) 0.5) reference))
                    (seq (filter #(pos? (:shutter %)) reference)))
       (throw (ex-info "Measured window must exercise actual pulses and shutter changes" {})))
     {:pixels pixels :movers movers :warmup warmup :frames frames :frame-period-ms period-ms :bpm 120
+     :reference :cpu-scalar-full-rate
+     :reference-pulse (mapv :pulse reference) :reference-shutter (mapv :shutter reference)
      :lanes (into {(first full) (report reference baseline rig pixels)}
                   (map (fn [lane] [(first lane) (report reference (run! lane) rig pixels)]))
                   (conj (vec rest) [:full-repeat (second full)]))}))
@@ -145,9 +159,10 @@
 (defn -main [& [file pixels movers warmup frames backend]]
   (let [[pixels movers warmup frames] (mapv parse-long [(or pixels "1024") (or movers "64")
                                                         (or warmup "40") (or frames "80")])]
-    (when-not (and file (every? pos-int? [pixels movers warmup frames]) (<= 20 frames))
-      (throw (ex-info "Use OUTPUT.edn [pixels movers warmup frames backend]; measure at least one beat" {})))
+    (when-not (and file (#{nil "cpu" "native-gpu"} backend) (every? pos-int? [pixels movers warmup frames]) (<= 20 frames))
+      (throw (ex-info "Use OUTPUT.edn [pixels movers warmup frames cpu|native-gpu] and measure at least one beat" {})))
     (try
       (let [result (measure pixels movers warmup frames (keyword (or backend "cpu")))]
-        (io/make-parents file) (spit file (str (pr-str result) "\n")) (prn result))
+        (io/make-parents file) (spit file (str (pr-str result) "\n"))
+        (verify! result) (prn (update result :lanes update-vals #(dissoc % :trace))))
       (finally (shutdown-agents)))))
