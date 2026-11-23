@@ -122,7 +122,7 @@
   (let [wanted (:queries client)
         query-only? (:query-only? client)
         base (:base client)
-        values (into {} (keep (fn [q] (when-let [lease (get leases q)] [q @(:result lease)]))) wanted)]
+        values (into {} (keep (fn [q] (when-let [lease (get leases q)] [q (queries/read-result lease source)]))) wanted)]
     (cond
       query-only?
       (let [model (:model source)
@@ -167,14 +167,14 @@
 (defn create
   "Create an inert stream service. Starts one daemon worker on first connection."
   ([project heartbeat!] (create project heartbeat! {}))
-  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault!]
+  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault! surfaces]
                         :or {frame-rate 40 checkpoint-every 240}}]
    (when-not (pos-int? checkpoint-every) (throw (ex-info "Checkpoint interval must be positive" {})))
    (let [hub {:client-faults (atom []) :report-fault! client-fault! :runtime-id runtime-id :checkpoint-every checkpoint-every :observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
               :period-ms (long (Math/ceil (/ 1000.0 (min 40 frame-rate))))
               :project project :heartbeat! heartbeat! :clients (atom {}) :closed? (atom false)
               :projected (volatile! nil) :latest (AtomicReference.) :wake (Semaphore. 0)}]
-     (let [hub (cond-> hub get-graph (assoc :query-store (queries/create get-graph #(wake! hub))))]
+     (let [hub (cond-> hub get-graph (assoc :query-store (queries/create get-graph #(wake! hub) surfaces)))]
        (assoc hub :worker (delay (doto (Thread. #(run-worker hub) "tolglow-state-stream")
                                  (.setDaemon true) (.start))))))))
 

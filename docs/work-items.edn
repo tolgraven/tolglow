@@ -1,7 +1,14 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+ [{:id :studio/visible-cue-pad-previews :title "Visualize mounted cue pages through musical keyframes"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/visualization/cue_pads.clj" "tolglow/src/studio/tolglow/studio/cue_pad_preview.cljs"
+           "afterglow/src/afterglow/control/devices/session.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Share inactive and running samples across visible browser and Push pad cells, clean up every lease and lower visual keyframe frequency before live effects."]
+   :evidence ["Release Chromium observed 16 distinct colors on an inactive cue, switched pages, and recorded Transit query disposal. Paired Afterglow PR #71 verifies fair physical MIDI messages and session cleanup. See docs/cue-pad-previews.md for timing, ownership and reproduction."]}
+  {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
            "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"
