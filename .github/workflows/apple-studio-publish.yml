@@ -13,7 +13,7 @@ jobs:
         with:
           name: mac-studio-preview
           repository: tolgraven/tolglow
-          run-id: 45144096589
+          run-id: 45145873580
           github-token: ${{ github.token }}
           path: mac-review
       - name: Publish the two captured images on a media-only branch
@@ -24,5 +24,5 @@ jobs:
             git update-index --add --cacheinfo 100644,"$blob","apple-studio/$file"
           done
           tree="$(git write-tree)"
-          commit="$(git -c user.name='Tolglow CI' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit-tree "$tree" -m 'Capture standalone macOS Studio using its bundled Clojure host')"
-          git push origin "$commit:refs/heads/codex/apple-studio-window-media"
+          commit="$(git -c user.name='Tolglow CI' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit-tree "$tree" -m 'Record three cue launches in the real bundled macOS Studio')"
+          git push origin "$commit:refs/heads/codex/apple-studio-live-cue-media"
