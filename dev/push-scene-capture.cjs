@@ -9,7 +9,7 @@ async function captureShow([url, directory, executablePath]) {
   const frames = JSON.parse(readFileSync(join(directory, 'frames.json')));
   let page;
   const errors = [], requests = [], samples = [];
-  const worker = await createWorker({url, executablePath, noSandbox: true, startupTimeoutMs: 60000, sceneStartupTimeoutMs: 60000, sceneCaptureTimeoutMs: 60000},
+  const worker = await createWorker({url, executablePath, noSandbox: true, captureTimeoutMs: 10000, startupTimeoutMs: 60000, sceneStartupTimeoutMs: 60000, sceneCaptureTimeoutMs: 60000},
     async options => {
       const browser = await chromium.launch({...options, args: [...options.args, '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
       return {
@@ -47,6 +47,25 @@ async function captureShow([url, directory, executablePath]) {
     }
     await page.waitForTimeout(250);
     assert.equal(await page.evaluate(() => window.lastVenue.draws), samples.at(-1).draws, 'idle panel ran extra frames');
+    // Headless Chromium does not background tabs. Drive the browser visibility
+    // event while exercising the production renderer, context loss and new canvas.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', {configurable: true, value: true});
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    assert(await page.evaluate(() => window.lastVenue.disposed && !document.querySelector('.push-scene canvas')));
+    await page.evaluate(() => {
+      delete document.hidden;
+      document.dispatchEvent(new Event('visibilitychange'));
+      return window.tolglowPushDisplay.frameReady();
+    });
+    const recovered = await worker.capture(frames[0]);
+    assert(await page.evaluate(() => {
+      const next = document.querySelector('.push-scene canvas')?.tolglowPreview;
+      return next && next !== window.lastVenue && next.ready && next.draws > 0 && !next.renderer.getContext().isContextLost();
+    }), 'restored display failed to draw on a fresh WebGL surface');
+    writeFileSync(join(directory, 'recovered.png'), Buffer.from(recovered.png, 'base64'));
+    await page.evaluate(() => { window.lastVenue = document.querySelector('.push-scene canvas').tolglowPreview; });
     await worker.capture({'display-mode': 'parameters'});
     assert(await page.evaluate(() => !document.querySelector('.push-scene canvas') && window.lastVenue.disposed),
       'returning to parameters left the simulator mounted');
