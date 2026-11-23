@@ -1,0 +1,1 @@
+{"admission":{"accepted":1020,"rejected":0,"overflow":0},"remaining":0,"frames":1221,"peak-queue":15,"sent":1020,"duration-ms":30503.11880800128,"commands":4996,"udp":{"received":1020,"rejected":0,"running?":true},"late-by-one-period":215,"expected":4996,"last-levels":{"audience-count":0,"dance-effort":0.0,"pulse-count":0}}
