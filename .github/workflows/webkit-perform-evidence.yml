@@ -11,11 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          ref: 034efce297b51c305549954e40dee516e01eb471
           path: tolglow
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 3fd49ef6877cac57dbc5f0e185fedd2dc7607f39
+          ref: 9387c0ae211397734a761ac98c4894cbfeeb83e4
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
