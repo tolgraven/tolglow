@@ -13,17 +13,36 @@
 
 (defonce ^:private running (atom nil))
 
+(defn- show-path [folder path]
+  (if (and (seq folder) (string? path) (not (.isAbsolute (io/file path))))
+    (str (io/file folder path))
+    path))
+
+(defn launch-config [home folder config evaluator]
+  (let [show (modules/settings config :show)
+        path (or (show-path folder (:credential-path show)) (str (io/file home "credentials.edn")))
+        state (:show-state config)]
+    (cond-> (assoc config
+                   :show (-> show
+                             (assoc :credential-path path)
+                             (assoc-in [:repl-options :session-options :evaluator-factory] evaluator))
+                   :web-server {:enabled true :host "127.0.0.1" :port 0})
+      (:load-file state) (update-in [:show-state :load-file] (partial show-path folder))
+      (:save-file state) (update-in [:show-state :save-file] (partial show-path folder)))))
+
+(defn- read-show [folder]
+  (if (seq folder)
+    (source/read-show folder application/registry)
+    {:config (application/default-config) :registry application/registry
+     :evaluator-factory (source/default-evaluator)}))
+
 (defn -open [home folder]
   (locking running
     (when @running (throw (ex-info "This isolate already owns a show." {})))
     (alter-var-root #'math/*rnd* #(or % (java.util.Random.)))
-    (let [{cfg :config registry :registry} (if (seq folder)
-                                             (source/read-show folder application/registry)
-                                             {:config (application/default-config) :registry application/registry})
-          cfg (launch/with-application-sources cfg)
-          local-show (assoc (modules/settings cfg :show) :credential-path (str (io/file home "credentials.edn")))
-          local-web {:enabled true :host "127.0.0.1" :port 0}
-          show (application/start! (assoc cfg :show local-show :web-server local-web) registry)
+    (let [{:keys [config registry evaluator-factory]} (read-show folder)
+          config (launch/with-application-sources config)
+          show (application/start! (launch-config home folder config evaluator-factory) registry)
           port (get-in show [:application :modules :web-server :port])]
       (if (pos-int? port)
         (do (reset! running show) port)
