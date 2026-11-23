@@ -20,7 +20,8 @@
   (let [{:keys [url writer]} (relay/start! service "127.0.0.1")
         root (subs url 0 (.lastIndexOf ^String url "/"))
         host (subs root 0 (.lastIndexOf ^String root "/"))
-        manifest "#EXTM3U\nplaylist-1.m3u8\n"]
+        manifest (str "#EXTM3U\n\n#EXT-X-STREAM-INF:BANDWIDTH=71720,AVERAGE-BANDWIDTH=12072,"
+                      "CODECS=\"avc1.640c1e\",RESOLUTION=990x280,FRAME-RATE=30\nplaylist-1.m3u8\n")]
     (is (thrown? Exception (relay/start! service "127.0.0.1")))
     (is (= [404 nil] (fetch url "GET")))
     (is (thrown? Exception (relay/publish! service "stale" "master.m3u8" (buffer manifest))))

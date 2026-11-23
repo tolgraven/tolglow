@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, readFileSync} from 'node:fs';
 import {createServer} from 'node:http';
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {chromium} from 'playwright-core';
@@ -35,31 +38,33 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
   const origin = 'http://127.0.0.1:' + server.address().port;
   let browser;
   try {
-    browser = await chromium.launch({executablePath, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required']});
+    browser = await chromium.launch({executablePath, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required', '--use-gl=angle',
+      '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
     const page = await browser.newPage();
     await page.goto(origin);
     const result = await page.evaluate(async () => {
       const {startVideo} = await import('/airplay.js');
       const canvas = document.querySelector('canvas');
-      const ctx = canvas.getContext('2d');
-      const start = performance.now();
+      const gl = canvas.getContext('webgl2', {preserveDrawingBuffer: false});
+      if (!gl) return 'WebGL2 context unavailable';
       const abort = new AbortController();
-      const paint = () => {
-        const t = performance.now() - start;
-        ctx.fillStyle = Math.floor(t / 700) % 2 ? 'lime' : 'red';
-        ctx.fillRect(0, 0, 320, 180);
-        ctx.fillStyle = 'white';
-        ctx.fillRect(Math.floor(t / 20) % 320, 0, 1, 180);
+      let draws = 0;
+      const paint = green => {
+        gl.clearColor(green ? 0 : 1, green ? 1 : 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
         canvas.tolglowCaptureVideo?.(canvas);
       };
-      paint();
-      const clock = setInterval(paint, 32);
-      window.stopPreview = () => {abort.abort(); clearInterval(clock);};
+      // A paused renderer has no retained drawing buffer. Its first requested
+      // draw must populate HLS even before the regular animation clock starts.
+      canvas.tolglowPreview = {draw() {draws++; paint(false);}};
+      window.stopPreview = () => abort.abort();
+      window.showGreen = () => paint(true);
       try {
         await new Promise((resolve, reject) => {
           startVideo(canvas, (path, bytes) => fetch('/' + path, {method: 'PUT', body: bytes}),
             resolve, reject, abort.signal).catch(reject);
         });
+        if (draws !== 1) return 'No requested presentation';
         return 'ready';
       } catch (error) {
         return String(error);
@@ -70,14 +75,42 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
       return t.skip(result);
     }
     assert.equal(result, 'ready');
-    const {stdout} = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-threads', '1', '-analyzeduration', '0', '-probesize', '75000', '-live_start_index', '0',
-      '-i', origin + '/master.m3u8', '-t', '2.5', '-vf', 'scale=1:1', '-c:v', 'rawvideo', '-threads', '1',
-      '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], {encoding: 'buffer', timeout: 45000});
-    assert.ok(stdout.length > 30);
-    const colors = [];
-    for (let i = 0; i + 2 < stdout.length; i += 3) colors.push([...stdout.subarray(i, i + 3)]);
-    assert.ok(colors.some(([r, g]) => r > 180 && g < 70), 'No decoded red frame');
-    assert.ok(colors.some(([r, g]) => g > 180 && r < 70), 'No decoded green frame');
+    const directory = await mkdtemp(join(tmpdir(), 'tolglow-hls-'));
+    t.after(() => rm(directory, {recursive: true, force: true}));
+    const master = await (await fetch(origin + '/master.m3u8')).text();
+    const variant = master.split('\n').find(line => line.endsWith('.m3u8'));
+    assert.ok(variant);
+    const receipt = async () => {
+      const manifest = await (await fetch(origin + '/' + variant)).text();
+      const file = manifest.split('\n').filter(line => line.endsWith('.ts')).at(-1);
+      return {file, number: Number(file.match(/-(\d+)\.ts$/)[1])};
+    };
+    const decode = async ({file}) => {
+      const segment = new Uint8Array(await (await fetch(origin + '/' + file)).arrayBuffer());
+      const target = join(directory, file);
+      await writeFile(target, segment);
+      const {stdout} = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-threads', '1',
+        '-i', target, '-vf', 'scale=1:1', '-frames:v', '1', '-c:v', 'rawvideo', '-threads', '1',
+        '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], {encoding: 'buffer', timeout: 10000});
+      return [...stdout];
+    };
+    const red = await receipt();
+    const [r, g] = await decode(red);
+    assert.ok(r > 180 && g < 70, 'The first requested presentation did not reach the receiver');
+    await page.evaluate(() => window.showGreen());
+    const before = await receipt();
+    let last = before;
+    let rgb = [r, g];
+    const until = performance.now() + 22000;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const next = await receipt();
+      if (next.number > last.number) {
+        last = next;
+        rgb = await decode(last);
+      }
+    } while (!(rgb[1] > 180 && rgb[0] < 70) && performance.now() < until);
+    assert.ok(rgb[1] > 180 && rgb[0] < 70, `Expected green, received ${rgb} in ${last.file}`);
     await page.evaluate(() => window.stopPreview());
   } catch (error) {
     t.diagnostic('Receiver playlist: ' + files.get('playlist-1.m3u8')?.toString());

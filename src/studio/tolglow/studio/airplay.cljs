@@ -8,16 +8,17 @@
 (def ^:private prefix "/api/preview/airplay/")
 (def ^:private media-type "application/transit+json")
 
+(defn- read-control! [response]
+  (let [decode (fn [text]
+                 (let [value (transit/decode text)]
+                   (if (.-ok response) value (throw (js/Error. (:message value))))))]
+    (.then (.text response) decode)))
+
 (defn- control! [route & [body]]
   (let [options (cond-> {:method (if body "POST" "GET")
                          :headers {"Accept" media-type "Content-Type" media-type}}
                   body (assoc :body (transit/encode body)))]
-    (-> (js/fetch (str prefix route) (clj->js options))
-        (.then (fn [response]
-                 (-> (.text response)
-                     (.then (fn [text]
-                              (let [result (transit/decode text)]
-                                (if (.-ok response) result (throw (js/Error. (:message result)))))))))))))
+    (.then (js/fetch (str prefix route) (clj->js options)) read-control!)))
 
 (defn- upload! [writer file buffer signal]
   (-> (js/fetch (str prefix writer "/" file)
@@ -55,7 +56,7 @@
                  (when (identical? abort (:abort @session))
                    (swap! ui assoc :phase :sharing :url url :width width :height height)
                    (when-let [player @video]
-                     (when (.canPlayType player "application/vnd.apple.mpegurl")
+                     (when (seq (.canPlayType player "application/vnd.apple.mpegurl"))
                        (set! (.-src player) url)))))
         begin! (fn [abort module {:keys [url writer]}]
                  (if-not (identical? abort (:abort @session))
@@ -64,17 +65,22 @@
                        (js-invoke module "startVideo" (canvas) (partial upload! writer)
                                   (partial ready! abort url) (partial failed! abort) (.-signal abort)))))
         start! (fn []
-                 (let [abort (js/AbortController.) address (:address @ui)]
+                 (let [abort (js/AbortController.)
+                       address (:address @ui)
+                       current? #(identical? abort (:abort @session))
+                       connect (fn [module]
+                                 (when (current?)
+                                   (-> (control! "start" {:address address})
+                                       (.then (partial begin! abort module)))))
+                       prepare (fn [module]
+                                 (when (current?)
+                                   (-> (js-invoke module "waitForPreview" (canvas) (.-signal abort))
+                                       (.then #(connect module)))))]
                    (reset! session {:abort abort})
                    (swap! ui assoc :phase :starting)
                    (external! (canvas) true)
                    (-> (js-invoke js/globalThis "tolglowLoadEngine" "airplay")
-                       (.then (fn [module]
-                                (when (identical? abort (:abort @session))
-                                  (-> (js-invoke module "waitForPreview" (canvas) (.-signal abort))
-                                      (.then #(when (identical? abort (:abort @session))
-                                                (-> (control! "start" {:address address})
-                                                    (.then (partial begin! abort module)))))))))
+                       (.then prepare)
                        (.catch (partial failed! abort)))))
         configure! (fn []
                      (swap! ui assoc :phase :looking)

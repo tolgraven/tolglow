@@ -105,10 +105,16 @@
    :depends-on [:native/apple-show-studio]
    :evidence ["GluonFX completed full-host arm64 iOS native compilation in run 45149622090 after isolating per-process random state. Linking, on-device startup, dynamic user code and hardware output still need verification."]
    :acceptance ["Launch the native-compiled Clojure show, read the chosen show folder and render a production Studio frame without a remote host. Preserve supported editing and foreground/suspend behavior on real hardware."]}
+  {:id :studio/receiver-preview :title "Share the live room with a read-only HLS receiver"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/js/preview/airplay.js" "tolglow/src/tolglow/preview/airplay.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["The operator selects the network interface. A receiver decodes changing rendered frames. Stopping sharing revokes its media URL and releases the encoder."]
+   :evidence ["Chromium encoded presented WebGL frames and FFmpeg decoded the resulting H.264. A full Ring and Studio run recorded the room under two cue looks and checked revocation. Physical Apple receiver negotiation remains part of standalone qualification."]}
   {:id :native/apple-standalone-studio :title "Deliver and qualify self-contained Studio applications on macOS, iPadOS and iOS"
    :kind :implementation :status :planned :owner nil
-   :paths ["tolglow/native"] :depends-on [:native/apple-show-studio :native/apple-on-device-show]
-   :acceptance ["Distinguish packaged full Clojure runtime from native-image subset and paired host. Open external config and editable app sources, exercise PiP and actual AirPlay receivers at supported resolutions."] :evidence []}
+   :paths ["tolglow/native" "tolglow/src/tolglow/preview/airplay.clj" "tolglow/js/preview/airplay.js"] :depends-on [:native/apple-show-studio :native/apple-on-device-show :studio/receiver-preview]
+   :acceptance ["Distinguish packaged full Clojure runtime from native-image subset and paired host. Open external config and editable app sources, exercise PiP and actual AirPlay receivers at supported resolutions."] :evidence ["The packaged Mac app opens a selected show folder and supports canvas PiP. Studio can share its rendered room through a short-lived H.264 HLS receiver. FFmpeg decoded two cue looks and a 990 × 280 moving preview and lost access on Stop. A physical AirPlay target, 4K negotiation and on-device sustained throughput still need qualification."]}
   {:id :models/agent-language :title "Expose compact show authoring and shader operations to local and remote agents"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/src/tolglow/agents"] :depends-on [:foundation/tests]

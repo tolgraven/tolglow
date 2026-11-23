@@ -47,7 +47,11 @@ export async function startVideo(canvas, publish, ready, failed, signal) {
     targetDuration: 1, maxLiveSegmentCount: 6
   })});
   output.addVideoTrack(source, {frameRate: 30});
-  const started = performance.now();
+  // The encoded timeline starts with the first presented picture. A stalled
+  // browser may yield for seconds; omit that gap instead of emitting an HLS
+  // segment whose duration exceeds the receiver's declared target duration.
+  let previousSample;
+  let timestamp = 0;
   let lastCopy = -Infinity;
   let busy = false;
   let clock;
@@ -69,7 +73,12 @@ export async function startVideo(canvas, publish, ready, failed, signal) {
   const sample = async () => {
     if (busy || signal.aborted || lastCopy === -Infinity) return;
     busy = true;
-    try { await source.add((performance.now() - started) / 1000, 1 / 30); }
+    try {
+      const now = performance.now();
+      if (previousSample !== undefined) timestamp += Math.min((now - previousSample) / 1000, 1 / 15);
+      previousSample = now;
+      await source.add(timestamp, 1 / 30);
+    }
     catch (error) { if (!signal.aborted) failed(error.message); }
     finally { busy = false; }
   };
@@ -78,10 +87,13 @@ export async function startVideo(canvas, publish, ready, failed, signal) {
     await output.start();
     signal.throwIfAborted();
     canvas.tolglowCaptureVideo = capture;
-    // Bitmap and 2D canvases retain their last picture. The next actual scene
-    // presentation immediately replaces this initial sample on a WebGL canvas.
-    capture(canvas);
+    // drawImage on the WebGL canvas after compositing can return a cleared
+    // buffer. Wait for the next presentation, requesting one immediately even
+    // when a slow shader compile has delayed the regular render clock.
     clock = setInterval(sample, 1000 / 30);
+    if (await canvas.tolglowPreview?.draw() === false && !signal.aborted) {
+      throw new Error('The 3D preview could not present a frame for sharing.');
+    }
   } catch (error) { stop(); throw error; }
 }
 
