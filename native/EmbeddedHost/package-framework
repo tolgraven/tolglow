@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+library="${1:?Path to the linked Tolglow dylib}"
+platform="${2:?iPhoneOS or iPhoneSimulator}"
+output="${3:?Output directory for TolglowRuntime.framework}"
+case "$platform" in iPhoneOS|iPhoneSimulator) ;; *) exit 64 ;; esac
+src="$(cd "$(dirname "$0")" && pwd)"
+framework="$output/TolglowRuntime.framework"
+test ! -e "$framework"
+mkdir -p "$framework/Headers" "$framework/Modules"
+cp "$library" "$framework/TolglowRuntime"
+install_name_tool -id '@rpath/TolglowRuntime.framework/TolglowRuntime' "$framework/TolglowRuntime"
+cp "$src/TolglowRuntime.h" "$framework/Headers/"
+cp "$src/module.modulemap" "$framework/Modules/"
+python3 - "$framework" "$platform" <<'PY'
+import plistlib, sys
+from pathlib import Path
+directory, platform = sys.argv[1:]
+info = {"CFBundleExecutable": "TolglowRuntime", "CFBundleIdentifier": "org.tolglow.runtime",
+        "CFBundlePackageType": "FMWK", "CFBundleName": "TolglowRuntime",
+        "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1", "MinimumOSVersion": "18.0",
+        "CFBundleSupportedPlatforms": [platform]}
+with (Path(directory) / "Info.plist").open("wb") as file:
+    plistlib.dump(info, file)
+PY
+xcrun nm -gjU "$framework/TolglowRuntime" > "$output/runtime-symbols.txt"
+for symbol in _graal_create_isolate _graal_tear_down_isolate _tolglow_open_local _tolglow_close_local; do
+  grep -Fxq "$symbol" "$output/runtime-symbols.txt"
+done
