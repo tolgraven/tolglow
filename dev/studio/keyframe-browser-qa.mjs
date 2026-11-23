@@ -96,8 +96,8 @@ try {
   await ceilingToggle.tap();
   assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
   await capture(11);
-  await editor.getByRole('checkbox',{name:'Sample at a fixed interval'}).uncheck();
-  assert.equal(await interval.count(),0);
+  await editor.locator('label').filter({hasText:'Sample at a fixed interval'}).tap();
+  await interval.waitFor({state:'hidden'});
   await capture(12);
   const savedCap = page.waitForResponse(r=>r.url().endsWith('/api/definition') && r.request().method()==='POST');
   await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
