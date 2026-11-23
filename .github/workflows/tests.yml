@@ -202,6 +202,7 @@ jobs:
           TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
           TOLGLOW_AUDIENCE_TIMING_DIR: ${{ runner.temp }}/onset-timing
           TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
+          TOLGLOW_STAGE_TRACE: ${{ runner.temp }}/stage-heartbeat.json
         run: |
           mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR" "$TOLGLOW_AUDIENCE_GATT_DIR"
           swift test --package-path native/Core
@@ -224,6 +225,13 @@ jobs:
         with:
           name: audience-gatt-qualification
           path: ${{ runner.temp }}/gatt/gatt-traces.json
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-stage-heartbeat
+          path: ${{ runner.temp }}/stage-heartbeat.json
           if-no-files-found: error
           retention-days: 10
   native:
