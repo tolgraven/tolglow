@@ -263,6 +263,9 @@
   (r/with-let [observed (r/atom (when (= mode :history) []))]
     [observed-visual mode schema value @(rf/subscribe [::clock]) observed window]))
 
+(defn history-toggle [schema preference]
+  (if (= :history (selected-mode schema preference)) :controls :history))
+
 (defn studio [schema value]
   (r/with-let [choice (r/atom :auto) window (r/atom 4)]
     (let [mode (selected-mode schema @choice)]
@@ -270,7 +273,7 @@
        [:div.parameter-views
         (when (spatial-kind schema)
           [:button {:type "button" :aria-pressed (= mode :spatial) :on-click #(reset! choice :spatial)} "3D"])
-        [:button {:type "button" :aria-pressed (= mode :history) :on-click #(swap! choice (fn [c] (if (= c :history) :auto :history)))} "History"]
+        [:button {:type "button" :aria-pressed (= mode :history) :on-click #(swap! choice (partial history-toggle schema))} "History"]
         (when (= mode :history)
           [:label "Window " [:select {:value @window :aria-label "Parameter history beat window"
                                      :on-change #(reset! window (js/Number (.. % -target -value)))}

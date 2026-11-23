@@ -72,3 +72,9 @@
     (is (= [-170 20 60] (visual/spatial-value schema second 400)))
     (is (nil? (:to (visual/spatial-keyframe second (clock 270) nil))))
     (is (= [-20 0 0] (:from (visual/spatial-keyframe second (clock 0) [-20 0 0]))))))
+
+(deftest schema-initiated-history-can-be-closed-and-reopened
+  (let [schema {:type :number :visualization :history}
+        closed (visual/history-toggle schema :auto)]
+    (is (= :controls (visual/selected-mode schema closed)))
+    (is (= :history (visual/history-toggle schema closed)))))
