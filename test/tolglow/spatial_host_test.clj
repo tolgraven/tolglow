@@ -22,7 +22,7 @@
               :blue {:id :blue :version 1 :effect-id :blue}}]
     (assoc (show/create-runtime {:model (assoc (control/new-show {:registry {:effects effects :cues cues}})
                                                :rig {:fixtures fixtures})
-                                 :batch? batch? :sink {:send! capture!}})
+                                 :batch? batch? :worker-timeout-ms 10000 :sink {:send! capture!}})
            ::captured-dmx captured)))
 
 (defn tick [rt now]

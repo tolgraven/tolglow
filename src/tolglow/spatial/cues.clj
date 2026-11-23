@@ -206,25 +206,31 @@
       (catch Exception ex
         {:instance instance :error (ex-message ex)}))))
 
+(defn- admit-volume [static {:keys [entries volumes balls] :as state} [key entry]]
+  (let [ball? (= :ball (get-in entry [:volume :shape]))
+        error (cond
+                (contains? static key) "A configured volume already uses this cue's ID"
+                (>= volumes 256) "The room already has 256 active volumes"
+                (and ball? (>= balls 64)) "The room already has 64 active balls"
+                :else (:error entry))]
+    (if error
+      (assoc-in state [:entries key] {:instance (:instance entry) :error error})
+      {:entries (assoc entries key entry) :volumes (inc volumes) :balls (if ball? (inc balls) balls)})))
+
 (defn volumes [model modulation previous]
   (let [settings (get-in model [:settings :spatial])
         static (when (:enabled? settings) (:volumes settings))
         clock (time/frame-clock model)
-        running (sort-by :order (keep #(live-instance model clock %) (vals (:instances model))))
-        admit (fn [{:keys [entries volumes balls] :as state} instance]
-                (let [key (key-for instance)
-                      entry (live-volume model modulation previous settings key instance)
-                      ball? (= :ball (get-in entry [:volume :shape]))
-                      error (cond
-                              (contains? static key) "A configured volume already uses this cue's ID"
-                              (>= volumes 256) "The room already has 256 active volumes"
-                              (and ball? (>= balls 64)) "The room already has 64 active balls"
-                              :else (:error entry))]
-                  (if error
-                    (assoc-in state [:entries key] {:instance instance :error error})
-                    {:entries (assoc entries key entry) :volumes (inc volumes) :balls (if ball? (inc balls) balls)})))]
-    (:entries (reduce admit {:entries {} :volumes (count static) :balls (count (filter #(= :ball (:shape %)) (vals static)))}
-                      running))))
+        live (keep #(live-instance model clock %) (vals (:instances model)))
+        prepare (fn [instance]
+                  (let [key (key-for instance)]
+                    [key (live-volume model modulation previous settings key instance)]))
+        occupancy {:entries {} :volumes (count static) :balls (count (filter #(= :ball (:shape %)) (vals static)))}]
+    (->> live
+         (sort-by :order)
+         (map prepare)
+         (reduce (partial admit-volume static) occupancy)
+         :entries)))
 
 (defn- member-source [key index]
   {:adapter :spatial-cue :volume-id key :member index})
@@ -259,28 +265,40 @@
         [(:model result) (assoc ids index (get-in result [:ack :instance-id]))]))
     [model {}] members))
 
+(defn- member-versions [model members]
+  (mapv (fn [{:keys [cue-id effect-id]}]
+          (let [cue (get-in model [:registry :cues cue-id])
+                id (or effect-id (:effect-id cue))]
+            [(:version cue) id (get-in model [:registry :effects id :version])]))
+        members))
+
+(defn- replace-lease [model leases key members now command]
+  (let [model (stop-members model key (get leases key) now command)]
+    (if (empty? members)
+      [model (dissoc leases key)]
+      (try
+        (let [[model ids] (start-members model key members now command)]
+          [model (assoc leases key {:members members :ids ids})])
+        (catch clojure.lang.ExceptionInfo error
+          [model (assoc leases key {:members members :error (ex-message error)
+                                    :failed-versions (member-versions model members)})])))))
+
 (defn reconcile
   "Scope one live activation per scene member, independent of the number of
   heads inside the field. Ending the parent only removes its recorded children."
   [model active now command]
-  (let [prior (get-in model run-path {})]
-    (if (and (empty? active) (empty? prior)) model
-      (let [[model leases]
-            (reduce
-              (fn [[model leases] key]
+  (let [prior (get-in model run-path {})
+        renew (fn [[model leases] key]
                 (let [members (get-in active [key :members])
-                      old (prior key)]
-                  (if (= members (:members old))
+                      old (get leases key)]
+                  (if (and (= members (:members old))
+                           (or (nil? (:error old)) (= (:failed-versions old) (member-versions model members))))
                     [model leases]
-                    (let [model (stop-members model key old now command)]
-                      (if (seq members)
-                        (try
-                          (let [[model ids] (start-members model key members now command)]
-                            [model (assoc leases key {:members members :ids ids})])
-                          (catch clojure.lang.ExceptionInfo error
-                            [model (assoc leases key {:members members :error (ex-message error)})]))
-                        [model (dissoc leases key)])))))
-              [model prior] (sort (into (set (keys prior)) (keys active))))]
+                    (replace-lease model leases key members now command))))]
+    (if (and (empty? active) (empty? prior))
+      model
+      (let [owners (sort (into (set (keys prior)) (keys active)))
+            [model leases] (reduce renew [model prior] owners)]
         (if (seq leases) (assoc-in model run-path leases) (update model :extensions dissoc ::members))))))
 
 (defn- group-rows [model key active weights]
@@ -294,28 +312,32 @@
             [id (merge descriptor {:member (inc index)}
                        (select-keys slot [:transforms :targets]))]))))
 
+(defn- coverage [volume instance aim? sample]
+  (let [{:keys [weights aims]} (when volume (sample volume))
+        weights (if (contains? instance :targets) (select-keys weights (:targets instance)) (or weights {}))]
+    (if-not (and volume aim?) {:weights weights}
+      (let [aims (if (contains? (:selection volume) :aimable) aims (:aims (sample (assoc volume :selection #{:aimable}))))]
+        {:weights weights :aims (select-keys aims (keys weights))}))))
+
+(defn- record-field [model physical sample frame key {:keys [volume values instance] :as entry}]
+  (let [position (get-in physical [:signals key :position])
+        volume (cond-> volume (and (= :ball (:shape volume)) position) (assoc :position position))
+        spec (get-in instance [:definition :spatial-volume])
+        {:keys [weights aims]} (coverage volume instance (:aim-at-volume? spec) sample)
+        error (or (:error entry) (get-in model (into run-path [key :error])))
+        paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
+                (:aim-at-volume? spec) (assoc :aim :volume))
+        view {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
+              :paint paint :affected-head-count (count weights)}]
+    (cond-> (-> frame
+                (update :groups into (group-rows model key entry weights))
+                (assoc-in [:overrides (:id instance)] (select-keys values (keys (:sources spec))))
+                (assoc-in [:members key] (set (keys weights)))
+                (assoc-in [:views key] (cond-> view error (assoc :error error))))
+      aims (assoc-in [:aims (:id instance)] aims))))
+
 (defn frame-fields [model active physical sample]
-  (reduce-kv
-    (fn [frame key {:keys [volume values instance] :as entry}]
-      (let [position (get-in physical [:signals key :position])
-            volume (cond-> volume (and (= :ball (:shape volume)) position) (assoc :position position))
-            aim? (get-in instance [:definition :spatial-volume :aim-at-volume?])
-            {:keys [weights aims]} (when volume (sample volume))
-            aims (if (and volume aim? (not (contains? (:selection volume) :aimable)))
-                   (:aims (sample (assoc volume :selection #{:aimable}))) aims)
-            weights (if (contains? instance :targets) (select-keys weights (:targets instance)) (or weights {}))
-            error (or (:error entry) (get-in model (into run-path [key :error])))]
-        (-> frame
-            (update :groups into (group-rows model key entry weights))
-            (cond-> aim? (assoc-in [:aims (:id instance)] (select-keys aims (keys weights))))
-            (assoc-in [:overrides (:id instance)] (select-keys values (keys (get-in instance [:definition :spatial-volume :sources]))))
-            (assoc-in [:members key] (set (keys weights)))
-            (assoc-in [:views key] (cond-> {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
-                                    :paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
-                                             aim? (assoc :aim :volume))
-                                    :affected-head-count (count weights)}
-                                     error (assoc :error error))))))
-    {:groups {} :overrides {} :views {} :members {}} active))
+  (reduce-kv (partial record-field model physical sample) {:groups {} :overrides {} :views {} :members {}} active))
 
 (defn with-aims
   "Add per-head reachable points to the same native layer as the cue's paint."
@@ -329,15 +351,15 @@
                   (map (fn [[head point]] {:target-id head :attribute :aim :value point :blend :replace}))
                   aims))))))
 
+(defn- scoped-block [groups block]
+  (if-let [group (get groups (get-in block [:source :instance-id]))]
+    (let [native (:native-layer block)
+          layer (cond-> (merge native group)
+                  (and (seq (:transforms native)) (seq (:transforms group)))
+                  (assoc :transforms (into (:transforms group) (:transforms native))))]
+      (assoc block :native-layer layer))
+    block))
+
 (defn mask-contributions [result groups]
   (if (empty? groups) result
-    (update result :contributions
-            (fn [blocks]
-              (mapv (fn [block]
-                      (if-let [group (get groups (get-in block [:source :instance-id]))]
-                        (update block :native-layer
-                                (fn [native]
-                                  (cond-> (merge native group)
-                                    (and (seq (:transforms native)) (seq (:transforms group)))
-                                    (assoc :transforms (into (:transforms group) (:transforms native))))))
-                        block)) blocks)))))
+    (update result :contributions #(mapv (partial scoped-block groups) %))))

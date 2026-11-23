@@ -188,11 +188,14 @@
         (host/submit rt 0 :import {:source (persistence/write-string model)})
         (let [id (:instance-id (host/submit rt 0 :spatial-cue command))
               key (cues/key-for (get-in (state rt) [:instances id]))
-              output (:output @(:state rt))
-              resolved (or (get-in output [:values :moving])
-                           (some #(when (= :moving (:id %)) %) (frame/project-compact (:compact output))))]
+              aim (fn []
+                    (let [output (:output @(:state rt))]
+                      (or (get-in output [:values :moving :aim])
+                          (some #(when (= :moving (:id %)) (:aim %)) (frame/project-compact (:compact output))))))]
           (is (= #{:moving} (get-in (state rt) [:variables :spatial :members key])))
-          (is (= centre (:aim resolved))))
+          (is (= centre (aim)))
+          (change! rt 25 id :position [1.0 2.0 3.0])
+          (is (= [1.0 2.0 3.0] (aim))))
         (finally (show/stop! rt))))))
 
 (deftest a-volume-and-its-children-retain-their-mask-through-the-release-envelope
@@ -210,4 +213,47 @@
           (host/tick rt 525)
           (is (= [0 0 255 0 0 255 0 0 255] (host/output rt)))
           (is (= 1 (count (:instances (state rt))))))
+        (finally (show/stop! rt))))))
+
+(deftest a-failed-scene-member-recovers-on-its-next-registry-version
+  (let [active {"test-owner" {:members [{:effect-id :wash :launch {:params {:brightness 0.5}}}]}}
+        effect {:id :wash :version 1 :params {}}
+        initial {:registry {:effects {:wash effect}}}
+        start (fn [model _ _] {:model model :ack {:status :accepted :instance-id "test-child"}})
+        failure (cues/reconcile initial active 0 start)
+        lease-path (conj cues/run-path "test-owner")
+        lease (get-in failure lease-path)]
+    (is (string? (:error lease)))
+    (is (identical? lease (get-in (cues/reconcile failure active 25 start) lease-path)))
+    (let [updated (assoc effect :version 2 :params {:brightness {:type :number :default 0.6 :bounds [0 1]}})
+          repaired (assoc-in failure [:registry :effects :wash] updated)
+          recovered (cues/reconcile repaired active 50 start)]
+      (is (= {0 "test-child"} (get-in recovered (conj lease-path :ids))))
+      (is (nil? (get-in recovered (conj lease-path :error)))))))
+
+(deftest beam-volumes-follow-the-last-committed-profiled-shutter
+  (doseq [batch? [true false]]
+    (let [rt (host/runtime batch?)
+          lamp {:id :green-lamp :position [0 0 0] :address 1 :universe 1
+                :channels {:green 1 :focus 3
+                           :shutter {:offset 2 :functions [{:type :shutter-closed :start 0 :end 10}]}}}
+          emit {:id :emit :version 1 :params {:opening {:type :number :default 0.0 :bounds [0 1]}}
+                :outputs {:green 1.0 :shutter {:op :param :key :opening}}}
+          model (-> (state rt) (assoc-in [:rig :fixtures] [lamp]) (assoc-in [:registry :effects :emit] emit))
+          region (assoc request :paint {:focus 0.25}
+                        :volume {:shape :sphere :position [0 0 2] :radius 0.25 :selection #{:beam}})]
+      (try
+        (host/submit rt 0 :import {:source (persistence/write-string model)})
+        (let [emitter (:instance-id (host/submit rt 0 :command {:op :effect/launch :effect-id :emit}))
+              id (:instance-id (host/submit rt 25 :spatial-cue region))
+              key (cues/key-for (get-in (state rt) [:instances id]))
+              members #(get-in (state rt) [:variables :spatial :members key])]
+          (is (empty? (members)))
+          (change! rt 50 emitter :opening 1.0)
+          (is (empty? (members)))
+          (host/tick rt 75)
+          (is (= #{:green-lamp} (members)))
+          (change! rt 100 emitter :opening 0.0)
+          (host/tick rt 125)
+          (is (empty? (members))))
         (finally (show/stop! rt))))))
