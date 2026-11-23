@@ -26,9 +26,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var queue = AudienceSteps()
     private var lastLevels: AudienceLevels?
 
-    init(name: String, port: NWEndpoint.Port?, token: String?, source: String) {
+    init(name: String, oscHost: String, port: NWEndpoint.Port?, token: String?, source: String) {
         self.name = name; self.source = source; self.token = token
-        connection = port.map { NWConnection(host: "127.0.0.1", port: $0, using: .udp) }
+        connection = port.map { NWConnection(host: NWEndpoint.Host(oscHost), port: $0, using: .udp) }
         super.init()
     }
 
@@ -200,7 +200,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         guard let connection, let token else { return }
         let delivered = queue.takeBatch()
         var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
-                      "dance-steps": Double(delivered), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
+                      "dance-steps": Double(delivered), "pulse-count": Double(levels.pulseCount), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
         if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
         do {
             let gestures = (0..<delivered).map { _ in Gesture(type: "dance-step") }
@@ -244,7 +244,7 @@ guard (portText == nil && token == nil) || (port != nil && (token?.count ?? 0) >
     print("Set both a valid OSC port and its enrolled sensor token, or omit both for radio-only mode.")
     exit(64)
 }
-let stage = Stage(name: arguments[1], port: port, token: token, source: environment["TOLGLOW_AUDIENCE_OSC_ID"] ?? "audience")
+let stage = Stage(name: arguments[1], oscHost: environment["TOLGLOW_AUDIENCE_OSC_HOST"] ?? "127.0.0.1", port: port, token: token, source: environment["TOLGLOW_AUDIENCE_OSC_ID"] ?? "audience")
 do {
     try stage.start(origin: origin, imagePath: arguments[3])
     RunLoop.main.run()
