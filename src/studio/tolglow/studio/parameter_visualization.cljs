@@ -275,7 +275,10 @@
 
 (defn- visible-visual [mode schema value window]
   (r/with-let [observed (r/atom (when (= mode :history) []))]
-    [observed-visual mode schema value @(rf/subscribe [::clock]) observed window]))
+    (let [sample (if (fn? value) (value) value)]
+      (if (some? sample)
+        [observed-visual mode schema sample @(rf/subscribe [::clock]) observed window]
+        [:span.block-trace-empty "Awaiting sample…"]))))
 
 (defn monitor
   "A single visible scope per performance strip. Sampling starts only when the

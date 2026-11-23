@@ -27,6 +27,7 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
@@ -79,6 +80,18 @@
 (defn- button [id text event & [class]]
   [:button {:id id :type "button" :class (or class "button") :on-click #(send! event)} text])
 
+(defn- import-selection! [event]
+  (let [input (.-target event)]
+    (when-let [file (aget (.-files input) 0)] (send! [:studio/import-file file]))
+    (set! (.-value input) "")))
+
+(defn- file-actions [mobile?]
+  [:<>
+   [button (if mobile? "mobile-export" "export-show") "Export show" [:studio/export] "text-button"]
+   [:label.text-button.file-label {:id (when mobile? "mobile-import")} "Import show"
+    [:input.studio-file-input {:id (if mobile? "mobile-import-show" "import-show") :type "file"
+                               :accept ".transit,.edn,application/transit+json" :on-change import-selection!}]]])
+
 (defn- sidebar [db]
   (let [{:keys [ui connection]} db]
     [:aside.sidebar
@@ -97,13 +110,7 @@
        [:span#connection-label (if (:connected? connection) "Studio connected" "Connecting to studio")]]
       [:div#output-status.muted.small
        (if (= "art-net" (get-in db [:show :status :output :type])) "Art-Net output enabled" "Local studio · preview")]
-      [button "export-show" "Export show ↗" [:studio/export] "text-button"]
-      [:label.text-button.file-label {:html-for "import-show"} "Import show ↙"]
-      [:input#import-show {:type "file" :accept ".transit,.edn,application/transit+json" :hidden true
-                           :on-change (fn [event]
-                                        (when-let [file (aget (.. event -target -files) 0)]
-                                          (send! [:studio/import-file file]))
-                                        (set! (.. event -target -value) ""))}]]]))
+      [file-actions false]]]))
 
 (defn- topbar [db]
   (let [show (:show db) ui (:ui db) playing? (get-in show [:transport :playing?] true)
@@ -115,7 +122,7 @@
       [:button#transport.icon-button {:aria-label (if playing? "Pause transport" "Play transport")
                                       :title "Play / pause transport"
                                       :on-click #(send! [:studio/command "transport/set" {:transport {:playing? (not playing?)}}])}
-       (if playing? "Ⅱ" "▷")]
+       [:span.transport-symbol {:class (if playing? "pause" "play") :aria-hidden true}]]
       [:label.bpm-label
        [number-input {:id "bpm" :type "number" :min 1 :max 999 :value (get-in show [:transport :bpm] 120)
                     :aria-label "Tempo in beats per minute"
@@ -235,7 +242,9 @@
         type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
-        overlay (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter]))
+        source (when-not handlers (sources/reading instance parameter))
+        overlay (if (and source (some? (:effective-value source))) (:effective-value source)
+                  (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
         bounds (:bounds schema) title (or (:name schema) (label parameter))
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
@@ -284,10 +293,10 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
-     (when (and (nil? handlers) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
+     (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source])
+     (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
                 (or (not (:compact? options)) (visualization/spatial-kind schema)))
-       [visualization/studio schema (if (some? overlay) overlay value)])
-     (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
+       [sources/result-visual visualization/studio instance parameter schema])]))
 
 (defn- preview-film-controls [settings]
   [:details.preview-film
@@ -807,8 +816,7 @@
   [:footer.workspace-footer
    [:span "TOLGLOW STUDIO " [:span.muted "/"] " "
     [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
-   [:span.mobile-file-actions [button "mobile-export" "Export show ↗" [:studio/export] "text-button"]
-    [:label#mobile-import.text-button.file-label {:html-for "import-show"} "Import show ↙"]]
+   [:span.mobile-file-actions [file-actions true]]
    [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
 (defn studio []

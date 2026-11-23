@@ -1,6 +1,7 @@
 ## Change
 
 Describe what a show operator or API caller can do after this change.
+For a changed show workflow, give the Studio path, a REPL form and their shared command or data. Explain any surface-specific interaction or link an owned parity gap.
 
 ## Visual evidence
 
@@ -11,3 +12,4 @@ Identify the build, input scene or fixture and capture environment. Label simula
 ## Verification
 
 List the tests or measurements run and any remaining hardware or visual qualification.
+For a changed show workflow, say how you checked an edit from each surface, its committed result and rejection feedback.
