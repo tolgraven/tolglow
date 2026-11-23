@@ -65,8 +65,14 @@ running effect. Macros launch together; sequences use once,
 loop, ping-pong or random traversal. Save, save-and-play, stop and reopening saved
 compositions all invoke the corresponding local API.
 
-Definitions lists effect/cue registry entries and their versions. EDN source is
-loaded from the server, validated, compiled and published. The visual builder
+In **Definitions**, search the registry by effect or cue name or ID. The selected
+entry shows its version. **New** opens an unpublished draft. The same toolbar
+switches between EDN and the visual builder and validates and publishes the
+current editor. Publication feedback appears beside the editor settings.
+On a phone the registry scrolls horizontally and leaves the code below it
+available for editing. The text editor and the Bruvbox Neovim editor share the
+same publication action. EDN source is loaded from the server, validated,
+compiled and published. The visual builder
 creates RGB constant color effects with an adjustable intensity parameter,
 duration and attack/release envelope, optionally with a matching cue. This is a
 small working code-free subset; it is not yet a general visual expression graph.
