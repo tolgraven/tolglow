@@ -665,15 +665,16 @@
   (when-not (and (number? value) (js/Number.isFinite value) (<= 0 value) (contains? #{"beats" "bars" "phrases" "ms"} unit))
     (throw (js/Error. "Choose a finite musical duration and a supported unit.")))
   {(keyword unit) value})
-(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit]} version]
+(defn builder-definition [{:keys [id name color level duration-value duration-unit release-value release-unit keyframes]} version]
   (when-not (re-matches #"[a-zA-Z][a-zA-Z0-9._/-]*" id) (throw (js/Error. "Use an identifier beginning with a letter.")))
   (when-not (and (number? level) (<= 0 level 1) (pos? duration-value) (<= 0 release-value))
     (throw (js/Error. "Intensity must be 0–1, duration positive, and release zero or positive.")))
-  {:id (keyword id) :version version :name name :swatch color :duration (musical-duration duration-value duration-unit)
+  (cond-> {:id (keyword id) :version version :name name :swatch color :duration (musical-duration duration-value duration-unit)
    :envelope {:attack (if (= release-unit "ms") {:ms 100} {:beats 0.125}) :release (musical-duration release-value release-unit)}
    :params {:level {:type :number :default level :bounds [0.0 1.0]}}
    :outputs {:color {:op :const :value (mapv #(/ (js/parseInt (subs color % (+ % 2)) 16) 255) [1 3 5])}
-             :dimmer {:op :param :key :level}}})
+             :dimmer {:op :param :key :level}}}
+    keyframes (assoc :keyframes keyframes)))
 (rf/reg-event-fx :studio/builder-generate
   (fn [{:keys [db]} _]
     (try

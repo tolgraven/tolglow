@@ -1,23 +1,10 @@
 (ns tolglow.composition.tween
   "Logical-time interpolation. No timers, frame counters or mutable closures."
   (:require [tolglow.registry :as registry]
-            [afterglow.time :as time]))
+            [afterglow.time :as time]
+            [afterglow.render.easing :as easing]))
 
-(defn curve
-  "Map a normalized fraction through a bounded easing curve."
-  [shape fraction]
-  (let [x (double (max 0 (min 1 fraction)))]
-    (case (or shape :linear)
-      :linear x
-      :smoothstep (* x x (- 3 (* 2 x)))
-      :sine (/ (- 1 (Math/cos (* Math/PI x))) 2)
-      :ease-in (* x x)
-      :ease-out (- 1 (* (- 1 x) (- 1 x)))
-      :step (if (= x 1.0) 1.0 0.0)
-      (if (and (map? shape) (= :power (:type shape))
-               (registry/finite-number? (:exponent shape)) (pos? (:exponent shape)))
-        (Math/pow x (double (:exponent shape)))
-        (throw (ex-info "Unknown easing curve" {:curve shape}))))))
+(def curve easing/sample)
 
 (defn interpolate
   "Interpolate equal-shaped numeric scalars or vectors."
