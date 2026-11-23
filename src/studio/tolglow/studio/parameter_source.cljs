@@ -141,7 +141,8 @@
                                   :aria-expanded (boolean (or (= param selected) chosen))
                                   :title (if status (str action " · " status) action) :aria-label action :aria-description status
                                   :on-click #(rf/dispatch [::select id (or chosen param)])}
-     [:span {:aria-hidden true} (case state :driving "∿" :base "Ⅱ" :pending "…" :error "!" "+")]
+     [:span {:aria-hidden true :class (when (= state :base) "transport-symbol pause")}
+      (case state :driving "∿" :base nil :pending "…" :error "!" "+")]
      (if components "Sources" "Source")]))
 
 (defn- options [schema]

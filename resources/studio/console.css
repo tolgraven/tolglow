@@ -211,3 +211,11 @@
 .source-color-swatch { display:inline-block; width:0.85em; height:0.85em; margin-right:4px; border:1px solid var(--line); border-radius:2px; vertical-align:middle; }
 
 .source-sample-target { display:block; color:var(--muted); line-height:1.25; font-size:10px; overflow-wrap:anywhere; }
+
+.transport-symbol { display:inline-block; vertical-align:middle; }
+.transport-symbol.pause { box-sizing:border-box; width:12px; height:14px; border-inline:3px solid currentColor; }
+.transport-symbol.play { width:0; height:0; border-block:7px solid transparent; border-inline-start:12px solid currentColor; }
+.param-source-trigger .transport-symbol.pause { width:8px; height:9px; border-inline-width:2px; }
+.file-label:has(.studio-file-input) { position:relative; display:inline-flex; align-items:center; min-height:44px; cursor:pointer; }
+.studio-file-input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.file-label:focus-within { outline:2px solid var(--instrument,var(--accent)); outline-offset:2px; border-radius:4px; }

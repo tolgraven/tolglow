@@ -80,6 +80,18 @@
 (defn- button [id text event & [class]]
   [:button {:id id :type "button" :class (or class "button") :on-click #(send! event)} text])
 
+(defn- import-selection! [event]
+  (let [input (.-target event)]
+    (when-let [file (aget (.-files input) 0)] (send! [:studio/import-file file]))
+    (set! (.-value input) "")))
+
+(defn- file-actions [mobile?]
+  [:<>
+   [button (if mobile? "mobile-export" "export-show") "Export show" [:studio/export] "text-button"]
+   [:label.text-button.file-label {:id (when mobile? "mobile-import")} "Import show"
+    [:input.studio-file-input {:id (if mobile? "mobile-import-show" "import-show") :type "file"
+                               :accept ".transit,.edn,application/transit+json" :on-change import-selection!}]]])
+
 (defn- sidebar [db]
   (let [{:keys [ui connection]} db]
     [:aside.sidebar
@@ -98,13 +110,7 @@
        [:span#connection-label (if (:connected? connection) "Studio connected" "Connecting to studio")]]
       [:div#output-status.muted.small
        (if (= "art-net" (get-in db [:show :status :output :type])) "Art-Net output enabled" "Local studio · preview")]
-      [button "export-show" "Export show ↗" [:studio/export] "text-button"]
-      [:label.text-button.file-label {:html-for "import-show"} "Import show ↙"]
-      [:input#import-show {:type "file" :accept ".transit,.edn,application/transit+json" :hidden true
-                           :on-change (fn [event]
-                                        (when-let [file (aget (.. event -target -files) 0)]
-                                          (send! [:studio/import-file file]))
-                                        (set! (.. event -target -value) ""))}]]]))
+      [file-actions false]]]))
 
 (defn- topbar [db]
   (let [show (:show db) ui (:ui db) playing? (get-in show [:transport :playing?] true)
@@ -116,7 +122,7 @@
       [:button#transport.icon-button {:aria-label (if playing? "Pause transport" "Play transport")
                                       :title "Play / pause transport"
                                       :on-click #(send! [:studio/command "transport/set" {:transport {:playing? (not playing?)}}])}
-       (if playing? "Ⅱ" "▷")]
+       [:span.transport-symbol {:class (if playing? "pause" "play") :aria-hidden true}]]
       [:label.bpm-label
        [number-input {:id "bpm" :type "number" :min 1 :max 999 :value (get-in show [:transport :bpm] 120)
                     :aria-label "Tempo in beats per minute"
@@ -810,8 +816,7 @@
   [:footer.workspace-footer
    [:span "TOLGLOW STUDIO " [:span.muted "/"] " "
     [:span#session-meta (str (count (get-in db [:show :rig :fixtures])) " fixtures · " (count (get-in db [:show :cues])) " cues · revision " (get-in db [:show :revision] 0))]]
-   [:span.mobile-file-actions [button "mobile-export" "Export show ↗" [:studio/export] "text-button"]
-    [:label#mobile-import.text-button.file-label {:html-for "import-show"} "Import show ↙"]]
+   [:span.mobile-file-actions [file-actions true]]
    [:span#shortcut-hint "B blackout · Space transport · 1–8 views"]])
 
 (defn studio []

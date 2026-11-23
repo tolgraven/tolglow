@@ -163,6 +163,32 @@ async function verifyControls(page,touch,profile) {
   await activate(card.getByRole('button',{name:'Resume',exact:true}));
 }
 
+async function verifyShellActions(page,profile,touch) {
+  const activate=button=>touch ? button.tap() : button.click();
+  const pause=page.getByRole('button',{name:'Pause transport',exact:true});
+  await pause.scrollIntoViewIfNeeded();
+  await pause.locator('.transport-symbol.pause').waitFor();
+  await activate(pause);
+  const play=page.getByRole('button',{name:'Play transport',exact:true});
+  await play.locator('.transport-symbol.play').waitFor();
+  await page.screenshot({path:join(directory,profile+'-transport-paused.png')});
+  await play.focus();
+  await play.press('Enter');
+  await pause.locator('.transport-symbol.pause').waitFor();
+  const files=page.locator(profile==='phone'?'.mobile-file-actions':'.sidebar-bottom');
+  const upload=files.getByLabel('Import show',{exact:true});
+  const download=files.getByRole('button',{name:'Export show',exact:true});
+  await upload.scrollIntoViewIfNeeded();
+  await upload.focus();
+  const selected=page.waitForEvent('filechooser');
+  if(touch) await upload.tap(); else await upload.press('Enter');
+  await (await selected).setFiles([]);
+  await page.screenshot({path:join(directory,profile+'-file-actions.png')});
+  const saving=page.waitForEvent('download');
+  await activate(download);
+  assert.equal((await saving).suggestedFilename(),'tolglow-show.transit');
+}
+
 async function verifyCueActions(page, name) {
   const cues = page.getByRole('group', {name:'Performance sections'}).getByRole('button',{name:'Cues',exact:true});
   if (await cues.isVisible()) await cues.tap();
@@ -238,6 +264,7 @@ try {
       await page.screenshot({path:join(directory,'desktop-wave-selector.png')});
     }
     if (webkitRun && touch) await verifyCueActions(page,name);
+    await verifyShellActions(page,name,touch);
     assert.deepEqual(errors,[]);
     await page.close();
   }
