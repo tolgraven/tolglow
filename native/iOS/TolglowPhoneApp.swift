@@ -63,6 +63,7 @@ import TolglowSensorCore
     func disarmPhone() { motion.disarm(); phoneToken = nil; osc.discardPending() }
     func disarmRelay() { relayArmed = false; watchToken = nil; osc.discardPending() }
     func suspend() {
+        audience.enterBackground()
         rigCalibration.suspend()
         disarmPhone(); disarmRelay(); motion.stop(); relay.cancelPending(); osc.close(); studio.disconnect()
         status = "Backgrounded: disarmed and disconnected"

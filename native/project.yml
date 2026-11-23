@@ -31,6 +31,7 @@ targets:
       path: iOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
         NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.
         NSCameraUsageDescription: Estimate dance movement locally or measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.

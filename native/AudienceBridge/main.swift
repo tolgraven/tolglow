@@ -21,7 +21,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var lastCount = 0
     private var timer: Timer?
     private var sending = false
-    private var queuedSteps = 0
+    private var queue = AudienceSteps()
     private var lastLevels: AudienceLevels?
 
     init(name: String, port: NWEndpoint.Port?, token: String?, source: String) {
@@ -137,18 +137,24 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         peers = peers.filter { time - $0.value.lastSeen < 8 }
         let levels = floor.drain(at: time)
         lastLevels = levels
-        queuedSteps = min(2048, queuedSteps + levels.steps)
+        if connection != nil {
+            do { try queue.append(levels.steps) }
+            catch {
+                stop("Gesture queue overflow (\(queue.pending) pending, \(levels.steps) incoming).")
+                return
+            }
+        }
         if lastCount != levels.count { print("Participants \(levels.count)") }
         let wasActive = lastCount > 0
         guard !sending else { return }
         lastCount = levels.count
-        guard levels.count > 0 || wasActive || queuedSteps > 0 else { return }
+        guard levels.count > 0 || wasActive || queue.pending > 0 else { return }
         send(levels, at: time)
     }
 
     private func send(_ levels: AudienceLevels, at time: Double) {
-        guard let connection, let token else { queuedSteps = 0; return }
-        let delivered = min(8, queuedSteps)
+        guard let connection, let token else { return }
+        let delivered = queue.takeBatch()
         var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
                       "dance-steps": Double(delivered), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
         if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
@@ -157,16 +163,25 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
             let observation = try Observation(deviceID: source, sessionID: session, sampleID: sampleID,
                 timeMS: time * 1000, values: values, gestures: gestures, pairingToken: token)
             let packet = try SensorOSC.encode(observation)
-            queuedSteps -= delivered; sampleID += 1; sending = true
+            sampleID += 1; sending = true
             connection.send(content: packet, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
                 self.sending = false
-                if error != nil { print("Local OSC delivery failed"); return }
-                if self.queuedSteps > 0, let latest = self.lastLevels {
+                if error != nil { self.stop("OSC send failed with \(delivered) gestures in flight."); return }
+                if self.queue.pending > 0, let latest = self.lastLevels {
                     self.send(latest, at: ProcessInfo.processInfo.systemUptime)
                 }
             })
-        } catch { print("Could not encode audience observation") }
+        } catch { stop("Could not encode audience observation.") }
+    }
+
+    private func stop(_ reason: String) {
+        timer?.invalidate()
+        radio.stopAdvertising()
+        radio.removeAllServices()
+        connection?.cancel()
+        FileHandle.standardError.write(Data("Stage stopped. \(reason) Check the OSC receiver before restarting.\n".utf8))
+        exit(75)
     }
 }
 

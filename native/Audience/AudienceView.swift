@@ -31,6 +31,9 @@ struct AudienceView: View {
                         ProgressView(value: session.effort)
                         LabeledContent("Steps", value: String(session.totalSteps))
                         if !session.message.isEmpty { Text(session.message).foregroundStyle(.secondary) }
+                        #if !APPCLIP
+                        Toggle("Keep sharing Watch input when iPhone locks", isOn: $session.allowLockedWatch)
+                        #endif
                         Button("Leave stage", role: .destructive) { client.leave() }
                     } else {
                         Text("Join a nearby stage over Bluetooth. Your activity contributes to the lighting mix.").foregroundStyle(.secondary)
@@ -53,7 +56,10 @@ struct AudienceView: View {
         .onChange(of: client.joined) { _, joined in if joined { session.startInputs() } }
         .onChange(of: session.input) { _, _ in session.resetInput() }
         .onChange(of: room) { _, _ in client.leave() }
-        .onChange(of: phase) { _, value in if value == .background { client.leave() } }
-        .onDisappear { client.leave() }
+        .onChange(of: phase) { _, value in
+            if value == .background { session.enterBackground() }
+            if value == .active { session.foreground() }
+        }
+        .onDisappear { if phase == .active { client.leave() } }
     }
 }

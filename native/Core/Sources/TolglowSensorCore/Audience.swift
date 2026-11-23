@@ -120,3 +120,19 @@ public struct AudienceFloor {
         return levels
     }
 }
+
+/// Gesture counts are never silently truncated. A failed append leaves the queue intact.
+public struct AudienceSteps {
+    public private(set) var pending = 0
+    public let limit: Int
+    public init(limit: Int = 2048) { self.limit = max(1, limit) }
+    public mutating func append(_ count: Int) throws {
+        guard count >= 0, count <= limit - pending else { throw SensorError.invalid("Audience gesture queue overflow") }
+        pending += count
+    }
+    public mutating func takeBatch() -> Int {
+        let batch = min(8, pending)
+        pending -= batch
+        return batch
+    }
+}

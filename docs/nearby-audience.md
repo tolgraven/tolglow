@@ -1,6 +1,6 @@
 # Dance floor participation
 
-The full iPhone app and the lightweight Dance floor App Clip have a common **Find nearby stages** action. The Mac bridge advertises a Bluetooth LE service, so the venue and phone can have different Wi-Fi connections or no Wi-Fi association. Installing the app or fetching a Clip for the first time still requires access to Apple’s distribution service. A guest chooses the stage and input. Leaving, losing the stage or backgrounding the phone ends capture.
+The full iPhone app and the lightweight Dance floor App Clip have a common **Find nearby stages** action. The Mac bridge advertises a Bluetooth LE service, so the venue and phone can have different Wi-Fi connections or no Wi-Fi association. Installing the app or fetching a Clip for the first time still requires access to Apple’s distribution service. A guest chooses the stage and input. Leaving or losing the stage ends capture. Backgrounding the phone stops its camera and motion capture. In the full app a guest may keep an already joined Watch sharing while the phone locks. Incoming Watch samples drive BLE writes in that mode. The Clip uses foreground participation.
 
 | Input | Available in | What the stage receives |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses
 
 The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. Heart rate and motion histories are never written by the bridge.
 
-Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host with a locally secured OSC forward. Native Linux BLE hosting and coordinated multiple gateways remain open.
+Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host with a locally secured OSC forward. Native Linux BLE hosting and coordinated multiple gateways remain open.
 
 ## Publish a scannable Clip
 

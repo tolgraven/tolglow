@@ -43,6 +43,16 @@ final class AudienceTests: XCTestCase {
         XCTAssertEqual(floor.drain(at: 1.2).steps, 0)
         XCTAssertEqual(floor.drain(at: 4).count, 0)
     }
+    func testOverflowPreservesPendingGesturesAndBatchesAtTheOSCLimit() throws {
+        var queue = AudienceSteps(limit: 10)
+        try queue.append(7)
+        XCTAssertThrowsError(try queue.append(4))
+        XCTAssertEqual(queue.pending, 7)
+        try queue.append(3)
+        XCTAssertEqual(queue.takeBatch(), 8)
+        XCTAssertEqual(queue.takeBatch(), 2)
+        XCTAssertEqual(queue.takeBatch(), 0)
+    }
     func testSustainedMotionAndDistinctPeaks() {
         var meter = DanceMeter()
         for i in 0..<40 { meter.observe(strength: 1, at: Double(i)/20) }

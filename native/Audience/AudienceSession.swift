@@ -29,6 +29,8 @@ final class AudienceSession: ObservableObject {
     private var lastPhoneSteps: UInt32?
     private var watch: (effort: Double, steps: UInt32, pulse: Int?, time: Double)?
     private var lastWatchSteps: UInt32?
+    @Published var allowLockedWatch = false
+    private(set) var watchOnlyInBackground = false
     private var generation = UUID()
     private var lastInputTime = -Double.infinity
     #if !APPCLIP
@@ -93,9 +95,27 @@ final class AudienceSession: ObservableObject {
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
         watch = (effort, steps, pulse, time)
+        if watchOnlyInBackground { publish() }
         return true
     }
-    func endWatch() { watch = nil; lastWatchSteps = nil }
+    func endWatch() {
+        watch = nil; lastWatchSteps = nil
+        if watchOnlyInBackground { client.leave() }
+    }
+
+    func enterBackground() {
+        guard !watchOnlyInBackground else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard client.joined, allowLockedWatch, let watch, now - watch.time <= 2 else { client.leave(); return }
+        watchOnlyInBackground = true
+        stopSampling()
+    }
+
+    func foreground() {
+        guard watchOnlyInBackground else { return }
+        watchOnlyInBackground = false
+        startInputs()
+    }
 
     private func publish() {
         let now = ProcessInfo.processInfo.systemUptime
@@ -118,12 +138,18 @@ final class AudienceSession: ObservableObject {
         }
     }
 
-    func stopInputs() {
+    private func stopSampling() {
         generation = UUID(); pose?.stop(); pose = nil
         #if !APPCLIP
         motion.stopDeviceMotionUpdates()
         #endif
         timer?.invalidate(); timer = nil; meter = DanceMeter()
+        lastInputTime = -.infinity; tapTime = -.infinity
+    }
+
+    func stopInputs() {
+        watchOnlyInBackground = false; allowLockedWatch = false
+        stopSampling()
         serial = 0; totalSteps = 0; effort = 0; lastPhoneSteps = nil; endWatch()
     }
 }
