@@ -59,11 +59,31 @@
           (release-unused-interest! hub)
           (wake! hub))))))
 
+(defn- release-queries! [hub before after]
+  (when-let [release! (:release-query! hub)]
+    (doseq [[query producer] before
+            :when (and (contains? (:scoped-queries hub) (first query)) (not (contains? after query)))]
+      (release! producer))))
+
+(defn- set-queries! [hub socket desired]
+  (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
+  (locking (:clients hub)
+    (when-let [client (get @(:clients hub) socket)]
+      (let [prior (:queries @client {})]
+        (when-not (= desired (set (keys prior)))
+          (let [next (into {} (for [q desired]
+                                [q (or (get prior q) ((get (:scoped-queries hub) (first q) identity) q))]))]
+            (swap! client #(-> % (assoc :queries next) (dissoc :pending :base)))
+            (release-queries! hub prior next)
+            (wake! hub)))))))
+
 (defn- forget! [hub socket]
   (locking (:clients hub)
     (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)]
       (release-unused-interest! hub)
-      (when (seq (:queries (some-> removed deref))) (wake! hub))
+      (when-let [prior (seq (:queries (some-> removed deref)))]
+        (release-queries! hub prior {})
+        (wake! hub))
       removed)))
 
 (defn- retire! [hub socket code reason]
@@ -122,7 +142,7 @@
   (let [wanted (:queries client)
         query-only? (:query-only? client)
         base (:base client)
-        values (into {} (keep (fn [q] (when-let [lease (get leases q)] [q (queries/read-result lease source)]))) wanted)]
+        values (into {} (keep (fn [[q scoped]] (when-let [lease (get leases scoped)] [q (queries/read-result lease source)]))) wanted)]
     (cond
       query-only?
       (let [model (:model source)
@@ -142,7 +162,7 @@
   (when-let [source (.get ^AtomicReference (:latest hub))]
     (let [common (delay (common-target hub source))
           clients (mapv (fn [[socket client]] [socket client @client]) @(:clients hub))
-          desired (into #{} (mapcat (comp :queries peek)) clients)
+          desired (into #{} (mapcat (comp vals :queries peek)) clients)
           leases (when-let [store (:query-store hub)] (queries/reconcile! store source desired))
           cache (volatile! {})]
       (doseq [[socket client before] clients :when (ready? before)]
@@ -167,10 +187,11 @@
 (defn create
   "Create an inert stream service. Starts one daemon worker on first connection."
   ([project heartbeat!] (create project heartbeat! {}))
-  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault! surfaces]
+  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault! surfaces observation! scoped-queries release-query!]
                         :or {frame-rate 40 checkpoint-every 240}}]
    (when-not (pos-int? checkpoint-every) (throw (ex-info "Checkpoint interval must be positive" {})))
-   (let [hub {:client-faults (atom []) :report-fault! client-fault! :runtime-id runtime-id :checkpoint-every checkpoint-every :observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
+   (let [hub {:scoped-queries scoped-queries :release-query! release-query! :observation! observation!
+              :client-faults (atom []) :report-fault! client-fault! :runtime-id runtime-id :checkpoint-every checkpoint-every :observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
               :period-ms (long (Math/ceil (/ 1000.0 (min 40 frame-rate))))
               :project project :heartbeat! heartbeat! :clients (atom {}) :closed? (atom false)
               :projected (volatile! nil) :latest (AtomicReference.) :wake (Semaphore. 0)}]
@@ -214,7 +235,7 @@
     (try
       (when-not (and (string? text) (<= (count text) 8192))
         (throw (ex-info "Invalid stream control" {})))
-      (let [{:keys [op token enabled? queries fault]} (transit/decode text)]
+      (let [{:keys [op token enabled? queries fault] :as message} (transit/decode text)]
         (case op
           :ack (let [[old _] (swap-vals! client
                                 (fn [{:keys [pending] :as state}]
@@ -223,13 +244,13 @@
                  (when (and (:pending old) (= token (get-in old [:pending :token])))
                    (grant-lease! hub session lease-clock)
                    (wake! hub)))
+          :observation (locking (:clients hub)
+                         (when-let [live (get @(:clients hub) socket)]
+                           (when-let [producer (get (:queries @live) (:query message))]
+                             (when-let [accept! (:observation! hub)] (accept! producer message)))))
           :resync (do (swap! client dissoc :base :pending) (wake! hub))
           :client-fault (client-fault! hub client session fault)
-          :queries (let [desired (queries/validate queries)]
-                     (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
-                     (swap! client (fn [c] (if (= desired (:queries c #{})) c
-                                              (-> c (assoc :queries desired) (dissoc :pending :base)))))
-                     (wake! hub))
+          :queries (set-queries! hub socket (queries/validate queries))
           :connections (set-interest! hub socket enabled?)
           :heartbeat (grant-lease! hub session lease-clock)
           (throw (ex-info "Unknown stream control" {}))))

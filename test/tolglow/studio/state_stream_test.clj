@@ -433,3 +433,63 @@
           (is (nil? (get-in restored (conj qpath :session-id))))
           (is (= prev @requests))))
       (finally (.abort ^WebSocket (:socket client)) (.stop server) (app/stop! runtime) (close!)))))
+
+(deftest completed-browser-readback-is-private-to-its-socket-and-stops-on-last-reader
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        system (show/reactions runtime)
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        source :preview.rig/center-rgb
+        query [:studio/observation-demand :rig]
+        client (connect server "ipad")
+        other (connect server "ipad")
+        acquire #(rx/acquire! system [:browser/observation source] identity)
+        claim! (fn [client]
+                 (acknowledge client (receive client))
+                 (send-control client {:op :queries :queries [query]})
+                 (let [frame (receive client)]
+                   (acknowledge client frame)
+                   (:view frame)))
+        grants #(get-in % [:subscriptions query :value])
+        next-view (fn [client before]
+                    (let [frame (receive client)] (acknowledge client frame) (apply-patch before frame)))
+        packet (fn [grant rgb]
+                 (merge (select-keys grant [:show :token])
+                        {:op :observation :query query :source source :sequence 1
+                         :sampled-ms 500 :completed-ms 501 :value rgb}))]
+    (try
+      (let [base (claim! client)
+            backup (claim! other)
+            reader (acquire)]
+        (is (= {} (grants base) (grants backup)))
+        (let [started (next-view client base) grant (get (grants started) source)]
+          (is (= :center-rgb (:sampler grant)))
+          (send-control other (packet grant [99 99 99]))
+          (send-control client (packet grant [12 34 56]))
+          ;; A :resync is ordered behind its preceding observation on this same
+          ;; socket. The show can stay paused while producers join and leave.
+          (send-control client {:op :resync})
+          (let [synced (next-view client started)]
+            (rx/publish! system)
+            (is (= [12 34 56] (:value @(:signal reader))))
+            ((:close! reader))
+            (let [stopped (next-view client synced) reader (acquire)]
+              (is (= {} (grants stopped)))
+              (let [restarted (next-view client stopped)]
+                (is (not= (:token grant) (get-in (grants restarted) [source :token])))
+                (.abort ^WebSocket (:socket client))
+                (let [promoted (next-view other backup)
+                      next-grant (get (grants promoted) source)]
+                  (is (not= (:token grant) (:token next-grant)))
+                  (send-control other (packet grant [1 2 3]))
+                  (send-control other {:op :resync})
+                  (let [fenced (next-view other promoted)]
+                    (rx/publish! system)
+                    (is (nil? @(:signal reader)))
+                    (send-control other (packet next-grant [2 4 8]))
+                    (send-control other {:op :resync})
+                    (next-view other fenced)
+                    (rx/publish! system)
+                    (is (= [2 4 8] (:value @(:signal reader))))))
+                ((:close! reader)))))))
+      (finally (.abort ^WebSocket (:socket client)) (.abort ^WebSocket (:socket other))
+               (show/stop! runtime) (.stop server)))))

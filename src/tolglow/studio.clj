@@ -24,6 +24,7 @@
             [tolglow.studio.projection :as projection]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.studio.state-stream :as state-stream]
+            [tolglow.observations :as observations]
             [tolglow.studio.web :as web]))
 
 (defn stream-view
@@ -39,7 +40,12 @@
             stream (state-stream/create #(stream-view runtime %) #(show/heartbeat! runtime %)
                      {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
                       :get-graph #(show/reactions runtime)
-                      :surfaces {cue-pads/query-id
+                      :scoped-queries {observations/demand-query observations/scope-query}
+                      :release-query! (partial observations/drop-provider! (:browser-observations runtime))
+                      :observation! (fn [producer message]
+                                      (observations/accept! (:browser-observations runtime) (:model @(:state runtime)) producer message))
+                      :surfaces {observations/demand-query (partial observations/provider-lease (:browser-observations runtime))
+                                 cue-pads/query-id
                                  (fn [query]
                                    (let [lease (Object.) service (:cue-pad-previews runtime)]
                                      {:sample! #(cue-pads/present! service lease % query)

@@ -16,11 +16,11 @@
 
 (defn read-result [lease source]
   (if-let [sample! (:sample! lease)]
-    (let [last @(:last lease)]
-      (if (identical? source (:source last)) (:value last)
+    (let [last @(:last lease) version (some-> (:version lease) deref)]
+      (if (and (identical? source (:source last)) (= version (:version last))) (:value last)
         (let [value (try {:value (sample! source)}
                          (catch Exception _ {:error :unavailable}))]
-          (vreset! (:last lease) {:source source :value value})
+          (vreset! (:last lease) {:source source :version version :value value})
           value)))
     @(:result lease)))
 
@@ -54,7 +54,11 @@
 
 (defn- open-lease [store system query public]
   (if-let [open! (get (:surfaces store) (first query))]
-    (assoc (open! query) :last (volatile! nil))
+    (let [{:keys [version close!] :as lease} (open! query)
+          key (Object.)]
+      (when version (add-watch version key (fn [_ _ _ _] ((:wake! store)))))
+      (assoc lease :last (volatile! nil)
+             :close! #(do (when version (remove-watch version key)) (when close! (close!)))))
     (open-graph-lease system query (contains? public (first query)) (:wake! store))))
 
 (defn reconcile!
