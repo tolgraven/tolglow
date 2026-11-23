@@ -18,16 +18,16 @@ jobs:
         with:
           name: audience-clip-simulator
           path: ${{ runner.temp }}/clip
-          run-id: 45161248176
+          run-id: 45160914974
           repository: tolgraven/tolglow
           github-token: ${{ github.token }}
       - name: Publish the two simulator captures
         run: |
           mkdir -p audience/apple
-          cp "$RUNNER_TEMP/clip/audience-clip.png" audience/apple/full-motion-invitation.png
-          cp "$RUNNER_TEMP/clip/audience-clip.mp4" audience/apple/full-motion-invitation.mp4
+          cp "$RUNNER_TEMP/clip/audience-clip.png" audience/apple/stage-discovery.png
+          cp "$RUNNER_TEMP/clip/audience-clip.mp4" audience/apple/stage-discovery.mp4
           git config user.name 'Tolglow review media'
           git config user.email 'review-media@users.noreply.github.com'
-          git add audience/apple/full-motion-invitation.png audience/apple/full-motion-invitation.mp4
-          git commit -m 'Publish the actual Apple simulator App Clip and installation offer'
+          git add audience/apple/stage-discovery.png audience/apple/stage-discovery.mp4
+          git commit -m 'Publish the audience stage discovery screen from the Apple simulator'
           git push origin HEAD:refs/heads/codex/push-page-review-media
