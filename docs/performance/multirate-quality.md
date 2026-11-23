@@ -180,3 +180,10 @@ below the cap. The worst second-bar displacement for these choices was 0,
 0.210, 0.068 and 0.138 radii respectively. A changing movement program or zoom
 can invalidate a calibrated interval. An online policy would have to detect
 that change or resample before relying on earlier measurements.
+
+A second replay exercises a continuous sine orbit with a four-frame period.
+For the 5° near beam, sampling only the midpoint of each four-frame window
+would report less than 0.001 radii of error on all 40 windows. The full
+physical command stream puts the worst intermediate centre 10.78 radii away.
+All 40 midpoint checks would falsely admit the window at the example budget.
+The report includes these false admissions for each optical configuration.

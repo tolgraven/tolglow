@@ -33,12 +33,12 @@
     (op :vec3 (op :add (axis :x) (orbit :sin 5.0 0.55))
         (op :subtract (axis :y) distance) (op :add (axis :z) (orbit :cos 4.0 0.32)))))
 
-(defn- model [fixtures stride]
+(defn- model [fixtures stride target]
   (reduce
    (fn [model [group distance]]
      (let [targets (keep-indexed (fn [i f] (when (= group (first (group-for i))) (:id f))) fixtures)
            effect (cond-> {:id group :version 1 :targets (vec targets)
-                           :outputs {:aim (program distance) :dimmer 1.0 :color [1 1 1]}}
+                           :outputs {:aim (target distance) :dimmer 1.0 :color [1 1 1]}}
                     (> stride 1) (assoc :keyframes {:interval {:ms (* frame-ms stride)}}))]
        (-> model
            (bench/command [group :define] {:op :registry/publish :kind :effects :definition effect})
@@ -63,8 +63,8 @@
     (when-not area (throw (ex-info "Fixture beam missed the benchmark floor" {:fixture (:id fixture) :pose pose})))
     {:direction (:direction beam) :beam-angle (:beam-angle beam) :area area}))
 
-(defn- replay [fixtures stride]
-  (let [runtime (show/create-runtime {:model (model fixtures stride) :batch? true :workers 2 :worker-timeout-ms 10000
+(defn- replay [fixtures stride target]
+  (let [runtime (show/create-runtime {:model (model fixtures stride target) :batch? true :workers 2 :worker-timeout-ms 10000
                                       :adaptive-keyframes {:enabled? false} :workspace-options nil})]
     (try
       (into [] (keep (fn [i]
@@ -113,10 +113,32 @@
             [g {:stride stride :first-bar-max-radii (get-in lanes [stride :errors g :first-bar :footprint-radii :max])
                 :second-bar-max-radii (get-in lanes [stride :errors g :second-bar :footprint-radii :max])}]))))
 
+(defn- fast-orbit [depth]
+  (let [axis (fn [k] {:op :position :axis k})
+        swing (op :multiply 0.55 (op :sin (op :multiply (* 10 Math/PI) {:op :beat})))]
+    (op :vec3 (op :add (axis :x) swing) (op :subtract (axis :y) depth)
+        (op :add (axis :z) 0.25))))
+
+(defn- midpoint-comparison [fixtures limit]
+  ;; At 120 BPM this continuous orbit completes one cycle in four output frames.
+  ;; Sample the same first four fixtures used by the footprint recording.
+  (let [reference (replay fixtures 1 fast-orbit)
+        candidate (replay fixtures 4 fast-orbit)]
+    (into {}
+          (for [j (range 4)]
+            (let [radii (map #(get (displacement (nth %1 j) (nth %2 j)) :footprint-radii)
+                             reference candidate)
+                  windows (mapv (fn [r] {:midpoint (nth r 2) :worst (reduce max r)}) (partition 4 radii))]
+              [(nth groups j) {:windows (count windows)
+                               :worst-midpoint (reduce max (map :midpoint windows))
+                               :worst-frame (reduce max (map :worst windows))
+                               :false-admissions (count (filter #(and (<= (:midpoint %) limit)
+                                                                      (> (:worst %) limit)) windows))}])))))
+
 (defn measure [limit]
-  (let [fixtures (rig) reference (replay fixtures 1)
+  (let [fixtures (rig) reference (replay fixtures 1 program)
         lanes (into {} (for [stride [1 2 4 8]]
-                         (let [candidate (replay fixtures stride)]
+                         (let [candidate (replay fixtures stride program)]
                            [stride (cond-> {:errors (compare-frames reference candidate)}
                                      (= stride 4) (assoc :footprints (trace candidate)))])))]
     (doseq [g groups]
@@ -127,7 +149,8 @@
                      (> (p95 [:near 5.0]) (p95 [:near 40.0]) (p95 [:far 40.0])))
         (throw (ex-info "Fixture optics or the moving target did not affect the replay" {}))))
     {:movers (count fixtures) :frames frames :bpm 120 :period-ms frame-ms :groups groups
-     :radius-budget limit :first-bar-policy (compare-calibrated lanes limit)
+     :radius-budget limit :midpoint-comparison (midpoint-comparison fixtures limit)
+     :first-bar-policy (compare-calibrated lanes limit)
      :fixture-positions (mapv :position (subvec fixtures 0 4))
      :reference-footprints (trace reference) :lanes lanes}))
 
@@ -139,5 +162,5 @@
       (let [result (measure limit)]
         (io/make-parents output)
         (spit output (str (pr-str result) "\n"))
-        (prn (select-keys result [:movers :frames :radius-budget :first-bar-policy])))
+        (prn (select-keys result [:movers :frames :radius-budget :first-bar-policy :midpoint-comparison])))
       (finally (shutdown-agents)))))
