@@ -4,6 +4,8 @@ The application uses Ring on the JVM and re-frame/Reagent in `src/studio`.
 Keep HTML to the document mount. WebGL and Neovim have isolated interop engines;
 application state, subscriptions, events and views belong in ClojureScript.
 
+Preserve domain identifiers, command results and rejection details at the web boundary so Studio and a REPL attached to this show report the same operation. See [REPL and Studio parity](../../../docs/repl-studio-parity.md).
+
 - `tolglow.studio` binds routes and browser streams to a configured
   `tolglow.show`. The show owns command admission, frame commits and devices.
   Return data from workers and acquire web resources through the web module.
