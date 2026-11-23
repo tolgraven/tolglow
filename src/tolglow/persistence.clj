@@ -493,12 +493,12 @@
   ([model] (write-string model nil))
   ([model frame-output] (encode-document (make-document model frame-output))))
 
-(def ^:private json-factory (JsonFactory.))
+(def ^:private json-factory (delay (JsonFactory.)))
 
 (defn- read-transit-file [source]
   ;; A Transit reader consumes a single value and can leave trailing input.
   ;; Scan the document boundary without creating a second in-memory JSON tree.
-  (with-open [parser (.createParser ^JsonFactory json-factory ^String source)]
+  (with-open [parser (.createParser ^JsonFactory @json-factory ^String source)]
     (check! (.nextToken parser) [] "Empty show document")
     (.skipChildren parser)
     (check! (nil? (.nextToken parser)) [] "Expected exactly one Transit document"))

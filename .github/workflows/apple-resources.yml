@@ -1,0 +1,63 @@
+name: Build paired Apple Studio resources
+on:
+  workflow_call:
+    inputs:
+      embedded-host:
+        type: boolean
+        default: false
+permissions: {contents: read}
+jobs:
+  resources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with: {path: tolglow}
+      - name: Read the paired revision exercised by the architecture suite
+        id: fork
+        run: |
+          pin="$(sed -nE 's/^ +ref: ([a-f0-9]{40})$/\1/p' tolglow/.github/workflows/tests.yml | sort -u)"
+          [[ "$pin" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$pin" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: ${{ steps.fork.outputs.sha }}
+          path: afterglow
+      - uses: actions/setup-java@v6.3.0
+        with: {distribution: temurin, java-version: '21'}
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: tolglow/package-lock.json
+      - name: Install verified Leiningen
+        working-directory: tolglow
+        run: .github/scripts/install-lein
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
+          restore-keys: maven-${{ runner.os }}-
+      - name: Build the production re-frame application and Ring host
+        working-directory: tolglow
+        env:
+          EMBEDDED_STUDIO: ${{ inputs.embedded-host }}
+        run: |
+          npm ci
+          npm run studio:build
+          if [[ "$EMBEDDED_STUDIO" == true ]]; then
+            lein with-profile +embedded-host test :only tolglow.native.show-source-test
+            lein with-profile +embedded-host uberjar
+          else
+            lein uberjar
+          fi
+          mkdir -p ../studio-assets
+          mapfile -t jars < <(find target -name '*-standalone.jar' -print)
+          test "${#jars[@]}" = 1
+          cp "${jars[0]}" ../studio-assets/studio.jar
+          if [[ "$EMBEDDED_STUDIO" == false ]]; then
+            native/Packaging/archive-sources ../studio-assets "$PWD" "$PWD/../afterglow"
+          fi
+      - uses: actions/upload-artifact@v7.0.2
+        with: {name: studio-runtime, path: studio-assets, retention-days: 2}
+

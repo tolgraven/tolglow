@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+command -v xcodegen || brew install xcodegen
+native/EmbeddedHost/generate-project
+xcrun simctl list devices available -j > devices.json
+udid="$(python3 - <<'PYTHON'
+import json
+from pathlib import Path
+choices=[device for runtime, devices in json.loads(Path('devices.json').read_text())['devices'].items()
+         if 'iOS' in runtime for device in devices if 'iPad' in device['name'] and device['isAvailable']]
+assert choices, 'No installed iPad simulator'
+print(choices[0]['udid'])
+PYTHON
+)"
+xcrun simctl boot "$udid"
+xcrun simctl bootstatus "$udid" -b
+xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
+  -derivedDataPath native/DerivedData -resultBundlePath embedded-ui.xcresult \
+  -only-testing:LocalStudioUITests CODE_SIGNING_ALLOWED=NO build-for-testing
+app="native/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app"
+test -s "$app/Frameworks/TolglowRuntime.framework/TolglowRuntime"
+ditto -c -k --keepParent "$app" embedded-ipad-studio.zip
+xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
+  -derivedDataPath native/DerivedData -resultBundlePath run-ui.xcresult \
+  -only-testing:LocalStudioUITests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building

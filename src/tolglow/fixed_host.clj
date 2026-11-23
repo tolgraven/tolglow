@@ -5,29 +5,23 @@
   (:require [clojure.java.io :as io]
             [thi.ng.math.core :as math]
             [tolglow.application :as application]
-            [tolglow.data :as data]
             [tolglow.modules :as modules]
             [tolglow.native-resources]
+            [tolglow.native.show-source :as source]
             [tolglow.studio]))
 
 (defonce ^:private running (atom nil))
-
-(defn- config [folder]
-  (if (seq folder)
-    (let [file (io/file folder "tolglow.edn")]
-      (when-not (.isFile file)
-        (throw (ex-info "Choose a folder containing tolglow.edn." {})))
-      (data/read-edn (slurp file)))
-    (application/default-config)))
 
 (defn -open [home folder]
   (locking running
     (when @running (throw (ex-info "This isolate already owns a show." {})))
     (alter-var-root #'math/*rnd* #(or % (java.util.Random.)))
-    (let [cfg (config folder)
+    (let [{cfg :config registry :registry} (if (seq folder)
+                                             (source/read-show folder application/registry)
+                                             {:config (application/default-config) :registry application/registry})
           local-show (assoc (modules/settings cfg :show) :credential-path (str (io/file home "credentials.edn")))
           local-web {:enabled true :host "127.0.0.1" :port 0}
-          show (application/start! (assoc cfg :show local-show :web-server local-web))
+          show (application/start! (assoc cfg :show local-show :web-server local-web) registry)
           port (get-in show [:application :modules :web-server :port])]
       (if (pos-int? port)
         (do (reset! running show) port)

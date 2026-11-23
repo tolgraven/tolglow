@@ -25,7 +25,7 @@ private final class ShowThread {
                 _ = tolglow_close_local(thread)
             }
             let closed = graal_tear_down_isolate(thread)
-            if port <= 0 { ended("Could not start this show. Check its tolglow.edn configuration.") }
+            if port <= 0 { ended("Could not start this show. Check its configuration in tolglow.edn or show.clj.") }
             else if closed != 0 { ended("The local runtime could not finish shutting down.") }
             else { ended(nil) }
         }
@@ -100,7 +100,7 @@ struct OnDeviceStudio: View {
                     if !show.busy {
                         Button("Open included show") { show.start(folder: nil) }
                         Button("Choose show folder") { choosing = true }
-                        Text("Choose a folder containing tolglow.edn. This device hosts the show while Studio is open.")
+                        Text("Choose a folder containing tolglow.edn or show.clj. This device hosts the show while Studio is open.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Spacer()

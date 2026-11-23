@@ -1,150 +1,55 @@
-name: Embedded iPad Studio Native Image
+name: Embedded Apple Studio Native Image
 on:
   push:
     branches: [codex/apple-embedded-native-host]
+  workflow_dispatch:
+  pull_request:
+    paths: ['native/EmbeddedHost/**', 'native/iOS/OnDeviceStudio.swift', 'src/tolglow/fixed_host.clj', 'src/tolglow/native_resources.clj', 'dev/tolglow/native_assets.clj', '.github/workflows/embedded-apple-host.yml', '.github/workflows/apple-resources.yml']
 permissions: {contents: read, actions: read}
 concurrency:
-  group: embedded-local-studio-${{ github.ref_name }}
+  group: embedded-local-studio-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
-  ipad:
-    runs-on: macos-15-intel
-    timeout-minutes: 95
+  resources:
+    uses: ./.github/workflows/apple-resources.yml
+    with: {embedded-host: true}
+  host:
+    needs: resources
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: ios-sim, runner: macos-15-intel}
+          - {target: ios, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v4
-        with:
-          name: studio-runtime
-          repository: tolgraven/tolglow
-          run-id: 45164798704
-          github-token: ${{ github.token }}
-      - name: Cross-compile the full Ring application for iOS using GluonFX
-        shell: bash
+        with: {name: studio-runtime, path: build/release}
+      - name: Compile and link the Clojure application
+        run: native/EmbeddedHost/build-framework "${{ matrix.target }}" build/release/studio.jar build/native-host
+      - name: Open, stop and reopen the local Ring show on iPad
+        if: matrix.target == 'ios-sim'
+        run: native/Tests/check-embedded-studio
+      - name: Build the unsigned device app with the ARM64 framework
+        if: matrix.target == 'ios'
         run: |
-          url='https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-darwin-gluon-22.1.0.1-Final.tar.gz'
-          curl -fLsS --retry 3 "$url" -o "$RUNNER_TEMP/gluon.tgz"
-          echo "61084c8e12a500e5019657d3160fa3394cd8230a0e780718a051d59028fbfb99  $RUNNER_TEMP/gluon.tgz" | shasum -a 256 -c -
-          mkdir "$RUNNER_TEMP/gluon"
-          tar -xf "$RUNNER_TEMP/gluon.tgz" --strip-components 1 -C "$RUNNER_TEMP/gluon"
-          export GRAALVM_HOME="$(dirname "$(dirname "$(find "$RUNNER_TEMP/gluon" -type f -name java -path '*/bin/java' | head -1)")")"
-          export JAVA_HOME="$GRAALVM_HOME" PATH="$GRAALVM_HOME/bin:$PATH"
-          java -version
-          curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
-          echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
-          curl -fLsS https://repo.maven.apache.org/maven2/org/graalvm/sdk/graal-sdk/22.1.0/graal-sdk-22.1.0.jar -o graal-sdk.jar
-          echo '6d3994e14cadba8ffb4b431899266dd19e84c7543eaf9190a0e530bc79dfaed1  graal-sdk.jar' | shasum -a 256 -c -
-          mkdir -p override/tolglow/agents override/thi/ng/math
-          unzip -p studio.jar tolglow/agents/credentials.clj | sed 's/\.toAbsolutePath (if/.toAbsolutePath ^Path (if/' > override/tolglow/agents/credentials.clj
-          unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
-          unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
-          java -cp dev:studio.jar clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
-          cp src/tolglow/native_resources.clj override/tolglow/native_resources.clj
-          cat > override/tolglow/fixed_image.clj <<'CLOJURE'
-          (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
-          (defn -main [& args]
-            (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
-            (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
-                 (catch Throwable failure (.printStackTrace failure) (throw failure)))
-            (apply app/-main args))
-          CLOJURE
-          cp src/tolglow/fixed_host.clj override/tolglow/fixed_host.clj
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.native-resources tolglow.fixed-image tolglow.fixed-host]] (compile ns))"
-          javac --release 17 -d override -cp override:studio.jar:graal-sdk.jar native/EmbeddedHost/StudioRuntime.java
-          jar uf studio.jar -C override .
-          if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
-            mkdir -p tracing/META-INF/native-image/tolglow/studio
-            java -agentlib:native-image-agent=config-output-dir="$PWD/tracing/META-INF/native-image/tolglow/studio" -cp studio.jar tolglow.fixed_image --port 0 >training.log 2>&1 &
-            trainer=$!
-            trap 'kill "$trainer" 2>/dev/null || true' EXIT
-            for ((i=0; i<120; i++)); do
-              if grep -q 'Tolglow Studio listening on' training.log; then break; fi
-              if ! kill -0 "$trainer"; then tail -30 training.log; exit 1; fi
-              sleep 1
-            done
-            origin="$(sed -n 's/Tolglow Studio listening on //p' training.log)"
-            curl -fsS "$origin/studio/js/main.js" -o /dev/null
-            curl -fsS "$origin/api/state" -o /dev/null
-            kill -TERM "$trainer"
-            wait "$trainer" || test "$?" = 143
-            trap - EXIT
-            python3 - <<'METADATA'
-          import json
-          from pathlib import Path
-          directory=Path('tracing/META-INF/native-image/tolglow/studio')
-          prefixes=('org.eclipse.jetty.', 'org.slf4j.', 'com.fasterxml.jackson.')
-          def retained(entry):
-              name=entry.get('type',entry.get('name',''))
-              return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
-          for path in directory.iterdir():
-              if path.name=='reflect-config.json':
-                  entries=json.loads(path.read_text())
-                  path.write_text(json.dumps([e for e in entries if retained(e)]))
-              elif path.name=='reachability-metadata.json':
-                  tables=json.loads(path.read_text())
-                  path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
-              elif path.is_file():
-                  path.unlink()
-          METADATA
-            jar uf studio.jar -C tracing META-INF
-          fi
-          mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=studio.jar -DgroupId=org.tolglow -DartifactId=studio-host -Dversion=1 -Dpackaging=jar
-          mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=graal-build-time.jar -DgroupId=com.github.clj-easy -DartifactId=graal-build-time -Dversion=1.0.6 -Dpackaging=jar
-          cat >pom.xml <<'POM'
-          <project xmlns="http://maven.apache.org/POM/4.0.0">
-            <modelVersion>4.0.0</modelVersion><groupId>org.tolglow</groupId><artifactId>ios-host</artifactId><version>1</version>
-            <dependencies>
-              <dependency><groupId>org.graalvm.sdk</groupId><artifactId>graal-sdk</artifactId><version>22.1.0</version></dependency>
-              <dependency><groupId>io.github.willena</groupId><artifactId>sqlite-jdbc</artifactId><version>3.49.0.0</version></dependency>
-              <dependency><groupId>org.tolglow</groupId><artifactId>studio-host</artifactId><version>1</version></dependency>
-              <dependency><groupId>com.github.clj-easy</groupId><artifactId>graal-build-time</artifactId><version>1.0.6</version></dependency>
-            </dependencies>
-            <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
-            <configuration><target>ios-sim</target><releaseConfiguration><skipSigning>true</skipSigning></releaseConfiguration><mainClass>org.tolglow.embedded.StudioRuntime</mainClass><nativeImageArgs>
-              <nativeImageArg>-H:IncludeResources=studio/.*|gpu/.*|js/compute/.*|tolglow/.*\.edn|tolglow\.edn</nativeImageArg>
-              <nativeImageArg>-H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings</nativeImageArg>
-              <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
-              <nativeImageArg>-J-Dtolglow.native.build=true</nativeImageArg>
-              <nativeImageArg>--initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken</nativeImageArg>
-            </nativeImageArgs></configuration></plugin></plugins></build>
-          </project>
-          POM
-          mkdir -p target/classes
-          mvn -B com.gluonhq:gluonfx-maven-plugin:1.0.29:sharedlib 2>&1 | tee ios-build.log
-          library="$(find target/gluonfx -maxdepth 3 -type f -name '*.dylib' | head -1)"
-          test -n "$library"
-          native/EmbeddedHost/package-framework "$library" iPhoneSimulator native/build/embedded
-          xcrun vtool -show-build native/build/embedded/TolglowRuntime.framework/TolglowRuntime | tee framework-platform.log
           command -v xcodegen || brew install xcodegen
           native/EmbeddedHost/generate-project
-          xcrun simctl list devices available -j > devices.json
-          udid="$(python3 - <<'PYTHON'
-          import json
-          from pathlib import Path
-          choices=[device for runtime, devices in json.loads(Path('devices.json').read_text())['devices'].items()
-                   if 'iOS' in runtime for device in devices if 'iPad' in device['name'] and device['isAvailable']]
-          assert choices, 'No installed iPad simulator'
-          print(choices[0]['udid'])
-          PYTHON
-          )"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
-            -derivedDataPath native/DerivedData -resultBundlePath embedded-ui.xcresult \
-            -only-testing:LocalStudioUITests CODE_SIGNING_ALLOWED=NO build-for-testing
-          app="native/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app"
+          xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath native/DerivedData CODE_SIGNING_ALLOWED=NO build
+          app=native/DerivedData/Build/Products/Release-iphoneos/TolglowPhone.app
           test -s "$app/Frameworks/TolglowRuntime.framework/TolglowRuntime"
-          ditto -c -k --keepParent "$app" embedded-ipad-studio.zip
-          xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
-            -derivedDataPath native/DerivedData -resultBundlePath run-ui.xcresult \
-            -only-testing:LocalStudioUITests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
+          ditto -c -k --keepParent "$app" unsigned-iphone-studio.zip
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: embedded-ipad-host
+          name: embedded-host-${{ matrix.target }}
           path: |
-            *.log
-            target/gluonfx/*/gvm/log/
-            embedded-ipad-studio.zip
+            build/native-host/*.log
+            build/native-host/target/gluonfx/*/gvm/log/
             native/build/embedded/runtime-symbols.txt
+            embedded-ipad-studio.zip
+            unsigned-iphone-studio.zip
             run-ui.xcresult
