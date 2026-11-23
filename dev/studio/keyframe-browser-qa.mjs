@@ -48,9 +48,12 @@ try {
   await card.getByLabel('Tween curve',{exact:true}).selectOption('cubic-bezier');
   const editor = card.locator('.keyframe-editor');
   const graph = editor.locator('svg');
-  const capture = async i => {
-    if (captures) await editor.screenshot({path:captures + '/' + String(i).padStart(2,'0') + '.png',animations:'disabled'});
+  // Capture the viewport, whose lifetime spans effect hot reloads. Saving an
+  // element screenshot can race React replacing that element on publication.
+  const take = async name => {
+    if (captures) await page.screenshot({path:captures+'/'+name+'.png',animations:'disabled'});
   };
+  const capture = i => take(String(i).padStart(2,'0'));
   await editor.evaluate(el => el.scrollIntoView({block:'center',behavior:'instant'}));
   await capture(0);
   const handle = await graph.locator('circle.hit').first().boundingBox();
@@ -88,8 +91,7 @@ try {
   assert.match(await card.locator('.keyframe-sample').innerText(),/origin/i);
   assert.match(await card.locator('.keyframe-sample').innerText(),/target/i);
   assert.match(await card.locator('.keyframe-sample').innerText(),/result/i);
-  if (captures) await card.locator('details[open]').filter({has:page.locator('.keyframe-editor')}).last()
-    .screenshot({path:captures+'/published.png'});
+  await take('published');
   const ceilingToggle = editor.locator('label').filter({hasText:'Limit automatic slowdown'});
   assert.ok((await ceilingToggle.boundingBox()).height>=44,'The entire ceiling label is a touch target');
   await ceilingToggle.tap();
@@ -113,7 +115,8 @@ try {
   const capOnly = (await request('/api/state')).instances.find(x=>x.id===launch['instance-id']).definition.keyframes;
   assert.equal(capOnly.interval,undefined);
   assert.equal(capOnly['max-interval'].beats,0.125);
-  if (captures) await editor.screenshot({path:captures+'/ceiling-published.png'});
+  await editor.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+  await take('ceiling-published');
   assert.deepEqual(errors,[]);
   console.log('Touch drag, fractional intervals, native values and cap-only hot reload verified through v3.');
 } finally {await browser.close();}
