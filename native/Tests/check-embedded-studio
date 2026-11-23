@@ -24,3 +24,8 @@ ditto -c -k --keepParent "$app" embedded-ipad-studio.zip
 xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "id=$udid" \
   -derivedDataPath native/DerivedData -resultBundlePath run-ui.xcresult \
   -only-testing:LocalStudioUITests -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
+mkdir -p build/ipad-media/attachments
+xcrun xcresulttool export attachments --path run-ui.xcresult --output-path build/ipad-media/attachments
+python3 -m venv "$RUNNER_TEMP/tolglow-ipad-media"
+"$RUNNER_TEMP/tolglow-ipad-media/bin/pip" -q install pillow==12.0.0
+"$RUNNER_TEMP/tolglow-ipad-media/bin/python" native/Tests/record_embedded_studio.py build/ipad-media

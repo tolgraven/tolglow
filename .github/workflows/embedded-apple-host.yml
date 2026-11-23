@@ -53,3 +53,10 @@ jobs:
             embedded-ipad-studio.zip
             unsigned-iphone-studio.zip
             run-ui.xcresult
+      - uses: actions/upload-artifact@v7.0.2
+        if: matrix.target == 'ios-sim' && always()
+        with:
+          name: embedded-ipad-studio-preview
+          path: |
+            build/ipad-media/ipad.png
+            build/ipad-media/ipad.gif
