@@ -47,3 +47,21 @@
     (is (= :live-view (interop/preview-engine views :perform)))
     (is (= :live-view (interop/preview-engine (update views :previews dissoc :rig) nil)))
     (is (nil? (interop/preview-engine (update views :previews dissoc :rig) :rig)))))
+
+(deftest canvas-rate-counts-accepted-bitmap-intervals-and-resets-with-the-owner
+  (let [time (atom 0) rate (atom nil)
+        {:keys [present! clear!]} (interop/bitmap-cadence #(deref time) #(reset! rate %))]
+    (present! "night" 1)
+    (doseq [n (range 1 21)] (reset! time (* 50 n)) (present! "night" 1))
+    (is (= 20 @rate))
+    (clear!)
+    (is (nil? @rate))
+    (reset! time 16000)
+    (present! "night" 1)
+    (reset! time 16200)
+    (present! "next show" 1)
+    (is (nil? @rate))
+    (doseq [n (range 1 11)] (reset! time (+ 16200 (* 100 n))) (present! "next show" 1))
+    (is (= 10 @rate))
+    (present! "next show" 2)
+    (is (nil? @rate))))

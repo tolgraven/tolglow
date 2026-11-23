@@ -34,7 +34,8 @@
 
 (defn match-sink-entries
   "Associate publisher admissions and capture-sink callbacks in call order.
-  A held frame can repeat an ID. An expired or sinkless attempt has no callback."
+  A held frame can repeat its ID, including for an overdue safety correction.
+  Only rows recording a send have a matching callback."
   [outputs wire]
   (loop [[output & more] outputs pending (seq wire) result []]
     (if output

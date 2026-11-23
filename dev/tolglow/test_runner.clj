@@ -2,7 +2,7 @@
   (:require [clojure.test :as test]))
 
 (def pure-tests
-  '[tolglow.visualization.cue-pads-test tolglow.effects.sampling-quality-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test
+  '[tolglow.visualization.cue-pads-test tolglow.effects.sampling-quality-test tolglow.compute-test tolglow.fixtures.patch-test tolglow.application-test tolglow.build-manifest-test tolglow.utils.iters-test tolglow.registry-test tolglow.effects-test tolglow.signals-test tolglow.modulation-test tolglow.parameter-sources-test
     tolglow.clock-test tolglow.observations-test tolglow.system-controls-test tolglow.aim-paths-test tolglow.studio.aim-paths-host-test
     tolglow.studio.http-transit-test tolglow.transit-test tolglow.studio.state-stream-test tolglow.studio.debug-stream-test
     tolglow.compiler-test tolglow.block-bindings-test tolglow.material-library-test tolglow.material-inputs-test
@@ -21,8 +21,9 @@
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
     tolglow.integrations.analysis-test
     tolglow.integrations.gdtf-test
-    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.stride-break-even-test
-    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
+    tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test
+    tolglow.perf.output-deadlines-test tolglow.perf.effect-samples-test tolglow.stride-break-even-test
+    tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.studio.web-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
     tolglow.persistence-test tolglow.expressive-test tolglow.audio.capture-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
@@ -37,7 +38,9 @@
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
-    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test])
+    tolglow.render.workers-test tolglow.request-archive-test
+    tolglow.event-subscribers-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
+    tolglow.preview.airplay-test])
 
 (def suites
   {"pure" pure-tests

@@ -2,11 +2,139 @@
   (:require [clojure.test :refer [deftest is]]
             [tolglow.show :as show]
             [tolglow.demo :as demo]
+            [tolglow.atmosphere.deadline :as fog-deadline]
+            [afterglow.control.model :as control]
             [afterglow.sync.session :as sync-session]
             [afterglow.output.scheduler :as scheduler]))
 
 (defn- bytes-copy [universes]
   (into {} (map (fn [[u data]] [u (mapv #(bit-and (int %) 255) data)])) universes))
+
+(defn- fog-capture [off]
+  (let [clock (atom 0) sent (atom []) stall? (atom false) partial? (atom false)
+        pump {:id :pump :universe 1 :address 2 :channels {:fog 1}
+              :fogger {:flow-m3-min 60 :dmx-range [off (if (zero? off) 255 0)]}}
+        fixtures [{:id :light :universe 1 :address 1 :channels {:dimmer 1}}
+                  pump {:id :other :universe 2 :address 1 :channels {:dimmer 1}}]
+        runtime (show/create-runtime {:model (control/new-show {:rig {:fixtures fixtures}})
+                                      :workspace-options nil :independent-output? true
+                                      :physical-now-ms #(deref clock)
+                                      :sink {:send! (fn [universes id]
+                                                      (swap! sent conj [id (subvec (get (bytes-copy universes) 1) 0 2)])
+                                                      (when @partial?
+                                                        (throw (ex-info "Second universe write failed" {}))))}})
+        owner (update (:publisher runtime) :prepare-output
+                      (fn [prepare]
+                        (fn [buffers source]
+                          (let [packet (prepare buffers source)]
+                            (when @stall? (swap! clock + 26))
+                            packet))))]
+    {:clock clock :sent sent :stall? stall? :partial? partial? :runtime runtime :owner owner}))
+
+(defn- offer-fog! [{:keys [clock runtime owner]} slot red fog until]
+  (let [patch (:compiled @(:patch runtime))
+        epoch (get-in @(:state runtime) [:model :epoch])
+        token (scheduler/begin-frame! owner epoch patch {} false
+                                      {:slot slot :started-at-ms @clock :deadline-ms (* 25 slot)})
+        universes (into {} (map (fn [u] [u (byte-array 512)])) (:universes patch))
+        ^bytes buffer (get universes 1)
+        assignments (when until [{:target-id :pump :until-ms until :off-bytes (:fog-off-bytes patch)}])]
+    (aset-byte buffer 0 (unchecked-byte red))
+    (aset-byte buffer 1 (unchecked-byte fog))
+    (swap! (:fog-deadlines runtime) fog-deadline/remember (:frame-id token) assignments)
+    (scheduler/complete! owner token {:universes universes :safety-state assignments})))
+
+(defn- publish-fog! [{:keys [clock owner]} at]
+  (reset! clock at)
+  (scheduler/publish! owner at))
+
+(deftest expired-packet-keeps-its-new-look-off-the-wire-and-still-stops-fog
+  (let [{:keys [runtime sent stall? owner] :as capture} (fog-capture 0)]
+    (try
+      (offer-fog! capture 1 10 100 50)
+      (publish-fog! capture 25)
+      (offer-fog! capture 2 20 100 50)
+      (reset! stall? true)
+      (let [late (publish-fog! capture 50)]
+        (is (= [[1 [10 100]] [1 [10 0]]] @sent))
+        (is (= {:expired-before-send? true :safety-output? true :sent-at-ms 76}
+               (select-keys late [:expired-before-send? :safety-output? :sent-at-ms]))))
+      (offer-fog! capture 4 30 100 50)
+      (publish-fog! capture 100)
+      (is (= 2 (count @sent)) "A cutoff already on the wire does not repeat on another expired packet")
+      (is (= 1 (:safety-publications (scheduler/status owner))))
+      (finally (show/stop! runtime)))))
+
+(deftest an-expired-slot-recovers-from-a-partial-send
+  (doseq [prior-send? [true false]]
+    (let [{:keys [runtime sent stall? partial?] :as capture} (fog-capture 196)]
+      (try
+        (when prior-send?
+          (offer-fog! capture 1 10 196 nil)
+          (publish-fog! capture 25))
+        (offer-fog! capture 2 20 100 75)
+        (reset! partial? true)
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Second universe write failed" (publish-fog! capture 50)))
+        (reset! partial? false)
+        (offer-fog! capture 3 30 196 nil)
+        (reset! stall? true)
+        (is (:safety-output? (publish-fog! capture 75)))
+        (is (= (if prior-send?
+                 [[1 [10 196]] [2 [20 100]] [1 [10 196]]]
+                 [[1 [20 100]] [0 [0 196]]])
+               @sent))
+        (reset! stall? false)
+        (offer-fog! capture 5 40 196 nil)
+        (publish-fog! capture 125)
+        (reset! stall? true)
+        (is (not (:safety-output? (publish-fog! capture 150))))
+        (finally (show/stop! runtime))))))
+
+(deftest an-expired-slot-retires-a-manual-pump-on-a-still-patched-universe
+  (doseq [off [0 196]]
+    (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture off)]
+      (try
+        (offer-fog! capture 1 10 100 nil)
+        (publish-fog! capture 25)
+        (let [model (:model @(:state runtime))
+              rig (update (:rig model) :fixtures (fn [fixtures] (filterv #(not= :pump (:id %)) fixtures)))
+              reply (show/submit! runtime :rig (assoc rig :expected-epoch (:epoch model)))]
+          (reset! clock 40)
+          (show/tick! runtime 40)
+          (is (= :accepted (:status @reply)) (str @reply)))
+        (reset! stall? true)
+        (is (:safety-output? (publish-fog! capture 50)))
+        (is (= [[1 [10 100]] [1 [10 off]]] @sent))
+        (finally (show/stop! runtime))))))
+
+(deftest a-published-fog-cutoff-outlasts-the-producer-history
+  (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
+    (try
+      (offer-fog! capture 1 10 100 75)
+      (publish-fog! capture 25)
+      (doseq [slot (range 2 11)]
+        (reset! clock (dec (* 25 slot)))
+        (offer-fog! capture slot 30 196 nil))
+      (is (nil? @(:fog-deadlines runtime)))
+      (reset! stall? true)
+      (is (:safety-output? (publish-fog! capture 250)))
+      (is (= [[1 [10 100]] [1 [10 196]]] @sent))
+      (finally (show/stop! runtime)))))
+
+(deftest an-expired-new-epoch-does-not-extend-the-previous-automatic-pulse
+  (let [{:keys [runtime sent clock stall?] :as capture} (fog-capture 196)]
+    (try
+      (offer-fog! capture 1 10 100 1000)
+      (publish-fog! capture 25)
+      (let [reply (show/submit! runtime {:op :show/restart})]
+        (reset! clock 40)
+        (show/tick! runtime 40)
+        (is (= :accepted (:status @reply))))
+      (reset! stall? true)
+      (is (:safety-output? (publish-fog! capture 50)))
+      (is (= [[1 [10 100]] [1 [10 196]]] @sent))
+      (finally (show/stop! runtime)))))
+
 (deftest real-effect-worker-can-block-while-output-keeps-advancing
   (let [physical (atom 0) sent (atom []) blocked? (atom false)
         entered (promise) release (promise)

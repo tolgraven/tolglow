@@ -31,3 +31,35 @@ test('manual movement bounds room walls, preserves gradual entry and clears fixt
   const result = constrainCamera([0, 2, 0], [12, 5, 10], [{position: [0, 2, 0]}], [0, 2, 1]);
   assert.ok(Math.hypot(result[0], result[1] - 2, result[2]) >= .449);
 });
+
+test('walking and braking cover the same distance on 60 and 120 Hz displays', async () => {
+  const {Vector3} = await import('three');
+  const {integrateWalk} = await import('../../../js/preview/camera-navigation.js');
+  function simulate(rate) {
+    const velocity = new Vector3(), distance = new Vector3(), target = new Vector3(0, 0, 2);
+    const advance = () => distance.add(integrateWalk(velocity, target, 1 / rate));
+    advance();
+    assert.ok(velocity.z > 0 && velocity.z < 1, 'accelerates from rest');
+    for (let n = 1; n < rate; n++) advance();
+    const before = distance.z; target.set(0, 0, 0); advance();
+    assert.ok(distance.z > before && velocity.z < 2, 'releases gradually');
+    for (let n = 1; n < rate; n++) advance();
+    return distance.z;
+  }
+  assert.ok(Math.abs(simulate(60) - simulate(120)) < 1e-10);
+});
+
+test('paired touches distinguish midpoint travel from pinch and rebase when contact changes', async () => {
+  const {CameraGesture} = await import('../../../js/preview/camera-gesture.js');
+  const g = new CameraGesture();
+  g.add(1, 20, 60); g.add(2, 60, 60);
+  g.points.get(1).y = 58; g.points.get(2).y = 58;
+  assert.equal(g.sample(), null);
+  g.points.get(1).y = 20; g.points.get(2).y = 20;
+  assert.deepEqual(g.sample(), {kind:'walk', x:0, y:-40, zoom:0});
+  g.remove(2); assert.equal(g.sample(), null);
+  g.add(3, 60, 20);
+  g.points.get(1).x -= 10; g.points.get(3).x += 10;
+  const pinch = g.sample();
+  assert.equal(pinch.kind, 'pinch'); assert.equal(pinch.x, 0); assert.ok(pinch.zoom > 0);
+});

@@ -1,6 +1,11 @@
 {:lein {:profile "+cljs"}
  :builds
- {:studio-test {:target :node-test
+ {:compute-worker {:target :browser
+                   :output-dir "resources/studio/compute/runtime"
+                   :asset-path "/studio/compute/runtime"
+                   :modules {:transport {:init-fn tolglow.studio.compute-transport/init! :web-worker true}}
+                   :compiler-options {:infer-externs true :output-feature-set :es-next}}
+  :studio-test {:target :node-test
                 :output-to "target/studio-tests.js"
                 :ns-regexp "tolglow.studio.*-test$"
                 :autorun false}

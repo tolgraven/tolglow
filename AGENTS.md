@@ -1,10 +1,11 @@
 # Working on tolglow
 
-Preserve active scopes when new ideas arrive. Record each new request in the [request register](docs/request-coverage.md) with its work item and acceptance check.
+Search [GitHub Issues](https://github.com/tolgraven/tolglow/issues) when a request arrives. Update the matching issue with the operator’s goal and a concrete acceptance check. Open a new issue for distinct work and link its dependencies. Keep other active requests open until their own checks pass.
 
-Read [docs/README.md](docs/README.md), the [v1 contract](docs/implementation-contract-v1.md)
-and [roadmap](docs/roadmap.md) before architectural work. The complete requested
-product scope is documented; proposed behavior is not automatically shipped.
+When a show feature changes, review it from both the running REPL and Studio. Name the common command or data, check feedback in each direction and record any remaining gap. See [REPL and Studio parity](docs/repl-studio-parity.md).
+
+Read the [architecture index](docs/README.md), the [v1 contract](docs/implementation-contract-v1.md)
+and the relevant issue before architectural work.
 The later [expressive performance requirements](docs/product/expressive-performance.md)
 add typed beat modulation/categories, MPE/controllers, a lighting synthesizer,
 musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
@@ -39,7 +40,7 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 ## Development contract
 
 - Run `lein test-pure` and applicable `lein test` against the paired
-  fork. Run `lein check-roadmap` after tracking changes. Frontend changes
+  fork. Frontend changes
   require the configured production build plus fresh browser interaction
   checks; desktop viewport emulation does not prove real iPad Safari behavior.
   See [testing](docs/testing.md) for exact scope and observed results.
@@ -78,11 +79,11 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 ## Parallel work and completion
 
-- Claim exact disjoint paths in `docs/work-items.edn` with owner and prerequisites
-  before editing. Coordinate public contract changes across consumers first.
-- Record actual commands, outcomes and limits before marking a milestone done.
-  Completed v1 modules do not complete broader roadmap items. Keep source audit,
-  focused test, integrated test, browser and physical device evidence distinct.
+- Record the owner, affected paths and prerequisite issues on the existing GitHub
+  issue before editing. Coordinate shared contracts with the other owners.
+- Link the pull request, tested revision, commands and observed results on the
+  issue. Close it when its acceptance checks pass. For partial delivery, keep
+  the issue open and identify the remaining work or hardware qualification.
 - Hardware support needs hardware evidence. Push 3 generic MIDI bindings are
   not native display/standalone support. The robot duck remains later research
   until its identity/SDK are known. Do not place provider secrets in definitions,

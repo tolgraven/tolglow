@@ -7,19 +7,24 @@ background worker or the main-thread fallback.
 
 ## Using the camera
 
-- **Orbit:** drag to orbit, pinch or scroll to zoom. Arrow keys orbit and `+`/`-`
-  zoom when the canvas has keyboard focus. Existing audience/overview presets,
-  fixture focus and reset remain available; `Home` restores the audience view.
-- **Explore:** drag with a mouse or one finger to look around. `WASD` moves on the
-  horizontal plane, `Q`/`E` moves down/up, and Shift doubles the selected speed.
-  The six hold buttons provide the same movement on iPad/phone. Speed is in
-  metres per second, from 0.25 to 8; it is physical camera speed, not musical time.
+- **Orbit** lets you drag with a mouse or one finger to orbit. Pinch or use
+  `+`/`-` on the focused canvas to zoom. Select an audience or overview
+  preset, focus a fixture, or press `Home` to restore the audience view.
+- **Explore** lets you drag with a mouse or one finger to look around. Use
+  `WASD`, the arrow keys, or `H`/`J`/`K`/`L` (left, back, forward, right)
+  to walk along the ground. The camera eases into motion, slows after release,
+  and eases through changes of direction. Press `Q`/`E` to go down/up or hold
+  Shift to double the selected speed. The six hold buttons offer the same
+  directions on iPad and phone. The speed setting ranges from 0.25 to 8 metres
+  per second.
+- **Touch and trackpad** two-finger swipes move along the ground. Swipe up to
+  move forward and right to strafe right. Pinching zooms. Keyboard movement or
+  a two-finger swipe starts Explore from Orbit or Auto tour.
 - **Auto tour:** moves closer to fixtures that are actually emitting light. It
   visits up to 16 of the brightest fixtures, changing subject every eight seconds
   and immediately retargeting when a subject goes dark. With no lit fixtures it
-  moves toward a room overview. Keyboard movement or a drag immediately takes
-  over in Explore; scrolling returns to Orbit. Selecting a preset also ends the
-  tour. Start Auto tour again to resume automatic movement.
+  moves toward a room overview. Dragging takes over in Explore. Selecting a
+  preset also ends the tour. Start Auto tour again to resume automatic movement.
 
 Keyboard controls only act on a focused preview canvas. REPL, editor and form
 input keep their keys. Blur, hidden/offscreen state, editing suspension and
@@ -67,10 +72,12 @@ there is no per-motion scan across every pixel in a large rig.
 
 Pure planner tests cover deterministic lit-fixture selection, bounds, camera
 clearance and authoritative target coordinates. Real Chromium input tests cover
-worker and forced fallback keyboard movement, pointer look, typing/blur guards,
-editing suspension, tour retargeting, manual takeover, reduced motion, hidden
-state, projection aspect and disposal. Re-frame tests verify validated local
-camera effects and preservation of lighting show state.
+worker and forced fallback ground movement, acceleration and braking, tablet
+swipes and pinches, trackpad translation and pinch, pointer look and orbit,
+gesture cancellation, typing and blur guards, editing suspension, tour
+retargeting, manual takeover, reduced motion, hidden state, projection aspect
+and disposal. Re-frame tests verify validated local camera effects and
+preservation of lighting show state.
 
 Validation on 2026-11-21: 24 preview tests and 138 frontend tests (730 assertions)
 passed. The optimized Studio build compiled 148 files with zero warnings. Compiled

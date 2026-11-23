@@ -6,6 +6,8 @@ and shared [v1 contract](../../docs/implementation-contract-v1.md).
 
 Code that configures lights, devices, saves or providers belongs in the owning show namespace. Use it directly from code, config and Studio. Keep Ring, Jetty and re-frame at the web boundary. See [public module APIs](../../docs/headless-modules.md).
 
+Give each operator-facing show action a discoverable REPL example against the active runtime. Check that Studio can use the same domain operation and observe its outcome. Track missing paths in [REPL and Studio parity](../../docs/repl-studio-parity.md).
+
 ## Module boundaries
 
 - `fixtures.clj` expands the original declarative patch maps into actual Afterglow channels
@@ -64,8 +66,8 @@ Processing sketches or open devices. Capture output and inject transport shells.
 
 Run focused behavioral tests, then applicable integration lanes. Record exact
 scope and counts; distinguish a pure module from a complete UI/workflow and a
-source-derived protocol from physical hardware evidence. Use the work ledger
-for exclusive ownership rather than conflicting implementations of shared APIs.
+source-derived protocol from physical hardware evidence. Record the owner and
+affected shared APIs on the existing GitHub issue before editing.
 
 ## Expanded performance work
 

@@ -30,6 +30,12 @@ struct GuestComputeControl: View {
                 .font(.caption).foregroundStyle(.secondary)
             if let gpu = worker.gpu { ComputeSurface(gpu: gpu).frame(width: 2, height: 2).accessibilityHidden(true) }
         }
-        .onDisappear { request = nil; worker.stop() }
+        .onReceive(client.$joined) { connected in if !connected { stop() } }
+        .onDisappear(perform: stop)
+    }
+
+    private func stop() {
+        request = nil
+        worker.stop()
     }
 }

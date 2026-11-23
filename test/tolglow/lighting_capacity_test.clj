@@ -265,3 +265,15 @@
       (show/tick! rt 28)
       (is (= :following (get-in (show/snapshot rt) [:output :lighting-capacity :mode])))
       (finally (show/stop! rt)))))
+
+(deftest coarse-fine-lamp-meter-reads-the-same-word-as-the-driver
+  (doseq [inverted? [false true]]
+    (let [channel (cond-> {:offset 1 :fine-offset 2} inverted? (assoc :inverted-from 0))
+          patch (frame/compile-patch [{:id :lamp :universe 1 :address 512 :channels {:dimmer channel}}])
+          plan (capacity/prepare patch)]
+      (doseq [code [0 1 255 256 32767 32768 65534 65535]]
+        (let [value (/ code 65535.0)
+              frame (frame/resolve-frame patch [{:target-id :lamp :attribute :dimmer :value value}])
+              actual (get-in (capacity/measure-sources plan (:universes frame) [:lamp]) [:lamp :local-brightness])]
+          (is (< (abs (- actual value)) 1.0e-12) [inverted? code actual])
+          (is (<= 0 actual 1) [inverted? code actual]))))))

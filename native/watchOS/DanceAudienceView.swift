@@ -6,6 +6,7 @@ struct DanceAudienceView: View {
     @ObservedObject private var link: WatchFloorLink
     @ObservedObject private var stage: AudienceClient
     @State private var sharePulse = false
+    @State private var reviewingPulse = false
 
     init(workout: DanceWorkout) {
         self.workout = workout
@@ -30,7 +31,10 @@ struct DanceAudienceView: View {
             routeButton(.pairedPhone, title: "Paired iPhone", icon: "iphone", id: "route-paired")
             routeButton(.nearbyStage, title: "Nearby stage", icon: "antenna.radiowaves.left.and.right", id: "route-direct")
             if link.route == .nearbyStage {
-                if stage.joined {
+                if stage.reconnecting {
+                    Text(stage.status).accessibilityAddTraits(.updatesFrequently)
+                    Button("Cancel reconnection") { workout.stop() }
+                } else if stage.joined {
                     Label("Connected to stage", systemImage: "checkmark.circle")
                     if !participating { Button("Disconnect") { workout.stop() } }
                 } else if let venue = link.selectedStage {
@@ -54,6 +58,23 @@ struct DanceAudienceView: View {
         }
     }
 
+    private var pulseConsent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Heart rate at the stage").font(.headline)
+                Text("The stage receives your BPM. A saved show can retain the last average. If only you share, that’s your BPM.")
+                    .font(.caption)
+                    .accessibilityIdentifier("pulse-consent")
+                Text("You can stop sharing and keep dancing. The Watch discards the workout.").font(.caption)
+                Button("Use heart rate") {
+                    sharePulse = true
+                    reviewingPulse = false
+                }.accessibilityIdentifier("confirm-pulse")
+                Button("Cancel", role: .cancel) { reviewingPulse = false }
+            }.padding(.horizontal, 4)
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
@@ -63,15 +84,24 @@ struct DanceAudienceView: View {
                     Text("\(workout.steps) motion steps").monospacedDigit()
                     if let bpm = workout.bpm {
                         Label("\(bpm) BPM", systemImage: "heart.fill").monospacedDigit()
-                    } else if sharePulse {
+                    } else if workout.runningWorkout {
                         Text("No recent heart rate").font(.caption)
                     }
-                } else {
-                    Toggle("Share heart rate", isOn: $sharePulse).disabled(workout.requesting)
-                    if sharePulse {
-                        Text("Start a dance workout to share your latest BPM with the floor. Tolglow discards the workout when you leave.")
-                            .font(.caption)
+                    if workout.runningWorkout {
+                        Button("Stop sharing heart rate") {
+                            sharePulse = false
+                            workout.withdrawPulse()
+                        }.accessibilityIdentifier("withdraw-pulse")
                     }
+                } else {
+                    Button {
+                        if sharePulse { sharePulse = false } else { reviewingPulse = true }
+                    } label: {
+                        Label(sharePulse ? "Use motion only" : "Share heart rate",
+                              systemImage: sharePulse ? "heart.fill" : "heart")
+                    }
+                    .accessibilityIdentifier("choose-pulse")
+                    .disabled(workout.requesting)
                 }
                 Toggle("Share wrist axes", isOn: $workout.shareMotionAxes)
                 if workout.active || workout.requesting {
@@ -84,6 +114,7 @@ struct DanceAudienceView: View {
             }.padding(.horizontal, 4)
         }
         .navigationTitle("Dance floor")
+        .sheet(isPresented: $reviewingPulse) { pulseConsent }
         .onAppear { workout.prepareConnection() }
         .onDisappear {
             if participating || link.route == .nearbyStage { workout.stop() }

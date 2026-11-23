@@ -100,5 +100,4 @@ results, faulted expiry, retry suppression, renderer rejection, bounded journals
 deterministic replay and serial/worker equivalence. Host checks use actual DSL
 division by zero, bounded workers, captured DMX, Ring editing/retry, durable
 reactive actions, save/restore/restart, zero-distance aim, typed unsupported
-attributes and additive overflow. Physical lighting is never activated. Exact
-aggregate evidence is recorded in `work-items.edn`.
+attributes and additive overflow. Physical lighting is never activated. See the [effect isolation issue](https://github.com/tolgraven/tolglow/issues/396) for the verification record.

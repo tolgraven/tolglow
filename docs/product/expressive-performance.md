@@ -77,9 +77,8 @@ timestamps before a domain binding chooses quantization or smoothing.
 Automatic mapping should use semantic parameter metadata: type, range, unit,
 category, preferred gesture, polarity and display label. Offer a reviewable map,
 MIDI learn, explicit overrides and saved device profiles. Do not infer every
-controller's protocol from Push 2 or replace user mappings on reconnect. Generic
-MPE/explicit captured-address support is not native Push 3 display or standalone
-support.
+controller's protocol from Push 2 or replace user mappings on reconnect. Tethered Push 3 has a separate [USB screen qualification](../push-display-packaging.md#tethered-push-3).
+Standalone hosting requires separate implementation and device measurements.
 
 X-Touch and multiple extenders need a separately verified profile. Inspect actual
 Ableton remote-script/MCU references, document the selected mode and port
@@ -221,8 +220,7 @@ a deliberate selection/export flow rather than a weakened backup format.
 ## Implementation order and evidence
 
 Keep independent lanes for typed modulation, signal registry, expressive
-protocols, verified X-Touch work, musical integration and sharing. Claim exact
-paths in [the work ledger](../work-items.edn), coordinate shared command/schema
+protocols, verified X-Touch work, musical integration and sharing. Link the relevant [issue](https://github.com/tolgraven/tolglow/issues), coordinate shared command/schema
 changes and add behavioral tests before marking a narrow milestone done. The
 initial implementation should demonstrate real end-to-end slices with injected
 transports; later physical or external-service checks are separately selected.

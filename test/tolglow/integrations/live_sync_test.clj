@@ -377,3 +377,24 @@
     (is (nil? (observation (assoc sample :path "live_set tracks 1 mixer_device volume"))))
     (is (nil? (live-params/observation (assoc live :mode :live) "event-2" 8 sample)))
     (is (thrown? clojure.lang.ExceptionInfo (live-params/descriptor (assoc spec :path "live_set tracks 0"))))))
+
+(deftest parameter-routing-follows-live-ownership-and-input-lifetime
+  (let [config (assoc-in midi-config [:live :parameters] {11 {:cue-id :red :param :level :bounds [0 1]}})
+        manager (live-sync/create-manager {:config config :now-ms (constantly 0)
+                                           :midi-factory (fake-midi (atom 0) (atom 0) (atom nil) (atom []))})]
+    (try
+      (is (nil? (live-sync/parameter-routing manager)))
+      (sync/start! manager (callbacks (atom []) (atom [])))
+      (is (session/flush! manager))
+      (let [routing (live-sync/parameter-routing manager)]
+        (is (= :level (get-in routing [:parameters 11 :param])))
+        (is (= [:midi-clock] (:source-ids routing))))
+      (live-sync/handoff! manager :live (envelope "handoff"))
+      (is (session/flush! manager))
+      (is (nil? (live-sync/parameter-routing manager)))
+      (live-sync/handoff! manager :lighting (envelope "return"))
+      (is (session/flush! manager))
+      (is (some? (live-sync/parameter-routing manager)))
+      (sync/stop! manager)
+      (is (nil? (live-sync/parameter-routing manager)))
+      (finally (sync/close! manager)))))

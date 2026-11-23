@@ -4,7 +4,9 @@
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
+            [tolglow.studio.display :as display]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.parameter-precision :as precision]
             [tolglow.studio.web :as web]))
 
 (def view
@@ -159,4 +161,50 @@
           (is (not (contains? (values 0) :pose)))
           (is (= {:pan-deg 30.0 :tilt-deg 20.0} (select-keys pose [:pan-deg :tilt-deg])))
           (is (not= (:direction pose) (get-in values [:hung :direction])))))
+      (finally (show/stop! runtime)))))
+
+(deftest fixture-resolution-follows-real-targets-across-studio-and-push
+  (let [schema {:type :number :default 0.123456789 :bounds [0 1]}
+        param {:op :param :key :movement}
+        definition {:id :move :version 1 :params {:movement schema :unmapped schema}
+                    :outputs {:pan {:op :multiply :args [param {:op :const :value 0.9}]}}}
+        fixtures [{:id :wide :channels {:pan [1 2]}} {:id :coarse :channels {:pan 1}}]
+        instance {:id "1:1" :effect-version 1 :definition definition :targets [:coarse]}
+        model {:epoch 1 :rig {:fixtures fixtures} :registry {:effects {:move definition}}
+               :instances {"1:1" instance}}
+        cache (atom nil)
+        project #(precision/model-definitions cache %)
+        all (project model)
+        path [:params :movement :dmx-bits]
+        panel {:instance-id "1:1" :epoch 1 :definition-version 1
+               :parameters [{:param :movement :schema schema :value 0.123456789}]}
+        first-panel (precision/push-view (atom nil) model panel)]
+    (is (= 16 (get-in (get all [definition nil]) path)))
+    (is (= 8 (get-in (get all [definition [:coarse]]) path)))
+    (is (nil? (get-in (get all [definition nil]) [:params :unmapped :dmx-bits])))
+    (is (identical? (get all [definition nil]) (get (project model) [definition nil])))
+    (is (= 8 (get-in first-panel [:parameters 0 :schema :dmx-bits])))
+    (is (= 0.123456789 (get-in first-panel [:parameters 0 :value])))
+    (is (= panel (precision/push-view (atom nil) (assoc model :epoch 2) panel)))
+    (is (= 8 (get-in (get (project (assoc-in model [:rig :fixtures] [(last fixtures)])) [definition nil]) path)))
+    (is (nil? (get-in definition path)))))
+
+(deftest push-parameter-and-audio-surfaces-preserve-the-same-fine-channel
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        snapshot @(:state runtime)
+        schema {:type :number :default 0.5 :bounds [0 1]}
+        definition {:id :aim :params {:pan schema} :outputs {:pan {:op :param :key :pan}}}
+        instance {:id "1:1" :effect-version 1 :definition definition :targets [:head] :params {:pan 0.5}}
+        model (-> (:model snapshot)
+                  (assoc :epoch 1 :instances {"1:1" instance})
+                  (assoc-in [:rig :fixtures] [{:id :head :channels {:pan [1 2]}}]))
+        host (assoc runtime :state (atom (assoc snapshot :model model)))
+        panel {:instance-id "1:1" :epoch 1 :definition-version 1
+               :parameters [{:param :pan :schema schema :value 0.5}]}]
+    (try
+      (let [project (with-redefs [display/browser-display :project!] (show/push-browser-display host {}))]
+        (doseq [mode [:parameters :audio]]
+          (let [view (project (assoc panel :display-mode mode))]
+            (is (= 16 (get-in view [:parameters 0 :schema :dmx-bits])) (str mode))
+            (is (= (= mode :audio) (contains? view :audio-waveform))))))
       (finally (show/stop! runtime)))))

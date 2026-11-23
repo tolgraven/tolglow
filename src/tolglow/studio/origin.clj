@@ -69,5 +69,5 @@
   [handler public]
   (fn [request]
     (handler (if (= public (http-origin (str "https://" (get-in request [:headers "host"]))))
-               (assoc request :scheme :https)
+               (assoc request :scheme :https ::proxied? true)
                request))))

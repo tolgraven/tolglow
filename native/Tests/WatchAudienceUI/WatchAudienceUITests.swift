@@ -1,6 +1,30 @@
 import XCTest
 
 final class WatchAudienceUITests: XCTestCase {
+    func testHeartSharingConsentExplainsSavedShowAverages() {
+        let app = XCUIApplication()
+        app.launch()
+        let floor = app.buttons["dance-floor"]
+        XCTAssertTrue(floor.waitForExistence(timeout: 12))
+        floor.tap()
+        let pulse = app.buttons["choose-pulse"]
+        for _ in 0..<4 where !pulse.isHittable { app.swipeUp() }
+        XCTAssertTrue(pulse.isHittable)
+        pulse.tap()
+        let consent = app.staticTexts["pulse-consent"]
+        XCTAssertTrue(consent.waitForExistence(timeout: 5))
+        XCTAssertTrue(consent.label.contains("saved show"))
+        XCTAssertTrue(consent.label.contains("only you"))
+        capture("04-pulse-consent", app)
+        let confirm = app.buttons["confirm-pulse"]
+        for _ in 0..<4 where !confirm.isHittable { app.swipeUp() }
+        XCTAssertTrue(confirm.isHittable)
+        confirm.tap()
+        let workout = app.buttons["Start dance workout"]
+        for _ in 0..<4 where !workout.isHittable { app.swipeUp() }
+        XCTAssertTrue(workout.isHittable)
+    }
+
     func testChooseSoloStageAndReturnToPairedMode() {
         let app = XCUIApplication()
         app.launch()
@@ -26,6 +50,27 @@ final class WatchAudienceUITests: XCTestCase {
         paired.tap()
         XCTAssertTrue(app.staticTexts["Your Watch and iPhone share one place on the floor."].exists)
         capture("03-paired-again", app)
+    }
+
+    func testCancelInterruptedStage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview-audience-reconnection"]
+        app.launch()
+        let floor = app.buttons["dance-floor"]
+        XCTAssertTrue(floor.waitForExistence(timeout: 12))
+        floor.tap()
+        let message = app.staticTexts["Reconnecting to West floor · 1 of 3"]
+        let cancel = app.buttons["Cancel reconnection"]
+        for _ in 0..<3 where !cancel.isHittable { app.swipeUp() }
+        XCTAssertTrue(message.exists)
+        XCTAssertTrue(cancel.isHittable)
+        capture("04-interrupted-stage", app)
+        cancel.tap()
+        let find = app.buttons["Find stages"]
+        for _ in 0..<3 where !find.isHittable { app.swipeDown() }
+        XCTAssertTrue(find.waitForExistence(timeout: 5))
+        XCTAssertFalse(cancel.exists)
+        capture("05-reconnection-cancelled", app)
     }
 
     private func capture(_ name: String, _ app: XCUIApplication) {
