@@ -14,14 +14,38 @@
 (def max-result-floats 8192)
 (def ^:private max-clients 16)
 
-(defn create [pool token]
-  (when (and pool (string? token) (<= 24 (count token) 1024))
-    {:pool pool :token (.getBytes ^String token StandardCharsets/UTF_8)
-     :clients (atom {}) :closed? (atom false)
-     :io (doto (ScheduledThreadPoolExecutor. 1
-                 ^ThreadFactory (reify ThreadFactory
-                                  (newThread [_ f] (doto (Thread. f "tolglow-compute-socket-io") (.setDaemon true)))))
-           (.setRemoveOnCancelPolicy true))}))
+(defn- credential [value]
+  (when (and (string? value) (<= 24 (count value) 1024)) (.getBytes ^String value StandardCharsets/UTF_8)))
+
+(defn create
+  ([pool operator] (create pool operator {}))
+  ([pool operator {:keys [guest-bridge verification] :or {verification :full}}]
+   (when (and pool (or (credential operator) guest-bridge))
+     (let [operator-bytes (credential operator) bridge (credential guest-bridge)]
+       (when (or (and guest-bridge (not bridge)) (and operator (not operator-bytes))
+                 (and bridge operator-bytes (MessageDigest/isEqual bridge operator-bytes))
+                 (and bridge (not (contains? pool/verification-policies verification))))
+         (throw (ex-info "Invalid compute credentials or guest verification mode" {})))
+       {:pool pool :token operator-bytes :bridge-token bridge :verification verification
+        :clients (atom {}) :closed? (atom false)
+        :io (doto (ScheduledThreadPoolExecutor. 1
+                    ^ThreadFactory (reify ThreadFactory
+                                     (newThread [_ f] (doto (Thread. f "tolglow-compute-socket-io") (.setDaemon true)))))
+              (.setRemoveOnCancelPolicy true))}))))
+
+(defn admission
+  "Validate credentials held by the Studio worker or stage bridge. The host
+  chooses guest verification. A guest never receives either credential."
+  [hub {:keys [op token caps]}]
+  (let [bytes (credential token) limit (:max-result-floats caps)
+        matches? #(and bytes % (MessageDigest/isEqual bytes %))]
+    (when (and (= :hello op) (pos-int? limit))
+      (let [base {:max-result-floats (min limit max-result-floats)}]
+        (cond
+          (matches? (:bridge-token hub))
+          (when (and (= true (:guest? caps)) (string? (:subject caps)) (<= 1 (count (:subject caps)) 128))
+            (assoc base :verification (:verification hub) :subject (:subject caps)))
+          (and (matches? (:token hub)) (not (contains? caps :guest?))) base)))))
 
 (defn- retire! [{:keys [clients pool]} socket code reason]
   (when-let [client (get (first (swap-vals! clients dissoc socket)) socket)]
@@ -74,16 +98,10 @@
                                           (retire! hub socket 1008 "Compute handshake expired")))
                            5 TimeUnit/SECONDS))))))
 
-(defn- admit! [hub socket client {:keys [op token caps]}]
-  (let [limit (:max-result-floats caps)]
-    (when-not (and (= :hello op) (string? token) (<= 24 (count token) 1024)
-                   (pos-int? limit)
-                   (MessageDigest/isEqual (:token hub) (.getBytes ^String token StandardCharsets/UTF_8)))
-      (throw (ex-info "Compute admission denied" {})))
-    ;; Queue the welcome before making this client visible to the render pool.
-    (offer! hub socket client {:op :welcome})
-    (let [id (pool/connect! (:pool hub) {:max-result-floats (min limit max-result-floats)}
-                            (partial offer! hub socket client))]
+(defn- admit! [hub socket client hello]
+  (let [caps (or (admission hub hello) (throw (ex-info "Compute admission denied" {})))]
+    (offer! hub socket client (cond-> {:op :welcome} (:verification caps) (assoc :verification (:verification caps))))
+    (let [id (pool/connect! (:pool hub) caps (partial offer! hub socket client))]
       (reset! (:id client) id)
       (when-let [timer @(:timer client)] (.cancel ^java.util.concurrent.Future timer false)))))
 
