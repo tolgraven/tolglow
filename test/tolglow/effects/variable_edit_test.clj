@@ -1,6 +1,6 @@
 (ns tolglow.effects.variable-edit-test
-  (:require [afterglow.control.model :as control]
-            [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is]]
+            [tolglow.demo :as demo]
             [tolglow.effects.variable-edit :as edit]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -56,7 +56,7 @@
 
 (deftest variable-specific-material-defaults-survive-guarded-binding-edits
   (let [material {:name "Dusk transmission" :mode :multiply :inputs {:factor 0.25} :glsl "factor"}
-        model (assoc-in (control/new-show {:show-id "local-materials"})
+        model (assoc-in (demo/model)
                         [:settings :variable-blocks :prefabs :venue/dusk] material)
         runtime (show/create-runtime {:model model :workspace-options nil})
         handler (studio/handler runtime)

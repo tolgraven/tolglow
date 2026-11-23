@@ -7,7 +7,7 @@
             [tolglow.studio.block-builder :as builder]
             [tolglow.studio.block-inspector :as inspector]
             [tolglow.studio.block-trace :as trace]
-            [tolglow.studio.spatial-preview :refer [watch-visibility]]))
+            [tolglow.studio.visibility :refer [watch-visibility]]))
 
 (defn- view [db] (get-in db [:server-projection :view]))
 (defn- owner [db] (select-keys (view db) [:runtime-id :show-id :epoch]))
