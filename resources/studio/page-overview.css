@@ -1,0 +1,13 @@
+.push-pages { grid-row: 2 / 4; display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; color: #e9eadf; }
+.push-pages-heading { display: flex; align-items: center; justify-content: space-between; font-size: 12px; line-height: 15px; padding: 0 8px; }
+.push-pages-heading span, .push-page-label small { color: #afb9a6; }
+.push-pages-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); flex: 1; gap: 4px; min-height: 0; }
+.push-page-tile { display: grid; grid-template-columns: auto; grid-template-rows: minmax(0, 1fr) auto; align-items: center; justify-items: center; padding: 2px 4px; border: 1px solid #354236; border-radius: 4px; min-width: 0; }
+.push-page-tile.current { border-color: #bdd4a7; background: #202c23; }
+.push-page-map { display: grid; width: min(100%, 65px); height: 100%; max-height: 65px; aspect-ratio: 1; grid-template: repeat(8, 1fr) / repeat(8, 1fr); gap: 1px; background: #101711; }
+.push-page-map i { display: block; position: relative; border-radius: 1px; overflow: hidden; }
+.push-page-map i span { position: absolute; inset: 0; }
+.push-page-map i span.split { clip-path: polygon(100% 0,100% 100%,0 100%); }
+.push-page-label { display: flex; flex-direction: column; width: 100%; align-items: center; line-height: 14px; font-size: 13px; }
+.push-page-label b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.push-page-label small { font-size: 10px; }
