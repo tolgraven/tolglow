@@ -68,5 +68,6 @@
   "Read the diagnostic ranking on demand, outside the frame publication loop."
   [runtime]
   (when-let [state (get-in @(:state runtime) [:cadence :state])]
-    (assoc (select-keys state [:frame :frame-ms :late-rate :keyframe-intervals])
+    (assoc (select-keys state [:frame :frame-ms :late-rate :keyframe-intervals
+                               :output-slot :slot-gap :minimum-useful-stride])
            :effects (cadence/ranked-costs state))))

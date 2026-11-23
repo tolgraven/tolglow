@@ -100,3 +100,26 @@
         (is (= :accepted (:status (apply-at! rt :settings {:scope :adaptive-keyframes :values {:enabled? false}} 75))))
         (is (nil? (cadence/status rt))))
       (finally (show/stop! rt)))))
+
+(deftest production-slot-passes-completed-render-opportunities-to-the-governor
+  (let [clock (atom 0.0)
+        runtime (show/create-runtime {:model (model) :workspace-options nil :workers 2
+                                      :physical-now-ms #(deref clock)
+                                      :adaptive-keyframes {:enabled? true}})
+        launch (show/submit! runtime {:op :cue/launch :cue-id :sampled})
+        render (fn [slot]
+                 (let [deadline (* 25.0 slot)
+                       start (- deadline 10.0)]
+                   (reset! clock start)
+                   (show/render-slot! runtime {:slot slot :started-at-ms start :deadline-ms deadline})))]
+    (try
+      (with-redefs [show/now-ms (fn [_] @clock)]
+        (doseq [slot [1 5 11]] (render slot))
+        (is (= :accepted (:status (deref launch 0 nil))))
+        (is (= {:output-slot 11 :slot-gap 6 :minimum-useful-stride 10}
+               (select-keys (cadence/status runtime) [:output-slot :slot-gap :minimum-useful-stride])))
+        (is (= 275.0 (get-in @(:state runtime) [:model :time-ms])))
+        (show/tick! runtime 300.0)
+        (is (nil? (:output-slot (cadence/status runtime))))
+        (is (= 2 (:minimum-useful-stride (cadence/status runtime)))))
+      (finally (show/stop! runtime)))))
