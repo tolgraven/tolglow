@@ -21,6 +21,9 @@ follow the time-varying target from pitched and rolled positions on a truss.
 The benchmark compares both direct and independent output against the scalar
 reference and captures every ArtDMX universe. [Dense venue measurements](performance/dense-venue.md)
 
+Measure one and four overlapping native cue volumes, including emitted-beam
+selection, with the [weighted venue profile](performance/weighted-venue.md).
+
 The corpus includes spatial RGBW pixel color, beat-based attack/release, an
 ordinary tween overlay, and optionally eight moving heads with aim, focus, zoom,
 RGBW and physical dimmers. Fixtures cross universe boundaries. The pipeline

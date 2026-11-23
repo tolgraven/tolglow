@@ -150,7 +150,9 @@
   (into {} (for [collector (ManagementFactory/getGarbageCollectorMXBeans)]
              [(.getName collector) {:collections (.getCollectionCount collector) :ms (.getCollectionTime collector)}])))
 
-(defn- measure [run expected {:keys [warmup samples]}]
+(defn measure
+  "Time run after warmup; verify each result against expected outside its measured interval."
+  [run expected {:keys [warmup samples]}]
   (dotimes [i warmup] (check! (expected i) (run i)))
   (let [bean (ManagementFactory/getThreadMXBean)
         owner (.getId (Thread/currentThread))
@@ -161,15 +163,19 @@
                            (.isThreadAllocatedMemorySupported ^com.sun.management.ThreadMXBean bean)
                            (.isThreadAllocatedMemoryEnabled ^com.sun.management.ThreadMXBean bean))
         allocated #(when allocations? (reduce + (map (fn [id] (max 0 (.getThreadAllocatedBytes ^com.sun.management.ThreadMXBean bean (long id)))) ids)))
+        cpu? (and (.isThreadCpuTimeSupported bean) (.isThreadCpuTimeEnabled bean))
+        cpu #(when cpu? (reduce + (map (fn [id] (max 0 (.getThreadCpuTime bean (long id)))) ids)))
         gc-before (gc-snapshot)
         observations (mapv (fn [offset]
-                             (let [i (+ warmup offset) bytes-before (allocated) start (System/nanoTime)
-                                   actual (run i) elapsed (/ (- (System/nanoTime) start) 1e6) bytes-after (allocated)]
+                             (let [i (+ warmup offset) bytes-before (allocated) cpu-before (cpu) start (System/nanoTime)
+                                   actual (run i) elapsed (/ (- (System/nanoTime) start) 1e6) cpu-after (cpu) bytes-after (allocated)]
                                (check! (expected i) actual)
-                               {:ms elapsed :bytes (when allocations? (- bytes-after bytes-before)) :stages-ms (:stages-ms actual)}))
+                               {:ms elapsed :cpu-ms (when cpu? (/ (- cpu-after cpu-before) 1e6))
+                                :bytes (when allocations? (- bytes-after bytes-before)) :stages-ms (:stages-ms actual)}))
                            (range samples))
         milliseconds (distribution (map :ms observations))]
-    {:milliseconds milliseconds :frames-per-second (/ 1000.0 (:mean milliseconds))
+    {:milliseconds milliseconds :cpu-ms (when cpu? (distribution (map :cpu-ms observations)))
+     :frames-per-second (/ 1000.0 (:mean milliseconds))
      :over-25ms (count (filter #(> (:ms %) 25.0) observations))
      :allocated-bytes (when allocations? (distribution (map :bytes observations))) :allocation-thread-count (count ids)
      :stages-ms (into {} (for [stage (keys (:stages-ms (first observations)))]
@@ -214,7 +220,9 @@
                      :publish (/ (- published ticked) 1e6)
                      :preview (/ (- (System/nanoTime) published) 1e6)}}))))
 
-(defn- projected-host-step! [runtime sink clock indices i]
+(defn projected-host-step!
+  "Advance one show and capture freshly presented packets and comparable preview fields."
+  [runtime sink clock indices i]
   (vreset! clock (* 25.0 (inc i)))
   (vreset! (:latest sink) [])
   (let [frame (host-step! runtime sink indices i)]
