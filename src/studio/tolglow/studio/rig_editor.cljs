@@ -366,7 +366,7 @@
                                          :on-change #(rf/dispatch [:studio/preview-setting :camera (value %)])}
                                 [:option {:value "audience"} "Audience"] [:option {:value "overview"} "Overview"]]]
         [:label "Work light · preview only" [:input {:type "range" :aria-label "Rig preview work light" :min 0 :max 1 :step 0.01
-                                                       :value (get-in db [:ui :preview-settings :worklight] 0.12)
+                                                       :value (get-in db [:ui :preview-settings :worklight] 0)
                                                        :on-change #(rf/dispatch [:studio/preview-setting :worklight (js/Number (value %))])}]]]
        [:div.rig-plane-controls
         [choice "Editing plane" (:plane state) [["xz" "Floor · XZ"] ["xy" "Front · XY"] ["yz" "Side · YZ"]] [:plane]]

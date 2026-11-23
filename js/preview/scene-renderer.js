@@ -9,7 +9,7 @@ import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {displayTransform, EdgePass, FilmPass} from './film.js';
-import {TIERS, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
+import {TIERS, rasterBudget, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
@@ -27,6 +27,19 @@ import {LightingSamples} from './lighting-samples.js';
 const DOWN = new THREE.Vector3(0, -1, 0);
 const MAX_LIGHTS = 16;
 
+function setRigPose(root, spec) {
+  const position = spec.position || [0, 0, 0];
+  const rotation = (spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180);
+  const changed = position.some((value, axis) => root.position.getComponent(axis) !== value)
+    || root.rotation.x !== rotation[0] || root.rotation.y !== rotation[1] || root.rotation.z !== rotation[2];
+  root.position.fromArray(position); root.rotation.set(...rotation, 'ZYX');
+  return changed;
+}
+function invalidateShadows(spots, reflections) {
+  for (const light of spots || []) if (light.castShadow) light.shadow.needsUpdate = true;
+  for (const light of reflections?.lights || []) if (light.castShadow) light.shadow.needsUpdate = true;
+}
+
 /** One lifecycle-owned graphics engine. The JVM owns all lighting output. */
 export class SceneRenderer {
   constructor(canvas, status, platform = {}) {
@@ -36,7 +49,7 @@ export class SceneRenderer {
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
     this.filmSettings = {bloom: .28, exposure: .85, grain: .0015};
     this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.qualityChoice = 'auto';
-    this.fogOverride = null; this.workLight = .12; this.visible = Boolean(platform.worker); this.lost = false;
+    this.fogOverride = null; this.workLight = 0; this.visible = Boolean(platform.worker); this.lost = false;
     this.lastFrame = 0; this.renderScale = 1; this.scaleChangedAt = 0; this.clock = 0; this.fogAnimationUntil = 0; this.draws = 0; this.lastCPU = 0;
     this.abort = new AbortController(); this.reducedMotion = platform.worker
       ? {matches: Boolean(platform.reducedMotion)} : matchMedia('(prefers-reduced-motion: reduce)');
@@ -206,7 +219,7 @@ export class SceneRenderer {
     if (force || this.key !== key) { this.ready = false; this.rebuild(rig); this.key = key; }
     for (const entry of this.trusses || []) {
       const spec = (rig.trusses || []).find(t => String(t.id) === entry.id);
-      if (spec) {entry.root.position.fromArray(spec.position); entry.root.rotation.set(...(spec['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');}
+      if (spec && setRigPose(entry.root, spec)) this.shadowCastersChanged = true;
     }
     this.fog?.setAtmosphere(opticalShow, snapshot.output?.atmosphere);
     this.fog?.setAmount(this.fogAmount);
@@ -220,11 +233,11 @@ export class SceneRenderer {
     this.fixtures.forEach((entry, index) => {
       const id = slots.meshes[index], fixture = this.fixtureById.get(id);
       if (entry.fixture !== fixture) {
+        if (apertureRadius(entry.fixture) !== apertureRadius(fixture)) this.shadowCastersChanged = true;
         entry.setAperture(fixture);
         entry.fixture = fixture; entry.id = id; entry.root.name = 'fixture:' + id;
       }
-      entry.root.position.fromArray(fixture.position || [0, 0, 0]);
-      entry.root.rotation.set(...(fixture['rotation-deg'] || [0, 0, 0]).map(v => v * Math.PI / 180), 'ZYX');
+      if (setRigPose(entry.root, fixture)) this.shadowCastersChanged = true;
       entry.light = spotById.get(id);
     });
     this.applyLighting(this.lighting.values(this.fixtures, receivedAt));
@@ -234,42 +247,47 @@ export class SceneRenderer {
     this.activeLights = 0;
     this.lightEntries = [];
     const candidates = [];
+    let castersChanged = this.shadowCastersChanged;
     for (const entry of this.fixtures) {
       const resolved = output[entry.id] || {}, direction = fixtureDirection(entry.fixture, resolved), rgb = emittedColor(resolved);
       const world = new THREE.Quaternion().setFromUnitVectors(DOWN, new THREE.Vector3(...direction));
-      entry.head.quaternion.copy(entry.root.quaternion).invert().multiply(world);
-      entry.yoke.rotation.y = axisDegrees(entry.fixture, resolved, 'pan') * Math.PI / 180;
+      const head = entry.root.quaternion.clone().invert().multiply(world);
+      const pan = axisDegrees(entry.fixture, resolved, 'pan') * Math.PI / 180;
+      // Unlit heads remain shadow casters for the other fixtures.
+      if (!entry.head.quaternion.equals(head) || entry.yoke.rotation.y !== pan) castersChanged = true;
+      entry.head.quaternion.copy(head); entry.yoke.rotation.y = pan;
       const brightness = entry.fixture['relative-brightness'] ?? 1;
       entry.lensMaterial.emissive.setRGB(...rgb).multiplyScalar(8 * brightness);
       if (!entry.light) continue;
       const light = entry.light;
       const lit = brightness > 0 && Math.max(...rgb) > 0;
       if (lit) this.activeLights++;
-      light.color.setRGB(...rgb); light.intensity = 145 * brightness; light.angle = beamAngle(entry.fixture, resolved);
+      const angle = beamAngle(entry.fixture, resolved);
+      const optics = opticalFrustum(entry.fixture.position, direction, angle, apertureRadius(entry.fixture));
+      const distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
+      const target = optics.virtual.clone().add(new THREE.Vector3(...direction));
+      if (light.castShadow && (light.angle !== angle || light.distance !== distance
+        || light.shadow.camera.near !== optics.apexDistance + .006
+        || !light.position.equals(optics.virtual) || !light.target.position.equals(target))) light.shadow.needsUpdate = true;
+      light.color.setRGB(...rgb); light.intensity = 145 * brightness; light.angle = angle;
       light.penumbra = clamp(.72 - (Number(resolved.focus) || 0) * .52, .2, .8);
-      const optics = opticalFrustum(entry.fixture.position, direction, light.angle, apertureRadius(entry.fixture));
       light.position.copy(optics.virtual);
-      light.distance = Math.max(...this.room) * 2.5 + optics.apexDistance;
+      light.distance = distance;
       if (light.shadow.camera.near !== optics.apexDistance + .006) {
         light.shadow.camera.near = optics.apexDistance + .006; light.shadow.camera.updateProjectionMatrix();
       }
       light.shadow.camera.far = light.distance; light.userData.apexDistance = optics.apexDistance;
-      light.target.position.copy(light.position).add(new THREE.Vector3(...direction)); light.target.updateMatrixWorld();
+      light.target.position.copy(target); light.target.updateMatrixWorld();
       if (!lit) continue;
       const beam = {position: optics.optical, virtualPosition: optics.virtual, apexDistance: optics.apexDistance, apertureRadius: optics.radius, direction: optics.axis, color: light.color,
         angle: light.angle, penumbra: light.penumbra, intensity: light.intensity, distance: light.distance, shadow: light.castShadow ? light.shadow : null, pseudo: entry.fixture['pseudo-fixture']};
       this.lightEntries.push(beam);
       this.reflections.addCandidate(candidates, entry, beam, resolved['beam-footprint']);
     }
-    // Low-order room bounce estimate: only actual emitted, floor-directed light
-    // contributes. This illuminates airborne density, not a second fixture output.
-    const bounce = new THREE.Color(0, 0, 0);
-    for (const entry of this.lightEntries) {
-      if (entry.pseudo) continue;
-      const downward = Math.max(0, -entry.direction.y);
-      bounce.add(entry.color.clone().multiplyScalar(downward * .045 * entry.intensity / 145));
-    }
-    this.bounceColor = bounce;
+    // Fog, color and camera updates do not alter light-space depth. Geometry
+    // changes invalidate every map; otherwise only changed light optics do.
+    if (castersChanged) invalidateShadows(this.spots, this.reflections);
+    this.shadowCastersChanged = false;
     // The permanent spot order matches Three's shadow-first uniform order.
     if (this.spots.length) {
       if (candidates.length) this.content.updateMatrixWorld(true);
@@ -309,6 +327,7 @@ export class SceneRenderer {
         light.shadow.camera.near = .06; light.shadow.camera.far = light.distance;
         light.shadow.bias = -.00008; light.shadow.normalBias = .012;
         light.castShadow = index < this.options.shadows;
+        light.shadow.autoUpdate = false; light.shadow.needsUpdate = true;
         this.spots.push(light); this.lightIds.push(entry.id);
         this.content.add(light, light.target); entry.light = light;
       }
@@ -327,8 +346,8 @@ export class SceneRenderer {
     if (this.qualityChoice !== 'auto' || this.draws < 2 || !this.visible) return;
     this.measuredFrameMs = elapsed;
     const budget = 1000 / this.targetHz;
-    this.overBudget = elapsed > budget * 1.35 ? (this.overBudget || 0) + 1 : 0;
-    this.underBudget = elapsed < budget * .65 ? (this.underBudget || 0) + 1 : 0;
+    this.overBudget = elapsed > budget * .9 ? (this.overBudget || 0) + 1 : 0;
+    this.underBudget = elapsed < budget * .5 ? (this.underBudget || 0) + 1 : 0;
     if (now - this.scaleChangedAt < 1000) return;
     let scale = this.renderScale;
     if (this.overBudget >= 4) scale = Math.max(.5, Math.min(scale * .85, scale * Math.sqrt(budget / elapsed)));
@@ -337,7 +356,9 @@ export class SceneRenderer {
       const direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
       const next = adjacentQuality(this.quality, direction);
       if (next !== this.quality) {
-        this.renderScale = direction < 0 ? .65 : .9;
+        const sameRaster = rasterBudget(next, this.qualityChoice, this.softwareRenderer)
+          === rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer);
+        this.renderScale = direction < 0 ? (sameRaster ? scale : .65) : .9;
         this.scaleChangedAt = now; this.overBudget = this.underBudget = 0;
         this.applyTier(next);
         return;
@@ -355,7 +376,7 @@ export class SceneRenderer {
     if (!bounds.width || !bounds.height) return;
     const pixelRatio = this.platform.worker ? bounds.pixelRatio : devicePixelRatio;
     const {scene: [width, height], display: [displayWidth, displayHeight]} = rasterSizes(
-      bounds.width, bounds.height, pixelRatio, this.options, this.renderScale, this.maxDimension);
+      bounds.width, bounds.height, pixelRatio, rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer), this.renderScale, this.maxDimension);
     this.camera.aspect = bounds.width / bounds.height; this.camera.updateProjectionMatrix();
     if (displayWidth !== this.displayWidth || displayHeight !== this.displayHeight) {
       this.renderer.setSize(displayWidth, displayHeight, false);
@@ -409,6 +430,7 @@ export class SceneRenderer {
     this.gpuTimer?.dispose();
     if (!this.platform.worker) this.gpuTimer = new GpuTimer(this.renderer.getContext());
     this.resize(); this.refreshEnvironment(); this.fog?.upload();
+    invalidateShadows(this.spots, this.reflections);
     this.lost = false; this.ready = false; this.lastFrame = 0; this.setStatus('Restoring venue shaders…');
   }
   scheduleFrame(delay) {
@@ -450,13 +472,15 @@ export class SceneRenderer {
     // floor lit by the directional worklamp.
     const ambient = this.hemisphere.color.clone().multiplyScalar(this.workLight * .8)
       .add(this.workLamp.color.clone().multiplyScalar(this.workLight * .65));
-    if (this.bounceColor) ambient.add(this.bounceColor);
     this.fog.setAmbient?.({color: ambient, intensity: 1, groundColor: ambient.clone().multiplyScalar(.5)});
     this.fog.update(simulate ? dt : 0, this.lightEntries || []);
     this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
-    this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
+    // Glass needs an immutable fogged source while writing into the composer.
+    // Without glass, integrate directly into its input and avoid a full HDR copy.
+    this.inputPass.enabled = this.glass.enabled;
+    this.fog.render(this.sceneTarget, this.camera, this.glass.enabled ? this.compositeTarget : this.composer.readBuffer);
     this.film.uniforms.phase.value = this.reducedMotion.matches ? 0 : Math.floor(this.clock * 24) % 1024;
     this.composer.render(dt); this.editorOverlay?.render(this.renderer, this.camera); this.lastCPU = performance.now() - started; this.draws++;
     this.observedFrame?.(this.canvas, this.snapshot?.['show-id'], this.snapshot?.epoch, this.snapshot?.['frame-number'] ?? 0);

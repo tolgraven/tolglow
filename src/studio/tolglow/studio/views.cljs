@@ -329,7 +329,7 @@
      [:div.preview-settings
       [:label "Work light"
        [:input {:type "range" :min 0 :max 1 :step 0.01 :aria-label "Preview work light"
-                 :value (get-in db [:ui :preview-settings :worklight] 0.12)
+                 :value (get-in db [:ui :preview-settings :worklight] 0)
                  :on-change #(when-let [value (number-value %)] (input! [:studio/preview-setting :worklight value]))}]]
       [:select {:aria-label "Preview quality" :value (get-in db [:ui :preview-settings :quality] "auto")
                  :on-change #(input! [:studio/preview-setting :quality (input-value %)])}

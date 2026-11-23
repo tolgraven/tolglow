@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SceneRenderer} from '../../../js/preview/scene-renderer.js';
-import {TIERS, rasterSizes, sceneSamples, supportedSamples, configureDisplayRange} from '../../../js/preview/render-quality.js';
+import {TIERS, rasterBudget, rasterSizes, sceneSamples, supportedSamples, configureDisplayRange} from '../../../js/preview/render-quality.js';
 
 test('present at panel DPR up to UHD regardless of the current fog and scene budget', () => {
   const size = (w, h, dpr, tier, scale = 1) => rasterSizes(w, h, dpr, TIERS[tier], scale, 16384);
@@ -51,7 +51,7 @@ test('completed warm frames control auto quality with headroom and hysteresis', 
 });
 
 
-test('a 15 ms warm workload keeps its spatial budget on a 60 Hz panel and adapts on 120 Hz', () => {
+test('auto reserves delivery headroom on both 60 Hz and 120 Hz panels', () => {
   function scene(displayHz) {
     const engine = Object.create(SceneRenderer.prototype);
     Object.assign(engine, {displayHz, quality: 'mobile', qualityChoice: 'auto', options: TIERS.mobile,
@@ -60,8 +60,35 @@ test('a 15 ms warm workload keeps its spatial budget on a 60 Hz panel and adapts
   }
   const standard = scene(60), fast = scene(120);
   for (let i = 0; i < 5; i++) {
-    standard.measureLoad(15, 2000 + i); fast.measureLoad(15, 2000 + i);
+    standard.measureLoad(16, 2000 + i); fast.measureLoad(16, 2000 + i);
   }
-  assert.equal(standard.renderScale, 1);
+  assert.ok(standard.renderScale < 1);
   assert.ok(fast.renderScale < 1);
+});
+
+test('hardware Auto simplifies lighting cost without inheriting the software raster cap', () => {
+  const size = (choice, software) => rasterSizes(1559, 700, 1.8, rasterBudget('low', choice, software), .65, 16384);
+  assert.ok(size('auto', false).scene[0] >= 1100);
+  assert.ok(size('low', false).scene[0] < 450);
+  assert.ok(size('auto', true).scene[0] < 450);
+  assert.deepEqual(size('auto', false).display, size('auto', true).display);
+  assert.equal(rasterBudget('desktop', 'auto', false), TIERS.desktop);
+});
+
+test('Auto lowers mobile lighting cost without enlarging its unchanged raster budget', () => {
+  const transitions = [], engine = Object.create(SceneRenderer.prototype);
+  Object.assign(engine, {qualityChoice: 'auto', quality: 'mobile', options: TIERS.mobile,
+    displayHz: 60, softwareRenderer: false, draws: 10, visible: true, renderScale: .5, scaleChangedAt: 0,
+    // Capture the graphics-allocation boundary; the production policy chooses
+    // the tier and scale, and production raster sizing resolves actual pixels.
+    applyTier(next) {transitions.push(next); this.quality = next; this.options = TIERS[next];}});
+  const size = () => rasterSizes(1559, 700, 1.8,
+    rasterBudget(engine.quality, engine.qualityChoice, engine.softwareRenderer), engine.renderScale, 16384);
+  const before = size();
+  for (let frame = 0; frame < 8; frame++) engine.measureLoad(20, 2000 + frame);
+  assert.deepEqual(transitions, ['low']);
+  assert.equal(engine.renderScale, .5);
+  assert.deepEqual(size(), before, 'a cheaper lighting tier must not increase the existing raster');
+  assert.equal(engine.options.shadows, 1);
+  assert.equal(sceneSamples(engine.quality, ...size().scene, 4), 0);
 });

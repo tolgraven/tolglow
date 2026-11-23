@@ -20,7 +20,7 @@ export class WorkerRoomPreview {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.disposed = false;
     this._ready = false; this.presented = false; this.room = [12, 5, 10]; this.snapshot = null;
     this.identity = showIdentity(null); this.visible = false; this.generation = 0; this.paused = false;
-    this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
+    this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = 0; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});

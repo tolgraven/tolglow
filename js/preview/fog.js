@@ -133,13 +133,16 @@ void main(){
  vec3 surfaceWorld=(cameraWorld*surfaceView).xyz;
  vec2 interval=roomHit(eye,ray);float start=max(0.,interval.x),finish=min(interval.y,length(surfaceWorld-eye));
  if(finish<=start){volumeOutput=vec4(0.,0.,0.,1.);return;}
- vec4 lightIntervals[16];
+ vec4 lightIntervals[16];int rayLights[16];int rayLightCount=0;
  for(int i=0;i<16;i++){
   if(i>=lightCount)break;
-  lightIntervals[i]=vec4(1.,0.,1.,0.);
-  if(dot(lightColor[i],lightColor[i])>.000001 && lightShape[i].y>0.)
-   lightIntervals[i]=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
-                          coneHit(i,lightProfile[i].w,eye,ray,start,finish));
+  if(dot(lightColor[i],lightColor[i])<=.000001 || lightShape[i].y<=0.)continue;
+  vec4 spans=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
+                  coneHit(i,lightProfile[i].w,eye,ray,start,finish));
+  // Most screen rays cross very few beams. Cull once, before marching, while
+  // retaining each exact clipped interval (including sub-step narrow shafts).
+  if(spans.y<=spans.x && spans.w<=spans.z)continue;
+  lightIntervals[rayLightCount]=spans;rayLights[rayLightCount]=i;rayLightCount++;
  }
  float stepSize=(finish-start)/float(raySteps);
  float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
@@ -155,7 +158,7 @@ void main(){
   // Sky irradiance also reaches material near the floor. A height-only mix
   // incorrectly made a warm white plume look like black smoke at its source.
   vec3 ambient=mix(ambientGround,ambientSky,.65+.15*clamp(position.y/room.y,0.,1.));
-  if(density*extinctionPerM>.12){
+  if(density*extinctionPerM>.12 && dot(ambient,ambient)>0.){
    // Three coarse canopy samples approximate environment occlusion inside a
    // dense plume. Multiple scattering retains a bright floor, unlike opaque
    // smoke. This is a local lighting estimate, not a second fluid simulation.
@@ -167,14 +170,17 @@ void main(){
    ambient*=.78+.22*fogTransmission(extinctionPerM,canopy*amount,.56);
   }
   radiance+=transmission*(1.-segment)*.92*ambient;
-  for(int i=0;i<16;i++){
-   if(i>=lightCount)break;
+  for(int light=0;light<16;light++){
+   if(light>=rayLightCount)break;
+   int i=rayLights[light];
    for(int layer=0;layer<2;layer++){
     bool halo=layer==1;
-    vec2 span=halo?lightIntervals[i].zw:lightIntervals[i].xy;
+    vec2 span=halo?lightIntervals[light].zw:lightIntervals[light].xy;
     float lo=max(begin,span.x),hi=min(begin+stepSize,span.y);
     if(hi<=lo)continue;
-    vec3 samplePosition=eye+ray*((lo+hi)*.5);
+    // Jitter inside the clipped light interval too, so lit density does not
+    // align into marching slabs. The full interval still covers narrow beams.
+    vec3 samplePosition=eye+ray*(lo+(.2+.6*jitter)*(hi-lo));
     float localDensity=densityAt(samplePosition);
     if(localDensity<=0.)continue;
     float foreground=fogTransmission(extinctionPerM,density,lo-begin);
@@ -222,7 +228,12 @@ export class VolumetricFog {
   constructor(renderer, { quality = 'desktop' } = {}) {
     if (!FOG_QUALITY[quality]) throw new Error('Unknown fog quality');
     this.renderer = renderer; this.quality = quality; this.budget = FOG_QUALITY[quality]; this.disposed = false;
-    this.field = new FogField({ grid: this.budget.grid }); this.field.burst(); this.amount = 0.5;
+    // Local preview haze is an explicit maintained room setting, not a single
+    // startup puff that disappears while the control remains unchanged. At
+    // unit visibility this is 15% equivalent density; show-owned atmosphere
+    // below replaces it completely with accepted emitted/mixed quantities.
+    this.field = new FogField({ grid: this.budget.grid, initialHaze: .15, retainedHaze: .15 });
+    this.field.burst(); this.amount = 0.5;
     this.packed = new Uint16Array(this.field.data.length);
     this.density = new THREE.Data3DTexture(this.packed, ...this.budget.grid);
     Object.assign(this.density, { format: THREE.RedFormat, type: THREE.HalfFloatType, internalFormat: 'R16F',
@@ -317,7 +328,7 @@ export class VolumetricFog {
     const atmosphere = this.showAtmosphere;
     const visibleAmount = atmosphere && !atmosphere.localVolume && !atmosphere.sample?.['mixed-density'] ? 0 : this.amount;
     u.extinctionPerM.value = this.extinctionPerM;
-    u.mixedDensity.value = atmosphere?.sample?.['mixed-density'] || 0;
+    u.mixedDensity.value = atmosphere ? atmosphere.sample?.['mixed-density'] || 0 : this.field.retainedHaze;
     u.amount.value = visibleAmount; u.time.value = this.field.time; u.lightCount.value = this.lights.length;
     u.lightShadow.value.fill(-1); let shadows = 0;
     for (let slot = 0; slot < 4; slot++) u[`shadow${slot}`].value = this.dummyShadow;

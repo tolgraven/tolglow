@@ -13,6 +13,13 @@ import {beginPassSample} from './room-pass-analysis.mjs';
 const [cdp = 'http://127.0.0.1:9223', output = 'target/room-device'] = process.argv.slice(2);
 const quality = process.env.ROOM_QUALITY || 'auto';
 if (!['auto', 'mobile', 'desktop'].includes(quality)) throw new Error('ROOM_QUALITY must be auto, mobile or desktop.');
+const workLight = Number(process.env.ROOM_WORK_LIGHT ?? .22);
+const lightingMode = process.env.ROOM_LIGHTING_MODE || 'hold';
+const minimumWarmupMs = Number(process.env.ROOM_WARMUP_MS ?? 8000);
+if (!Number.isFinite(workLight) || workLight < 0 || workLight > 1) throw new Error('ROOM_WORK_LIGHT must be between zero and one.');
+if (!['hold', 'interpolate'].includes(lightingMode)) throw new Error('ROOM_LIGHTING_MODE must be hold or interpolate.');
+if (!Number.isInteger(minimumWarmupMs) || minimumWarmupMs < 8000 || minimumWarmupMs > 120000)
+  throw new Error('ROOM_WARMUP_MS must be between 8000 and 120000.');
 const passes = process.env.ROOM_PASSES?.split(',').map(s => s.trim());
 const allowedPasses = ['full', 'cached-shadows', 'skip-fog-raymarch', 'present-cached-frame'];
 if (passes && (quality === 'auto' || passes.some(p => !allowedPasses.includes(p)))) {
@@ -34,7 +41,8 @@ const shader = await readFile(join(source, 'resources/studio/preview-worker.js')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const metadata = {tolglow: gitHead(source), afterglow: gitHead(fork), mainJsSha256: hash(ui),
   workerJsSha256: hash(shader), platform: process.platform, architecture: process.arch,
-  output: 'preview only', quality, warmup: {minimumSeconds: 8, minimumDrawnFrames: 4}, scenarios: []};
+  output: 'preview only', quality, workLight, lightingMode,
+  warmup: {minimumSeconds: minimumWarmupMs / 1000, minimumDrawnFrames: 4}, scenarios: []};
 const config = join(temp, 'room.edn');
 await writeFile(config, '{:init {:components [:show] :modules [:web-server]} :show {:workspace-options nil} :web-server {:host "127.0.0.1" :port 0}}');
 const leinPrefix = [];
@@ -104,12 +112,14 @@ try {
   page.on('worker', w => {note('worker',new URL(w.url()).pathname); w.on('close', () => note('worker-closed',new URL(w.url()).pathname));});
   await page.bringToFront();
   await page.goto(origin);
+  await page.evaluate(() => {document.title = 'Tolglow benchmark — measuring preview';});
   await page.locator('#preview').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready, null, {timeout: 90000});
   // Use ordinary controls and the actual device viewport and DPR.
   const expand = page.getByRole('button', {name: 'Expand', exact: true});
   if (await expand.count()) await expand.click();
   await page.getByLabel('Preview quality', {exact: true}).selectOption(quality);
+  await page.getByLabel('Preview fixture updates', {exact: true}).selectOption(lightingMode);
   await page.locator('#preview').scrollIntoViewIfNeeded();
   if (passes) {
     probeWorker = page.workers().find(w => new URL(w.url()).pathname === '/studio/preview-worker.js');
@@ -135,7 +145,7 @@ try {
     // Restore the full moving scene before selecting a different ablation, so
     // a cached-frame sample captures the current lit scenario.
     if (pass) await probeWorker.evaluate(() => self.setRoomPassMode('full'));
-    await slider('Preview work light', .22); await slider('Preview fog density', fog);
+    await slider('Preview work light', workLight); await slider('Preview fog density', fog);
     await page.locator('#preview').scrollIntoViewIfNeeded();
     await page.waitForFunction(fog => {
       const t = document.querySelector('#preview').tolglowPreview.getTelemetry();
@@ -147,7 +157,7 @@ try {
       quality, {timeout: 90000});
     const warmStarted = Date.now();
     const initialFrames = await page.evaluate(() => document.querySelector('#preview').tolglowPreview.getTelemetry().frames);
-    await Promise.all([delay(8000), page.waitForFunction(n => document.querySelector('#preview').tolglowPreview.getTelemetry().frames >= n + 4,
+    await Promise.all([delay(minimumWarmupMs), page.waitForFunction(n => document.querySelector('#preview').tolglowPreview.getTelemetry().frames >= n + 4,
       initialFrames, {timeout: 150000})]);
     if (pass) {
       await probeWorker.evaluate(choice => self.setRoomPassMode(choice), pass);
@@ -160,9 +170,21 @@ try {
     }
     const state = async () => (await (await fetch(origin + '/api/state')).json()).output?.values?.['head-1'];
     const warmupMs = Date.now() - warmStarted;
+    const settings = () => page.evaluate(() => {
+      const preview = document.querySelector('#preview').tolglowPreview, t = preview.getTelemetry();
+      return {quality: document.querySelector('[aria-label="Preview quality"]').value,
+        lightingMode: t.lightingMode, workLight: t.workLight, fog: t.fogAmount};
+    });
+    const settingsBefore = await settings();
     const before = await state();
     const [measured, middle] = await Promise.all([page.evaluate(measureRoom, 20000), delay(7100).then(state)]);
     const after = await state();
+    const settingsAfter = await settings();
+    measured.controls = {before: settingsBefore, after: settingsAfter};
+    if ([settingsBefore, settingsAfter].some(s => s.quality !== quality || s.lightingMode !== lightingMode || s.workLight !== workLight || s.fog !== fog))
+      measured.invalid.push('preview controls differ from the requested benchmark settings');
+    if (measured.start.camera.some((v, i) => Math.abs(v - measured.end.camera[i]) > 1e-6))
+      measured.invalid.push('camera changed during the controlled sample');
     if (pass) {
       measured.pass = pass;
       const {timings, accepted, raymarched} = await page.evaluate(() => window.finishRoomPassSample());

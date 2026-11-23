@@ -66,9 +66,10 @@ export function intersectCone(origin, direction, position, axis, angle, interval
 }
 
 export class FogField {
-  constructor({ grid = FOG_QUALITY.desktop.grid, room = [12, 5, 10], initialHaze = 0.07 } = {}) {
+  constructor({ grid = FOG_QUALITY.desktop.grid, room = [12, 5, 10], initialHaze = 0.07, retainedHaze = 0 } = {}) {
     if (!Array.isArray(grid) || grid.length !== 3 || grid.some(n => !Number.isInteger(n) || n < 4 || n > 64)) throw new Error('Invalid fog grid');
     this.grid = [...grid]; this.initialHaze = clamp(finite(initialHaze, 'haze'), 0, 1);
+    this.retainedHaze = clamp(finite(retainedHaze, 'retained haze'), 0, 1);
     const count = grid[0] * grid[1] * grid[2];
     this.data = new Float32Array(count); this.temperature = new Float32Array(count);
     this.advected = new Float32Array(count); this.advectedHeat = new Float32Array(count);
@@ -94,6 +95,7 @@ export class FogField {
   copyFrom(field) {
     if (!(field instanceof FogField)) throw new Error('Expected an owned fog field');
     this.setRoom(field.room);
+    this.retainedHaze = field.retainedHaze;
     const [nx, ny, nz] = this.grid, [ox, oy, oz] = field.grid;
     for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       const i = x + y * nx + z * nx * ny;
@@ -187,7 +189,11 @@ export class FogField {
       const left = x ? i - 1 : i, right = x < nx - 1 ? i + 1 : i;
       const down = y ? i - nx : i, up = y < ny - 1 ? i + nx : i;
       const back = z ? i - stride : i, front = z < nz - 1 ? i + stride : i;
-      this.next[i] = Math.max(0, (b[i] + cx * (b[left] + b[right] - 2 * b[i]) + cy * (b[down] + b[up] - 2 * b[i]) + cz * (b[back] + b[front] - 2 * b[i])) * densityDecay);
+      const diffused = b[i] + cx * (b[left] + b[right] - 2 * b[i]) + cy * (b[down] + b[up] - 2 * b[i]) + cz * (b[back] + b[front] - 2 * b[i]);
+      // An explicit manual-preview haze setting maintains its room background.
+      // Emitted plume excess still disperses and ventilates; ordinary fields
+      // retain the original decay to empty air (retainedHaze defaults to zero).
+      this.next[i] = Math.max(0, this.retainedHaze + (diffused - this.retainedHaze) * densityDecay);
       this.nextHeat[i] = Math.max(0, (h[i] + cx * (h[left] + h[right] - 2 * h[i]) + cy * (h[down] + h[up] - 2 * h[i]) + cz * (h[back] + h[front] - 2 * h[i])) * cooling);
     }
     [this.data, this.next] = [this.next, this.data]; [this.temperature, this.nextHeat] = [this.nextHeat, this.temperature];

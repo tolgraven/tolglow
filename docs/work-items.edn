@@ -30,6 +30,25 @@
    :depends-on [:foundation/tests]
    :acceptance ["Record the actual macOS host model, CPU, renderer, workload, source revisions and warmup. Report full-frame deadline counts, time for four spheres, and agreement of fixture events and output."
                 "Measure native shader dispatch and completed readback separately, distinguish software rendering, and retain raw results."] :evidence []}
+  {:id :preview/mac-display-cadence :title "Restore independent display cadence and dark-show volumetric fog"
+   :kind :implementation :status :in-progress :owner "local Mac renderer owner"
+   :paths ["tolglow/docs/performance/local-mac-preview.md" "tolglow/docs/performance/captures/mac-preview"
+           "tolglow/dev/preview/measure-room.mjs"
+           "tolglow/js/preview/worker.js" "tolglow/js/preview/display-clock.js"
+           "tolglow/js/preview/scene-renderer.js" "tolglow/js/preview/render-quality.js"
+           "tolglow/js/preview/worker-proxy.js" "tolglow/js/preview/fog.js" "tolglow/js/preview/fog-field.js"
+           "tolglow/src/studio/tolglow/studio/events.cljs" "tolglow/src/studio/tolglow/studio/views.cljs"
+           "tolglow/src/studio/tolglow/studio/rig_editor.cljs"
+           "tolglow/test/js/preview/shadow-cache-browser.test.mjs" "tolglow/test/js/preview/shadow-cache-browser-fixture.mjs" "tolglow/test/js/preview/shadow-cache.test.mjs" "tolglow/test/js/preview/display-refresh.test.mjs" "tolglow/test/js/preview/worker-clock.test.mjs" "tolglow/test/js/preview/lighting-samples.test.mjs" "tolglow/test/js/preview/render-quality.test.mjs"
+           "tolglow/test/js/preview/fog.test.mjs" "tolglow/test/js/preview/fog-gpu.test.mjs" "tolglow/test/js/preview/fog-gpu-fixture.mjs"
+           "tolglow/resources/studio/preview.js" "tolglow/resources/studio/preview-worker.js"]
+   :depends-on [:render/frame-v1]
+   :acceptance ["Measure actual completed worker bitmaps independently of backend lighting keyframes and display RAF callbacks."
+                "Keep bounded GPU completion and bitmap acknowledgement; remove avoidable display skips."
+                "Dark show by default with explicit worklight, visible stable preview haze and advected plumes; preserve authoritative venue atmosphere."
+                "Verify fog depth, shadowing and empty-air behavior in the shared development Chrome on the physical M4 Air."]
+   :evidence ["docs/performance/local-mac-preview.md records actual M4 worker presentations, independent scheduled 40.088 Hz publication, GPU fog/shadow/glass pixel checks, and the rejected timing experiments. Complete preview repeats span 55–59 Hz at 914×410 scene and 2806×1260 display. Stable 60 Hz, physical 120 Hz and visual acceptance remain open."]
+   :notes "Cloud owner delegated these renderer paths and only worklight defaults in UI files. Integrated with current parameter controls and browser observation hooks; R92 remains open."}
   {:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
    :kind :implementation :status :in-progress :owner "Nearby audience participation"
    :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge" "tolglow/native/Core/Sources/TolglowSensorCore/AudienceRecovery.swift"]

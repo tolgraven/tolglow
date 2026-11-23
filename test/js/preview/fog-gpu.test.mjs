@@ -7,8 +7,9 @@ import {chromium} from 'playwright-core';
 import {fogTransmission, fogAbsorptance} from '../../../js/preview/fog-optics.generated.js';
 
 test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and PCF depth shadows', async t => {
+  const endpoint = process.env.CDP_ENDPOINT;
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
-  if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH to run actual GPU-context assertions');
+  if (!endpoint && !existsSync(executablePath)) return t.skip('Set CDP_ENDPOINT or CHROMIUM_PATH to run actual GPU-context assertions');
   const bundle = await build({entryPoints: [new URL('./fog-gpu-fixture.mjs', import.meta.url).pathname],
     bundle: true, format: 'esm', platform: 'browser', write: false});
   const server = createServer((request, response) => {
@@ -16,11 +17,12 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     response.end(request.url === '/fixture.js' ? bundle.outputFiles[0].text : '<script type="module" src="/fixture.js"></script>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  let browser;
+  let browser, page;
   try {
-    browser = await chromium.launch({executablePath, headless: true,
+    browser = endpoint ? await chromium.connectOverCDP(endpoint) : await chromium.launch({executablePath, headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
-    const page = await browser.newPage(), errors = [];
+    page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
+    const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -28,6 +30,9 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     const result = await page.evaluate(() => window.fogTest());
     t.diagnostic(JSON.stringify(result));
     assert.deepEqual(errors, []);
+    assert.ok(Math.abs(result.manualHazeDensity - .15) < .00001);
+    assert.ok(Math.abs(result.manualHazeTransmission - fogTransmission(1.25, .15 * .7, 8)) < .002);
+    assert.equal(result.culledLightDifference, 0);
     assert.equal(result.zeroAmountDifference, 0);
     assert.equal(result.emptyFieldDifference, 0);
     assert.equal(result.behindOpaqueDifference, 0);
@@ -62,7 +67,13 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.ok(Math.abs(result.brighterHalo/result.halo - 2) < .02);
     assert.equal(result.dryHalo,0);
     assert.equal(result.glError, 0);
-  } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
+  } finally {
+    await page?.close();
+    // For connectOverCDP, Playwright closes only its transport here. The shared
+    // browser and default context remain open; only this test's page is closed.
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
 test('the emitted material preserves transparent boundaries and trace attenuation', () => {

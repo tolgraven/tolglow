@@ -61,6 +61,27 @@ test('uniform haze has exact ventilation decay without invented structures', () 
   for (const v of field.data) near(v, expected);
 });
 
+test('manual room haze remains stable while emitted plume excess disperses', () => {
+  const field = new FogField({grid: [12, 8, 12], initialHaze: .15, retainedHaze: .15});
+  for (let n = 0; n < 200; n++) field.advance(.05);
+  for (const density of field.data) near(density, .15);
+  field.burst({position: [-2, .2, -1], direction: [1, .15, 0], duration: 1, strength: 2});
+  for (let n = 0; n < 20; n++) field.advance(.05);
+  const fresh = field.stats();
+  assert.ok(fresh.maximumDensity > .5);
+  for (let n = 0; n < 140; n++) field.advance(.05);
+  const dispersed = field.stats();
+  assert.equal(dispersed.activeSources, 0);
+  assert.ok(dispersed.maximumDensity < fresh.maximumDensity);
+  assert.ok(dispersed.meanDensity > .15);
+  assert.ok(field.data.every(density => density >= .15));
+  const resized = new FogField({grid: [16, 10, 16], initialHaze: 0});
+  resized.copyFrom(field);
+  assert.equal(resized.retainedHaze, .15);
+  assert.equal(resized.time, field.time);
+  near(resized.stats().massEstimate, dispersed.massEstimate, .15);
+});
+
 test('fresh hot plume is local, rises, diffuses and cools after emission ends', () => {
   const field = new FogField({ grid: [24, 16, 24], room: [8, 4, 8], initialHaze: 0 });
   field.burst({ position: [-2, .2, -1], direction: [1, .15, 0], duration: 1, strength: 1.5 });

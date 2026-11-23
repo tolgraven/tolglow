@@ -15,6 +15,12 @@ export function presentationHz(tier, choice, software, displayHz) {
   return Math.min(limit, displayHz || limit);
 }
 
+// Hardware Auto can simplify fog, shadows and MSAA without inheriting the
+// software fallback's tiny raster. Resolution still adapts inside this budget.
+export function rasterBudget(tier, choice, software) {
+  return TIERS[tier === 'low' && choice === 'auto' && !software ? 'mobile' : tier];
+}
+
 export function rasterSizes(width, height, dpr, tier, scale, maxDimension) {
   const native = Math.min(dpr || 1, Math.sqrt(UHD / (width * height)), maxDimension / Math.max(width, height));
   const internal = Math.min(native, tier.dpr, Math.sqrt(tier.maxPixels / (width * height))) * scale;

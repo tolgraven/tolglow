@@ -38,6 +38,11 @@ window.fogTest = () => {
   const gl = renderer.getContext(), debug = gl.getExtension('WEBGL_debug_renderer_info');
   const result = {renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)};
   scene.background = new THREE.Color(.125, .25, .5);
+  fog.field.clear(fog.field.initialHaze); fog.upload(); fog.setAmount(.7);
+  for (let i = 0; i < 20; i++) fog.update(.05);
+  const maintained = render([]), maintainedSource = pixels(target), center = (49 * width + 49) * 4;
+  result.manualHazeDensity = fog.field.stats().meanDensity;
+  result.manualHazeTransmission = maintained[center] / maintainedSource[center];
   fog.field.clear(.5); fog.upload(); fog.setAmount(0);
   const zero = render([entry()]); result.zeroAmountDifference = difference(zero, pixels(target));
   fog.field.clear(0); fog.upload(); fog.setAmount(1);
@@ -61,6 +66,11 @@ window.fogTest = () => {
   // Merely checking that an occluder dims something misses attachment/format
   // migrations that make every shadowed light incorrectly disappear.
   const clearUnshadowed = render([{...entry(), shadow: null}]);
+  // Missing/black cones surrounding a contributing light must not change its
+  // original index, profile or shadow slot in the compact per-ray light list.
+  const miss = {...entry(), position: new THREE.Vector3(30, 3, 2), shadow: null};
+  const off = {...entry(), color: new THREE.Color(0, 0, 0), shadow: null};
+  result.culledLightDifference = difference(clearUnshadowed, render([miss, off, {...entry(), shadow: null}, miss, off]));
   const clearShadowed = render([entry()]);
   result.clearShadowDifference = difference(clearUnshadowed, clearShadowed);
   result.clearShadowRatio = sum(clearShadowed) / sum(clearUnshadowed);
@@ -109,6 +119,7 @@ window.fogTest = () => {
   const host=(time,mixed,local,emitted,flow)=>({'sample-time-ms':time,epoch:1,'volume-m3':256,'mixed-m3':mixed,'mixed-density':mixed/256,
     sources:[{'fixture-id':'jet',position:[-.7,1.25,0],direction:[1,.1,0],'local-m3':local,'emitted-m3':emitted,'flow-m3-s':flow}]});
   fog.setAtmosphere('venue',host(0,0,0,0,0)); result.manualDuringShow=fog.burst();
+  for (let i = 0; i < 20; i++) fog.update(.05);
   const dry=render([]); result.dryHostDifference=difference(dry,pixels(target));
   fog.setAtmosphere('venue',host(500,0,3,3,6));
   const jet=render([]), red=jet.filter((_,i)=>i%4===0);

@@ -17,7 +17,7 @@
   {:session session :show nil :pointers {} :pending-params {} :drafts {} :stream-id nil
    :connection {:connected? false :error "Connecting to the studio…"}
    :ui {:view :perform :page-id nil :selected-instance nil :launch-mode "toggle" :edit? false
-        :preview-settings {:worklight 0.12 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
+        :preview-settings {:worklight 0 :quality "auto" :camera "audience"} :preview-expanded? false :preview-controls? false
         :definition-search "" :assign-cue "" :toast nil :action-cell nil :clipboard nil :prompt nil
         :composition {:id "evening-drift" :name "Evening drift" :mode "sequence" :loop "once" :slots []}
         :definition {:kind "effects" :source initial-source :version 1 :engine :textarea :mode :source
@@ -876,7 +876,7 @@
     {:db (assoc-in db [:ui :preview-controls?] (boolean supported?))
      :fx (into [[:studio/preview (cond-> [:fog (get-in db [:ui :fog])] owner (conj owner))]]
                (when supported? (mapv (fn [[key value]] [:studio/preview (cond-> [key value] owner (conj owner))])
-                                      (merge {:worklight 0.12 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
+                                      (merge {:worklight 0 :quality "auto" :camera "audience"} (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]
     (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
