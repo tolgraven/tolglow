@@ -194,8 +194,19 @@ struct AudienceView: View {
             if typeSize.isAccessibilitySize {
                 Picker("Movement input", selection: $session.input) { inputOptions }.frame(minHeight: 48)
             } else {
-                Picker("Movement input", selection: $session.input) { inputOptions }
-                    .pickerStyle(.segmented).frame(minHeight: 44)
+                HStack(spacing: 4) {
+                    ForEach(AudienceInput.allCases) { input in
+                        let selected = session.input == input
+                        Button { session.input = input } label: {
+                            Text(input.rawValue).font(.subheadline.weight(.semibold))
+                                .foregroundStyle(selected ? onAccent : .primary)
+                                .padding(.horizontal, 4).frame(maxWidth: .infinity, minHeight: 48)
+                                .background(selected ? accent : background, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
             }
             Text(session.input == .camera ? "Prop up the phone where the front camera can see your knees and feet. Images stay on this device." : detail(session.input))
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -213,11 +224,13 @@ struct AudienceView: View {
             if session.input == .touch {
                 primary("Tap a step", symbol: "hand.tap.fill") { session.tap() }
             }
-            Button("Leave stage", role: .destructive) { client.leave() }
-                .frame(minHeight: 46)
+            Button(role: .destructive) { client.leave() } label: {
+                Text("Leave stage").frame(maxWidth: .infinity, minHeight: 46).contentShape(Rectangle())
+            }
         } else if client.looking || client.connecting {
-            Button("Cancel") { client.leave() }.frame(maxWidth: .infinity, minHeight: 50)
-                .buttonStyle(.bordered)
+            Button { client.leave() } label: {
+                Text("Cancel").frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+            }.buttonStyle(.bordered)
         } else {
             primary("Find a stage", symbol: "dot.radiowaves.left.and.right") {
                 attemptedJoin = true
