@@ -26,6 +26,8 @@ done
 test -s "$show/window-port"
 port="$(cat "$show/window-port")"
 curl -fsS "http://127.0.0.1:$port/studio/js/main.js" -o /dev/null
+xcrun swiftc native/macOS/StudioNavigation.swift native/Tests/verify-blob-export.swift -o "$out/verify-blob-export"
+"$out/verify-blob-export" "http://127.0.0.1:$port/" "$show/export.transit"
 sleep 6
 window="$("$out/window-id" "$app_pid")"
 test -n "$window"

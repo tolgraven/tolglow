@@ -51,7 +51,7 @@ struct TolglowStudioApp: App {
 
 private struct StudioWindow: NSViewRepresentable {
     let url: URL
-    func makeCoordinator() -> Navigation { Navigation(origin: url) }
+    func makeCoordinator() -> StudioNavigation { StudioNavigation(origin: url) }
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsAirPlayForMediaPlayback = true
@@ -61,18 +61,8 @@ private struct StudioWindow: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: WKWebView, context: Context) {}
-    static func dismantleNSView(_ view: WKWebView, coordinator: Navigation) {
+    static func dismantleNSView(_ view: WKWebView, coordinator: StudioNavigation) {
         view.stopLoading()
         view.navigationDelegate = nil
-    }
-    final class Navigation: NSObject, WKNavigationDelegate {
-        let origin: URL
-        init(origin: URL) { self.origin = origin }
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            let url = navigationAction.request.url
-            let local = url?.scheme == origin.scheme && url?.host == origin.host && url?.port == origin.port
-            decisionHandler(local ? .allow : .cancel)
-        }
     }
 }
