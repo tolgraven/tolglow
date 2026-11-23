@@ -11,6 +11,7 @@
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-visualization :as visualization]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
@@ -129,13 +130,14 @@
 
 (defn xyz-readings [show instance components]
   (let [base (mapv (fn [[k schema]] (or (value-by-id (:params instance) k) (:default schema))) components)
-        effective (mapv (fn [[k _] v] (or (parameter-overlay show (:id instance) k) v)) components base)]
+        effective (mapv (fn [[k _] v] (or (:effective-value (sources/reading instance k)) (parameter-overlay show (:id instance) k) v)) components base)]
     {:base base :effective effective}))
 
 (rf/reg-sub :performance/parameter-overlay
   (fn [db [_ id parameter]] (parameter-overlay (:show db) id parameter)))
 (rf/reg-event-db :performance/runtime-change
-  (fn [db _] (store db (assoc defaults :generation (inc (:generation (state db))) :group (:group (state db))))))
+  (fn [db _] (store (update db :ui dissoc :parameter-source :source-requests :block-fixtures)
+                    (assoc defaults :generation (inc (:generation (state db))) :group (:group (state db))))))
 (rf/reg-event-fx :performance/action
   (fn [{:keys [db]} [_ target operation fields]]
     (try (send-action db target operation (or fields {}))
@@ -304,14 +306,8 @@
     (cond-> {:type :vector :size 3 :semantic/type attribute}
       (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds)))))
 
-(defn- effective-control [show instance {:keys [parameter schema components] :as control}]
-  (if components
-    [(xyz-schema control) (:effective (xyz-readings show instance components))]
-    [schema (let [overlay (parameter-overlay show (:id instance) parameter)]
-              (if (some? overlay) overlay (get (:params instance) parameter (:default schema))))]))
-
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
-  (let [{:keys [base effective]} (xyz-readings show instance components)
+  (let [{:keys [base]} (xyz-readings show instance components)
         title (control-title control)
         axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (str axis " · " (wire id))))
                    components ["X" "Y" "Z"])
@@ -320,12 +316,18 @@
     [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")}
      [:label title]
      [widgets/axes-control title axes base update!]
-     (when-not compact? [visualization/studio (xyz-schema control) effective])]))
+     (let [param (or (some #(when (sources/driven? instance (first %)) (first %)) components)
+                     (some #(when (sources/bound? instance (first %)) (first %)) components)
+                     (ffirst components))]
+       [sources/trigger (:id instance) param title (sources/reading instance param) components])
+     (when (and (not compact?) (some #(sources/driven? instance (first %)) components))
+       [sources/axes-visual visualization/studio instance components (xyz-schema control)])]))
 
 (defn- parameter-bank [show instance controls compact? parameter-control]
   [:div.live-effect-parameters {:class (if compact? "control-strip" "control-detail")
-                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")
-                                :tab-index (when compact? 0)}
+                                :data-size (if (<= (count controls) 2) "small" "bank")
+                                :style {"--control-count" (min 8 (count controls))}
+                                :role "group" :aria-label (if compact? "Parameter strip" "Detailed parameter controls")}
    (for [{:keys [parameter schema components] :as control} controls]
      ^{:key (control-id control)}
      (if components
@@ -335,6 +337,11 @@
 (defn- viewable? [{:keys [schema components]}]
   (or (seq components)
       (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
+
+(defn driven-controls [instance controls]
+  (filter (fn [{:keys [parameter components]}]
+            (if components (some #(sources/driven? instance (first %)) components) (sources/driven? instance parameter)))
+          controls))
 
 (defn resolve-monitor [controls requested preferred]
   (let [choices (filterv viewable? controls)
@@ -347,10 +354,10 @@
 (rf/reg-event-db :performance/monitor-select
   (fn [db [_ id parameter]] (store db (assoc-in (state db) [:monitor id] parameter))))
 
-(defn- strip-monitor [show instance {:keys [choices selected]}]
+(defn- strip-monitor [instance {:keys [choices selected]}]
   (when selected
     (let [id (wire (:id instance))
-          [schema value] (effective-control show instance selected)
+          schema (if (:components selected) (xyz-schema selected) (:schema selected))
           title (control-title selected)]
       [:div.strip-monitor
        [:div.strip-monitor-bar
@@ -361,7 +368,9 @@
              ^{:key (control-id control)} [:option {:value (control-id control)} (control-title control)])]
           [:strong title])
         [:span (if (visualization/spatial-kind schema) "3D" "4 beats")]]
-       ^{:key (control-id selected)} [visualization/monitor schema value]])))
+       ^{:key (control-id selected)}
+       (if-let [axes (:components selected)] [sources/axes-visual visualization/monitor instance axes schema]
+           [sources/result-visual visualization/monitor instance (:parameter selected) schema])])))
 
 (defn- resolve-controls [definition cue-layout]
   (let [{:keys [parameters monitor]} (layout/resolve-layout definition {:ui/layout cue-layout})]
@@ -377,22 +386,29 @@
         title (or (:name cue) (:name instance) (widgets/label (:cue-id instance)))
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
-        scope (resolve-monitor controls (get-in state [:monitor id]) monitor)]
+        editing @(rf/subscribe [::sources/selection id])
+        scope (resolve-monitor (driven-controls instance controls) (get-in state [:monitor id]) monitor)]
     [:article.live-effect-card {:data-live-instance id :aria-label (str title " · " id)
                                 :data-density (if expanded? "detail" "strip")
                                 :data-wide (boolean (or expanded? (> (count controls) 3)))
                                 :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
      [:header.live-effect-header
-      [:div.live-effect-title [:h3 title] [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]]
-      [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]
+      [:div.live-effect-title
+       [:h3 title]
+       [:div.live-effect-meta
+        [:span.live-effect-phase (cond faulted? "Fault" paused? "Paused" :else (widgets/label (:phase instance)))]
+        [widgets/category-tags (or (:categories instance) (:categories definition)) (:category-colors show)]]]
       [:button.live-effect-expand {:type "button" :aria-expanded expanded? :aria-label (str (if expanded? "Collapse " "Expand ") title " controls")
                                    :on-click #(rf/dispatch [:performance/card-toggle id])}
        (if expanded? "Compact" "Detail")]]
      (when (seq controls)
        [:div.live-effect-body
         [parameter-bank show instance controls (not expanded?) parameter-control]
-        (when-not expanded? [strip-monitor show instance scope])])
+        (when (and (not expanded?) (:selected scope)) [strip-monitor instance scope])])
+     (when-let [schema (get-in definition [:params editing])]
+       (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
+         ^{:key [id editing]} [sources/editor instance editing schema group]))
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced

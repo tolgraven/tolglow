@@ -53,7 +53,7 @@ This is a visual fluid approximation, not a pressure-projected CFD solver.
 
 The half-float density texture is sampled in a depth-limited ray march. Opaque
 surfaces terminate the ray. Exponential extinction attenuates the background;
-single scattering uses a forward Henyey–Greenstein phase function, cone profile,
+single scattering uses a normalized isotropic bulk phase (1 / 4π), cone profile,
 distance falloff and four-tap light visibility. Coherent detail modulates
 existing density rather than manufacturing fog. Heat-local curl and lower
 explicit diffusivity retain fresh jet folds. A bounded three-sample canopy
@@ -69,7 +69,7 @@ samples. Camera-path extinction still uses the bounded global march. Local
 constant-density quadrature, limited shadow resolution and single scattering are
 approximations; multiple scattering and resolved incoming-light optical depth
 remain future work. The low-resolution result is upsampled with opaque-depth
-weights to avoid dragging background fog across foreground edges.
+weights to avoid dragging background fog across foreground edges. Where no neighbor represents a thin surface at its opaque depth, the compositor integrates the medium in front of that pixel using the same density, incident light and shadows.
 
 Amount zero copies the source HDR surface exactly. A zero-density field has
 zero in-scattering even with lights or ambient illumination. With no light or
@@ -139,3 +139,7 @@ the transmission of a homogeneous layer with density `d` and length `L` is
 `exp(-extinction-per-m × d × L)`. Viewer, lamp and reflected-light paths use
 the same coefficient. A different fluid calibration changes apparent opacity
 without changing emitted or mixed volume.
+
+### Orbit qualification
+
+Run `FOG_ORBIT_OUTPUT=target/fog-orbit node --test test/js/preview/fog-orbit.test.mjs` with Chromium available. The test renders the release WebGL fog shader at nine angles with a fixed source, density, exposure and eye distance. It measures both sides of the composite pass, then restricts diagnostic in-scattering to a stationary 25 cm chord. This separates a source viewed down the length of its cone from an equal mass of fog seen from the side. A thin foreground surface also exercises depth reconstruction. At a 15 × 9 fog raster, a narrow beam between sample centers can lose contrast. The output includes this separate subpixel sweep and its full-raster reference.

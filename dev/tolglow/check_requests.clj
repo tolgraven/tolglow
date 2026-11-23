@@ -1,40 +1,47 @@
 (ns tolglow.check-requests
-  "Validate the human-edited request index against the work ledger."
+  "Check the archived request index and its GitHub issue links offline."
   (:require [clojure.string :as str]))
 
-(defn- fail [reason context]
-  (throw (ex-info reason context)))
+(def ^:private issue-link
+  #"\[[^\]]+\]\(https://github\.com/tolgraven/tolglow/issues/[1-9]\d*\)")
 
-(defn- request [known line]
-  (let [[id acceptance refs status :as fields] (mapv str/trim (rest (str/split line #"\|" -1)))
-        [_ number] (re-matches #"R(\d+)[a-z]?" (or id ""))
-        tokens (str/split (or refs "") #",\s*")
-        ids (mapv #(some->> % (re-matches #"`:([\w.-]+/[\w.-]+)`") second keyword) tokens)]
-    (when-not (and (= 5 (count fields)) number (seq acceptance)
-                   (or (#{"Open" "Standing"} status)
-                       (and (str/starts-with? status "Verified · ") (re-find #"\[[^\]]+\]\([^)]+\)" status))))
-      (fail "Malformed request or missing verification link" {:line line}))
-    (when-not (every? known ids)
-      (fail "Request references an unknown work item" {:request id :refs ids}))
-    {:id id :turn (Long/parseLong number) :status (first (str/split status #" "))}))
+(defn- request-rows [markdown]
+  (for [line (str/split-lines markdown)
+        :when (and (str/starts-with? line "| R") (not (str/starts-with? line "| Request |")))]
+    (mapv str/trim (str/split line #"(?<!\\)\|" -1))))
 
-(defn- request-lines [markdown]
-  (filter #(str/starts-with? % "| R") (remove #(str/starts-with? % "| Request |") (str/split-lines markdown))))
+(defn- parse-row [[leading id original refs trailing :as fields]]
+  (let [turn (some->> id (re-matches #"R(\d+)[a-z]?") second parse-long)]
+    (when-not (and (= 5 (count fields)) (= "" leading trailing) (pos-int? turn)
+                   (not (str/blank? original)))
+      (throw (ex-info "Malformed archived request" {:fields fields})))
+    (when-not (and (re-find issue-link refs)
+                   (re-matches #"(?:[\s,;·]|<br\s*/?>)*" (str/replace refs issue-link "")))
+      (throw (ex-info "Expected links to tolgraven/tolglow GitHub Issues" {:request id :links refs})))
+    {:id id :turn turn}))
 
 (defn preserve-ids! [previous current]
-  (let [ids #(map (comp str/trim second (fn [line] (str/split line #"\|"))) (request-lines %))
+  ;; Only the identifiers are read from the previous version. This also works
+  ;; when the migration PR compares the original four-column archive with this one.
+  (let [ids #(map second (request-rows %))
         retained (set (ids current))
         missing (remove retained (ids previous))]
     (when (seq missing)
-      (fail "Earlier request IDs were removed" {:missing (vec missing)}))))
+      (throw (ex-info "Earlier request IDs were removed" {:missing (vec missing)})))))
 
-(defn validate [ledger markdown]
-  (let [known (set (map :id (:items ledger)))
-        declared (some->> markdown (re-find #"Recorded through request \*\*(\d+)\*\*") second parse-long)
-        rows (mapv #(request known %) (request-lines markdown))
+(defn validate [markdown]
+  (let [rows (mapv parse-row (request-rows markdown))
         ids (mapv :id rows)
         turns (mapv :turn rows)]
-    (when-not (and (pos-int? declared) (= (distinct turns) (range 1 (inc declared)))
-                   (apply <= turns) (= (count ids) (count (set ids))))
-      (fail "Missing, duplicated or out-of-order conversation request" {:declared declared :ids ids}))
-    {:turns declared :entries (count rows) :dispositions (frequencies (map :status rows))}))
+    (when-not (and (seq rows)
+                   (= turns (sort turns))
+                   (= (distinct turns) (range 1 (inc (peek turns))))
+                   (= (count ids) (count (set ids))))
+      (throw (ex-info "Missing, duplicated or out-of-order archived request" {:ids ids})))
+    {:requests (peek turns) :entries (count rows)}))
+
+(defn -main [& [path]]
+  (let [current (slurp (or path "docs/request-coverage.md"))]
+    (when-let [previous (System/getenv "TOLGLOW_PREVIOUS_REQUESTS")]
+      (preserve-ids! (slurp previous) current))
+    (println "Archived requests checked" (validate current))))

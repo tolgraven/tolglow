@@ -5,6 +5,160 @@ import {createServer} from 'node:http';
 import {build} from 'esbuild';
 import {chromium} from 'playwright-core';
 
+const distance = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
+
+function assertGroundTravel(before, after, axis, sign, input) {
+  const delta = after.map((value, index) => value - before[index]);
+  assert.ok(delta[axis] * sign > .03, `${input} should move in the expected direction: ${delta}`);
+  for (const [index, movement] of delta.entries()) {
+    if (index !== axis) assert.ok(Math.abs(movement) < .001, `${input} should stay on its ground axis: ${delta}`);
+  }
+}
+
+function speedBetween(frames, start, end) {
+  return 1000 * distance(frames[start].position, frames[end].position) / (frames[end].time - frames[start].time);
+}
+
+function dispatchTouch(session, type, points = []) {
+  return session.send('Input.dispatchTouchEvent', {
+    type, touchPoints: points.map(([id, x, y]) => ({id, x, y})),
+  });
+}
+
+async function exerciseCamera(page) {
+  const canvas = page.locator('canvas');
+  const touch = await page.context().newCDPSession(page);
+  await canvas.focus();
+  await page.evaluate(() => setTestPose());
+  await page.evaluate(() => traceKey('keydown'));
+  await page.keyboard.down('w');
+  const acceleration = await page.evaluate(() => cameraTrace);
+  await page.evaluate(() => traceKey('keyup'));
+  await page.keyboard.up('w');
+  const braking = await page.evaluate(() => cameraTrace);
+  const initial = speedBetween(acceleration, 0, 2), cruising = speedBetween(acceleration, 6, 9);
+  const justReleased = speedBetween(braking, 0, 2), slowing = speedBetween(braking, 6, 9);
+  assert.ok(initial > 0 && initial < cruising * .85, `W accelerates gradually: ${initial} → ${cruising} m/s`);
+  assert.ok(justReleased > .05 && slowing < justReleased * .65, `W brakes gradually: ${justReleased} → ${slowing} m/s`);
+  assertGroundTravel(acceleration[0].position, braking.at(-1).position, 2, -1, 'w');
+
+  for (const [keys, axis, sign] of [
+    [['s', 'j', 'ArrowDown'], 2, 1], [['k', 'ArrowUp'], 2, -1],
+    [['a', 'h', 'ArrowLeft'], 0, -1], [['d', 'l', 'ArrowRight'], 0, 1],
+  ]) {
+    for (const key of keys) {
+      const before = await page.evaluate(() => setTestPose());
+      await page.keyboard.down(key);
+      await page.waitForFunction(({before, axis}) => Math.abs(position()[axis] - before[axis]) > .03, {before, axis}, {timeout: 3000});
+      await page.keyboard.up(key);
+      assertGroundTravel(before, await page.evaluate(() => position()), axis, sign, key);
+      assert.equal(await page.evaluate(() => pose().mode), 'walk', key);
+    }
+  }
+
+  await page.evaluate(() => setTestPose());
+  const orbitStart = await page.evaluate(() => pose());
+  await page.mouse.move(100, 80); await page.mouse.down();
+  // Ending a separate touch must leave the active mouse drag with OrbitControls.
+  await dispatchTouch(touch, 'touchStart', [[1, 160, 110]]);
+  await dispatchTouch(touch, 'touchEnd');
+  await page.mouse.move(147, 99, {steps: 4}); await page.mouse.up();
+  const orbitEnd = await page.evaluate(() => pose());
+  assert.ok(distance(orbitStart.position, orbitEnd.position) > .05, 'Mouse drag should move the Orbit camera around its target');
+  assert.ok(Math.abs(orbitEnd.radius - orbitStart.radius) < .001);
+  assert.equal(orbitEnd.mode, 'orbit');
+  assert.deepEqual(orbitEnd.target, orbitStart.target);
+
+  await page.evaluate(() => setTestPose('walk'));
+  const walkStart = await page.evaluate(() => pose());
+  await page.mouse.move(100, 80); await page.mouse.down();
+  await page.mouse.move(145, 95, {steps: 4}); await page.mouse.up();
+  await page.evaluate(() => nextFrames());
+  const mouseLook = await page.evaluate(() => pose());
+  assert.deepEqual(mouseLook.position, walkStart.position);
+  assert.ok(distance(mouseLook.rotation, walkStart.rotation) > .01, 'Mouse drag should look around in Explore');
+
+  await page.evaluate(() => setTestPose('walk'));
+  const touchStart = await page.evaluate(() => pose());
+  await dispatchTouch(touch, 'touchStart', [[1, 95, 90]]);
+  await dispatchTouch(touch, 'touchMove', [[1, 125, 101]]);
+  await page.evaluate(() => nextFrames());
+  const touchLook = await page.evaluate(() => pose());
+  assert.deepEqual(touchLook.position, touchStart.position);
+  assert.ok(distance(touchLook.rotation, touchStart.rotation) > .01, 'One finger should look around in Explore');
+  await dispatchTouch(touch, 'touchCancel');
+
+  for (const [mode, points, axis, sign] of [
+    ['orbit', [[1, 90, 60], [2, 150, 60]], 2, -1],
+    ['walk', [[1, 140, 108], [2, 200, 108]], 0, 1],
+  ]) {
+    await page.evaluate(mode => setTestPose(mode), mode);
+    await dispatchTouch(touch, 'touchStart', [[1, 90, 108]]);
+    const oneFinger = await page.evaluate(() => pose());
+    await dispatchTouch(touch, 'touchStart', [[1, 90, 108], [2, 150, 108]]);
+    await page.evaluate(() => nextFrames());
+    assert.deepEqual(await page.evaluate(() => pose()), oneFinger, 'A second stationary finger must not jump the view');
+    await dispatchTouch(touch, 'touchMove', points);
+    await page.evaluate(() => nextFrames(5));
+    const swiped = await page.evaluate(() => pose());
+    assertGroundTravel(oneFinger.position, swiped.position, axis, sign, 'Two-finger swipe');
+    assert.equal(swiped.mode, 'walk');
+    assert.ok(distance(swiped.rotation, oneFinger.rotation) < .001, 'Two-finger swipes should translate without steering');
+    await dispatchTouch(touch, 'touchCancel');
+    const cancelled = await page.evaluate(() => pose());
+    await page.evaluate(() => nextFrames());
+    assert.deepEqual(await page.evaluate(() => pose()), cancelled, 'Cancelled touch must leave no queued movement');
+  }
+
+  await page.evaluate(() => setTestPose());
+  const pinchStart = await page.evaluate(() => pose());
+  await dispatchTouch(touch, 'touchStart', [[1, 100, 90], [2, 140, 90]]);
+  await dispatchTouch(touch, 'touchMove', [[1, 68, 90], [2, 172, 90]]);
+  await page.evaluate(() => nextFrames(5));
+  await dispatchTouch(touch, 'touchEnd');
+  const pinched = await page.evaluate(() => pose());
+  assert.ok(pinched.radius < pinchStart.radius - .1, 'A symmetrical touch pinch should dolly in');
+  assert.deepEqual(pinched.target, pinchStart.target);
+  assert.equal(pinched.mode, 'orbit');
+
+  for (const [dx, dy, axis, sign] of [[0, -60, 2, -1], [60, 0, 0, 1]]) {
+    const before = await page.evaluate(() => setTestPose());
+    await page.mouse.move(120, 90); await page.mouse.wheel(dx, dy);
+    await page.evaluate(() => nextFrames(5));
+    const trackpad = await page.evaluate(() => pose());
+    assertGroundTravel(before, trackpad.position, axis, sign, 'Trackpad swipe');
+    assert.equal(trackpad.mode, 'walk');
+  }
+  await page.evaluate(() => setTestPose());
+  const trackpadStart = await page.evaluate(() => pose());
+  await page.keyboard.down('Control'); await page.mouse.wheel(0, -60); await page.keyboard.up('Control');
+  await page.evaluate(() => nextFrames(5));
+  const trackpadPinch = await page.evaluate(() => pose());
+  assert.ok(trackpadPinch.radius < trackpadStart.radius - .1, 'Control-modified wheel should dolly in');
+  assert.equal(trackpadPinch.mode, 'orbit');
+
+  // Drawing must still reach the real editor input owner while navigation is suspended.
+  await page.evaluate(() => {
+    setTestPose('walk');
+    window.editEvents = [];
+    engine.canvas.addEventListener('tolglow-editor', event => editEvents.push(event.detail.type));
+    engine.update({...snapshot, editor: {tool: 'draw', plane: 'xy', 'plane-value': -1}});
+  });
+  assert.equal(await page.evaluate(() => engine.getNavigationState().interacting), true);
+  const editing = await page.evaluate(() => pose());
+  await page.keyboard.down('w'); await page.mouse.move(100, 80); await page.mouse.down();
+  await page.mouse.move(150, 100); await page.mouse.up(); await page.mouse.wheel(60, -60);
+  await dispatchTouch(touch, 'touchStart', [[1, 90, 108], [2, 150, 108]]);
+  await dispatchTouch(touch, 'touchMove', [[1, 120, 60], [2, 180, 60]]);
+  await dispatchTouch(touch, 'touchCancel');
+  await page.evaluate(() => nextFrames()); await page.keyboard.up('w');
+  assert.deepEqual(await page.evaluate(() => pose()), editing);
+  assert.deepEqual(await page.evaluate(() => editEvents), ['begin', 'move', 'end', 'begin', 'move', 'cancel']);
+  await page.evaluate(() => engine.update(snapshot));
+  assert.equal(await page.evaluate(() => engine.getNavigationState().interacting), false);
+  await touch.detach();
+}
+
 test('real camera input, active-light tour and editor suspension agree in worker and fallback', {timeout: 120000}, async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
   if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH for real camera input');
@@ -24,7 +178,7 @@ test('real camera input, active-light tour and editor suspension agree in worker
     browser = await chromium.launch({executablePath, headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
     for (const worker of [true, false]) {
-      const page = await browser.newPage(), errors = [];
+      const page = await browser.newPage({hasTouch: true}), errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       await page.waitForFunction(() => window.RoomPreview);
@@ -36,32 +190,43 @@ test('real camera input, active-light tour and editor suspension agree in worker
         window.engine = new RoomPreview(document.querySelector('canvas'), document.querySelector('#status'), {worker});
         engine.setFog(0); engine.update(snapshot); await engine.whenReady;
         window.position = () => engine.camera.position.toArray();
+        window.pose = () => ({position: position(), target: engine.controls.target.toArray(),
+          rotation: engine.camera.quaternion.toArray(), radius: engine.camera.position.distanceTo(engine.controls.target),
+          mode: engine.getNavigationState().mode});
+        window.setTestPose = (mode = 'orbit') => {
+          engine.setNavigationMode(mode);
+          engine.camera.position.set(0, 1.6, 2.7);
+          engine.controls.target.set(0, 1.2, -2);
+          engine.controls.enableDamping = false;
+          engine.controls.update();
+          engine.controls.enableDamping = true;
+          return position();
+        };
         window.nextFrames = async (count = 3) => {for (let i = 0; i < count; i++) await new Promise(requestAnimationFrame);};
+        window.traceKey = type => {
+          window.cameraTrace = new Promise(resolve => {
+            engine.canvas.addEventListener(type, async () => {
+              const frames = [];
+              for (let i = 0; i < 10; i++) {
+                const time = await new Promise(requestAnimationFrame);
+                frames.push({position: position(), time});
+              }
+              resolve(frames);
+            }, {once: true});
+          });
+        };
       }, worker);
       assert.equal(await page.evaluate(() => engine.getTelemetry().thread || 'main'), worker ? 'worker' : 'main');
 
+      await exerciseCamera(page);
+
       // Real key events are scoped to the focused canvas; text input is untouched.
-      await page.locator('canvas').focus();
-      const start = await page.evaluate(() => position());
-      await page.keyboard.down('w');
-      await page.waitForFunction(start => Math.hypot(...position().map((v, i) => v - start[i])) > .03, start);
-      await page.keyboard.up('w');
-      assert.equal(await page.evaluate(() => engine.getNavigationState().mode), 'walk');
       await page.locator('input').fill(''); await page.locator('input').focus();
       const typingStart = await page.evaluate(() => position());
-      await page.keyboard.type('wasd'); await page.evaluate(() => nextFrames());
+      await page.keyboard.type('wasdhjkl'); await page.keyboard.press('ArrowLeft'); await page.evaluate(() => nextFrames());
       assert.deepEqual(await page.evaluate(() => position()), typingStart);
-      assert.equal(await page.locator('input').inputValue(), 'wasd');
-
-      const target = await page.evaluate(() => engine.controls.target.toArray());
-      await page.mouse.move(100, 80); await page.mouse.down(); await page.mouse.move(145, 95, {steps: 4}); await page.mouse.up();
-      assert.notDeepEqual(await page.evaluate(() => engine.controls.target.toArray()), target);
-      await page.evaluate(() => engine.setInteractionActive(true));
-      const editPose = await page.evaluate(() => ({position: position(), target: engine.controls.target.toArray()}));
-      await page.keyboard.down('w'); await page.mouse.move(100, 80); await page.mouse.down();
-      await page.mouse.move(150, 100); await page.mouse.up(); await page.evaluate(() => nextFrames()); await page.keyboard.up('w');
-      assert.deepEqual(await page.evaluate(() => ({position: position(), target: engine.controls.target.toArray()})), editPose);
-      await page.evaluate(() => engine.setInteractionActive(false));
+      assert.equal(await page.locator('input').inputValue(), 'wasdhjkl');
+      assert.equal(await page.locator('input').evaluate(input => input.selectionStart), 7);
 
       await page.evaluate(() => engine.setNavigationMode('tour'));
       await page.waitForFunction(() => engine.getNavigationState()['tour-fixture'] === 'head-a');

@@ -129,6 +129,13 @@
      ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
                    [:div.push-parameter-name [:span.push-encoder (inc index)]
                     [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
+                    (when-let [state (:source-state parameter)]
+                      (let [text (case (keyword state)
+                                   :active (if-let [fixture (:sample-fixture parameter)]
+                                             (widgets/label (or (:name fixture) (:id fixture)))
+                                             (widgets/label (first (:source-types parameter))))
+                                   :held "Held" :pending "Waiting" :error "Error" nil)]
+                        [:span.push-source-state {:data-state (name state) :title (or (:source-error parameter) text)} text]))
                     (when (and component (not (contains? #{:value "value"} component)))
                       [:span.push-component {:title "Encoder component"} (widgets/label component)])]
                    (cond

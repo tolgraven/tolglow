@@ -264,10 +264,12 @@ React's value/selection restoration consistent. Network operations stay in
 effects. Authoring views receive bounded projections so renderer clock updates
 do not redraw unrelated editors. Standard command/gesture events remain queued.
 
-Responsive layout keeps the full 8×8 grid on phones, uses a bottom navigation bar
-and moves import/export into the footer when the desktop sidebar disappears.
-iPad-sized layouts retain larger cue cells and place preview/inspector alongside
-one another when space permits. There are no remote fonts or UI/CDN assets.
+Studio navigation takes its order, titles and named Lucide icons from the shared
+Reitit page routes. The sidebar and phone navigation use the same links. The
+number keys 1–8 follow their displayed order. Short labels fit the phone bar,
+while each link keeps its full accessible name. Icons ship with the application
+and work offline. On phones all eight cue columns fit across the page, and the
+transport includes the file controls.
 
 ## Assistant and provider connection
 
@@ -444,6 +446,14 @@ process restart. Existing worktree files remain on disk, but a fresh process doe
 not recover the catalog; saving/restoring a show does not currently repair this.
 This is a known lifecycle gap, not a completed persistent development environment.
 
+## Running cue controls
+
+Each card in **Perform → In the mix** places the cue title above its state and category labels. **Detail** opens exact parameter editing, envelope controls and effect inspection. **Compact** returns to the instrument bank. Both modes edit the running cue instance.
+
+Use **Source** beside a control to attach or edit a driver. A parameter that has a working driver can share the card’s result display. Select its name above the graph to switch between driven parameters. **Use base value** hands the parameter back to the manual control. **Resume LFO** restores the driver. The waveform picker has its own shape preview.
+
+Compact banks fill the card width. Wider screens can place eight controls in a row. A narrower card wraps the same controls into rows. Pause, zero, release and opacity stay below the bank.
+
 ## Responsive Studio qualification
 
 The page-by-page results below come from touch-enabled Chromium and desktop Chromium against a release build served by Ring. The layouts used 390 × 844, 1024 × 768 and 1440 × 900 CSS pixels.
@@ -554,3 +564,11 @@ In **Compose**, select a cue and use **Add cue** to append a slot. Each row keep
 In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
 
 After an optimized build, run `lein run -m tolglow.qa.performance-layout target/authoring-layout authoring` to start a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.
+
+### Live parameter sources
+
+In **Perform → Live**, each running parameter has a **Source** action. Choose a registered waveform, enter its period in beats, bars or phrases (fractions such as `3/2` work), and set its phase and output range. Color, vector, integer and choice parameters keep their own value types. Grouped XYZ controls share one source editor with an axis selector. Changes apply to the selected running instance.
+
+The knob still edits the base value. Editing the base or choosing **Use base value** temporarily gives it control, **Resume LFO** resumes the generator, and **Detach LFO** removes that binding. Source details also identify random controllers, live patches, Live automation, spatial inputs, response envelopes and fixture blocks when the server reports them.
+
+Manual controls use the available strip width. A running source adds an observed result to the strip. When several parameters are driven, the monitor selector switches between them. A steady signal still drives its chart. Using the manual base or encountering a source error removes the trace when that was the only driver. Its source controls remain available. A fixture block shows the native result for the fixture named above its chart. Its source editor can select a different fixture. When the rig has no matching fixtures, the monitor reports that state. Waveform selectors always preview the registered shape. These shape previews describe the selected waveform; time histories show samples from the show.

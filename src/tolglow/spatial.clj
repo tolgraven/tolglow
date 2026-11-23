@@ -124,8 +124,6 @@
   (cond-> (cues/restore (actions/restore model ids epoch) ids)
     (get-in model state-path) (assoc-in (conj state-path :epoch) epoch)))
 
-(def ^:private optical-fields [:emitted-color :pan :tilt :zoom :direction :shutter :strobe])
-
 (defn- venue-optics [rig]
   (let [{:keys [width height depth]} (merge {:width 12 :height 5 :depth 10} (:room rig))]
     {:range-m (Math/hypot (Math/hypot width depth) height)
@@ -147,9 +145,11 @@
         index (when compact
                 (if (identical? order (get-in cached [:index :order])) (:index cached)
                     (render/compact-index order)))
-        values (or (:values previous) (when compact (render/compact-reader index compact optical-fields)))]
+        frame (if (and compact (nil? (:values previous)))
+                (field/compact-observations options index compact)
+                (assoc options :values (:values previous)))]
     {:cache {:rig rig :venue venue :extinction extinction :options options :index index}
-     :frame (assoc options :values values)}))
+     :frame frame}))
 
 (defn- live-settings [original active previous]
   (if (empty? active)

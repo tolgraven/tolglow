@@ -44,7 +44,7 @@ Reference revision [tolgraven/tolglow-web at 2b58843](https://github.com/tolgrav
 | Edit without losing the previous value | The text widget supports immediate and commit-on-blur modes. Enter can commit a draft or save a nonempty filter. Escape in deferred mode restores the external value. Verify typing, Escape, blur and an external update arriving during editing. [Input widget][web-ui] |
 | Adjust a color in place | The picker edits hue while preserving the current color's other components and provides separate lightness and saturation sliders. Verify changing hue preserves the chosen saturation, lightness and alpha. Check server echo, the Studio swatch and the selected Push view. [Color widget][web-ui] · [Typed wire values](studio-transit.md) |
 
-When restoring a row, add the regression at the entry point a performer or show author uses. Record the test, commit and remaining hardware check in the [work ledger](work-items.edn). A missing source example or an untested device interaction stays an open acceptance case.
+When restoring a row, add the regression at the entry point a performer or show author uses. Record the test, commit and remaining hardware check in the relevant [GitHub issue](https://github.com/tolgraven/tolglow/issues). A missing source example or an untested device interaction stays an open acceptance case.
 
 [ag-show]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/show.clj
 [ag-cues]: https://github.com/Deep-Symmetry/afterglow/blob/bb5dfd1042f7670881245b7e7cd3cb1c4bd7238c/src/afterglow/effects/cues.clj
