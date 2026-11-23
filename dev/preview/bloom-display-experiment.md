@@ -14,6 +14,21 @@ CHROMIUM_PATH=/path/to/chromium node --test test/js/preview/experiments/bloom-di
 
 The test reads the completed canvas after the actual WebGL Room pass chain and checks that the baseline repeats. With SwiftShader and the 193 × 112 scene rendered to a 257 × 149 canvas, the SDR haze was byte-identical and dropped from 145 to 144 draws. Disabling bloom kept both frames at 132 draws and byte-identical. With glass and the extended tone-map shader branch, draws fell from 146 to 145 and two of 153,172 RGBA8 values differed by one level each. The gate for that case is one level at most and no more than 0.1% changed channels. That case runs the extended transform on an SDR surface. It leaves extended HDR output on a physical display unverified.
 
+## Half-float storage probe
+
+Run the isolated storage comparison in an installed Chromium. Omit `BLOOM_STORAGE_HEADED=1` for headless mode. Set `BLOOM_STORAGE_SWIFTSHADER=1` to request the software control explicitly. The receipt records the actual renderer string and browser version.
+
+```sh
+CHROMIUM_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+  BLOOM_STORAGE_HEADED=1 node --test test/js/preview/experiments/bloom-storage-browser.test.mjs
+```
+
+The fixture uploads the same two binary32 operands to every path on a 64 × 32 raster with 8,192 RGBA components. The inputs are exact binary16 values with directed midpoint, exponent rollover, signed and subnormal controls. The operand hash is `da7fa09169909a1683f98806b0bef3408fa987d38c0fbc18a0d8ed78136c3aac` over the scene values followed by bloom values in little-endian binary32 order. This hash identifies the corpus for cross-driver comparison.
+
+The four paths are Three's premultiplied `ONE, ONE` `CopyShader` blend into RGBA16F, direct shader addition stored in RGBA16F, GLSL `packHalf2x16` with unpacking, and explicit toward-zero packing with unpacking. The packing paths write the unpacked values to RGBA32F so a second half-float store cannot alter them. The test verifies the blend operands and compares the full-float sum with independent CPU arithmetic. It reports exact mismatch counts, maximum absolute differences and the first differing operands for each pairing. The storage paths' agreement is an observation for that driver and corpus. This probe covers arithmetic and storage only. The full Room pixel test covers the production pass chain.
+
+Linux Chromium 156.0.8078.79 reported ANGLE SwiftShader with both its default headless setup and the explicit software request. Blend, direct storage and nearest packing agreed on all 8,192 components. Toward-zero packing matched its CPU oracle and differed from each of those paths on 3,589 components, with a maximum absolute difference of 0.03125. Both operand controls and the full-float sum matched exactly.
+
 ## MacBook Air comparison
 
 Use an unlocked, foreground Mac on AC power. Close other active rendering tests and keep the display mode, browser zoom and window fixed. This replays one captured show frame in a new headed Chromium window. It does not launch the show host or open output devices. Generate the input with `lein run -m tolglow.qa.violet-stage /tmp/bloom-air-capture` against the paired Afterglow release, or use the archived frame below. [Captured stage input](https://raw.githubusercontent.com/tolgraven/tolglow/b08610fedfe7c88e0c60523921eb0ce2df8f1643/show-frame.json)
