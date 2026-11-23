@@ -199,6 +199,7 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
 
 struct RigCameraView: UIViewRepresentable {
     let scanner: RigScanner
+    let surface: VenueSurface?
     func makeCoordinator() -> Coordinator { Coordinator(scanner: scanner) }
     func makeUIView(context: Context) -> ARSCNView {
         let view = ARSCNView()
@@ -207,7 +208,7 @@ struct RigCameraView: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: ARSCNView, context: Context) {
-        context.coordinator.updateOutline(scanner.surface, in: view)
+        context.coordinator.updateOutline(surface, in: view)
     }
     final class Coordinator: NSObject {
         let scanner: RigScanner

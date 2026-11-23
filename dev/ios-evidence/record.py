@@ -28,8 +28,8 @@ try:
     rec=sp.Popen(["xcrun","simctl","io",udid,"recordVideo","--codec=h264",str(out/(mode+".mp4"))])
     time.sleep(1.8)
     if mode=="plane":
-        step("camera",delay=1.2);step("measure","measured=true",delay=2.2);screenshot("plane-review")
-        step("save","Saved scan-booth-wall",delay=1.8)
+        step("camera",delay=1.8);screenshot("plane-before");step("measure","measured=true",delay=2.2);screenshot("plane-review")
+        step("save","Saved scan-booth-wall",delay=1.8);screenshot("plane-saved")
     else:
         step("arm","running=true",delay=1.0)
         for i in range(1,4):

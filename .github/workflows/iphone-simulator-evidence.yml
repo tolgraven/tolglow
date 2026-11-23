@@ -28,7 +28,7 @@ jobs:
       - name: Record the actual SwiftUI workflows with synthetic inputs
         run: |
           python3 dev/ios-evidence/record.py plane "$SIMULATOR_ID"
-          python3 dev/ios-evidence/record.py meter "$SIMULATOR_ID"
+          swift dev/ios-evidence/verify-outline.swift
       - uses: actions/upload-artifact@v4
         if: always()
         with:

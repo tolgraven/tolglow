@@ -37,7 +37,7 @@ struct RigCalibrationView: View {
                         }
                     }.buttonStyle(.bordered).controlSize(.large)
                     if scanner.running {
-                        RigCameraView(scanner: scanner).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18)).id("camera")
+                        RigCameraView(scanner: scanner, surface: scanner.surface).frame(minHeight: 320, idealHeight: 420).clipShape(RoundedRectangle(cornerRadius: 18)).id("camera")
                         Picker("Tap identifies", selection: $scanner.selectedKind) {
                             Text("Floor origin").tag("origin"); Text("Floor +Z").tag("heading")
                             Text("Lens").tag("lens"); Text("Beam spot").tag("beam")
