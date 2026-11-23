@@ -8,6 +8,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Share inactive and running samples across visible browser and Push pad cells, clean up every lease and lower visual keyframe frequency before live effects."]
    :evidence ["Release Chromium observed 16 distinct colors on an inactive cue, switched pages, and recorded Transit query disposal. Paired Afterglow PR #71 verifies fair physical MIDI messages and session cleanup. See docs/cue-pad-previews.md for timing, ownership and reproduction."]}
+  {:id :render/distributed-browser-workers :title "Render eligible fixture groups on foreground Studio clients"
+   :kind :implementation :owner nil :status :done :depends-on [:foundation/tests]
+   :paths ["afterglow/src/afterglow/render/distributed.clj" "tolglow/src/tolglow/render/workers.clj"
+           "tolglow/src/studio/tolglow/studio/compute_transport.cljs" "tolglow/js/compute"]
+   :acceptance ["Prepare and reuse GPU programs across separate Studio clients. Recover locally when a client departs or misses its deadline. Keep each complete physical output frame consistent."]
+   :evidence ["Two Chromium GPU workers drove 64 moving heads across two Art-Net universes. The 40 Hz loopback run verified 774 full frames against the ordered CPU output and deliberately dropped one peer. docs/performance/distributed-compute.md records measured deadlines, fallbacks and native hardware coverage."]}
   {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"

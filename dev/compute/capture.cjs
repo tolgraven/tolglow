@@ -47,7 +47,12 @@ async function instrument(worker) {
   });
 }
 
-async function joinPeer(browser, url) {
+function captureCard(page, directory, name) {
+  return page.locator("section.panel").filter({hasText: "RENDER COMPUTE"})
+    .screenshot({path: join(directory, name + ".png")});
+}
+
+async function joinPeer(browser, url, directory, index) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const result = { phase: "joining" };
@@ -57,6 +62,7 @@ async function joinPeer(browser, url) {
     }
   });
   await page.goto(url + "/connections");
+  if (index === 0) await captureCard(page, directory, "before-enrollment");
   await page.getByLabel("Compute token").fill(process.env.TOLGLOW_COMPUTE_TOKEN);
   const started = page.waitForEvent("worker", { predicate: w => w.url().includes("/compute/runtime/transport.js") });
   await page.getByRole("button", { name: "Contribute this GPU" }).click();
@@ -64,6 +70,7 @@ async function joinPeer(browser, url) {
   await page.getByText("Contributing GPU time", { exact: false }).first().waitFor();
   if (await page.evaluate(() => document.hidden)) throw Error("Worker joined from a hidden page");
   await instrument(worker);
+  if (index === 0) await captureCard(page, directory, "enrolled");
   result.phase = "active";
   return { worker, page, result };
 }
@@ -77,10 +84,11 @@ async function main([url, directory, executablePath]) {
         args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
       }));
     }
-    const peers = await Promise.all(browsers.map(browser => joinPeer(browser, url)));
+    const peers = await Promise.all(browsers.map((browser, i) => joinPeer(browser, url, directory, i)));
     writeFileSync(join(directory, "connected"), "2");
     if (await waitForMarker(directory, "lose-peer")) {
       const first = peers[0];
+      await captureCard(peers[1].page, directory, "rendering");
       first.result.counts = await first.worker.evaluate(() => {
         self.proof.dropNext = true;
         return self.proof;
@@ -92,6 +100,8 @@ async function main([url, directory, executablePath]) {
       if (counts) p.result.counts = counts;
     }
     writeFileSync(join(directory, "browser.json"), JSON.stringify(peers.map(p => p.result), null, 2));
+    await captureCard(peers[0].page, directory, "departed");
+    await captureCard(peers[1].page, directory, "surviving");
     await peers[1].page.screenshot({ path: join(directory, "connections.png") });
   } finally {
     await Promise.all(browsers.map(browser => browser.close()));

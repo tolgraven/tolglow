@@ -2,6 +2,12 @@
 
 The proof show patches 64 RGBW moving heads across two Art-Net universes. Eighteen persistent cues write color, dimmer, focus and a world-space aim vector. The cue at the highest priority changes its swatch and aim, fades to half opacity to expose the underlying layer, and ends. A second CPU show receives the same commands. The UDP receiver checks both complete 512-byte universes against the CPU show’s ordered transitions, including the presentation scheduler’s idle bytes before its first render. A partial sequence is reported separately and checked against the CPU bytes received for that universe.
 
+## Enable workers in a show
+
+Set `:compute-backend :distributed` in the `:show` map. The GPU allocation is a portion of each show frame. For a 40 Hz show, `:gpu-budget-ms 12` leaves 13 ms of its nominal 25 ms frame for other work. The host can render locally when a worker is late or absent. Set `TOLGLOW_COMPUTE_TOKEN` in the host environment to a separate random secret, for example the output of `openssl rand -hex 32`. The host accepts 24–1,024 characters. A show file can move between hosts without carrying this credential.
+
+On a remote device, open the authenticated Studio HTTPS origin and choose **Connections → Contribute this GPU**. Enter the compute token. The client first compiles and reads back a calibration shader. When it succeeds, the host can send eligible fixture groups. The panel reports results sent and fixture rows rendered by this worker. Host-accepted results and deadline misses are measured separately. Leaving the pool, closing the tab, or hiding it releases its GPU context and socket. Thermal throttling and background suspension depend on the browser and device.
+
 ## Two local workers
 
 Use the paired Afterglow source with distributed compute, Linux Chromium and Node. From Tolglow:

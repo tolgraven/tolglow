@@ -10,9 +10,10 @@
   (.postMessage js/self #js {:phase phase :message message}))
 
 (defn- close! [phase reason]
-  (when-let [{:keys [socket heartbeat dispatch]} @session]
+  (when-let [{:keys [socket heartbeat progress-timer dispatch]} @session]
     (reset! session nil)
     (js/clearInterval heartbeat)
+    (js/clearTimeout progress-timer)
     (when dispatch (dispatch #js {:op "dispose" :requestId 0}))
     (when socket
       (set! (.-onclose socket) nil)
@@ -51,13 +52,24 @@
     :run #js {:op "run" :requestId job :id id :start start :count count :uniforms (clj->js uniforms)}
     (throw (js/Error. "Unknown compute request"))))
 
-(defn- reply! [socket {:keys [op job id]} response]
+(defn- publish-progress! []
+  (when-let [{:keys [replies rows]} @session]
+    (swap! session dissoc :progress-timer)
+    (.postMessage js/self #js {:phase "progress" :replies replies :rows rows})))
+
+(defn- record-result! [rows]
+  (let [state (swap! session #(-> % (update :replies inc) (update :rows + rows)))]
+    (when-not (:progress-timer state)
+      (swap! session assoc :progress-timer (js/setTimeout publish-progress! 500)))))
+
+(defn- reply! [socket {:keys [op job id count]} response]
   (let [error (cond-> {:op :error :id id} job (assoc :job job))]
     (cond
       (not (aget response "ok")) (send! socket error)
       (= op :prepare) (do (when-let [old (aget response "evicted")] (send! socket {:op :error :id old}))
                           (send! socket {:op :ready :id id}))
-      :else (send! socket {:op :result :job job :values (result-bytes (aget response "values"))}))))
+      :else (do (send! socket {:op :result :job job :values (result-bytes (aget response "values"))})
+                (record-result! count)))))
 
 (defn- accept! [socket dispatch text]
   (when-not (and (string? text) (<= (count text) (* 16 1024 1024)))
@@ -97,7 +109,7 @@
                        #js {:onAvailability (fn [event]
                                              (when-not (aget event "available")
                                                (close! "error" "GPU context unavailable")))})]
-        (reset! session {:dispatch dispatch})
+        (reset! session {:dispatch dispatch :replies 0 :rows 0})
         (-> (dispatch #js {:op "probe" :requestId 0})
             (.then (fn [response]
                      (if (and @session (aget response "ok"))
