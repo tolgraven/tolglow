@@ -116,3 +116,14 @@
       (is (= 413 (:status (app {:request-method :post :uri "/api/command"
                                 :headers {"content-type" mime}
                                 :body (java.io.StringReader. text)})))))))
+
+(deftest invitation-images-require-the-current-stage-id
+  (let [png (byte-array [1 2 3])
+        app (web/app {:sensor! (fn [op {:keys [id]}] (when (= [op id] [:stage-qr "active"]) png))})
+        fetch (fn [id] (app {:request-method :get :uri "/api/sensors/stage/qr" :query-string (str "id=" id)}))
+        current (fetch "active")]
+    (is (= 404 (:status (fetch "expired"))))
+    (is (= "image/png" (get-in current [:headers "Content-Type"])))
+    (is (= "no-store" (get-in current [:headers "Cache-Control"])))
+    (with-open [image (:body current)]
+      (is (= [1 2 3] (vec (.readAllBytes image)))))))

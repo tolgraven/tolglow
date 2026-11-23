@@ -94,6 +94,8 @@ jobs:
           path: |
             build/media/studio.png
             build/media/studio.gif
+            build/media/stage-invitation.png
+            build/media/stage.gif
             build/media/launch.log
       - name: Build the iPhone and iPad simulator app with its Watch app and App Clip
         run: native/Packaging/archive-companion build/companion

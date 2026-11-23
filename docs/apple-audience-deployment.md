@@ -2,6 +2,12 @@
 
 A physical QR carries an HTTPS URL for the stage. Before printing invitations, associate your domain with the signed companion and its App Clip. The Mac stage creates the invitation locally for its running session.
 
+## Open a stage from Studio
+
+In the packaged Mac app, open **Connections → Stage invitation**. Start the OSC receiver and choose a sensor enrolled for the room. Enter its public HTTPS invocation origin and a stage name, then select **Start stage**. The invitation appears when the helper creates the stage key. **Discoverable** means the Mac has begun Bluetooth advertising. Select **Save QR image** to put that invitation on a screen or invitation card for this run. Arm the fresh sensor session through the normal show controls before mapping audience movement to lighting.
+
+**Stop stage**, replacing its sensor credential, stopping OSC, or loading another show invalidates that QR. Starting again produces a new fingerprint. A guest with an older image needs the current invitation. A reusable venue invitation would require an operator-selected identity protected in Keychain with a fresh challenge on every connection. That option remains open.
+
 ## Associate the domain
 
 1. Pick an HTTPS origin you operate, such as `https://lights.example.org`. Build the parent and Clip with `AUDIENCE_DOMAIN=lights.example.org`. Enable Associated Domains for those App IDs in the signing team.

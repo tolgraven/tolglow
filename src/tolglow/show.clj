@@ -69,6 +69,7 @@
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
+            [tolglow.integrations.audience-invitation :as audience-stage]
             [tolglow.sensors :as sensors]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
@@ -1681,6 +1682,12 @@
       (:configure :arm :calibrate)
       (deref (submit! runtime ({:configure :sensor-configure :arm :sensor-arm :calibrate :sensor-calibrate} operation) payload)
              5000 {:status :pending :message "Sensor configuration remains queued"})
+      (:stage-start :stage-stop)
+      (let [current (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
+        (if (= :stage-start operation)
+          (sensors/start-stage! current payload)
+          (audience-stage/stop-current! (:stage current) (:id payload))))
+      :stage-qr (audience-stage/png (:stage manager) (:id payload))
       :osc-start
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (sensors/start-osc! manager (select-keys payload [:host :port]))
