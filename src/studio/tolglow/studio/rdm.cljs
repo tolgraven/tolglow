@@ -20,11 +20,31 @@
                           {:host "127.0.0.1" :port 9010}))
         settings (if (= transport (:transport config :ola)) (merge defaults config) defaults)]
     (into {} (map (fn [[k v]] [k (str v)])) (select-keys settings connection-fields))))
+(defn- discovery-inventory [snapshot universe]
+  (let [jobs (filter (fn [{:keys [operation device]}]
+                       (and (= :discover operation) (= universe (:universe device))))
+                     (reverse (:jobs snapshot)))
+        ;; A completed job can reach the client before its table is saved by the show.
+        latest-uids (when (:connected? snapshot)
+                      (some (fn [job] (when (= :completed (:status job)) (get-in job [:result :uids]))) jobs))
+        uids (or latest-uids (get-in snapshot [:discovered universe]))
+        pending? (some #(#{:queued :running} (:status %)) jobs)
+        device-count (count uids)]
+    {:uids uids
+     :status-text (cond
+                    pending? (str "Discovery pending for universe " universe ".")
+                    (nil? uids) (str "No RDM inventory recorded for universe " universe ".")
+                    (empty? uids) (str "Last inventory for universe " universe " listed no RDM devices.")
+                    :else (str device-count (if (= 1 device-count) " RDM device" " RDM devices")
+                               " in the last inventory for universe " universe "."))}))
 (defn- view [local snapshot]
   (let [config (:config snapshot)
         draft (when-not (:connected? snapshot) local)
-        transport (or (:transport draft) (:transport config) :ola)]
-    (merge local (settings-form transport config) (:form draft) {:snapshot snapshot :transport transport})))
+        transport (or (:transport draft) (:transport config) :ola)
+        universe (parse-long (:universe local))]
+    (merge local (settings-form transport config) (:form draft)
+           {:snapshot snapshot :transport transport
+            :inventory (when (and snapshot universe) (discovery-inventory snapshot universe))})))
 (defn state [db]
   (view (ui db) (get-in db [:server-projection :view :subscriptions query :value])))
 (defn current-request? [db token]
@@ -136,7 +156,7 @@
         discovery-disabled? (or (:busy? s) (not enabled?))
         missing-uid? (and enabled? (= :art-net (:transport s)) (str/blank? (:controller-uid s)))
         disabled? (or discovery-disabled? missing-uid?)
-        discovered (get-in snapshot [:discovered (parse-long (:universe s))])]
+        {:keys [uids status-text]} (:inventory s)]
     [:section.panel.rdm-panel {:aria-label "RDM fixture management"}
        [:div.panel-top [:span.section-label "RIG · RDM FIXTURES"]
         [:span.rdm-badge (cond enabled? "SESSION ENABLED" snapshot "OFFLINE" :else "CONNECTING")]]
@@ -162,11 +182,12 @@
           [:div.rdm-actions
            [:button.button {:disabled discovery-disabled? :on-click #(action! :discover {:universe (parse-long (:universe s)) :full? false})} "Read device list"]
            [:button.button {:disabled discovery-disabled? :on-click #(action! :discover {:universe (parse-long (:universe s)) :full? true})} "Discover"]]]
-         (when (seq discovered)
+         (when status-text [:p.small.muted {:role "status"} status-text])
+         (when (seq uids)
            [:label "Discovered device"
             [:select {:aria-label "Discovered device" :value (:uid s) :on-change #(input! :uid %)}
              [:option {:value ""} "Choose a device"]
-             (for [uid discovered] ^{:key uid} [:option {:value uid} uid])]])
+             (for [uid uids] ^{:key uid} [:option {:value uid} uid])]])
          [:div.rdm-fields [field s :uid "Device UID" "text"] [field s :sub-device "Subdevice" "number"]]
          [:div.rdm-actions
           [:button.button {:disabled (or disabled? (str/blank? (:uid s))) :on-click #(action! :read (device s))} "Read device"]
