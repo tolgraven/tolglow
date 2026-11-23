@@ -1,5 +1,7 @@
 # Local models for lighting control, shaders and code
 
+**JEV** (J E V) is the first local model for show-control branch decisions.
+
 Start on the 48 GB M4 MacBook Pro with **Qwen2.5-Coder-7B-Instruct** and use **Qwen2.5-Coder-1.5B-Instruct** as the first 8 GB iPhone candidate. Both have Apache-2.0 cards, standard causal decoder implementations, native code pretraining and the same verified tokenizer and chat template. That gives a controlled comparison across devices. Their suitability for lighting control still needs generated-answer and physical device measurements. Nine immutable base revisions, source cards and licenses are recorded in the [model inventory](../../dev/model-lab/models.json).
 
 ## Candidates by device
