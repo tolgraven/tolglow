@@ -445,7 +445,7 @@
                        {:repositories {:tolglow (str first) :afterglow (str second)}
                         :workspace-parent (str (.resolve ^java.nio.file.Path root "studio-workspaces"))
                         :check-profiles {:unit {:repo :tolglow :argv ["git" "status" "--porcelain"]}}
-                        :runner (fn [request] (deref finish 3000 nil) (workspace/run-trusted-process! request))}})
+                        :runner (fn [request] @finish (workspace/run-trusted-process! request))}})
             manager (get-in runtime [:development :workspaces])
             _ (workspace/create! manager {:id "lighting"})
             server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
@@ -468,6 +468,9 @@
               (is (= :running (get-in running-view (into cursor [:running-checks :unit :status]))))
               (acknowledge client running)
               (deliver finish true)
+              ;; The check hashes two real Git worktrees before and after its process.
+              ;; Start the transport deadline once the status actually exists.
+              (is (= :passed (:status (deref (:result run) 30000 nil))))
               (let [done (receive client)
                     done-view (apply-patch running-view done)]
                 (is (= :passed (get-in done-view (into cursor [:checks :unit :status]))))
