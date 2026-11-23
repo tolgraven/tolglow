@@ -11,6 +11,12 @@ import WatchConnectivity
     @Published private(set) var discoveredDeviceID = ""
     var receive: ((Observation) -> Bool)?
     var onFailure: (() -> Void)?
+    var audienceReceive: ((Double, UInt32, Int?) -> Bool)?
+    var audienceEnded: (() -> Void)?
+    private var audienceSession: UUID?
+    private var audienceSending = false
+    private var audienceDeadline: Task<Void, Never>?
+    private var audienceReceiver = AudienceWatchReceipt()
     private var active = false
     private var sending = false
     private var generation = UUID()
@@ -77,11 +83,64 @@ import WatchConnectivity
             })
         } catch { fail("Invalid Watch observation") }
     }
+    func beginAudience() {
+        endAudience()
+        audienceSession = UUID()
+    }
+
+    func sendAudience(_ sample: AudienceSample) {
+        guard let id = audienceSession else { return }
+        guard active, WCSession.default.isReachable else { fail("Open your joined audience session on iPhone"); return }
+        // The next 200 ms tick carries the newest effort and the cumulative steps.
+        guard !audienceSending else { return }
+        audienceSending = true
+        audienceDeadline = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self, self.audienceSession == id, self.audienceSending else { return }
+            self.fail("Audience relay timed out")
+        }
+        let message: [String: Any] = ["audience-session": id.uuidString,
+                                      "sample": sample.bytes, "sent": Date().timeIntervalSince1970]
+        WCSession.default.sendMessage(message, replyHandler: { [weak self] reply in
+            let accepted = reply["received"] as? Bool == true
+            Task { @MainActor in
+                guard let self, self.audienceSession == id else { return }
+                self.audienceDeadline?.cancel()
+                self.audienceSending = false
+                if !accepted { self.fail("Join the audience on iPhone first") }
+            }
+        }, errorHandler: { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.audienceSession == id else { return }
+                self.fail("Audience relay disconnected")
+            }
+        })
+    }
+
+    func endAudience() {
+        let session = audienceSession
+        audienceSession = nil
+        audienceDeadline?.cancel()
+        audienceDeadline = nil
+        audienceSending = false
+        if let session, active, WCSession.default.isReachable {
+            WCSession.default.sendMessage(["audience-end": session.uuidString], replyHandler: nil, errorHandler: nil)
+        }
+    }
+
     func cancelPending() {
+        endAudience()
         generation = UUID(); deadline?.cancel(); deadline = nil
         mailbox = ObservationMailbox(); sending = false
     }
-    func stop() { cancelPending(); active = false; reachable = false; status = "Relay stopped" }
+    func stop() {
+        cancelPending()
+        active = false
+        reachable = false
+        audienceReceiver = AudienceWatchReceipt()
+        audienceEnded?()
+        status = "Relay stopped"
+    }
     private func fail(_ message: String) { cancelPending(); status = message; onFailure?() }
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
@@ -100,13 +159,28 @@ import WatchConnectivity
     }
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         let device = message["device-id"] as? String
+        let audienceID = (message["audience-session"] as? String).flatMap(UUID.init(uuidString:))
+        let sample = (message["sample"] as? Data).flatMap(AudienceSample.init(bytes:))
+        let sent = message["sent"] as? Double
         Task { @MainActor in
-            if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
+            if self.active, let audienceID, let sample, let sent {
+                let previous = self.audienceReceiver.current
+                let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: Date().timeIntervalSince1970)
+                if accepted, let previous, previous != audienceID { self.audienceEnded?() }
+                replyHandler(["received": accepted && self.audienceReceive?(sample.effort, sample.steps, sample.pulse) == true])
+            } else if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
                 self.discoveredDeviceID = device
                 replyHandler(["received": true])
             } else { replyHandler(["received": false]) }
         }
     }
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let id = (message["audience-end"] as? String).flatMap(UUID.init(uuidString:))
+        Task { @MainActor in
+            if self.active, let id, self.audienceReceiver.end(session: id) { self.audienceEnded?() }
+        }
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data, replyHandler: @escaping (Data) -> Void) {
         Task { @MainActor in
             guard self.active, let observation = try? Observation.decode(messageData), observation.pairingToken == nil else {
