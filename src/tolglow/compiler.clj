@@ -110,7 +110,9 @@
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
-        block-plan (when (contains? definition :blocks) (blocks/prepare definition entries prepare-expression))
+        block-plan (when (or (contains? definition :blocks)
+                             (some (comp blocks/reads-variable? :value) entries))
+                     (blocks/prepare (merge {:blocks {}} definition) entries prepare-expression))
         outputs (mapv (partial compile-output schemas bind-pure (some? block-plan)) (range)
                       (or (:outputs block-plan) entries))
         selected (when (contains? definition :targets) (set (:targets definition)))
@@ -160,9 +162,9 @@
   ([definition bind-pure match-plan rig]
   (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
-        positions (when block-plan (blocks/positions rig))
+        fixture-index (when block-plan (blocks/fixture-index rig))
         select-fixtures (fixture-selector rig selected)]
-    ((if (predictable-outputs? definition) keyframes/predictable identity)
+    (cond->
      (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
@@ -209,7 +211,8 @@
                             (when (or (nil? targets) (some #{(:id fixture)} targets))
                               (let [value (try
                                             (if frame-only? sampled-value
-                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0]))))
+                                                (evaluate (assoc env :fixture fixture :position (:position fixture [0 0 0])
+                                                                 :surface-uv (:surface-uv fixture))))
                                             (catch clojure.lang.ExceptionInfo cause
                                               (throw (ex-info "Effect evaluation failed"
                                                               {:definition-id (:id definition) :fixture-id (:id fixture)
@@ -226,10 +229,12 @@
                              rows))))
                     fixtures))]
         (-> context
-            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
+            (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % [])))))))))
+            (update :intents #(or % [])))))
+      block-plan (vary-meta blocks/step-info block-plan)
+      (predictable-outputs? definition) keyframes/predictable))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."

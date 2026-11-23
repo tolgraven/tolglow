@@ -26,6 +26,7 @@
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
+            [tolglow.effects.material-design :as material-design]
             [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
@@ -480,6 +481,11 @@
       (when (= :effects kind) (compiler/compile-effect (prefabs/capture (prefabs/catalog model) definition)))
       (update (command model {:op :registry/publish :kind kind :definition definition} time-ms)
               :ack merge {:kind kind :id (:id definition) :version (:version definition)}))
+    :material-edit
+    (let [{:keys [settings] :as result} (material-design/edit model payload)]
+      (if settings
+        (apply-message model {:type :settings :payload settings} time-ms runtime)
+        result))
     :agent-cue
     (let [cue (:cue payload)
           errors (registry/validate-definition :cues cue)
