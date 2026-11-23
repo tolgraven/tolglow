@@ -30,7 +30,7 @@ the graphics engine. It produces the two files the Studio loads at
 Keep Tolglow and Afterglow as sibling checkouts. See the
 [architecture and feature documentation](docs/README.md),
 [test commands and verification limits](docs/testing.md), and
-[implementation roadmap](docs/roadmap.md). Physical lighting and device output
+[open development issues](https://github.com/tolgraven/tolglow/issues). Physical lighting and device output
 are explicit operations; starting the Studio does not activate a rig by itself.
 
 ## Run the studio
@@ -57,10 +57,11 @@ project merges explicit application versions with the fork's project data.
 npm run studio:test
 npm run preview:test
 npm run studio:build
-lein check-roadmap
 ```
 
 The parity lane includes pure tests. Browser workflows, Docker jobs, physical
 controllers and Apple builds have separate gates described in the testing guide.
 Read [AGENTS.md](AGENTS.md) before changing source. Independent changes use focused
-branches and pull requests targeting `master`.
+branches and pull requests targeting `master`. Find the existing issue for your
+change, record its scope, then link the PR and verification evidence. Close the
+issue after its acceptance checks pass. [Development issues](https://github.com/tolgraven/tolglow/issues)

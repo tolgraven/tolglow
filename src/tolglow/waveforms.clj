@@ -5,6 +5,7 @@
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
             [tolglow.composition.response :as response]
+            [tolglow.controllers.parameter-display :as parameter-display]
             [tolglow.registry :as registry]
             [tolglow.signals :as signals]))
 
@@ -113,9 +114,9 @@
              (when clock-bound? (signal-environment model instance)) (dissoc request :input-key)]]
     (or (get-in @cache [:entries key])
         (let [result (preview snapshot request)]
-          (swap! cache (fn [{:keys [entries order]}]
+          (swap! cache (fn [{:keys [entries order] :as state}]
                          (let [order (vec (take-last 64 (conj (filterv #(not= key %) order) key)))]
-                           {:order order :entries (assoc (select-keys entries order) key result)})))
+                           (assoc state :order order :entries (assoc (select-keys entries order) key result)))))
           result))))
 
 (defn display-audio
@@ -140,7 +141,6 @@
   (let [instance (get-in snapshot [:model :instances (:instance-id view)])
         current? (and instance (= (:epoch view) (get-in snapshot [:model :epoch]))
                       (= (:definition-version view) (:effect-version instance)))
-        effective (when current? (effective-params snapshot instance))
         model (:model snapshot)
         config (get-in model [:settings :controllers :push-display])
         stale? (and (:instance-id view) (not current?))
@@ -149,17 +149,26 @@
                        :time-ms (:time-ms model) :beat (get-in model [:transport :beat])))
         view (merge {:display-mode (:mode config :parameters)
                      :parameter-view (:parameter-view config :auto)
-                     :history-beats (:history-beats config 4)} view)]
+                     :history-beats (:history-beats config 4)} view)
+        visible? (and current? (= :parameters (:display-mode view)) (not (get-in view [:target-picker :open?])))
+        inputs (delay ((resolved-inputs snapshot response/monitor-middleware) instance))
+        overrides (or (:resolved-param-overrides snapshot) (get-in snapshot [:modulation-view :overrides]))
+        displayed (if (and current? (= :audio (:display-mode view)) (seq (:responses model)))
+                    (get-in @inputs [:instance :params])
+                    (merge (:params instance) (get overrides (:id instance))))
+        reading (when (and visible? (seq (:parameters view)))
+                  (parameter-display/readings cache snapshot instance view (fn [_] @inputs)))]
     (cond-> (update (assoc view :visualization-clock clock :runtime-id (or (:runtime-id view) (:runtime-id snapshot) (:show-id model))) :parameters
                     (fn [parameters]
                       (mapv (fn [parameter]
                               (let [id (:param parameter (:id parameter))
                                     parameter (cond-> parameter
-                                                stale? (dissoc :value :base-value :effective-value)
+                                                stale? (dissoc :value :base-value :effective-value :source-state :source-types :source-error :sample-fixture)
                                                 current?
                                                 (assoc :value (get-in instance [:params id])
                                                        :base-value (get-in instance [:params id])
-                                                       :effective-value (get effective id)))]
+                                                       :effective-value (get displayed id))
+                                                reading (merge (reading id)))]
                                 (if (= :waveform-selector (get-in parameter [:schema :semantic/type]))
                                   (if current?
                                     (try (let [result (cached-preview cache snapshot

@@ -99,14 +99,23 @@
     (is (= [empty-levels empty-levels] (mapv :levels [started still-empty])))
     (is (= [0 0 0] (mapv :steps [started between still-empty])))))
 
+(defn- scan-png [file]
+  (let [image (ImageIO/read file)
+        w (.getWidth image)
+        h (.getHeight image)
+        rgb (RGBLuminanceSource. w h (.getRGB image 0 0 w h nil 0 w))]
+    (.getText (.decode (QRCodeReader.) (BinaryBitmap. (HybridBinarizer. rgb))))))
+
 (deftest printed-invitation-contains-the-ephemeral-stage-fingerprint
-  (let [stage (stage/create) file (java.io.File/createTempFile "tolglow-gatt-invite" ".png")]
+  (let [file (java.io.File/createTempFile "tolglow-gatt-invite" ".png")
+        origin "https://stage.example"
+        fresh-room (:room (stage/create))
+        ;; Camera detection fails with ZXing's default mask for this payload.
+        difficult-room "8c4c299def7236fcb126562f2f031d5b3f75b59b6aa0ca35c3c2ca7a1bc408d6"]
     (try
-      (let [url (main/write-invitation! "https://stage.example" (:room stage) file)
-            image (ImageIO/read file) w (.getWidth image) h (.getHeight image)
-            rgb (RGBLuminanceSource. w h (.getRGB image 0 0 w h nil 0 w))
-            decoded (.decode (QRCodeReader.) (BinaryBitmap. (HybridBinarizer. rgb)))]
-        (is (= (str "https://stage.example/audience/" (:room stage)) url (.getText decoded)))
-        (is (thrown? Exception (main/invitation "http://stage.example" (:room stage))))
-        (is (thrown? Exception (main/invitation "https://stage.example/path" (:room stage)))))
+      (doseq [room [fresh-room difficult-room]]
+        (let [url (main/write-invitation! origin room file)]
+          (is (= (str origin "/audience/" room) url (scan-png file)))))
+      (is (thrown? Exception (main/invitation "http://stage.example" fresh-room)))
+      (is (thrown? Exception (main/invitation "https://stage.example/path" fresh-room)))
       (finally (.delete file)))))
