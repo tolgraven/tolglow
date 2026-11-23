@@ -31,13 +31,14 @@
 (defn resolved-inputs
   "Resolve one committed snapshot's modulation and response inputs. Compile the
   response chain once for all projected instances, respecting private clocks."
-  [{:keys [model resolved-param-overrides modulation-view]}]
+  ([snapshot] (resolved-inputs snapshot response/compile-middleware))
+  ([{:keys [model resolved-param-overrides modulation-view]} compile-responses]
   (let [overrides (or resolved-param-overrides (:overrides modulation-view))
         responses (filterv #(not= false (:enabled? %)) (:responses model []))
-        middleware (if (seq responses) (response/compile-middleware responses) identity)]
+        middleware (if (seq responses) (compile-responses responses) identity)]
     (fn [instance]
       (middleware {:instance (update instance :params merge (get overrides (:id instance)))
-                   :frame (instance-clock model instance)}))))
+                   :frame (instance-clock model instance)})))))
 
 (defn effective-params [snapshot instance]
   (get-in ((resolved-inputs snapshot) instance) [:instance :params]))

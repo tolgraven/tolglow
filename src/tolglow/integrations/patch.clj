@@ -126,8 +126,9 @@
         (fail! :invalid-state "Invalid captured source observation")))
     (doseq [[id route-state] (:routes state)]
       (let [route (get routes id) captured (:envelope route-state)]
-        (when-not (and (only-keys? route-state #{:gate? :held-value :envelope :smoothed :clock :instance-id})
+        (when-not (and (only-keys? route-state #{:gate? :held-value :envelope :smoothed :clock :instance-id :contributing?})
                        (boolean? (:gate? route-state))
+                       (or (not (contains? route-state :contributing?)) (boolean? (:contributing? route-state)))
                        (every? #(and (finite? %) (<= 0 % 1)) ((juxt :held-value :smoothed) route-state))
                        (or (nil? (:instance-id route-state)) (id? (:instance-id route-state)))
                        (historical-clock? (:clock route-state) current)
@@ -265,7 +266,7 @@
                      (or gate? (and captured (not done?)) (> smoothed 1.0e-9)))
         [low high] (:range route)
         value (+ low (* (clamp smoothed 0.0 1.0) (- high low)))
-        next-state {:gate? gate? :held-value held-value :envelope captured :smoothed smoothed :clock clock :instance-id instance}
+        next-state {:gate? gate? :contributing? (boolean active?) :held-value held-value :envelope captured :smoothed smoothed :clock clock :instance-id instance}
         contribution (when active? {:route-id (:id route) :source-id (:source route) :destination (:destination route)
                                      :instance-id instance :value value :priority (:priority route) :origin (:origin observation)})]
     {:state next-state :contribution contribution

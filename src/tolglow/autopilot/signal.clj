@@ -83,7 +83,10 @@
                                  (get builtin-functions (:id definition))
                                  (ir/compile-expression (:expression definition)))]))})))
 
-(defn- cue-parameter [model options {:keys [cue-id param]}]
+(defn cue-parameter
+  "Read the local or latest running activation's typed input. Spatial links can
+  supply a committed field view to resolve cross-volume feedback in one pass."
+  [model options {:keys [cue-id param]}]
   (when-let [instance (or (let [selected (get-in model [:instances (:instance-id options)])]
                             (when (= cue-id (:cue-id selected)) selected))
                           (reduce (fn [found instance]
@@ -92,9 +95,10 @@
                                   instance found))
                               nil (vals (:instances model))))]
     (let [view (:modulation-view options)
+          overrides (:linked-overrides view (:overrides view))
           params (if (seq (:responses model))
-                   (waveforms/effective-params {:model model :modulation-view view} instance)
-                   (merge (:params instance) (get-in view [:overrides (:id instance)])))]
+                   (waveforms/effective-params {:model model :resolved-param-overrides overrides} instance)
+                   (merge (:params instance) (get overrides (:id instance))))]
       (get params param (get-in instance [:definition :params param :default])))))
 
 (defn- numeric-or [n fallback] (double (if (time/finite-number? n) n fallback)))
