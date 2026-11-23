@@ -19,7 +19,9 @@ AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run -m \
   tolglow.perf.adaptive-keyframes 4000 24 80
 ```
 
-Both passes use two release workers, a 25 ms output budget and a capture sink.
+The master performance workflow runs this comparison and retains
+`adaptive-keyframes.edn`. To write the same report locally, append an output
+file path to the command. Both passes use two release workers, a 25 ms output budget and a capture sink.
 The first pass measures every effect every frame and limits the stride to one.
 The second enables strides up to eight. Both use a 40% reserve for this stress
 case and require three successive pressure frames to change cadence. The
