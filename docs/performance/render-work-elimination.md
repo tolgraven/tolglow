@@ -161,6 +161,20 @@ Two complete show instances ran 36 paired frames after 18 warmups at each size, 
 
 At 20,000 pixels, a separate 48-frame comparison timed origin selection alone at 10.15 ms median with the current CPU code, 8.41 ms with a squared-distance CPU shortcut and 6.85 ms with the shader and CPU fade. These measurements used Mesa software OpenGL on shared Linux. The experiment covers four spheres and positions within ±32 metres. Production adoption would require a measured hardware gain, general shape and coordinate handling, and lifecycle and resource ownership in the show host. Run `./replay.sh ./results` from the extracted kit to reproduce both comparisons. [Measurements and portable replay kit](https://raw.githubusercontent.com/tolgraven/afterglow/7243b1a2df037f35adece24ead95eae86757229e/experiments/four-sphere-classification.zip)
 
+#### Tracing late frames on the 1,024-pixel show
+
+Two workers rendered a beat-driven wash and aim movement on 128 heads, with a pulse, an independent 40 Hz publisher and an in-memory sink. The comparison used the exact source revisions of Afterglow #89. Each run covered 240 physical slots after 120 warmup slots. The owner thread selects and blends effect results, converts head positions into mechanical commands and packs DMX while the independent publisher prepares its own output. Timing the effect functions alone misses both costs.
+
+| Replayed slot | Time until ready | Observed on that slot |
+| --- | ---: | --- |
+| 142, shared host | 602 ms | Lighting packing took 555 ms elapsed and 74 ms owner CPU. Over the complete tick the owner spent 539 ms runnable waiting for a CPU. No GC pause overlapped. |
+| 281, same source with two bounded CPU competitors | 956 ms | Lighting packing took 898 ms elapsed and 191 ms owner CPU. Total owner runnable wait was 721 ms. The longest wait from effect submission to invocation was 2.39 ms. |
+| 344, same competitors with the #81 transport change | 148 ms | A 134 ms GC pause overlapped the render. Lighting packing took 2.28 ms of owner CPU. |
+
+In all three cases the wash interpolated with a 200 ms horizon and zero evaluator calls. The moving-head aim and pulse each ran once directly. The three observations belong to different runs. Thread durations can overlap, and the shared cgroup's throttling counter covers other jobs. The original screenshot did not capture these measurements.
+
+Afterglow #92 removes a sort and intermediate vectors from calibrated pan and tilt selection. Two hosts replayed 119 actual clocks and their observed effect intervals. Every ArtDMX byte, all 1,152 preview records, model and effect intents matched. Across 94 warmed pairs, median packing allocation fell from 1,184,312 to 944,696 bytes and packing CPU p95 from 3.68 to 3.29 ms. Whole-tick median was 10.07 and 10.65 ms respectively, with p95 of 51.72 and 41.02 ms. An independent physical comparison of #81 reduced median allocation to prepare an 11-universe packet from 572,192 to 17,568 bytes. The 25 ms guarantee remains open. [Afterglow #92, calibration example and local replay source](https://github.com/tolgraven/afterglow/pull/92)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
