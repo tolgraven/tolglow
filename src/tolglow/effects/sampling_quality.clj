@@ -42,8 +42,10 @@
                           entry (if (and entry (identical? definition (:definition entry))) entry
                                   {:definition definition :transient? (transient-output? definition)})]
                       (cond-> (assoc-in state [:definitions ref] entry)
-                        (:transient? entry) (update :protected conj id))))]
-      (reduce-kv capture {:epoch epoch :versions versions :protected #{} :definitions {}} instances))))
+                        (:transient? entry) (update :protected conj id)
+                        (get-in definition [:keyframes :max-interval])
+                        (assoc-in [:ceilings id] (:keyframes definition)))))]
+      (reduce-kv capture {:epoch epoch :versions versions :protected #{} :ceilings {} :definitions {}} instances))))
 
 (defn protect [samples ids]
   (reduce (fn [out id]

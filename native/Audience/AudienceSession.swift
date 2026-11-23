@@ -27,8 +27,13 @@ final class AudienceSession: ObservableObject {
     private var taps: UInt32 = 0
     private var tapTime = -Double.infinity
     private var lastPhoneSteps: UInt32?
-    private var watch: (effort: Double, steps: UInt32, pulse: Int?, time: Double)?
+    private var watch: (sample: AudienceSample, time: Double, motionTime: Double?)?
+    private var phoneMotion: AudienceMotion?
+    @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
+    private var wristStageJoin: TimeInterval?
+    private var lastPulse: Int?
+    private var lastLevelTime = -Double.infinity
     @Published var allowLockedWatch = false
     private(set) var watchOnlyInBackground = false
     private var generation = UUID()
@@ -37,7 +42,24 @@ final class AudienceSession: ObservableObject {
     private let motion = CMMotionManager()
     #endif
 
-    init() { client.onEnd = { [weak self] in self?.stopInputs() } }
+    init() {
+        client.onJoin = { [weak self] in
+            self?.wristStageJoin = Date().timeIntervalSince1970
+            self?.startInputs()
+        }
+        client.onEnd = { [weak self] in self?.stopInputs() }
+        client.onSuspend = { [weak self] in self?.pauseInputs() }
+    }
+
+    private func pauseInputs() {
+        stopSampling()
+        lastPulse = nil
+        lastLevelTime = -.infinity
+        watch = nil
+        lastWatchSteps = nil
+        lastPhoneSteps = nil
+        effort = 0
+    }
 
     func startInputs() {
         guard client.joined, timer == nil else { return }
@@ -53,14 +75,17 @@ final class AudienceSession: ObservableObject {
         #if !APPCLIP
         motion.stopDeviceMotionUpdates()
         #endif
+        phoneMotion = nil
         meter = DanceMeter(); lastInputTime = -.infinity; taps = 0; tapTime = -.infinity
         lastPhoneSteps = 0
         guard client.joined else { return }
         message = ""
         let ingest: (Double, Double) -> Void = { [weak self] strength, time in
             guard let self, self.generation == token else { return }
+            let before = self.meter.steps
             self.meter.observe(strength: strength, at: time)
             self.lastInputTime = ProcessInfo.processInfo.systemUptime
+            if self.meter.steps != before { self.phoneOnset() }
         }
         switch input {
         case .touch: break
@@ -75,9 +100,14 @@ final class AudienceSession: ObservableObject {
         case .motion:
             guard motion.isDeviceMotionAvailable else { message = "Motion unavailable. Tap along instead."; return }
             motion.deviceMotionUpdateInterval = 1 / 25
-            motion.startDeviceMotionUpdates(to: .main) { sample, _ in
-                guard let sample else { return }
+            motion.startDeviceMotionUpdates(to: .main) { [weak self] sample, _ in
+                guard let self, self.generation == token, let sample else { return }
                 let a = sample.userAcceleration
+                if self.shareMotionAxes {
+                    let r = sample.rotationRate
+                    self.phoneMotion = AudienceMotion(acceleration: SIMD3(a.x, a.y, a.z) * 9.80665,
+                                                      rotation: SIMD3(r.x, r.y, r.z))
+                } else { self.phoneMotion = nil }
                 ingest(sqrt(a.x*a.x + a.y*a.y + a.z*a.z) / 1.3, sample.timestamp)
             }
         #endif
@@ -88,22 +118,46 @@ final class AudienceSession: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         guard client.joined, input == .touch, now - tapTime >= 0.25 else { return }
         taps &+= 1; tapTime = now
+        phoneOnset()
     }
 
-    @discardableResult func receiveWatch(effort: Double, steps: UInt32, pulse: Int?) -> Bool {
-        guard client.joined, effort.isFinite, (0...1).contains(effort) else { return false }
+    private func phoneOnset() {
+        // The wrist owns the person's counter while its stream is fresh.
+        if let wrist = watch {
+            if ProcessInfo.processInfo.systemUptime - wrist.time <= 2 {
+                lastPhoneSteps = input == .touch ? taps : meter.steps
+                return
+            }
+            endWatch()
+        }
+        publish(refreshLevels: false)
+    }
+
+    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?, sent: TimeInterval) -> Bool {
+        // Acknowledge wrist receipt during a brief stage outage. Drop this
+        // observation; the first fresh wrist count after rejoining is a baseline.
+        if client.reconnecting { return true }
+        guard client.joined else { return false }
+        if let joined = wristStageJoin {
+            guard AudienceWatchReceipt.startsBaseline(sent: sent, afterStageJoin: joined) else { return true }
+            wristStageJoin = nil
+        }
         let time = ProcessInfo.processInfo.systemUptime
-        if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
-        watch = (effort, steps, pulse, time)
-        if watchOnlyInBackground { publish() }
+        if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = sample.steps }
+        watch = (sample, time, motionTime)
+        let withdrewPulse = lastPulse != nil && sample.pulse == nil
+        if withdrewPulse { lastPulse = nil }
+        let refresh = watchOnlyInBackground && time - lastLevelTime >= 0.2
+        if refresh || withdrewPulse || sample.steps != lastWatchSteps { publish(refreshLevels: refresh) }
         return true
     }
     func endWatch() {
-        watch = nil; lastWatchSteps = nil
+        watch = nil; lastWatchSteps = nil; lastPulse = nil
         if watchOnlyInBackground { client.leave() }
     }
 
     func enterBackground() {
+        client.setForeground(false)
         guard !watchOnlyInBackground else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard client.joined, allowLockedWatch, let watch, now - watch.time <= 2 else { client.leave(); return }
@@ -112,28 +166,33 @@ final class AudienceSession: ObservableObject {
     }
 
     func foreground() {
+        client.setForeground(true)
         guard watchOnlyInBackground else { return }
         watchOnlyInBackground = false
         startInputs()
     }
 
-    private func publish() {
+    private func publish(refreshLevels: Bool = true) {
         let now = ProcessInfo.processInfo.systemUptime
         let phoneSteps = input == .touch ? taps : meter.steps
         let phoneEffort = input == .touch ? exp(-3 * (now - tapTime)) : (now - lastInputTime <= 0.6 ? meter.effort : 0)
         if let data = watch, now - data.time > 2 { endWatch(); lastPhoneSteps = phoneSteps }
         // A paired dancer gets one vote and one step counter even if both devices detect the same step.
-        if let data = watch {
+        if let data = watch?.sample {
             let delta = data.steps &- (lastWatchSteps ?? data.steps)
             if delta <= 8 { totalSteps &+= delta }
             lastWatchSteps = data.steps
-            effort = max(data.effort, phoneEffort)
+            if refreshLevels { effort = max(data.effort, phoneEffort) }
         } else {
             totalSteps &+= phoneSteps &- (lastPhoneSteps ?? phoneSteps)
-            effort = phoneEffort
+            if refreshLevels { effort = phoneEffort }
         }
         lastPhoneSteps = phoneSteps
-        if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort, pulse: watch?.pulse) {
+        if refreshLevels { lastPulse = watch?.sample.pulse; lastLevelTime = now }
+        let phoneAxes = shareMotionAxes && now - lastInputTime <= 0.6 ? phoneMotion : nil
+        let wristAxes = watch.flatMap { $0.sample.motion?.fresh(measured: $0.motionTime, at: now) }
+        if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort,
+                                       pulse: lastPulse, motion: wristAxes ?? phoneAxes) {
             client.offer(packet); serial &+= 1
         }
     }
@@ -145,10 +204,12 @@ final class AudienceSession: ObservableObject {
         #endif
         timer?.invalidate(); timer = nil; meter = DanceMeter()
         lastInputTime = -.infinity; tapTime = -.infinity
+        lastLevelTime = -.infinity
     }
 
     func stopInputs() {
-        watchOnlyInBackground = false; allowLockedWatch = false
+        wristStageJoin = nil
+        watchOnlyInBackground = false; allowLockedWatch = false; shareMotionAxes = false
         stopSampling()
         serial = 0; totalSteps = 0; effort = 0; lastPhoneSteps = nil; endWatch()
     }

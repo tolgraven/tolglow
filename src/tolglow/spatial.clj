@@ -173,10 +173,25 @@
     (field/sampler rig frame)
     #(field/sample % rig frame)))
 
+(defn- linked-controls [model before]
+  (let [view (:modulation-view before)
+        fields (get-in before [:parameter-samples :spatial-overrides])]
+    (if (and (seq fields) (= (:epoch model) (get-in before [:model :epoch])))
+      (let [authored-sources #(get-in % [:instances %2 :definition :spatial-volume :sources])
+            retain (fn [indexed id values]
+                     (let [current (authored-sources model id)
+                           prior (authored-sources (:model before) id)]
+                       (reduce-kv (fn [m param value]
+                                    (if (and (contains? current param) (= (current param) (get prior param)))
+                                      (assoc-in m [id param] value) m))
+                                  indexed values)))]
+        (assoc view :linked-overrides (reduce-kv retain (:overrides view {}) fields)))
+      view)))
+
 (defn advance [model before now graph command]
   (let [original (get-in model [:settings :spatial])
         old-cache (:spatial-cache before)
-        active (cues/volumes (assoc model :time-ms now) (:modulation-view before) (:settings old-cache))
+        active (cues/volumes (assoc model :time-ms now) (linked-controls model before) (:settings old-cache))
         model (cues/reconcile model active now command)
         s (live-settings original active (:settings old-cache))
         prior (get-in model state-path)

@@ -6,34 +6,47 @@ public struct AudienceSample: Equatable {
     public let steps: UInt32
     public let effort: Double
     public let pulse: Int?
+    public let motion: AudienceMotion?
 
-    public init?(serial: UInt32, steps: UInt32, effort: Double, pulse: Int? = nil) {
+    public init?(serial: UInt32, steps: UInt32, effort: Double, pulse: Int? = nil, motion: AudienceMotion? = nil) {
         guard effort.isFinite, (0...1).contains(effort),
               pulse.map({ (30...240).contains($0) }) ?? true else { return nil }
         self.serial = serial
         self.steps = steps
         self.effort = effort
+        self.motion = motion
         self.pulse = pulse
     }
 
     public var bytes: Data {
-        var bytes: [UInt8] = [1]
+        var bytes: [UInt8] = [motion == nil ? 1 : 2]
         for word in [serial, steps] {
             for shift in [24, 16, 8, 0] { bytes.append(UInt8(truncatingIfNeeded: word >> shift)) }
         }
         bytes.append(UInt8((effort * 255).rounded()))
         bytes.append(UInt8(pulse ?? 0))
+        if let motion {
+            for value in motion.components {
+                withUnsafeBytes(of: value.bitPattern.bigEndian) { bytes.append(contentsOf: $0) }
+            }
+        }
         return Data(bytes)
     }
 
     public init?(bytes: Data) {
         let b = Array(bytes)
-        guard b.count == 11, b[0] == 1 else { return nil }
+        guard (b.count == 11 && b[0] == 1) || (b.count == 35 && b[0] == 2) else { return nil }
         func word(_ start: Int) -> UInt32 {
             b[start..<(start + 4)].reduce(0) { ($0 << 8) | UInt32($1) }
         }
+        var motion: AudienceMotion?
+        if b[0] == 2 {
+            let values = stride(from: 11, to: 35, by: 4).map { Double(Float(bitPattern: word($0))) }
+            guard let axes = AudienceMotion(values) else { return nil }
+            motion = axes
+        }
         self.init(serial: word(1), steps: word(5), effort: Double(b[9]) / 255,
-                  pulse: b[10] == 0 ? nil : Int(b[10]))
+                  pulse: b[10] == 0 ? nil : Int(b[10]), motion: motion)
     }
 }
 
@@ -66,6 +79,8 @@ public struct DanceMeter {
 
 public struct AudienceLevels {
     public let count: Int
+    public let motionCount: Int
+    public let motion: [String: Double]
     public let pulseCount: Int
     public let effort: Double
     public let pulse: Double?
@@ -91,7 +106,8 @@ public struct AudienceFloor {
         guests = guests.filter { time - $0.value.time < timeout }
     }
 
-    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double) -> Bool {
+    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double,
+                                                     reserveSteps: (Int) -> Bool = { _ in true }) -> Bool {
         guard time.isFinite else { return false }
         var credit = 2.0
         if let previous = guests[id], time - previous.time < timeout {
@@ -99,7 +115,7 @@ public struct AudienceFloor {
             let added = sample.steps &- previous.sample.steps
             credit = min(2.0 + 4 * timeout, previous.stepCredit + max(0, time - previous.time) * 4)
             guard time >= previous.time, sequence > 0, sequence < (1 << 31),
-                  Double(added) <= credit else { return false }
+                  Double(added) <= credit, reserveSteps(Int(added)) else { return false }
             credit = min(2.0, credit - Double(added))
             pendingSteps += Int(added)
         } else {
@@ -110,15 +126,21 @@ public struct AudienceFloor {
         return true
     }
 
+    /// Drain accepted counter deltas independently of the slower level snapshot.
+    public mutating func takeSteps() -> Int {
+        defer { pendingSteps = 0 }
+        return pendingSteps
+    }
+
     public mutating func drain(at time: Double) -> AudienceLevels {
         expire(at: time)
         let pulses = guests.values.compactMap { $0.sample.pulse }
-        let levels = AudienceLevels(count: guests.count, pulseCount: pulses.count,
+        let motion = guests.values.compactMap { $0.sample.motion }
+        let steps = takeSteps()
+        return AudienceLevels(count: guests.count, motionCount: motion.count, motion: AudienceMotion.mean(motion), pulseCount: pulses.count,
             effort: guests.values.reduce(0) { $0 + $1.sample.effort } / Double(max(1, guests.count)),
             pulse: pulses.isEmpty ? nil : Double(pulses.reduce(0,+)) / Double(pulses.count),
-            steps: pendingSteps)
-        pendingSteps = 0
-        return levels
+            steps: steps)
     }
 }
 
@@ -131,8 +153,8 @@ public struct AudienceSteps {
         guard count >= 0, count <= limit - pending else { throw SensorError.invalid("Audience gesture queue overflow") }
         pending += count
     }
-    public mutating func takeBatch() -> Int {
-        let batch = min(8, pending)
+    public mutating func takeBatch(upTo allowance: Int = 8) -> Int {
+        let batch = min(8, pending, max(0, allowance))
         pending -= batch
         return batch
     }

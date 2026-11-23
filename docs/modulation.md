@@ -249,3 +249,27 @@ constraint solving across parameters, audio-reactive modulation, or learned
 movement policies. It does not guarantee that every mathematically valid range
 looks good on a particular rig. Numeric domains and category metadata are
 authoring data that the UI can expose for deliberate control.
+
+## Waveforms on a running instance
+
+Use the instance ID from a launch receipt to attach a waveform to one parameter. Two launches of the same cue can use different waveforms and ranges. The base parameter stays editable. Removing the waveform reveals the underlying input again, including another random or patch source if one is active.
+
+```clojure
+(show/submit! runtime :modulation-bind
+  {:instance-id instance-id :param :level
+   :binding {:type :lfo :waveform :pulse :period {:beats 1/2}
+             :phase 0.25 :inputs {:duty 0.35} :from 0.15 :to 0.9}})
+(show/submit! runtime :modulation-hold {:instance-id instance-id :params [:level]})
+(show/submit! runtime :modulation-resume {:instance-id instance-id :params [:level]})
+(show/submit! runtime :modulation-unbind {:instance-id instance-id :param :level})
+```
+
+Studio uses the same operations through typed Transit POSTs to `/api/modulation/bind`, `/hold`, `/resume` and `/unbind` under the modulation route. Binding again edits the current source. Musical periods accept beats, bars or phrases. Phase runs in cycles on the activation's private beat clock and captured meter. Holding the parameter exposes its base while the phase continues. Pausing the effect freezes its private clock. Ending the activation releases its bindings and the compiled plan is retired on the next frame.
+
+Registered waveform values are normalized from their declared range, clamped to 0–1, and interpolated between the two typed endpoints. Colors, coordinates and ranges interpolate component-wise. Integers round to the nearest value and boolean or enum inputs select the second endpoint at halfway. Live revisions of the selected waveform recompile its plan. A composite authored with `signals/sample` captures the nested expression at publication. Republishing the composite picks up a new constituent waveform. An incompatible destination or waveform input is reported on that source while the underlying parameter remains usable. Show files retain bindings, original schema, waveform registry and manual holds across instance-ID changes.
+
+Committed Studio snapshots include the registered waveform choices in `:parameter-waveforms`. Each bound entry under `[:instances n :parameter-sources param]` exposes its base value, effective input and sources, including held and constant-valued sources. A random controller waiting for its next legal sample is marked pending. A rejected sample carries a diagnostic on that frame. The input pipeline applies the random controller, instance waveform, spatial overrides and response middleware in order. Parameter blocks inside an effect can yield a different result per fixture. Live destinations list the MIDI controller and current ports while the lighting bridge owns them. Handing the device back to Live or stopping the input removes that source. Patch destinations include their captured route and source IDs, including audio pitch or level. A spatial field reports its configured variable, cue parameter or volume control. Their authored block source contains the path for `:runtime/block-trace`, which returns the committed result for the requested fixture.
+
+Spatial links such as `{:cue-id :solo :param :position}` read the selected activation’s typed value, including its instance waveform and response envelope. A position vector or RGB color uses the same lookup as a scalar. The current instance waveform takes precedence over the last completed random sample. When a linked input is itself authored by another spatial field, its previous completed value is used. Two fields can therefore feed each other with one frame of delay per link.
+
+Patch sources stay pending until their first contribution reaches the destination. An open gate or a continuing smoothing or release tail keeps the source active. After expiry, its configuration remains available to edit. An imported show displays its saved random sample and glide position immediately, with the controller’s random seed and next musical boundary preserved. If response middleware fails, the affected input identifies the response and reports its error. Other inputs retain their own values and source information.

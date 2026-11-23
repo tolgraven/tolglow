@@ -152,7 +152,9 @@
   (into {} (for [collector (ManagementFactory/getGarbageCollectorMXBeans)]
              [(.getName collector) {:collections (.getCollectionCount collector) :ms (.getCollectionTime collector)}])))
 
-(defn- worker-counters []
+(defn worker-counters
+  "Counters for the owner and currently active Afterglow worker threads. Capture after warmup."
+  []
   (let [bean (ManagementFactory/getThreadMXBean)
         owner (.getId (Thread/currentThread))
         relevant? (fn [id]

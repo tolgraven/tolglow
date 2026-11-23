@@ -2,6 +2,14 @@ import Foundation
 
 /// Tracks live WatchConnectivity samples only. A delayed sample cannot reopen an ended session.
 public struct AudienceWatchReceipt {
+    private static let maximumClockLead = 0.5
+
+    /// The Watch clock can lead the stage phone by up to half a second.
+    /// A receipt older than this watermark cannot establish a fresh baseline.
+    public static func startsBaseline(sent: Double, afterStageJoin joined: Double) -> Bool {
+        sent.isFinite && joined.isFinite && sent - joined > maximumClockLead
+    }
+
     public private(set) var current: UUID?
     private var lastSerial: UInt32 = 0
     private var retired: [UUID] = []
@@ -21,7 +29,7 @@ public struct AudienceWatchReceipt {
     }
 
     public mutating func accept(session: UUID, sample: AudienceSample, sent: Double, now: Double) -> Bool {
-        guard sent.isFinite, now.isFinite, (-0.5...2.0).contains(now - sent),
+        guard sent.isFinite, now.isFinite, (-Self.maximumClockLead...2.0).contains(now - sent),
               !retired.contains(session) else { return false }
         if current == session {
             let advance = sample.serial &- lastSerial
@@ -38,13 +46,15 @@ public struct AudienceWatchReceipt {
 /// Heart sharing lasts only as long as fresh workout samples arrive. HealthKit
 /// keeps read permission private, so a denied or unavailable sensor looks silent.
 public struct AudiencePulse {
-    private let started: Date
+    private let started: Date?
     private var latest: (Int, Date)?
 
-    public init(started: Date) { self.started = started }
+    public init(started: Date? = nil) { self.started = started }
+
+    public mutating func withdraw() { self = AudiencePulse() }
 
     public mutating func observe(_ value: Double, measured: Date, now: Date) {
-        guard value.isFinite, (30...240).contains(value),
+        guard let started, value.isFinite, (30...240).contains(value),
               measured >= started, (0...12).contains(now.timeIntervalSince(measured)),
               latest.map({ measured >= $0.1 }) ?? true else { return }
         latest = (Int(value.rounded()), measured)
@@ -55,6 +65,7 @@ public struct AudiencePulse {
     }
 
     public func interrupted(at time: Date) -> Bool {
-        time.timeIntervalSince(latest?.1 ?? started) > 60
+        guard let started else { return false }
+        return time.timeIntervalSince(latest?.1 ?? started) > 60
     }
 }

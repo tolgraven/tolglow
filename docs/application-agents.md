@@ -132,8 +132,7 @@ work. Full diffs and full check logs use the existing workspace endpoints.
 
 The default event ring retains at most 256 events and 512 KiB of encoded event
 data. Each event has a monotonic cursor; `read-events` reports history loss through
-`:dropped?`, allowing the UI to refresh task status and diffs. Reconnecting or
-polling never restarts a task. Agent stdout is bounded to 2 MiB and 64 KiB per
+`:dropped?`, allowing the UI to refresh task status and diffs. Reconnecting resumes the existing task. Agent stdout is bounded to 2 MiB and 64 KiB per
 line by the execution request; the default run deadline is five minutes.
 
 One worker is the default, at most two are supported, and four further tasks may
@@ -215,3 +214,10 @@ CLI `--help` checks are not proof of an authenticated provider turn or a browser
 workflow. The Ring facade, top-level runtime callbacks and development lifetime
 wiring are implemented and tested; browser workflows have a separate owner and
 acceptance gate.
+
+
+## Following a running task
+
+The Coding agent pane receives `[:development/task-events task-id cursor]` on the operator’s Transit WebSocket. Each update contains up to 16 retained events, the next cursor, and the newest available cursor. Studio reads successive pages after a gap and refreshes the task’s status when history has expired. Closing the pane drops its stream. The task continues in its workspace, and opening the pane again resumes from the last displayed cursor. The final status remains visible after the stream is released.
+
+After building Studio and its local development container, run `lein run -m tolglow.qa.developer-output` to exercise the browser workflow. It uses a local provider fixture, an actual Docker zsh session and a paused show.

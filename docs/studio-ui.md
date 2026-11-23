@@ -444,6 +444,29 @@ process restart. Existing worktree files remain on disk, but a fresh process doe
 not recover the catalog; saving/restoring a show does not currently repair this.
 This is a known lifecycle gap, not a completed persistent development environment.
 
+## Responsive Studio qualification
+
+The page-by-page results below come from touch-enabled Chromium and desktop Chromium against a release build served by Ring. The layouts used 390 × 844, 1024 × 768 and 1440 × 900 CSS pixels.
+
+| Workspace | Operator interaction exercised | Measured change or result |
+| --- | --- | --- |
+| Perform | Four simultaneous cues, horizontal compact parameters, monitor focus, schema layouts and fallbacks | The iPad focus graph grew from 155 × 68 to 213 × 83 px with all four cue cards visible. [#129](https://github.com/tolgraven/tolglow/pull/129) |
+| Compose | Save and reopen sequence and macro slots with parameter overrides and musical timing | An iPad step row went from 171 to 52 px high. All four steps fit. [#140](https://github.com/tolgraven/tolglow/pull/140) |
+| Rig & space | Explore, switch tools and resume path authoring with its draft intact | On the same eight-fixture show, the iPad Explore canvas grew from 486 to 818 px wide. [#140](https://github.com/tolgraven/tolglow/pull/140) |
+| Connections | Observe live readings, change enrolled zones and explicitly arm the observed session | Three browser sizes received the same gateway updates, expired sessions and opt-in pulse coverage. [#142](https://github.com/tolgraven/tolglow/pull/142) |
+| Assistant | Configure a provider, save and send a message through a loopback provider | The first connection’s Save action moved from y=1,147 to y=407 on phone. [#156](https://github.com/tolgraven/tolglow/pull/156) |
+| Definitions | Find and load a definition, edit its WASM Neovim source and use validation and publishing | Phone Publish moved from y=1,040 to y=333. The editor grew from 332 × 350 to 348 × 456 px. [#161](https://github.com/tolgraven/tolglow/pull/161) |
+| Develop | Edit a real paired workspace, inspect its Git diff and switch between tasks and source without losing a draft | The selected source first appears at y=480 on phone, down from y=2,584. [#168](https://github.com/tolgraven/tolglow/pull/168) |
+| Debug | Filter and inspect events, return keyboard focus and inspect DMX output | Phone shows 10 complete event rows, up from four. The iPad shows nine, up from seven. [#163](https://github.com/tolgraven/tolglow/pull/163) |
+
+Each linked PR includes release screenshots, an interaction recording and a reproducible browser check.
+
+Perform also passed in Playwright’s Linux WebKit with iPhone, iPad and desktop profiles. Its iPad view displayed all four cues, a 213 × 83 px spatial monitor and eight controls on Orbital wash. The tests edited a live value, switched between its time graph and spatial view, paused and resumed the cue, opened the XYZ controls and pressed a cue long enough to open its radial menu. Touchscreen taps and keyboard input used Playwright’s input drivers. The hold used a captured mouse pointer. All three profiles had zero document overflow and zero page errors. Physical iPad Safari remains a separate check.
+
+To check cue gestures in Chromium, run `lein run -m tolglow.qa.performance-layout target/cue-gestures gestures` after building Studio. The check holds a touch contact on a cue, opens its actions, then plays two other cues with separate contacts and cancels them both. It also holds back a real Ring launch reply while the same pointer releases and plays the pad again. The late reply ends the original instance and the next press remains live until release. A further check drops an accepted launch reply and the first release request. Studio recovers the instance by its gesture ID in the state socket and retries its exact release. The saved screenshots and instance IDs come from the preview-only show.
+
+After `npm ci` and `npm run studio:build`, install WebKit with `npx --no-install playwright-core install --with-deps webkit`. Run `STUDIO_TEST_BROWSER=webkit lein run -m tolglow.qa.performance-layout target/webkit-perform` for the screenshots and measurements.
+
 ## Build, verification and remaining evidence
 
 Install pinned npm dependencies with `npm ci`, then run `npm run studio:build`

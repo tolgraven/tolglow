@@ -17,6 +17,12 @@ import TolglowSensorCore
 
     init(phone: WatchRelay) {
         self.phone = phone
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--preview-audience-reconnection") {
+            route = .nearbyStage
+            selectedStage = stage.previewInterruptedStage()
+        }
+        #endif
         stage.onJoin = { [weak self] in
             let ready = self?.whenJoined
             self?.whenJoined = nil
@@ -24,7 +30,7 @@ import TolglowSensorCore
         }
         stage.onEnd = { [weak self] in
             guard let self, !self.ending, self.route == .nearbyStage else { return }
-            self.interrupted?("Stage disconnected. Find your stage again to rejoin.")
+            self.interrupted?(self.stage.status)
         }
         phone.phoneFloorChanged = { [weak self] active in
             guard let self else { return }
@@ -99,9 +105,9 @@ import TolglowSensorCore
         if !stage.join(id) { interrupted?("Stage unavailable. Find your stage again to rejoin.") }
     }
 
-    func send(_ sample: AudienceSample) {
+    func send(_ sample: AudienceSample, motionAge: Double) {
         switch route {
-        case .pairedPhone: phone.sendAudience(sample)
+        case .pairedPhone: phone.sendAudience(sample, motionAge: motionAge)
         case .nearbyStage: stage.offer(sample)
         }
     }

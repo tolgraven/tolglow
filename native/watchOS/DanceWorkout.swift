@@ -11,6 +11,9 @@ import TolglowSensorCore
     @Published private(set) var bpm: Int?
     @Published private(set) var status = "Choose where to share your wrist motion."
 
+    @Published var shareMotionAxes = false
+    private var axes: AudienceMotion?
+
     private let store = HKHealthStore()
     private let motion: MotionSampler
     let link: WatchFloorLink
@@ -22,7 +25,7 @@ import TolglowSensorCore
     private var generation = UUID()
     private var meter = DanceMeter()
     private var serial: UInt32 = 0
-    private var pulse: AudiencePulse?
+    private var pulse = AudiencePulse()
     private var lastMotion = 0.0
     var runningWorkout: Bool { active && session != nil }
 
@@ -99,7 +102,7 @@ import TolglowSensorCore
         workout.startActivity(with: now)
         live.beginCollection(withStart: now) { [weak self] success, _ in
             Task { @MainActor in
-                guard let self, self.generation == token else { return }
+                guard let self, self.generation == token, self.builder === live else { return }
                 if success { self.connectForMotion(token: token) }
                 else { self.stop("Workout collection unavailable. You can join with motion only.") }
             }
@@ -119,9 +122,14 @@ import TolglowSensorCore
         motionUpdates = motion.$values.dropFirst().sink { [weak self] values in
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }
             let now = ProcessInfo.processInfo.systemUptime
+            let previous = self.meter.steps
             self.meter.observe(strength: sqrt(x*x + y*y + z*z) / 9.80665, at: now)
+            self.axes = self.shareMotionAxes ? AudienceMotion(values: values) : nil
             self.lastMotion = now
+            if self.meter.steps != previous { self.publish(refreshLevels: false) }
         }
+        // Establish the zero counter before the first onset, including on a fast rejoin.
+        publish()
         motion.preview()
         status = session == nil ? "Sharing motion with the floor." : "Dance workout active. Sharing available pulse and motion."
         ticker = Task { [weak self] in
@@ -132,19 +140,43 @@ import TolglowSensorCore
         }
     }
 
-    private func publish() {
+    private func publish(refreshLevels: Bool = true) {
         guard ProcessInfo.processInfo.systemUptime - lastMotion < 2.5 else { stop("Wrist motion unavailable. Dance sharing stopped."); return }
-        effort = meter.effort
+        if refreshLevels { effort = meter.effort }
         steps = meter.steps
         let now = Date()
-        if pulse?.interrupted(at: now) == true {
+        if pulse.interrupted(at: now) {
             stop("No heart rate available. Check permission and watch fit, or join with motion only.")
             return
         }
-        bpm = pulse?.bpm(at: now)
-        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm) else { return }
+        if refreshLevels { bpm = pulse.bpm(at: now) }
+        sendCurrentSample()
+    }
+
+    private func sendCurrentSample() {
+        let freshAxes = shareMotionAxes && ProcessInfo.processInfo.systemUptime - lastMotion <= 0.6 ? axes : nil
+        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm, motion: freshAxes) else { return }
         serial &+= 1
-        link.send(sample)
+        link.send(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
+    }
+
+    private func discardPulseWorkout() {
+        let oldSession = session, oldBuilder = builder
+        builder = nil
+        session = nil
+        pulse.withdraw()
+        bpm = nil
+        oldSession?.delegate = nil
+        oldBuilder?.delegate = nil
+        oldSession?.end()
+        oldBuilder?.discardWorkout()
+    }
+
+    func withdrawPulse() {
+        guard runningWorkout else { return }
+        discardPulseWorkout()
+        status = "Heart rate off. Still sharing motion and steps."
+        sendCurrentSample()
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {
@@ -153,18 +185,14 @@ import TolglowSensorCore
         ticker = nil
         motionUpdates?.cancel()
         motionUpdates = nil
+        axes = nil; shareMotionAxes = false
         link.end()
         if active || requesting {
             motion.stop()
         }
         active = false
         requesting = false
-        session?.end()
-        builder?.discardWorkout()
-        builder = nil
-        session = nil
-        pulse = nil
-        bpm = nil
+        discardPulseWorkout()
         effort = 0
         steps = 0
         meter = DanceMeter()
@@ -188,14 +216,12 @@ import TolglowSensorCore
     }
     nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
     nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder, didCollectDataOf collectedTypes: Set<HKSampleType>) {
-        guard let type = HKObjectType.quantityType(forIdentifier: .heartRate), collectedTypes.contains(type),
-              let stats = workoutBuilder.statistics(for: type),
-              let date = stats.mostRecentQuantityDateInterval()?.end,
-              let value = stats.mostRecentQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: .minute())),
-              value.isFinite, (30...240).contains(value) else { return }
         Task { @MainActor in
-            guard self.builder === workoutBuilder else { return }
-            self.pulse?.observe(value, measured: date, now: Date())
+            guard self.builder === workoutBuilder,
+                  let type = HKObjectType.quantityType(forIdentifier: .heartRate), collectedTypes.contains(type),
+                  let stats = workoutBuilder.statistics(for: type), let date = stats.mostRecentQuantityDateInterval()?.end,
+                  let value = stats.mostRecentQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) else { return }
+            self.pulse.observe(value, measured: date, now: Date())
         }
     }
 }

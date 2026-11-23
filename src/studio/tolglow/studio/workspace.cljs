@@ -73,7 +73,25 @@
   (valid-source source)
   (if (get-in s [:files key]) (-> s (assoc-in [:files key :source] source) (update :errors dissoc [:file key])) s))
 
-(rf/reg-sub :workspace/state (fn [db _] (state db)))
+(defn with-status [local result]
+  (let [id (:selected-id local)
+        status (:value result)]
+    (cond
+      (nil? result) local
+      (and id (= id (:id status))) (assoc-in local [:statuses id] status)
+      (nil? status) (-> local (update :statuses dissoc id)
+                        (assoc-in [:errors [:status id]] "Workspace status is unavailable."))
+      :else local)))
+
+(rf/reg-sub :workspace/local (fn [db _] (state db)))
+(rf/reg-sub-raw :workspace/state
+  (fn [_ _]
+    (let [local (rf/subscribe [:workspace/local])]
+      (r/reaction
+        (let [{:keys [open? selected-id] :as s} @local]
+          (if (and open? selected-id)
+            (with-status s @(rf/subscribe [:studio/remote-result [:development/workspace selected-id]]))
+            s))))))
 (rf/reg-sub :workspace/token (fn [db _] (token db)))
 (rf/reg-event-db :workspace/set
   (fn [db [_ path value]]
@@ -85,13 +103,13 @@
 (rf/reg-event-fx :workspace/runtime-change
   (fn [{:keys [db]} _]
     (cond-> {:db (store db (-> (state db) (update :generation inc)
-                              (assoc :pending {} :errors {} :runner-ready? false :profiles [] :notice nil)))}
+                              (assoc :pending {} :errors {} :statuses {} :runner-ready? false :profiles [] :notice nil)))}
       (:open? (state db)) (assoc :dispatch [:workspace/list]))))
 (rf/reg-event-fx :workspace/list
   (fn [{:keys [db]} _]
     (cond
       (not (:open? (state db))) {}
-      (nil? (get-in db [:show :runtime-id])) {:dispatch-later [{:ms 200 :dispatch [:workspace/list]}]}
+      (nil? (get-in db [:show :runtime-id])) {}
       (get-in (state db) [:pending :list]) {}
       :else (request db :list nil {} nil {}))))
 (rf/reg-event-fx :workspace/create
@@ -106,12 +124,12 @@
   (fn [{:keys [db]} [_ id]]
     (let [id (wire id)]
       {:db (store db (assoc (state db) :selected-id id :active-file nil :filter "" :notice nil))
-       :fx [[:dispatch [:workspace/tree 0]] [:dispatch [:workspace/status id]]]})))
+       :dispatch [:workspace/tree 0]})))
 (rf/reg-event-fx :workspace/review-task
   (fn [{:keys [db]} [_ id]]
     (let [id (wire id)]
       {:db (store db (assoc (state db) :selected-id id :active-file nil :pane :diff :filter "" :notice nil))
-       :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/status id]] [:dispatch [:workspace/diff]]]})))
+       :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/diff]]]})))
 (rf/reg-event-fx :workspace/repository
   (fn [{:keys [db]} [_ repo]]
     {:db (store db (assoc (state db) :repo (wire repo) :active-file nil :filter "")) :dispatch [:workspace/tree 0]}))
@@ -120,18 +138,10 @@
     (let [s (state db) id (:selected-id s) repo (:repo s) key [:tree id repo]]
       (if (or (nil? id) (get-in s [:pending key])) {}
         (request db key :tree {:id id :repo repo :offset offset :limit 500} nil {:id id :repo repo :offset offset})))))
-(rf/reg-event-fx :workspace/status
-  (fn [{:keys [db]} [_ id]]
-    (let [s (state db) key [:status id]]
-      (if (or (not (:open? s)) (not= id (:selected-id s)) (get-in s [:pending key])) {}
-        (request (store db (assoc s :poll-id nil)) key :status {:id id} nil {:id id})))))
-(rf/reg-event-fx :workspace/poll-status
-  (fn [{:keys [db]} [_ id serial]]
-    (if (= [id serial] (:poll-id (state db))) {:dispatch [:workspace/status id]} {})))
 (rf/reg-event-fx :workspace/open-file
   (fn [{:keys [db]} [_ path]]
     (let [s (state db) key (file-key (:selected-id s) (:repo s) path)
-          db (store db (assoc s :active-file key :pane :files))]
+          db (store db (assoc s :active-file key :pane :files :browse? false))]
       (if (get-in s [:files key]) {:db db}
         (request db [:file key] :file {:id (first key) :repo (second key) :path path} nil {:file-key key})))))
 (rf/reg-event-fx :workspace/new-file
@@ -139,7 +149,7 @@
     (try
       (let [s (state db) path (relative-path (:new-path s)) key (file-key (:selected-id s) (:repo s) path)]
         (when-not (:selected-id s) (throw (js/Error. "Choose a workspace first.")))
-        {:db (store db (cond-> (assoc s :active-file key :pane :files :new-path "")
+        {:db (store db (cond-> (assoc s :active-file key :pane :files :browse? false :new-path "")
                          (not (get-in s [:files key]))
                          (assoc-in [:files key] {:path path :repo (:repo s) :hash "missing" :source "" :baseline nil
                                                 :binary? false :buffer-version 1})))})
@@ -195,7 +205,7 @@
 (rf/reg-event-fx :workspace/navigate
   (fn [{:keys [db]} [_ action]]
     (let [s (state db) key (:active-file s) file (get-in s [:files key])]
-      (if (and file (= :neovim (:editor s)) (:editor-ready? file))
+      (if (and (= :files (:pane s)) file (= :neovim (:editor s)) (:editor-ready? file))
         {:workspace/read-editor {:key key :token (token db) :action action :buffer-version (:buffer-version file)}}
         {:dispatch action}))))
 (rf/reg-event-fx :workspace/editor-read
@@ -240,12 +250,9 @@
           nil (cond-> {:db (store db (-> s (assoc :workspaces (:workspaces data []) :profiles (profiles (:profiles data []))
                                                  :runner-ready? (true? (:runner-ready? data)) :closed? (:closed? data))
                                         (update :statuses merge (into {} (map (juxt :id identity) (:workspaces data))))))}
-                (:selected-id s) (assoc :dispatch [:workspace/status (:selected-id s)])
                 (and (nil? (:selected-id s)) (seq (:workspaces data))) (assoc :dispatch [:workspace/select (:id (first (:workspaces data)))]))
-          :create {:db (store db (-> s (assoc-in [:statuses (:id data)] data) (assoc :notice "Paired workspace created.")))
+          :create {:db (store db (-> s (assoc-in [:statuses (:id data)] data) (assoc :notice "Paired workspace created." :create-open? false)))
                    :fx [[:dispatch [:workspace/list]] [:dispatch [:workspace/navigate [:workspace/select (:id data)]]]]}
-          :status {:db (store db (-> s (assoc-in [:statuses id] data) (assoc :poll-id [id serial])))
-                   :dispatch-later (when (and (:open? s) (= id (:selected-id s))) [{:ms 1500 :dispatch [:workspace/poll-status id serial]}])}
           :tree (let [previous (get-in s [:trees [id repo] :entries])
                       entries (if (zero? offset) (:entries data) (vec (vals (into (sorted-map) (map (juxt :path identity) (concat previous (:entries data)))))))]
                   {:db (store db (assoc-in s [:trees [id repo]] (assoc data :entries entries)))})
@@ -255,21 +262,17 @@
                                  (-> (update-in [:files file-key] merge (select-keys data [:hash :size :revision]))
                                      (assoc-in [:files file-key :baseline] source)
                                      (assoc-in [:files file-key :disk] nil))))
-                  :fx [[:dispatch [:workspace/status (first file-key)]] [:dispatch [:workspace/tree 0]] [:dispatch [:workspace/diff]]]}
+                  :fx [[:dispatch [:workspace/tree 0]] [:dispatch [:workspace/diff]]]}
           :diff {:db (store db (assoc-in s [:diffs id] data))}
-          :check {:db (store db (assoc-in s [:statuses id :running-checks profile] data)) :dispatch [:workspace/status id]}
-          :stage {:db (store db (-> s (assoc-in [:statuses id :preview] data) (assoc :notice "Review candidate prepared from the checked files.")))
-                  :dispatch [:workspace/status id]}
+          :check {:db (store db (assoc-in s [:statuses id :running-checks profile] data))}
+          :stage {:db (store db (-> s (assoc-in [:statuses id :preview] data) (assoc :notice "Review candidate prepared from the checked files.")))}
           {:db (store db s)})))))
 (rf/reg-event-fx :workspace/failure
   (fn [{:keys [db]} [_ t key serial error]]
     (if-not (and (current? db t) (= serial (get-in (state db) [:pending key]))) {}
-      (let [status? (and (vector? key) (= :status (first key)))
-            s (cond-> (-> (state db) (update :pending dissoc key) (assoc-in [:errors key] (events/error-message error)))
-                status? (assoc :poll-id [(second key) serial]))]
-        {:db (store db s)
-         :dispatch-later (when (and (vector? key) (= :status (first key)) (:open? s) (= (second key) (:selected-id s)))
-                           [{:ms 3000 :dispatch [:workspace/poll-status (second key) serial]}])}))))
+      {:db (store db (-> (state db)
+                         (update :pending dissoc key)
+                         (assoc-in [:errors key] (events/error-message error))))})))
 
 (def neovim
   (r/create-class
@@ -326,23 +329,19 @@
 (defn- status-label [value] (if value (str/replace (wire value) "-" " ") "Not run"))
 (defn- create-form [s]
   (let [busy? (boolean (get-in s [:pending :create]))]
-    [:div.workspace-create
-     [:button.text-button {:type "button" :disabled busy? :aria-expanded (boolean (:create-open? s))
-                           :on-click #(rf/dispatch [:workspace/set [:create-open?] (not (:create-open? s))])}
-      "+ Create paired workspace"]
-     (when (or (:create-open? s) (empty? (:workspaces s)))
-       [:div.workspace-create-fields
-        [:p.small.muted "Create fresh branches for Tolglow and Afterglow from committed refs. Changes in your main checkouts are not copied."]
-        [:div.workspace-form-row
-         [:label "Workspace ID · optional" [:input {:type "text" :value (get-in s [:create :id]) :disabled busy?
-                                                     :placeholder "lighting-architecture" :on-change #(set-field! [:create :id] %)}]]
-         [:label "Tolglow base ref" [:input {:type "text" :value (get-in s [:create :tolglow]) :disabled busy?
-                                             :on-change #(set-field! [:create :tolglow] %)}]]
-         [:label "Afterglow base ref" [:input {:type "text" :value (get-in s [:create :afterglow]) :disabled busy?
-                                               :on-change #(set-field! [:create :afterglow] %)}]]]
-        [error-box s :create]
-        [:button.button.primary {:type "button" :disabled busy? :on-click #(rf/dispatch [:workspace/create])}
-         (if busy? "Creating paired branches…" "Create workspace")]])]))
+    [:section.workspace-create-fields {:aria-label "Create a paired workspace"}
+     [:h2 "Create a paired workspace"]
+     [:p.small.muted "Choose committed base refs for the Tolglow and Afterglow branches."]
+     [:div.workspace-form-row
+      (for [[field title placeholder] [[:id "Workspace ID · optional" "lighting-architecture"]
+                                       [:tolglow "Tolglow base ref" "HEAD"]
+                                       [:afterglow "Afterglow base ref" "HEAD"]]]
+        ^{:key field} [:label title
+                       [:input {:type "text" :value (get-in s [:create field]) :disabled busy?
+                                :placeholder placeholder :on-change #(set-field! [:create field] %)}]])]
+     [error-box s :create]
+     [:button.button.primary {:type "button" :disabled busy? :on-click #(rf/dispatch [:workspace/create])}
+      (if busy? "Creating paired branches…" "Create workspace")]]))
 (defn- tree-panel [s]
   (let [id (:selected-id s) repo (:repo s) tree (get-in s [:trees [id repo]])
         term (str/lower-case (:filter s))
@@ -402,7 +401,12 @@
          [:label "Editor"
           [:select {:value (name (:editor s)) :disabled (boolean (:binary? file)) :aria-label "Application file editor engine"
                     :on-change #(navigate! [:workspace/editor (keyword (.. % -target -value))])}
-           [:option {:value "text"} "Accessible text"] [:option {:value "neovim"} "Neovim · WebAssembly"]]]]
+           [:option {:value "text"} "Accessible text"] [:option {:value "neovim"} "Neovim · WebAssembly"]]]
+         [:div.workspace-save-bar
+          [:button.button.primary {:type "button" :disabled (or saving? (:binary? file) (and nvim? (not (:editor-ready? file))))
+                                    :on-click #(rf/dispatch [:workspace/save])} (if saving? "Saving…" "Save file")]
+          [:button.button {:type "button" :disabled (boolean (get-in s [:pending [:file key]]))
+                           :on-click #(navigate! [:workspace/reload-file])} "Read disk version"]]]
         (if (:binary? file)
           [:p.workspace-binary "This is a binary file. The workspace can include it, but this text editor cannot change it."]
           (if nvim?
@@ -417,12 +421,6 @@
                 (for [[label keys] [["Esc" "<Esc>"] ["Insert" "i"] ["Tab" "<Tab>"] ["Undo" "<Esc>u"]]]
                   ^{:key label} [:button.button {:type "button" :on-click #(rf/dispatch [:workspace/editor-input keys])} label])]
            [:p.small.muted (:editor-status file "Starting actual Neovim…")]])
-        [:div.workspace-save-bar
-         [:button.button.primary {:type "button" :disabled (or saving? (:binary? file) (and nvim? (not (:editor-ready? file))))
-                                   :on-click #(rf/dispatch [:workspace/save])} (if saving? "Saving…" "Save file")]
-         [:button.button {:type "button" :disabled (boolean (get-in s [:pending [:file key]]))
-                           :on-click #(navigate! [:workspace/reload-file])} "Read disk version"]
-         [:span.small.muted "Save checks the file hash; changed disk content is never overwritten silently."]]
         [disk-review key file]])]))
 (defn- diff-panel [s]
   (let [id (:selected-id s) diff (get-in s [:diffs id]) busy? (boolean (get-in s [:pending [:diff id]]))]
@@ -482,44 +480,78 @@
       [:button.button.primary {:type "button" :disabled (boolean (or (empty? (:profiles s)) (seq running) (get-in s [:pending [:stage id]])))
                                 :on-click #(rf/dispatch [:workspace/stage])} "Prepare review candidate"]]]))
 
+(defn- workspace-picker [s]
+  (let [{:keys [selected-id workspaces create-open?]} s]
+    [:div.workspace-selection
+     (when (seq workspaces)
+       [:label "Workspace"
+        [:select {:value (or selected-id "") :aria-label "Development workspace"
+                  :on-change #(navigate! [:workspace/select (.. % -target -value)])}
+         (when-not selected-id [:option {:value ""} "Choose workspace"])
+         (for [{:keys [id state]} workspaces]
+           ^{:key id} [:option {:value id} (str id " · " (status-label state))])]])
+     [:button.button.workspace-refresh {:type "button" :aria-label "Refresh workspaces"
+                                       :title "Refresh workspaces" :disabled (boolean (get-in s [:pending :list]))
+                                       :on-click #(rf/dispatch [:workspace/list])} "Refresh"]
+     (when (seq workspaces)
+       [:button.button {:type "button" :aria-expanded (boolean create-open?) :aria-controls "workspace-create"
+                        :on-click #(rf/dispatch [:workspace/set [:create-open?] (not create-open?)])}
+        "New workspace"])]))
+
+(defn- workspace-panes [{:keys [selected-id pane]}]
+  [:nav.workspace-panes {:aria-label "Development workspace views"}
+   (for [[id title] [[:files (if selected-id "Files" "Workspace")] [:diff "Diff"] [:checks "Checks & preview"]
+                     [:terminal "Terminal"] [:agent "Coding agent"]]
+         :when (or selected-id (#{:files :agent} id))]
+     ^{:key id} [:button {:type "button" :aria-current (when (= id pane) "page")
+                          :on-click #(navigate! [:workspace/pane id])} title])])
+
+(defn- repository-picker [s]
+  (let [repos (get-in s [:statuses (:selected-id s) :repositories])
+        entries (or (seq (sort-by (comp wire key) repos)) [[:tolglow {}] [:afterglow {}]])]
+    [:div.workspace-repositories {:role "group" :aria-label "Paired repositories"}
+     (for [[repo {:keys [branch base]}] entries :let [id (wire repo)]]
+       ^{:key id} [:button {:type "button" :aria-pressed (= id (:repo s))
+                            :on-click #(navigate! [:workspace/repository id])}
+                   [:strong id] [:span {:title branch} (or branch "Loading branch…")] [:code (short-hash base)]])]))
+
+(defn- workspace-files [s token]
+  (let [selected? (some? (:active-file s))]
+    [:div.workspace-file-layout {:class (when selected? "with-open-file")}
+     (when selected?
+       [:button.button.workspace-browse {:type "button" :aria-controls "workspace-file-tree"
+                                        :aria-expanded (boolean (:browse? s))
+                                        :on-click #(rf/dispatch [:workspace/set [:browse?] (not (:browse? s))])}
+        (if (:browse? s) "Hide file browser" "Browse files")])
+     [:div#workspace-file-tree {:class (when (:browse? s) "is-open")} [tree-panel s]]
+     [editor-panel s token]]))
+
 (defn workspace-view [_db]
-  (let [s @(rf/subscribe [:workspace/state]) t @(rf/subscribe [:workspace/token])
-        id (:selected-id s) status (get-in s [:statuses id])
-        repositories (or (seq (sort-by (comp wire key) (:repositories status))) [[:tolglow {}] [:afterglow {}]])]
+  (let [s @(rf/subscribe [:workspace/state])
+        token @(rf/subscribe [:workspace/token])
+        {:keys [selected-id pane workspaces create-open?]} s
+        create? (and (not= pane :agent) (or create-open? (empty? workspaces)))]
     [:div.workspace-view
-     [:section.panel.workspace-header
-      [:div.panel-top [:span.section-label "APPLICATION DEVELOPMENT"] [:span.small.muted "Paired Git worktrees"]]
-      [:div.workspace-header-body
-       [:h1 "Develop the lighting system"]
-       [:p.small.muted "Edit application code in its own paired branches. Cue and effect authoring remains in Definitions; running shows keep their own state."]
-       [error-box s :list]
-       [error-box s [:status id]]
-       (when (:notice s) [:p.workspace-notice {:role "status"} (:notice s)])
-       [:div.workspace-selection
-        [:label "Workspace"
-         [:select {:value (or id "") :aria-label "Development workspace"
-                    :on-change #(navigate! [:workspace/select (.. % -target -value)])}
-          (when-not id [:option {:value ""} "Choose or create a workspace"])
-          (for [workspace (:workspaces s)] ^{:key (:id workspace)} [:option {:value (:id workspace)} (str (:id workspace) " · " (status-label (:state workspace)))])]]
-        [:button.button {:type "button" :disabled (boolean (get-in s [:pending :list])) :on-click #(rf/dispatch [:workspace/list])} "Refresh workspaces"]]
-       [create-form s]]]
-     [application-agents/panel]
-     (when id
-       [:section.panel.workspace-main
-        [:div.workspace-repositories {:role "group" :aria-label "Paired repositories"}
-         (for [[repo details] repositories :let [name (wire repo)]]
-           ^{:key name} [:button {:type "button" :aria-pressed (= name (:repo s)) :on-click #(navigate! [:workspace/repository name])}
-                         [:strong name] [:span (or (:branch details) "Loading branch…")] [:code (short-hash (:base details))]])]
-        [:nav.workspace-panes {:aria-label "Development workspace views"}
-         (for [[pane label] [[:files "Files"] [:diff "Diff & summary"] [:checks "Checks & preview"] [:terminal "Terminal"]]]
-           ^{:key pane} [:button {:type "button" :aria-current (when (= pane (:pane s)) "page") :on-click #(navigate! [:workspace/pane pane])} label])]
-        (case (:pane s)
-          :files [:div.workspace-file-layout [tree-panel s] [editor-panel s t]]
-          :diff [diff-panel s]
-          :checks [checks-panel s]
-          :terminal [:div.workspace-terminal-slot {:data-workspace-id id :data-repository (:repo s)}
-                     [terminal/panel id (keyword (:repo s))]]
-          nil)])]))
+     [:header.workspace-header
+      [:h1 "Develop"]
+      (when (not= :agent pane) [workspace-picker s])]
+     [error-box s :list]
+     [error-box s [:status selected-id]]
+     (when (:notice s) [:p.workspace-notice {:role "status"} (:notice s)])
+     [workspace-panes s]
+     [:div#workspace-create {:hidden (not create?)} (when create? [create-form s])]
+     (if (= :agent pane)
+       [application-agents/panel]
+       (when selected-id
+         [:section.panel.workspace-main
+          [repository-picker s]
+          (case pane
+            :files [workspace-files s token]
+            :diff [diff-panel s]
+            :checks [checks-panel s]
+            :terminal [:div.workspace-terminal-slot {:data-workspace-id selected-id :data-repository (:repo s)}
+                       [terminal/panel selected-id (keyword (:repo s))]]
+            nil)]))]))
 (def panel
   (r/create-class
    {:display-name "Development workspace"
