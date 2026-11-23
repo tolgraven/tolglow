@@ -14,11 +14,13 @@ Report limits and measured error alongside time saved for each device. A faster 
 
 ## Measured decisions
 
-* **Give visible controls their own sampling budget.** Studio and Push share
+* **Give visible controls their own sampling budget.** Studio and Push 2 share
   musical cue-color keyframes for mounted cells. The host releases work when
   the final surface leaves. Sustained pressure first widens presentation
   sampling, while visual interpolation and physical output keep their own
-  clocks. Browser and captured Push LED evidence accompany the implementation.
+  clocks. Browser and captured Push 2 LED evidence accompany the implementation.
+  Push 3 currently exposes a semantic data view. Its physical pad LED writer
+  and device measurements are still open.
   [Mounted pad previews](https://github.com/tolgraven/tolglow/pull/117)
 * **Keep short flashes at source rate.** Uniform four-frame evaluation missed
   11 of 16 flash frames and introduced five false ones in a two-bar replay.

@@ -35,7 +35,7 @@
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
-   :evidence ["Merged Tolglow #117 and Afterglow #71 lease presentation work to visible surfaces and reduce visual keyframe frequency before slowing live effects."
+   :evidence ["Merged Tolglow #117 and Afterglow #71 lease presentation work to visible Studio cells and Push 2 pads and reduce visual keyframe frequency before slowing live effects."
               "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
               "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
               "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
