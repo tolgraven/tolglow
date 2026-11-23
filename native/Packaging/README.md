@@ -6,7 +6,13 @@ The **Compiled macOS Studio** artifact adds a native Apple Silicon executable to
 
 ## Open a show
 
-For the full JVM window, unzip **Tolglow-Studio-arm64** from **Packaged Apple Studio**. For the window with both engines, unzip **Tolglow-compiled-Studio-arm64** from **Compiled macOS Studio**. It contains a development build with an ad hoc signature. Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
+For the full JVM window, unzip **Tolglow-Studio-arm64** from **Packaged Apple Studio**. For the window with both engines, unzip **Tolglow-compiled-Studio-arm64** from **Compiled macOS Studio**. The packaged development app has an ad hoc signature. You can verify its bundled code locally with the command below. If macOS prompts about the developer when you open the downloaded build, follow Apple’s per-app approval steps for a build and workflow revision you trust. [Open an app on your Mac](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)
+
+```sh
+codesign --verify --deep --strict "Tolglow Studio.app"
+```
+
+Launch **Tolglow Studio** and choose **Open Show Folder**. The selected folder is the process working directory and its Clojure namespace root. Files referenced by the configuration can use relative paths. Only open folders whose code and configured hardware modules you intend to run.
 
 The runner reads the first available file in this order.
 
