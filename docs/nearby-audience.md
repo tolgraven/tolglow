@@ -7,7 +7,7 @@ The full iPhone app and the lightweight Dance floor App Clip have a common **Fin
 | Tap | App Clip and iPhone | Tap onset and a decaying intensity |
 | Camera | App Clip and iPhone | Effort and estimated steps from visible leg movement. Prop up the phone facing the dancer. Vision measures local knee and ankle movement relative to the hips. |
 | Phone motion | Full iPhone app | Acceleration peaks and smoothed intensity |
-| Wrist motion | Watch with its paired iPhone joined | Wrist effort and steps, counted once for the person |
+| Wrist motion | Watch relayed by a joined iPhone or enrolled directly at a nearby stage | Wrist effort and steps, counted once for the person |
 | Exercise pulse | Optional Watch dance workout | A fresh heart rate when the wearer expressly shares it. The stage exposes the mean of available readings and a presence flag. |
 
 Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses foreground Bluetooth, Vision and AVFoundation. Camera mode follows the person initially closest to the center. Both hips and at least two lower-body joints must be visible. When two bodies cross too closely or joints disappear, step detection waits for a fresh baseline. The meter measures leg movement relative to the hips so sliding the whole image sideways does not produce a step. Phone and Watch accelerometers detect movement peaks. Distinguishing individual styles of dance needs recorded validation with people. [Apple’s App Clip capabilities](https://developer.apple.com/documentation/appclip/choosing-the-right-functionality-for-your-app-clip)
@@ -18,11 +18,11 @@ Core Motion and HealthKit are unavailable to App Clips at runtime. The Clip uses
 2. Run the built tool with a stage name, the public HTTPS origin for your signed Clip, and an output filename. For example, `TolglowAudienceBridge "East stage" https://tolgraven.se east-stage.png`. Allow Bluetooth access. Without OSC settings, the bridge reports participant counts locally.
 3. For show control, enroll a single sensor source named `audience` (or set `TOLGLOW_AUDIENCE_OSC_ID`). Set `TOLGLOW_AUDIENCE_OSC_PORT` to the local receive port and `TOLGLOW_AUDIENCE_OSC_TOKEN` to that source’s private credential before starting the bridge. Apply the normal sensor configuration and arm the fresh source session. [Sensor enrollment and mappings](sensors.md)
 4. Display the generated QR. Full-app visitors can also browse advertised names manually. Scanning pins a particular stage’s public key. Restarting the bridge creates a fresh stage identity and QR.
-5. Guests open **Dance floor**, select the stage, then choose their input. For Watch participation, open the paired iPhone’s Dance floor and join first. On Watch select Dance floor and choose whether to share workout pulse.
+5. Guests open **Dance floor**, select the stage, then choose their input. For paired Watch participation, join the floor on iPhone and use **Paired iPhone** on Watch. To participate with a Watch alone, leave the floor on your phone, choose **Nearby stage**, tap **Find stages**, and select the advertised stage. Selecting a stage stops browsing. The Watch opens the live session when you choose **Join with motion**, or after you enable **Share heart rate** and grant workout access. You can take your time with either prompt. A direct Watch appearance is a manual nearby enrollment. The signed QR identity check remains available on iPhone.
 
 The registered observation has numeric channels `audience-count`, `dance-effort` (0–1), `dance-steps` (newly delivered), `pulse-present` and, while available, `pulse-bpm`. Map the `dance-step` gesture to a cue for a separate onset per estimated step. The bridge batches up to eight gestures into one OSC observation. Levels update five times a second. Coalesced phone writes carry a cumulative step counter. Host receipt times determine expiry and event timing. The bridge keeps current readings in memory. A saved show can contain the most recent configured aggregate channel, including its BPM when one wearer is participating.
 
-Phone and Watch share a participant identity for the joined session. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host. The bridge runs on macOS.
+In paired mode phone and Watch share a participant identity. Losing the phone connection ends wrist sharing until the guest explicitly rejoins. A direct Watch sends to the stage even when its paired phone is absent. If the paired phone reports it has joined, the Watch leaves its direct session and offers the paired route. Closing a solo session stops sampling, disconnects Bluetooth and discards the pending reading. Watch steps take precedence while available. A soloist has full weight. Each new guest contributes one equally weighted effort reading. Guests time out after 2.5 seconds, and the bridge sends a final count of zero. If the OSC delivery queue fills or sending fails, the bridge reports the error and stops the stage. The in-memory bound of 128 participants is a resource limit. Physical radio capacity must be measured separately. A nearby Mac can act as a gateway for a Linux lighting host. The bridge runs on macOS.
 
 To use each admitted step to launch a registered accent cue, add the following entry to the audience sensor’s mapping. The musical cooldown lets a large crowd play one accent per sixteenth note in 4/4. Remove the cooldown to process every detected guest onset.
 
@@ -33,6 +33,16 @@ To use each admitted step to launch a registered accent cue, add the following e
              :command {:op :cue/launch :cue-id :accent
                        :launch {:mode :one-shot :duration {:beats 1/8}}}}]}
 ```
+
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
+### Motion channels
+
+In the App Clip, **Use iPhone or Watch motion in Tolglow** opens the system offer for its parent app. After installation, scan the same stage QR to continue.
+
+Choose **Phone motion → Share phone acceleration and rotation** on iPhone, or **Share wrist axes** in the Watch dance view. The guest can turn sharing off during a song. Every 200 ms the bridge sends the mean signed, gravity-removed acceleration in m/s² (`accel-x`, `accel-y`, `accel-z`) and angular velocity in rad/s (`rotation-x`, `rotation-y`, `rotation-z`) from the guests currently supplying all six channels. The watch takes precedence when both devices send fresh axes. `motion-count` gives the number of contributing dancers across the selected zones. With one participant the means equal that device’s readings. With differently oriented devices, signed values can cancel. `dance-effort` gives an orientation-independent intensity for the crowd.
+
+Map the resulting channels to effect parameters through normal sensor mappings. Each source uses device-local axes. The mixer removes the six channels when the final contributor withdraws or expires. Tap and camera participation still send the estimated effort and steps.
 
 ## Cover several areas of a venue
 
@@ -49,15 +59,18 @@ lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
 
+
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
 ## Publish a scannable Clip
 
-Set `AUDIENCE_DOMAIN` for the signed build. Add the domain to your developer team, enable associated domains for Clip and parent, and serve an Apple App Site Association document via HTTPS at `/.well-known/apple-app-site-association`. Include the signed Clip in `appclips.apps` and the signed parent in `applinks.details` for `/audience/*`. Configure the corresponding App Clip experience and invocation URL prefix in App Store Connect before distributing the printed QR. Verify the size of the archived Clip against Apple’s physical invocation limit and test a fresh scan on a device with no installed parent. The default domain in project settings is a build configuration, not a published experience. [Apple’s invocation guide](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
+For pre-alpha testing, run the Clip in the iPhone simulator. On a development-signed iPhone, a registered Local Experience can open the **stage QR** directly from an HTTPS URL on a test host. Publishing a custom domain and an App Store experience belongs to the later public distribution test. [Simulator, local iPhone and public invitation instructions](nearby-audience-qualification.md#test-the-clip-before-distribution)
 
 The QR holds a public fingerprint. A per-connection challenge and ephemeral phone ECDH key derive an AES-GCM sample key. The bridge forwards aggregate values and gesture identities to the enrolled lighting input. It exposes no operator commands or rendering credentials to guests. Nearby render work has a separate full-app consent control and uses a measured peer connection for its GPU buffers. The Clip only participates in sensing. [Configure and qualify guest GPUs](../native/AudienceCompute/README.md)
 
 ## Qualification
 
-Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
+Build and exercise both iOS targets, Watch and bridge with `native/Tests/check_macos.sh`. Swift tests cover individual readings, multiple guests, expiration, duplicate/out-of-order packets, wraparound, pulse removal and step counting. A deterministic model test exercises 96 guests at five updates per second for three minutes with missed readings, duplicates, a guest rejoining, pulse opt-out and final expiry. It checks every tick’s individual step delta, participant count and mean effort. The Watch UI test exercises route selection on the actual simulator and captures the interaction. The physical acceptance run needs an iPhone, paired Watch and a Bluetooth Mac on separate networks. Include a solo Watch with its phone switched off, phone return, stage disconnection and the Bluetooth permission prompt. Test a signed QR launch, exercise and permission denial, stage restart, actual radio capacity at increasing crowd sizes and thermal behavior. Simulator build or replay results do not establish these properties.
 
 ## Operate audience zones in Studio
 

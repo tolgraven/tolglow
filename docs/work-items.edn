@@ -1,10 +1,26 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
+ [{:id :runtime/publication-clock
+   :title "Evaluate live effects for the intended output deadline"
+   :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
+                "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
+                "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."] :evidence []}
+  {:id :performance/macbook-air-qualification
+   :title "Measure the dense mixed rig on the physical MacBook Air"
+   :kind :research :status :in-progress :owner "Mixed venue profiling"
+   :paths ["tolglow/docs/performance/macbook-air.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Record the actual macOS host model, CPU, renderer, workload, source revisions and warmup. Report full-frame deadline counts, time for four spheres, and agreement of fixture events and output."
+                "Measure native shader dispatch and completed readback separately, distinguish software rendering, and retain raw results."] :evidence []}
+  {:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
    :kind :implementation :status :in-progress :owner "Nearby audience participation"
    :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge"]
-   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md." "Tolglow PRs 135 and 136 and Afterglow PR 78 add separate full-app GPU consent and strict or redundant field verification. The bundled iOS shader on Linux matched 3,723 complete 40 Hz Art-Net frames. The macOS encrypted loopback returned 16 KiB in 0.407 ms median. Physical radio and thermal qualification remain open."]}
+   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Watch can also enroll as a solo Bluetooth guest. AudienceCrowdTests exercises per-person effort and steps with 96 identities, replay, packet loss, rejoin and expiry for a three-minute virtual song. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md." "Tolglow PRs 135 and 136 and Afterglow PR 78 add separate full-app GPU consent and strict or redundant field verification. The bundled iOS shader on Linux matched 3,723 complete 40 Hz Art-Net frames. The macOS encrypted loopback returned 16 KiB in 0.407 ms median. Physical radio and thermal qualification remain open."
+              "PR 141 carries signed acceleration and rotation for consenting phone and Watch participants. The multi-zone OSC tests cover contributor weighting and withdrawal."]}
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
@@ -14,7 +30,7 @@
    :paths ["tolglow/linux/audience"]
    :depends-on [:foundation/tests]
    :acceptance ["Interoperate with Apple's encrypted v1/v2 frames and paired OSC gesture admission. Exercise ATT/BlueZ hardware and physical capacity on a Pi."]
-   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. Physical Bluetooth controller and Apple device qualification pending."]}
+   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
@@ -35,7 +51,8 @@
    :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. #79 measures reuse of their validated tuples across submissions, with unchanged, changing and spatial controls. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
-   :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
+   :paths ["tolglow/dev/tolglow/perf/musical_ceilings.clj"
+           "tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
            "tolglow/docs/performance/keyframe-admission.md" "tolglow/docs/performance/captures/admission-cost.edn"
@@ -44,7 +61,8 @@
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
-   :evidence ["Merged Tolglow #117 and Afterglow #71 lease presentation work to visible Studio cells and Push 2 pads and reduce visual keyframe frequency before slowing live effects."
+   :evidence ["A mixed 1,024-pixel/128-mover compound switches a capped wash from stride two to full rate on the same frame as a 120→240 BPM command. All 11 ArtDMX universes, active instances and intents match the full-rate run across 80 frames. See docs/performance/perceptual-scheduling.md."
+              "Merged Tolglow #117 and Afterglow #71 lease presentation work to visible Studio cells and Push 2 pads and reduce visual keyframe frequency before slowing live effects."
               "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
               "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
               "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
@@ -602,6 +620,18 @@
    :acceptance ["Pin the Afterglow main, Tolglow effects and tolglow-web source revisions"
                 "Tie individual operator behaviors to existing tests or concrete open acceptance checks"]
    :evidence ["docs/feature-parity-inventory.md contains three source-linked tables with observable checks"]}
+  {:id :studio/workspace-status-push :title "Push the selected development workspace across the Studio Transit socket"
+   :kind :implementation :status :done :owner "Workspace status subscriptions"
+   :paths ["tolglow/src/tolglow/development/workspace.clj" "tolglow/src/tolglow/studio/query_stream.clj" "tolglow/src/studio/tolglow/studio/workspace.cljs"]
+   :depends-on [:development/workspace-service-v1]
+   :acceptance ["Open a workspace, receive an external check completion while the show is idle, release demand on leaving, and issue no periodic status reads."]
+   :evidence ["Chromium on the optimized Studio bundle observed a check started outside the page enter running and passed, reconnected to its final status, and recorded zero workspace-status HTTP reads with the show held at frame zero. The real Transit socket integration also verifies the last subscriber releases the workspace watch. Reproduce with lein run -m tolglow.qa.workspace-status."]}
+  {:id :studio/developer-output-push :title "Stream coding-agent events and terminal output to their active panes"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/application_agents.cljs" "tolglow/src/studio/tolglow/studio/terminal.cljs" "tolglow/src/tolglow/development"]
+   :depends-on [:development/workspace-service-v1]
+   :acceptance ["Replace timed reads of agent events and terminal output with demand-driven operator streams. Preserve cursors, bounded replay, exit status, gap handling and teardown. Verify both panes receive output while the show clock is paused and produce no idle HTTP reads."]
+   :evidence []}
   {:id :web/typed-state-push
    :title "Deliver committed show state through Reitit, Transit and bounded WebSockets"
    :kind :implementation :status :done :owner nil

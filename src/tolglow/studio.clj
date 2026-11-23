@@ -19,6 +19,7 @@
             [tolglow.rig.fog-calibration :as fog-scan]
             [tolglow.studio.debug-stream :as debug-stream]
             [tolglow.development :as development]
+            [tolglow.development.workspace :as workspace]
             [tolglow.expressive :as expressive]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.studio.projection :as projection]
@@ -40,7 +41,11 @@
             stream (state-stream/create #(stream-view runtime %) #(show/heartbeat! runtime %)
                      {:frame-rate (:frame-rate runtime) :runtime-id (:id runtime)
                       :get-graph #(show/reactions runtime)
-                      :surfaces {cue-pads/query-id
+                      :surfaces {:development/workspace
+                                 (fn [[_ id & extra]]
+                                   (workspace/status-source (get-in runtime [:development :workspaces])
+                                                            (when (empty? extra) id)))
+                                 cue-pads/query-id
                                  (fn [query]
                                    (let [lease (Object.) service (:cue-pad-previews runtime)]
                                      {:sample! #(cue-pads/present! service lease % query)

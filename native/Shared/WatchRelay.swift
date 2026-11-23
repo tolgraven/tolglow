@@ -11,7 +11,23 @@ import WatchConnectivity
     @Published private(set) var discoveredDeviceID = ""
     var receive: ((Observation) -> Bool)?
     var onFailure: (() -> Void)?
-    var audienceReceive: ((Double, UInt32, Int?) -> Bool)?
+    var phoneFloorActive: (() -> Bool)?
+    var phoneFloorChanged: ((Bool) -> Void)?
+
+    func announcePhoneFloor() {
+        guard let phoneFloorActive, active, WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage(["phone-audience-active": phoneFloorActive()], replyHandler: nil, errorHandler: nil)
+    }
+
+    func checkPhoneFloor(_ completion: @escaping (Bool) -> Void) {
+        guard active, WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage(["phone-audience-query": true], replyHandler: { reply in
+            guard let joined = reply["phone-audience-active"] as? Bool else { return }
+            Task { @MainActor in completion(joined) }
+        }, errorHandler: nil)
+    }
+
+    var audienceReceive: ((AudienceSample, Double?) -> Bool)?
     var audienceEnded: (() -> Void)?
     private var audienceSession: UUID?
     private var audienceSending = false
@@ -88,7 +104,7 @@ import WatchConnectivity
         audienceSession = UUID()
     }
 
-    func sendAudience(_ sample: AudienceSample) {
+    func sendAudience(_ sample: AudienceSample, motionAge: Double) {
         guard let id = audienceSession else { return }
         guard active, WCSession.default.isReachable else { fail("Open your joined audience session on iPhone"); return }
         // The next 200 ms tick carries the newest effort and the cumulative steps.
@@ -99,8 +115,9 @@ import WatchConnectivity
             guard let self, self.audienceSession == id, self.audienceSending else { return }
             self.fail("Audience relay timed out")
         }
-        let message: [String: Any] = ["audience-session": id.uuidString,
+        var message: [String: Any] = ["audience-session": id.uuidString,
                                       "sample": sample.bytes, "sent": Date().timeIntervalSince1970]
+        if sample.motion != nil { message["motion-age"] = motionAge }
         WCSession.default.sendMessage(message, replyHandler: { [weak self] reply in
             let accepted = reply["received"] as? Bool == true
             Task { @MainActor in
@@ -147,6 +164,7 @@ import WatchConnectivity
         Task { @MainActor in
             guard self.active else { return }
             self.reachable = session.isReachable
+            if session.isReachable { self.announcePhoneFloor() } else { self.phoneFloorChanged?(false) }
             self.status = error?.localizedDescription ?? (activationState == .activated ? "Relay activated" : "Relay inactive")
         }
     }
@@ -154,20 +172,28 @@ import WatchConnectivity
         Task { @MainActor in
             guard self.active else { return }
             self.reachable = session.isReachable
+            if session.isReachable { self.announcePhoneFloor() } else { self.phoneFloorChanged?(false) }
             if !session.isReachable { self.fail("Counterpart unreachable; disarmed") }
         }
     }
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        let askingAboutFloor = message["phone-audience-query"] as? Bool == true
         let device = message["device-id"] as? String
         let audienceID = (message["audience-session"] as? String).flatMap(UUID.init(uuidString:))
         let sample = (message["sample"] as? Data).flatMap(AudienceSample.init(bytes:))
         let sent = message["sent"] as? Double
         Task { @MainActor in
-            if self.active, let audienceID, let sample, let sent {
+            if self.active, askingAboutFloor, let active = self.phoneFloorActive {
+                replyHandler(["phone-audience-active": active()])
+            } else if self.active, let audienceID, let sample, let sent {
                 let previous = self.audienceReceiver.current
-                let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: Date().timeIntervalSince1970)
+                let received = Date().timeIntervalSince1970
+                let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: received)
+                let measured = AudienceMotion.wristTimestamp(ageAtSend: message["motion-age"] as? Double,
+                                                             sent: sent, received: received,
+                                                             uptime: ProcessInfo.processInfo.systemUptime)
                 if accepted, let previous, previous != audienceID { self.audienceEnded?() }
-                replyHandler(["received": accepted && self.audienceReceive?(sample.effort, sample.steps, sample.pulse) == true])
+                replyHandler(["received": accepted && self.audienceReceive?(sample, measured) == true])
             } else if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
                 self.discoveredDeviceID = device
                 replyHandler(["received": true])
@@ -175,9 +201,12 @@ import WatchConnectivity
         }
     }
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let phoneJoined = message["phone-audience-active"] as? Bool
         let id = (message["audience-end"] as? String).flatMap(UUID.init(uuidString:))
         Task { @MainActor in
-            if self.active, let id, self.audienceReceiver.end(session: id) { self.audienceEnded?() }
+            guard self.active else { return }
+            if let phoneJoined { self.phoneFloorChanged?(phoneJoined) }
+            if let id, self.audienceReceiver.end(session: id) { self.audienceEnded?() }
         }
     }
 
