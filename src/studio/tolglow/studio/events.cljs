@@ -637,7 +637,8 @@
                         :studio/nvim-source initial-source}))
 (defn- edit-definition-source [db source]
   (let [revision (inc (get-in db [:ui :definition :edit-revision] 0))]
-    {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision})
+    {:db (update-in db [:ui :definition] merge {:source source :status "Unpublished changes" :edit-revision revision
+                                               :error? false :result ""})
      :dispatch-later (when (get-in db [:ui :definition :auto?]) [{:ms 850 :dispatch [:studio/auto-publish revision]}])}))
 
 (rf/reg-event-fx :studio/definition-source

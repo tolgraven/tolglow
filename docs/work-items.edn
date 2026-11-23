@@ -4,18 +4,11 @@
  [{:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
    :kind :implementation :status :in-progress :owner "Nearby audience participation"
    :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge"]
-   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md." "Tolglow PRs 135 and 136 and Afterglow PR 78 add separate full-app GPU consent and strict or redundant field verification. The bundled iOS shader on Linux matched 3,723 complete 40 Hz Art-Net frames. The macOS encrypted loopback returned 16 KiB in 0.407 ms median. Physical radio and thermal qualification remain open."]}
-  {:id :native/audience-stage-controls :title "Manage the stage invitation from Studio and package the Apple clients"
-   :kind :implementation :status :done :owner nil
-   :paths ["tolglow/native/Packaging" "tolglow/src/studio/tolglow/studio/audience_invitation.cljs"
-           "tolglow/src/tolglow/integrations/audience_invitation.clj"]
-   :depends-on [:foundation/tests]
-   :notes "Extends the shipped macOS bundle in #122 and the nearby stage helper in #130. Physical QR invocation and mobile Native Image qualification have separate acceptance checks."
-   :acceptance ["Start, stop and export a stage QR from operator Studio. Scope credentials to the owned process and show. Export the full simulator companion, report embedded Clip size and document signed physical QR qualification."] :evidence ["Apple workflow 45168401845 built the Mac bundle and Release simulator apps. Apple Vision decoded the saved QR from WKWebView, and the old image returned 404 after Stop. Independent decoding of the native screenshot matched. The simulator parent measured 7914609 bytes, Clip 1348995 and Watch 1299988. Physical QR invocation remains with :sensors/nearby-audience."]}
+   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence ["Tolglow PR 130 adds the radio bridge, Clip, Watch workout, bounded aggregation and existing OSC mappings. Cross-gateway tests run actual OSC decoding, enrollment, step-to-cue mapping, independent expiry and participant-weighted effort and pulse. Watch can also enroll as a solo Bluetooth guest. AudienceCrowdTests exercises per-person effort and steps with 96 identities, replay, packet loss, rejoin and expiry for a three-minute virtual song. Native simulator and venue hardware qualification are tracked separately in docs/nearby-audience.md." "Tolglow PRs 135 and 136 and Afterglow PR 78 add separate full-app GPU consent and strict or redundant field verification. The bundled iOS shader on Linux matched 3,723 complete 40 Hz Art-Net frames. The macOS encrypted loopback returned 16 KiB in 0.407 ms median. Physical radio and thermal qualification remain open."]}
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
-   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first-connection and the remaining general Studio pages are open."]}
   {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
    :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
    :paths ["tolglow/linux/audience"]
@@ -36,16 +29,19 @@
    :depends-on [:foundation/tests] :acceptance ["Observe a single dispatch and readback from the show for an eligible multi-effect chain. Test parameter changes, ordering, native alpha, invalidation, precision, barriers and CPU-reference equivalence."] :evidence []}
   {:id :performance/render-work-elimination :title "Measure and eliminate provably unobservable renderer work"
    :kind :research :status :in-progress :owner "Renderer work elimination and GPU compilation"
-   :paths ["tolglow/docs/performance/render-work-elimination.md"]
+   :paths ["tolglow/docs/performance/render-work-elimination.md" "tolglow/src/tolglow/spatial/cues.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."
+              "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
    :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
            "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
            "tolglow/docs/performance/keyframe-admission.md" "tolglow/docs/performance/captures/admission-cost.edn"
+           "tolglow/dev/tolglow/perf/stride_break_even.clj" "tolglow/test/tolglow/stride_break_even_test.clj"
+           "tolglow/docs/performance/captures/stride-break-even.zip"
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
@@ -53,7 +49,9 @@
               "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
               "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
               "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
-              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."]}
+              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."
+              "Tolglow #153 and Afterglow #84 measured the complete endpoint/blend cost and retained one checked fixture-position lookup per frozen rig. The 11-universe replay matched full state, output and events."
+              "At 1,024 pixels and 512 moving heads, shallow spatial aim lost worker time at stride two and saved it at four in both held-out trials. All tested intervals retained the full-rate show output. See docs/performance/keyframe-admission.md and the paired raw reports."]}
   {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
    :kind :documentation :status :planned :owner nil
    :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
@@ -101,6 +99,13 @@
    :depends-on [:foundation/tests]
    :acceptance ["Run a selected show folder in the macOS app, execute its namespaces, retain editable paired source branches, and present the real canvas through the system PiP API."]
    :evidence ["Apple Silicon run 45150904204 opened the packaged window, ran Clojure in the embedded GraalVM, fetched the release re-frame code from Ring, created worktrees from both bundled Git revisions, completed a WebKit backup replacement, and recorded three accepted cue launches. The browser regression reads changed pixels from a live captured track and exercises the system PiP window on supported Chromium desktops."]}
+  {:id :native/audience-stage-controls :title "Manage the stage invitation from Studio and package the Apple clients"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/native/Packaging" "tolglow/src/studio/tolglow/studio/audience_invitation.cljs"
+           "tolglow/src/tolglow/integrations/audience_invitation.clj"]
+   :depends-on [:foundation/tests]
+   :notes "Extends the shipped macOS bundle in #122 and the nearby stage helper in #130. Physical QR invocation and mobile Native Image qualification have separate acceptance checks."
+   :acceptance ["Start, stop and export a stage QR from operator Studio. Scope credentials to the owned process and show. Export the full simulator companion, report embedded Clip size and document signed physical QR qualification."] :evidence ["Apple workflow 45168401845 built the Mac bundle and Release simulator apps. Apple Vision decoded the saved QR from WKWebView, and the old image returned 404 after Stop. Independent decoding of the native screenshot matched. The simulator parent measured 7914609 bytes, Clip 1348995 and Watch 1299988. Physical QR invocation remains with :sensors/nearby-audience."]}
   {:id :native/apple-on-device-show :title "Compile the show host for on-device iPad and iPhone execution"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/native/Packaging" "tolglow/native/iOS/WebStudioView.swift"]

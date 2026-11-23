@@ -1,12 +1,13 @@
 import AVFoundation
 import Vision
+import TolglowSensorCore
 
 /// Only joint positions survive each camera callback. No video, photos or audio are saved.
 final class PoseMeter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "org.tolglow.audience.pose")
     private let request = VNDetectHumanBodyPoseRequest()
-    private var previous: [VNHumanBodyPoseObservation.JointName: CGPoint] = [:]
+    private var tracker = DancePoseTracker()
     private var previousTime: Double?
     private var active = false
     private let sample: (Double, Double) -> Void
@@ -44,25 +45,35 @@ final class PoseMeter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         queue.async {
             self.active = false
             if self.session.isRunning { self.session.stopRunning() }
-            self.previous = [:]; self.previousTime = nil
+            self.tracker = DancePoseTracker(); self.previousTime = nil
         }
     }
     func captureOutput(_ output: AVCaptureOutput, didOutput buffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let time = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
         guard active, time.isFinite, time - (previousTime ?? (time - 1)) >= 0.09 else { return }
-        let dt = time - (previousTime ?? time)
         previousTime = time
         let handler = VNImageRequestHandler(cmSampleBuffer: buffer, orientation: .leftMirrored)
-        let joints: [VNHumanBodyPoseObservation.JointName] = [.leftAnkle, .rightAnkle, .leftKnee, .rightKnee, .leftHip, .rightHip]
-        var points: [VNHumanBodyPoseObservation.JointName: CGPoint] = [:]
-        if (try? handler.perform([request])) != nil, let person = request.results?.first {
-            for joint in joints {
-                if let point = try? person.recognizedPoint(joint), point.confidence >= 0.45 { points[joint] = point.location }
-            }
+        let poses: [DancePose]
+        do {
+            try handler.perform([request])
+            poses = (request.results ?? []).compactMap(Self.pose)
+        } catch {
+            poses = []
         }
-        let distances = points.compactMap { joint, p in previous[joint].map { hypot(p.x - $0.x, p.y - $0.y) } }
-        previous = points
-        let strength = dt > 0 && dt < 0.5 && distances.count >= 2 ? min(1, Double(distances.max() ?? 0) / dt * 1.8) : 0
+        let strength = tracker.strength(poses, at: time)
         DispatchQueue.main.async { self.sample(strength, time) }
+    }
+
+    private static func pose(_ person: VNHumanBodyPoseObservation) -> DancePose? {
+        func point(_ joint: VNHumanBodyPoseObservation.JointName) -> DancePose.Point? {
+            guard let p = try? person.recognizedPoint(joint), p.confidence >= 0.45 else { return nil }
+            return DancePose.Point(Double(p.location.x), Double(p.location.y))
+        }
+        guard let left = point(.leftHip), let right = point(.rightHip) else { return nil }
+        let legs: [DancePose.Joint: DancePose.Point?] = [
+            .leftAnkle: point(.leftAnkle), .rightAnkle: point(.rightAnkle),
+            .leftKnee: point(.leftKnee), .rightKnee: point(.rightKnee)
+        ]
+        return DancePose(leftHip: left, rightHip: right, legs: legs.compactMapValues { $0 })
     }
 }

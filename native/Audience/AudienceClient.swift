@@ -11,6 +11,7 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     @Published private(set) var joined = false
     @Published private(set) var looking = false
     @Published private(set) var connecting = false
+    var onJoin: (() -> Void)?
     var onEnd: (() -> Void)?
     private var manager: CBCentralManager?
     private var devices: [UUID: CBPeripheral] = [:]
@@ -43,7 +44,11 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central.state == .poweredOn else {
-            if central.state != .unknown && central.state != .resetting { leave(); status = "Allow Bluetooth and turn it on to join" }
+            if central.state == .resetting && (connecting || joined) {
+                leave(); status = "Bluetooth restarted. Find your stage again."
+            } else if central.state != .unknown && central.state != .resetting {
+                leave(); status = "Allow Bluetooth and turn it on to join"
+            }
             return
         }
         if looking { central.scanForPeripherals(withServices: [AudienceRadio.service]) }
@@ -57,12 +62,19 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         venues.append(Venue(id: peripheral.identifier, name: name))
     }
 
-    func join(_ id: UUID) {
-        guard looking, let device = devices[id] else { return }
-        manager?.stopScan(); looking = false; connecting = true
+    func stopBrowsing() {
+        if manager?.isScanning == true { manager?.stopScan() }
+        looking = false
+    }
+
+    @discardableResult func join(_ id: UUID) -> Bool {
+        guard manager?.state == .poweredOn, !connecting, !joined, let device = devices[id] else { return false }
+        stopBrowsing()
+        connecting = true
         peer = device; device.delegate = self; manager?.connect(device)
         status = "Connecting to stage"
         deadline()
+        return true
     }
 
     private func deadline() {
@@ -130,7 +142,10 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
         guard peer === peripheral else { return }
         guard error == nil else { failed("Stage declined the connection or sample"); return }
         timeout?.cancel()
-        if characteristic.uuid == AudienceRadio.hello { connecting = false; joined = true; status = "Sharing with this stage" }
+        if characteristic.uuid == AudienceRadio.hello {
+            connecting = false; joined = true; status = "Sharing with this stage"
+            onJoin?()
+        }
         pending = false
         flush()
     }

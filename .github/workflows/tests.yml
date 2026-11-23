@@ -197,6 +197,18 @@ jobs:
           else
             echo 'native=true' >> "$GITHUB_OUTPUT"
           fi
+      - name: Run portable sensor and camera analysis tests
+        if: steps.paths.outputs.native == 'true'
+        env:
+          TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
+        run: swift test --package-path native/Core
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-camera-pose-trace
+          path: ${{ runner.temp }}/audience-pose.csv
+          if-no-files-found: error
+          retention-days: 10
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'
@@ -225,3 +237,14 @@ jobs:
         with:
           name: audience-clip-simulator
           path: ${{ runner.temp }}/audience-clip
+      - name: Capture solo Watch stage enrollment
+        run: native/Tests/capture_watch_audience.sh "$RUNNER_TEMP/watch-audience"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: watch-audience
+          path: |
+            ${{ runner.temp }}/watch-audience/*.png
+            ${{ runner.temp }}/watch-audience/*.mp4
+            ${{ runner.temp }}/watch-audience/ui.xcresult
+          retention-days: 10

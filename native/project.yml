@@ -114,7 +114,11 @@ targets:
   TolglowWatch:
     type: application
     platform: watchOS
-    sources: [watchOS, Shared]
+    sources:
+      - watchOS
+      - Shared
+      - Audience/AudienceRadio.swift
+      - Audience/AudienceClient.swift
     entitlements:
       path: watchOS/TolglowWatch.entitlements
       properties:
@@ -126,6 +130,8 @@ targets:
         WKBackgroundModes: [workout-processing]
         NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
         NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
+        NSBluetoothAlwaysUsageDescription: Find and join a nearby lighting stage when you choose to use only your Watch.
+        WKRunsIndependentlyOfCompanionApp: true
         WKApplication: true
         WKCompanionAppBundleIdentifier: org.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
@@ -134,6 +140,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
     dependencies:
       - package: TolglowSensorCore
+  WatchAudienceUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources: [Tests/WatchAudienceUI]
+    dependencies:
+      - target: TolglowWatch
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: TolglowWatch
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.watch-audience-ui-tests
 schemes:
   TolglowAudienceClip:
     build:
@@ -155,3 +172,6 @@ schemes:
     build:
       targets:
         TolglowWatch: all
+    test:
+      targets:
+        - WatchAudienceUITests
