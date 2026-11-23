@@ -26,7 +26,7 @@
    :paths ["tolglow/docs/performance/render-work-elimination.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Existing production baselines and candidate experiments are indexed in docs/performance/render-work-elimination.md."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
    :paths ["tolglow/docs/performance/perceptual-scheduling.md"]
