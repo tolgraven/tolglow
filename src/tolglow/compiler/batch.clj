@@ -174,10 +174,11 @@
                    (some :frame-only? outputs) (conj :tween))]
      (if (seq reasons)
        (with-meta (compiler/compile-effect definition bind-pure
-                    (when (matching/active? definition) (matching/prepare fixtures selected)))
+                    (when (matching/active? definition) (matching/prepare fixtures selected))
+                    (when enabled? fixtures))
          {:backend :ordinary :fallback-reasons reasons})
        (let [groups (output-groups selected-outputs prepare-group bind-pure)
-             scalar-step (compiler/compile-effect definition bind-pure)
+             scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
              envelope-attributes (set envelope-attributes)]
          (with-meta
            (fn [{:keys [frame instance state] :as context}]
