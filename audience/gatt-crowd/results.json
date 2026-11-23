@@ -1,0 +1,105 @@
+{
+  "admitted-cue-launches": 768,
+  "transport": "private dbus-daemon, real exported GATT characteristics, encrypted samples and loopback paired UDP",
+  "admission": {
+    "accepted": 130,
+    "rejected": 0,
+    "overflow": 0
+  },
+  "returned-to-one": {
+    "audience-count": 1,
+    "dance-effort": 1.0,
+    "pulse-count": 0,
+    "pulse-present": 0,
+    "motion-count": 0,
+    "dance-steps": 0
+  },
+  "solo": {
+    "motion-count": 1,
+    "rotation-z": 3.0,
+    "pulse-count": 1,
+    "audience-count": 1,
+    "accel-z": 0.5,
+    "accel-y": -1.75,
+    "rotation-x": -0.25,
+    "dance-steps": 0,
+    "rotation-y": 0.125,
+    "dance-effort": 1.0,
+    "accel-x": 2.5,
+    "pulse-present": 1,
+    "pulse-bpm": 90.0
+  },
+  "tempo-bpm": 120,
+  "host-frames": 189,
+  "afterglow": "14abdf9630baba74bbf70029a07609a14686eb01",
+  "simulated-clients": 96,
+  "expected-cue-launches": 768,
+  "crowd": {
+    "motion-count": 32,
+    "rotation-z": 3.0,
+    "pulse-count": 24,
+    "audience-count": 96,
+    "accel-z": 0.5,
+    "accel-y": -1.75,
+    "rotation-x": -0.25,
+    "dance-steps": 0,
+    "rotation-y": 0.125,
+    "dance-effort": 0.010416666666666666,
+    "accel-x": 2.5,
+    "pulse-present": 1,
+    "pulse-bpm": 92.04166666666667
+  },
+  "rounds": [
+    {
+      "beat": 1,
+      "cumulative-cues": 96,
+      "all-cues-ms": 187.179461
+    },
+    {
+      "beat": 2,
+      "cumulative-cues": 192,
+      "all-cues-ms": 157.427116
+    },
+    {
+      "beat": 3,
+      "cumulative-cues": 288,
+      "all-cues-ms": 132.350013
+    },
+    {
+      "beat": 4,
+      "cumulative-cues": 384,
+      "all-cues-ms": 135.611843
+    },
+    {
+      "beat": 5,
+      "cumulative-cues": 480,
+      "all-cues-ms": 169.645314
+    },
+    {
+      "beat": 6,
+      "cumulative-cues": 576,
+      "all-cues-ms": 288.464339
+    },
+    {
+      "beat": 7,
+      "cumulative-cues": 672,
+      "all-cues-ms": 116.037708
+    },
+    {
+      "beat": 8,
+      "cumulative-cues": 768,
+      "all-cues-ms": 140.570596
+    }
+  ],
+  "last": {
+    "audience-count": 0,
+    "dance-effort": 0.0,
+    "pulse-count": 0,
+    "pulse-present": 0,
+    "motion-count": 0,
+    "dance-steps": 0
+  },
+  "parallel-writes": 4,
+  "tolglow": "e486dd9ef7377a8239aed4844500cf2edf16c9b3",
+  "radio-tested": false
+}
