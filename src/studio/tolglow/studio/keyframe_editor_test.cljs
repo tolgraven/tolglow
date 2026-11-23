@@ -1,5 +1,7 @@
 (ns tolglow.studio.keyframe-editor-test
-  (:require [cljs.test :refer-macros [deftest is]]
+  (:require ["react-dom/server" :refer [renderToStaticMarkup]]
+            [reagent.core :as r]
+            [cljs.test :refer-macros [deftest is]]
             [tolglow.transit :as transit]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-picker :as picker]
@@ -43,3 +45,15 @@
   (let [rig (mapv (fn [n] {:id n :name (str "Emitter " n)}) (range 20000))]
     (is (= 48 (count (picker/fixture-options rig "" nil))))
     (is (= [12 19876] (picker/fixture-options rig "emitter 19876" 12)))))
+
+
+(deftest cap-only-editor-renders-and-can-change-its-authored-interval-independently
+  (let [cap {:max-interval {:beats (editor/parse-interval "1/8")} :curve :spring}
+        mixed (editor/toggle-duration cap :interval {:bars 1} true)
+        html (renderToStaticMarkup (r/as-element [editor/editor cap [] identity]))]
+    (is (.includes html "Maximum sample interval"))
+    (is (.includes html "1/8"))
+    (is (not (.includes html "aria-label=\"Keyframe interval\"")))
+    (is (= cap (editor/toggle-duration mixed :interval nil false)))
+    (is (= {:interval {:bars 1} :curve :spring} (editor/toggle-duration mixed :max-interval nil false)))
+    (is (nil? (editor/toggle-duration cap :max-interval nil false)))))

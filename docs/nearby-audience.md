@@ -1,5 +1,7 @@
 # Dance floor participation
 
+The packaged Mac app lets an operator start a stage, save its QR image, and close the invitation under **Connections → Stage invitation**. The QR is specific to that running stage. [Operator setup and Apple deployment](apple-audience-deployment.md)
+
 The full iPhone app and the lightweight Dance floor App Clip have a common **Find nearby stages** action. The Mac bridge advertises a Bluetooth LE service, so the venue and phone can have different Wi-Fi connections or no Wi-Fi association. Installing the app or fetching a Clip for the first time still requires access to Apple’s distribution service. A guest chooses the stage and input. Leaving or losing the stage ends capture. Backgrounding the phone stops its camera and motion capture. In the full app a guest may keep an already joined Watch sharing while the phone locks. Incoming Watch samples drive BLE writes in that mode. The Clip uses foreground participation.
 
 | Input | Available in | What the stage receives |
@@ -36,6 +38,14 @@ To use each admitted step to launch a registered accent cue, add the following e
 
 The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
 
+### Motion channels
+
+In the App Clip, **Use iPhone or Watch motion in Tolglow** opens the system offer for its parent app. After installation, scan the same stage QR to continue.
+
+Choose **Phone motion → Share phone acceleration and rotation** on iPhone, or **Share wrist axes** in the Watch dance view. The guest can turn sharing off during a song. Every 200 ms the bridge sends the mean signed, gravity-removed acceleration in m/s² (`accel-x`, `accel-y`, `accel-z`) and angular velocity in rad/s (`rotation-x`, `rotation-y`, `rotation-z`) from the guests currently supplying all six channels. The watch takes precedence when both devices send fresh axes. `motion-count` gives the number of contributing dancers across the selected zones. With one participant the means equal that device’s readings. With differently oriented devices, signed values can cancel. `dance-effort` gives an orientation-independent intensity for the crowd.
+
+Map the resulting channels to effect parameters through normal sensor mappings. Each source uses device-local axes. The mixer removes the six channels when the final contributor withdraws or expires. Tap and camera participation still send the estimated effort and steps.
+
 ## Cover several areas of a venue
 
 Give each Bluetooth gateway its own enrolled sensor ID, credential and zone QR. Set `TOLGLOW_AUDIENCE_OSC_HOST` on a remote gateway to the lighting host on your encrypted venue network or VPN. The default is loopback. Guests only need Bluetooth. The gateway-to-show OSC link carries its source credential, so keep it on the private link.
@@ -50,6 +60,16 @@ Run the rehearsal with the paired Afterglow checkout selected as for the test su
 lein with-profile +test run -m clojure.main -e \
   "(require '[tolglow.sensors.audience-test :as a]) (prn (a/crowd-rehearsal 900))"
 ```
+
+The solo Watch uses watchOS Core Bluetooth as a central and supports running independently of the companion app. [Apple Core Bluetooth](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager) · [Independent Watch app setting](https://developer.apple.com/documentation/bundleresources/information-property-list/wkrunsindependentlyofcompanionapp)
+
+## Dance-step timing
+
+Tap, camera, phone and wrist motion send their cumulative step count as soon as the input detects an onset. Periodic readings recover a missed counter change. The paired iPhone uses the wrist counter while it is fresh and carries one vote for the person. The Watch relay keeps one acknowledged message in flight and one replaceable sample with its original measurement time.
+
+The bridge takes a fresh effort and pulse snapshot five times per second. It submits onsets on the next 40 Hz show frame. Each OSC observation carries up to eight gestures and one frame admits up to four observations, allowing additional simultaneous steps to spill into the following frames. The bounded backlog reports overflow to the operator. A heartbeat can carry a due onset, and subsequent heartbeats carry zero until another step arrives.
+
+Run `swift test --package-path native/Core --filter AudienceLatencyTests` to exercise detection, bounded host aggregation and the OSC encoder using a deterministic clock. Set `TOLGLOW_AUDIENCE_TIMING_DIR` to an existing directory to save the observed packet times. CI publishes them as `audience-onset-timing`. These measurements end at the encoded datagram. Qualifying physical latency also requires timing the guest’s sensor, WatchConnectivity, BLE, OSC delivery and the receiving show.
 
 ## Publish a scannable Clip
 

@@ -32,6 +32,7 @@ on:
       - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'src/tolglow/effects/cadence.clj'
       - 'src/tolglow/effects/sampling_quality.clj'
       - 'bin/profile-*'
@@ -56,6 +57,7 @@ on:
       - 'dev/tolglow/perf/beam_*.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
+      - 'dev/tolglow/perf/independent_effects.clj'
       - 'bin/profile-master'
       - 'bin/profile-subscribers'
       - 'bin/profile-movers'
@@ -88,7 +90,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '3fd49ef6877cac57dbc5f0e185fedd2dc7607f39' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '9387c0ae211397734a761ac98c4894cbfeeb83e4' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
@@ -189,6 +191,13 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein run -m tolglow.perf.beam-fidelity ../performance-artifact/beam-fidelity.edn 0.25
+      - name: Compare independent worker batches with serial lighting output
+        if: hashFiles('tolglow/dev/tolglow/perf/independent_effects.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein run -m tolglow.perf.independent-effects ../performance-artifact/independent-effects.edn 32 80
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:

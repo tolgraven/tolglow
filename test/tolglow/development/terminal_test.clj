@@ -147,3 +147,28 @@
         (is (eventually #(empty? (:pending-containers (terminal/status terminal)))))
         (is (= ["created" "removed"] (clojure.string/split-lines (slurp operations))))
         (.join worker 1000)))))
+
+(deftest terminal-output-leases-isolate-the-owned-repository-and-publish-bounded-byte-pages
+  (let [bytes (.getBytes (apply str (repeat 70000 "x")) java.nio.charset.StandardCharsets/UTF_8)
+        base {:chunks [] :state :running :first-cursor 0 :cursor 0 :workspace-id "lighting" :repo :tolglow}
+        state (atom {:sessions {"selected" (assoc base :session-id "selected") "other" (assoc base :session-id "other")}})
+        manager {:state state}
+        query (fn [w repo cursor] (terminal/output-source manager [:development/terminal-output w repo "selected" cursor]))
+        before (count (.getWatches ^clojure.lang.Atom state))
+        lease (query "lighting" :tolglow 0)
+        wake (atom 0) detach ((:observe! lease) #(swap! wake inc))
+        read! (fn [lease] ((:sample! lease) ((:source! lease))))]
+    (try
+      (doseq [bad [(query "another" :tolglow 0) (query "lighting" :afterglow 0) (query "lighting" :tolglow -1)]]
+        (is (= {:error :unavailable} @(:result bad))))
+      (swap! state assoc-in [:sessions "other" :state] :exited)
+      (is (zero? @wake))
+      (swap! state update-in [:sessions "selected"] #'terminal/append-output bytes 68000)
+      (is (= 1 @wake))
+      (let [first (read! lease) next (read! (query "lighting" :tolglow (:cursor first)))]
+        (is (:dropped? first))
+        (is (= 65536 (count (.decode (Base64/getDecoder) ^String (:data first)))))
+        (is (false? (:dropped? next)))
+        (is (= 70000 (:cursor next) (:available-cursor first))))
+      (finally (detach)))
+    (is (= before (count (.getWatches ^clojure.lang.Atom state))))))

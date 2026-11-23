@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Test process for the Studio side of the deployed helper's stdout/PNG contract."""
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+name, origin, qr = sys.argv[1:]
+if (not name or len(os.environ["TOLGLOW_AUDIENCE_OSC_TOKEN"]) < 16
+        or int(os.environ["TOLGLOW_AUDIENCE_OSC_PORT"]) <= 0):
+    sys.exit(64)
+room = hashlib.sha256(os.urandom(32)).hexdigest()
+Path(qr).write_bytes(bytes.fromhex("89504e470d0a1a0a"))
+print(f"Stage invitation {origin}/audience/{room}", flush=True)
+print("Stage discoverable", flush=True)
+sys.stdin.buffer.read()

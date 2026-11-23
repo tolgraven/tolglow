@@ -363,3 +363,24 @@
         (workspace/create! manager {:id "bounded"})
         (let [error (try (workspace/fingerprint manager "bounded") (catch clojure.lang.ExceptionInfo error error))]
           (is (= code (:workspace/error (ex-data error)))))))))
+
+(deftest workspace-status-wakes-only-for-its-selected-workspace
+  (with-workspace {}
+    (fn [{:keys [manager]}]
+      (workspace/create! manager {:id "one"})
+      (workspace/create! manager {:id "two"})
+      (let [{:keys [observe! source! sample!]} (workspace/status-source manager "one")
+            updates (atom 0)
+            detach! (observe! #(swap! updates inc))
+            write! (fn [id text] (workspace/write-file! manager id :tolglow "edit.clj"
+                                                         {:expected-hash :missing :content text}))]
+        (try
+          (write! "two" "2")
+          (is (zero? @updates))
+          (write! "one" "1")
+          (is (pos? @updates))
+          (is (= (workspace/status manager "one") (sample! (source!))))
+          (finally (detach!)))
+        (let [before @updates]
+          (workspace/write-file! manager "one" :tolglow "more.clj" {:expected-hash :missing :content "3"})
+          (is (= before @updates)))))))

@@ -86,6 +86,8 @@ decoded `Uint8Array` bytes to xterm; UTF-8 and ANSI sequences may cross chunks.
 When history was overwritten, the client reports that gap and resumes at the
 returned cursor rather than pretending every byte was retained.
 
+The Develop pane follows `[:development/terminal-output workspace-id repo session-id cursor]` over the operator’s Transit socket. It requests the selected repository’s next page when xterm consumes the current one. Switching panes releases the watch. Returning replays the retained byte window into the new xterm instance. An exited shell drains any remaining bytes before the subscription ends. The server also checks that both the workspace and repository own the session.
+
 Each input request accepts at most 64 KiB. An eight-entry queue bounds pending
 input and keeps a blocked PTY writer off the HTTP/show owner. Backpressure rejects
 new input visibly; clients retain order and must not replay an uncertain accepted

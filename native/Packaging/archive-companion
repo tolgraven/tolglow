@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+native_root="$(cd "$(dirname "$0")/.." && pwd)"
+dest="${1:?Pass an artifact output directory}"
+mkdir -p "$dest"
+dest="$(cd "$dest" && pwd)"
+cd "$native_root"
+xcodegen generate
+xcodebuild -project Tolglow.xcodeproj -scheme TolglowPhone -configuration Release \
+  -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData \
+  CODE_SIGNING_ALLOWED=NO build
+
+app="$native_root/DerivedData/Build/Products/Release-iphonesimulator/TolglowPhone.app"
+python3 Packaging/simulator_report.py "$app" > "$dest/simulator-products.json"
+ditto -c -k --keepParent "$app" "$dest/Tolglow-Companion-simulator.zip"
+cat "$dest/simulator-products.json"

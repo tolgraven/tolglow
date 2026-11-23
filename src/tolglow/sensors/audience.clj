@@ -1,10 +1,12 @@
 (ns tolglow.sensors.audience
   "Combine admitted sensor channels across Bluetooth gateways in one venue.")
 
+(def motion-axes [:accel-x :accel-y :accel-z :rotation-x :rotation-y :rotation-z])
+
 (def gateway-mapping
   {:version 1
    :timeout-ms 1200
-   :channels (mapv (fn [id] {:id id :input id}) [:audience-count :dance-effort :pulse-count :pulse-bpm])})
+   :channels (mapv (fn [id] {:id id :input id}) (into [:audience-count :dance-effort :pulse-count :pulse-bpm :motion-count] motion-axes))})
 
 (defn- between? [lo hi x]
   (and (number? x) (Double/isFinite (double x)) (<= lo x hi)))
@@ -18,18 +20,33 @@
           effort (:dance-effort channels)]
       (when (and people (pos? people) (between? 0 1 effort))
         (let [pulse (:pulse-bpm channels)
-              wearers (or (and (between? 30 240 pulse) (count-in people (:pulse-count channels))) 0)]
-          [people (* people (double effort)) wearers (if (pos? wearers) (* wearers (double pulse)) 0.0)])))))
+              axes (mapv channels motion-axes)]
+          {:people people :effort effort :bpm pulse :axes axes
+           :wearers (if (between? 30 240 pulse) (or (count-in people (:pulse-count channels)) 0) 0)
+           :movers (if (every? #(between? -256 256 %) axes)
+                     (or (count-in people (:motion-count channels)) 0) 0)})))))
+
+(defn- weighted-mean [readings weight value participants]
+  (when (pos? participants)
+    (/ (reduce (fn [sum row]
+                 (if (pos? (weight row)) (+ sum (* (weight row) (value row))) sum))
+               0.0 readings)
+       participants)))
 
 (defn levels
-  "Use one vote per participant, and only consenting wearers for the pulse mean.
-  Source states already reflect host enrollment, arming and expiry."
+  "Weight each measurement by the participating people who supplied it."
   [sources gateway-ids]
-  (let [readings (keep #(reading (get-in sources [% :state])) (distinct gateway-ids))
-        [people effort wearers pulse] (reduce (partial mapv +) [0 0.0 0 0.0] readings)]
-    (cond-> {:audience-count people :dance-effort (if (pos? people) (/ effort people) 0.0)
-             :pulse-count wearers}
-      (pos? wearers) (assoc :pulse-bpm (/ pulse wearers)))))
+  (let [rows (keep #(reading (get-in sources [% :state])) (distinct gateway-ids))
+        total #(reduce + 0 (map % rows))
+        people (total :people)
+        wearers (total :wearers)
+        movers (total :movers)]
+    (cond-> {:audience-count people :dance-effort (or (weighted-mean rows :people :effort people) 0.0)
+             :pulse-count wearers :motion-count movers}
+      (pos? wearers) (assoc :pulse-bpm (weighted-mean rows :wearers :bpm wearers))
+      (pos? movers) (into (map-indexed (fn [i axis]
+                                         [axis (weighted-mean rows :movers #(nth (:axes %) i) movers)])
+                                       motion-axes)))))
 
 (defn project [model]
   (let [audience (get-in model [:variables :audience])
