@@ -326,3 +326,25 @@
           (show/tick! runtime 785)
           (is (<= 93 @bytes 95))))
       (finally (show/stop! runtime)))))
+
+(deftest projected-route-activity-follows-samples-and-release-tails
+  (doseq [with-envelope? [false true]]
+    (let [rt (show/create-runtime {:model (model)})
+          patch (cond-> (spec) with-envelope? (assoc-in [:routes 0 :envelope] {:release {:ms 100}}))]
+      (try
+        (let [id (prepare! rt patch)
+              read-source #(->> (:instances (show/snapshot rt)) (filter (comp #{id} :id)) first
+                                :parameter-sources :level :sources first)
+              events! (:events! (show/sync-callbacks rt))]
+          (is (true? (:pending? (read-source))))
+          (events! (observation "note" 127 10))
+          (show/tick! rt 10)
+          (is (= {:type :patch :route-id :input :source-id source-id} (read-source)))
+          (events! (observation "off" 0 20))
+          (show/tick! rt 20)
+          (show/tick! rt 70)
+          (is (= (not with-envelope?) (boolean (:pending? (read-source)))))
+          (show/tick! rt 125)
+          (is (true? (:pending? (read-source))))
+          (is (zero? (get-in @(:state rt) [:model :instances id :params :level]))))
+        (finally (show/stop! rt))))))
