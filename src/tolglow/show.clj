@@ -1060,11 +1060,12 @@
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
-                           frame-input (cond-> (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
+                           frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                               (:inputs sampling))
+                           frame-input (cond-> frame-input variables (assoc :resolved-variables variable-inputs))
                            response (response-middleware! runtime (:responses model []))
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
