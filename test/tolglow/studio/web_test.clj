@@ -119,9 +119,14 @@
 
 (deftest invitation-images-require-the-current-stage-id
   (let [png (byte-array [1 2 3])
-        app (web/app {:sensor! (fn [op {:keys [id]}] (when (= [op id] [:stage-qr "active"]) png))})
+        app (web/app {:sensor! (fn [op {:keys [id stage-id]}]
+                                 (case op
+                                   :stage-qr (when (= id "active") png)
+                                   :stage-stop {:stopped? (= "active" stage-id)}))})
         fetch (fn [id] (app {:request-method :get :uri "/api/sensors/stage/qr" :query-string (str "id=" id)}))
         current (fetch "active")]
+    (is (= {"stopped?" true}
+           (json/read-str (:body (app (request :post "/api/sensors/stage/stop" {:stage-id "active"}))))))
     (is (= 404 (:status (fetch "expired"))))
     (is (= "image/png" (get-in current [:headers "Content-Type"])))
     (is (= "no-store" (get-in current [:headers "Cache-Control"])))

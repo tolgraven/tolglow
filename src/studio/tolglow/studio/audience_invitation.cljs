@@ -29,7 +29,7 @@
 (rf/reg-event-fx ::operate
   (fn [{:keys [db]} [_ op]]
     (let [stage (state db)
-          body (if (= op :start) (select-keys stage [:device-id :stage-name :origin]) (select-keys stage [:id]))]
+          body (if (= op :start) (select-keys stage [:device-id :stage-name :origin]) {:stage-id (:id stage)})]
       {:db (update-in db [:connections :stage-form] #(-> % (dissoc :error) (assoc :pending? true)))
        :studio/http {:path (str "/api/sensors/stage/" (name op)) :body body
                      :on-success [::complete (session db)] :on-failure [::failed (session db)]}})))

@@ -1686,7 +1686,7 @@
       (let [current (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (if (= :stage-start operation)
           (sensors/start-stage! current payload)
-          (audience-stage/stop-current! (:stage current) (:id payload))))
+          (audience-stage/stop-current! (:stage current) (:stage-id payload))))
       :stage-qr (audience-stage/png (:stage manager) (:id payload))
       :osc-start
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
