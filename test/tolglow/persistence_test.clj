@@ -384,3 +384,17 @@
         previous (pr-str {:schema-version 2 :model model})]
     (is (= model (:model (files/read-string previous))))
     (is (= model (:model (wire/decode (files/write-string model)))))))
+
+(deftest cue-and-captured-effect-layouts-survive-a-show-roundtrip
+  (let [base (demo/model)
+        effect (assoc (get-in base [:registry :effects :breathe])
+                      :version 2 :ui/layout {:template :pulse :order [:period :level]})
+        published (:model (command base :effect {:op :registry/publish :kind :effects :definition effect}))
+        cue (assoc (get-in published [:registry :cues :breathe])
+                   :version 2 :ui/layout {:monitor :period})
+        prepared (:model (command published :cue {:op :cue/put :cue cue}))
+        running (command prepared :launch {:op :cue/launch :cue-id :breathe})
+        result (files/thaw base (files/read-string (files/write-string (:model running))))
+        instance (first (vals (:instances result)))]
+    (is (= (:ui/layout effect) (get-in instance [:definition :ui/layout])))
+    (is (= (:ui/layout cue) (get-in result [:registry :cues :breathe :ui/layout])))))

@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     iOS: '18.0'
     watchOS: '11.0'
+    macOS: '14.0'
 packages:
   TolglowSensorCore:
     path: Core
@@ -15,6 +16,16 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     # Set your own development team in Xcode; no signing credentials are stored.
 targets:
+  TolglowStudio:
+    type: application
+    platform: macOS
+    sources: [macOS]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.studio
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to lighting equipment configured by the show operator.
   TolglowPhone:
     type: application
     platform: iOS
@@ -122,6 +133,10 @@ schemes:
     build:
       targets:
         TolglowAudienceBridge: all
+  TolglowStudio:
+    build:
+      targets:
+        TolglowStudio: all
   TolglowPhone:
     build:
       targets:
