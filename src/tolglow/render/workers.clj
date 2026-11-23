@@ -57,7 +57,7 @@
 
 (defn- offer! [hub socket client packet]
   (if (and (not @(:closed? client)) (.offer ^ArrayBlockingQueue (:out client) packet))
-    (schedule-send! hub socket client)
+    (when @(:id client) (schedule-send! hub socket client))
     (throw (ex-info "Compute peer unavailable" {}))))
 
 (defn- open! [hub socket]
@@ -80,11 +80,12 @@
                    (pos-int? limit)
                    (MessageDigest/isEqual (:token hub) (.getBytes ^String token StandardCharsets/UTF_8)))
       (throw (ex-info "Compute admission denied" {})))
-    ;; Queue the welcome before making this client visible to the render pool.
-    (offer! hub socket client {:op :welcome})
+    ;; Put the welcome before any leased work, and hold writes until the pool has admitted the peer.
+    (.add ^ArrayBlockingQueue (:out client) {:op :welcome})
     (let [id (pool/connect! (:pool hub) {:max-result-floats (min limit max-result-floats)}
                             (partial offer! hub socket client))]
       (reset! (:id client) id)
+      (schedule-send! hub socket client)
       (when-let [timer @(:timer client)] (.cancel ^java.util.concurrent.Future timer false)))))
 
 (defn- receive! [hub socket message]
