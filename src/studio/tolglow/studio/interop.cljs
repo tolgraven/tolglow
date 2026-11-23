@@ -92,7 +92,8 @@
         intents (get-in show [:status :last-intents])]
     (aset this "rig" rig)
     (aset this "jsRig" js-rig)
-    (doseq [[k js-key cache] [[:sculpt-guide "sculpt-guide" "sculptGuide"] [:volume-guides "volume-guides" "volumeGuides"]]]
+    (doseq [[k js-key cache] [[:sculpt-guide "sculpt-guide" "sculptGuide"] [:volume-guides "volume-guides" "volumeGuides"]
+                              [:glass-meshes "glass-meshes" "glassMeshes"] [:glass-volumes "glass-volumes" "glassVolumes"]]]
       (let [guide (get show k)]
         (when-not (identical? guide (aget this js-key))
           (aset this js-key guide)
@@ -113,6 +114,10 @@
        (let [root (aget this "root")
              owner (get (r/argv this) 2 :perform)]
          (aset this "alive" true)
+         (when-let [changed (get (r/argv this) 3)]
+           (let [handler #(changed (.-detail %))]
+             (aset this "activity-handler" handler)
+             (.addEventListener (.querySelector root "canvas") "tolglow-preview-activity" handler)))
          (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (.-detail %) :keywordize-keys true)])]
            (aset this "rig-editor-handler" handler)
            (.addEventListener (.querySelector root "canvas") "tolglow-editor" handler))
@@ -153,15 +158,18 @@
          (js-invoke engine "dispose")
          (let [owner (get (r/argv this) 2 :perform)]
            (when (identical? engine (preview-engine @engines owner)) (swap! engines update :previews dissoc owner))))
+       (when-let [handler (aget this "activity-handler")]
+         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-preview-activity" handler))
        (when-let [handler (aget this "rig-editor-handler")]
          (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler)))
      :reagent-render
-     (fn [show & [owner]]
+     (fn [show & [owner _activity-changed]]
        (let [this (r/current-component)]
        [:div.preview-stage {:ref #(aset this "root" %)}
         [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
         [:div.preview-overlay
          [:span.preview-status {:id (if (= :rig owner) "rig-preview-status" "preview-status")} "Preparing preview"]
+         (when-let [limit (:visible-spatial-limit show)] [:span (str "Showing " limit " spatial volumes")])
          [:span {:id (if (= :rig owner) "rig-frame-time" "frame-time")} (str (.toFixed (or (get-in show [:status :frame-ms]) 0) 1) " ms")]]
         [:div.preview-caption "LIGHT, GIVEN SPACE."]]))}))
 

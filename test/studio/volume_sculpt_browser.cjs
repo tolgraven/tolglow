@@ -15,7 +15,9 @@ async function observeRigCamera(page) {
         return {...module, RoomPreview: class extends module.RoomPreview {
           constructor(canvas, status, options) {
             super(canvas, status, options);
-            if (canvas.closest('.rig-editor')) window.rigHandle = axis => {
+            if (!canvas.closest('.rig-editor')) return;
+            window.hasLiveSurface = () => !!this.snapshot?.['glass-volumes']?.length;
+            window.rigHandle = axis => {
               const guide = this.snapshot?.['sculpt-guide'];
               if (!guide) return null;
               const world = [...guide.center];
@@ -83,6 +85,13 @@ async function drag(page, session, axis, dx, dy, cancel) {
     const {cues,instances} = await (await page.request.get('/api/state', {headers:{Accept:'application/json'}})).json();
     assert.ok(cues.some(c => c.id === cueId));
     assert.ok(instances.some(i => i['cue-id'] === cueId));
+    const canvas = page.locator('.rig-editor canvas');
+    await canvas.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => window.hasLiveSurface());
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.waitForFunction(() => !window.hasLiveSurface());
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(() => window.hasLiveSurface());
     assert.equal(writes.length,1);
     assert.deepEqual(errors,[]);
     console.log('iPad-sized Chromium sculpted and stretched a volume, cancelled a drag, built an intersection, painted and launched a live grid cue.');
