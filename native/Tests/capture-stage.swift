@@ -34,6 +34,32 @@ struct CaptureStage {
         window.makeKeyAndOrderFront(nil)
     }
 
+    @MainActor static func report(_ phase: String, view: WKWebView, qr: URL) async {
+        let state = (try? await view.evaluateJavaScript("""
+          (() => {
+            const panels = [...document.querySelectorAll('.stage-invitation')];
+            const buttons = [...document.querySelectorAll('.stage-invitation button')];
+            return JSON.stringify({
+              url: location.origin + location.pathname,
+              readyState: document.readyState,
+              visibility: document.visibilityState,
+              connections: document.querySelectorAll('#view-connections').length,
+              connectionBadge: document.querySelector('#connection-label')?.textContent,
+              stagePanels: panels.length,
+              stageButtons: buttons.map(button => ({text: button.textContent, disabled: button.disabled})),
+              stageBadge: panels[0]?.querySelector('[role=status]')?.textContent,
+              stageQRs: document.querySelectorAll('.stage-invitation-qr').length,
+              editableOrigins: document.querySelectorAll('.stage-invitation input[type=url]:not([readonly]):not(:disabled)').length,
+              events: window.stageCapturePageEvents
+            });
+          })()
+        """)) as? String
+        let request = URLRequest(url: qr, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
+        let response = try? await URLSession.shared.data(for: request)
+        let status = (response?.1 as? HTTPURLResponse)?.statusCode ?? 0
+        FileHandle.standardError.write(Data("Stage \(phase), QR HTTP \(status): \(state ?? "JS unavailable")\n".utf8))
+    }
+
     @MainActor static func capture(_ view: WKWebView, _ path: URL) async throws {
         _ = try await view.evaluateJavaScript("document.querySelector('.stage-invitation').scrollIntoView({block:'center'})")
         let image = try await view.takeSnapshot(configuration: nil)
@@ -61,7 +87,18 @@ struct CaptureStage {
         try await post(origin.appendingPathComponent("api/sensors/osc/start"), ["port": 0])
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1050, height: 760))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+          window.stageCapturePageEvents = [];
+          for (const name of ['visibilitychange', 'pagehide', 'pageshow']) {
+            window.addEventListener(name, event => {
+              const events = window.stageCapturePageEvents;
+              if (events.length === 16) events.shift();
+              events.push([name, document.visibilityState, event.persisted ?? null]);
+            });
+          }
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1050, height: 760), configuration: configuration)
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = view
         // Studio subscribes to connection state only while its document is visible.
@@ -92,8 +129,10 @@ struct CaptureStage {
             """) as? Bool == true
         }
         let invitation = try await view.evaluateJavaScript("document.querySelector('.stage-invitation-qr input').value") as! String
-        let imageURL = try await view.evaluateJavaScript("document.querySelector('.stage-invitation-qr img').src") as! String
+        let imageSource = try await view.evaluateJavaScript("document.querySelector('.stage-invitation-qr img').src") as! String
+        let imageURL = URL(string: imageSource)!
         try await capture(view, folder.appendingPathComponent("stage-invitation.png"))
+        await report("before Save QR", view: view, qr: imageURL)
         _ = try await view.evaluateJavaScript("document.querySelector('.stage-invitation a[download]').click()")
         for _ in 0..<100 where !FileManager.default.fileExists(atPath: destination.path) {
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -106,14 +145,20 @@ struct CaptureStage {
         guard decoder.results?.map(\.payloadStringValue) == [invitation],
               invitation.range(of: #"^https://lights\.example\.org/audience/[0-9a-f]{64}$"#,
                                options: .regularExpression) != nil else { throw Failure.badImage }
-        print("Decoded the saved stage QR and verified its public HTTPS invitation.")
+        FileHandle.standardError.write(Data("Decoded the saved stage QR and verified its public HTTPS invitation.\n".utf8))
         show(window)
-        try await waitForStageButton(view, "Stop stage", click: true)
+        await report("after Save QR", view: view, qr: imageURL)
+        do {
+            try await waitForStageButton(view, "Stop stage", click: true)
+        } catch {
+            await report("at Stop failure", view: view, qr: imageURL)
+            throw error
+        }
         try await wait(view, for: "editable invocation origin after stopping") {
             try await view.evaluateJavaScript(setupIsVisible) as? Bool == true
         }
         try await capture(view, folder.appendingPathComponent("stage-closed.png"))
-        let (_, old) = try await URLSession.shared.data(from: URL(string: imageURL)!)
+        let (_, old) = try await URLSession.shared.data(from: imageURL)
         guard (old as? HTTPURLResponse)?.statusCode == 404 else { throw Failure.staleInvitation }
         print("Stopped the stage, restored its editable setup and verified that the old QR returns HTTP 404.")
         withExtendedLifetime((window, navigation)) {}
