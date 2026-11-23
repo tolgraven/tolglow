@@ -36,6 +36,7 @@ final class AudienceTests: XCTestCase {
         let all = floor.drain(at: 1)
         XCTAssertEqual(all.count, 96)
         XCTAssertEqual(all.effort, 0.5)
+        XCTAssertEqual(all.pulseCount, 1)
         XCTAssertEqual(all.pulse, 100)
         floor.leave(ids[0])
         XCTAssertNil(floor.drain(at: 1).pulse)
