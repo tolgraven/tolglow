@@ -29,6 +29,17 @@
       (is (= expected (peek (first readings))))
       (is (= [:figcaption [:span "0 … 1"] [:span "4 beats"]] axis)))))
 
+(deftest dmx-domain-labels-distinguish-narrow-bounds
+  (let [bounds [0.50001 0.50004]
+        point [0.50002 0.50002 0.50002]
+        data [{:beat 0 :values [0.50002]}]]
+    (doseq [[bits expected] [[16 "0.50001 … 0.50004"] [nil "0.5 … 0.5"]]]
+      (let [schema {:type :number :bounds bounds :dmx-bits bits}
+            [_ _ _ _ domain] (visual/space (assoc schema :type :vector :size 3) point point)
+            [_ _ _ _ axis] (visual/history-chart schema data 4)]
+        (is (= [:small.parameter-domain expected] domain))
+        (is (= [:figcaption [:span expected] [:span "4 beats"]] axis))))))
+
 (defn history-view [id n v]
   {:display-mode "parameters" :runtime-id "one" :instance-id id :epoch 1 :definition-version 3
    :visualization-clock {:time-ms (* 250 n) :beat (/ n 2)} :history-beats 1 :parameter-view "history"

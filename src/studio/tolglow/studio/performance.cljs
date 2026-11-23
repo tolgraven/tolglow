@@ -301,10 +301,13 @@
 (defn- control-title [{:keys [attribute parameter schema]}]
   (or (:name schema) (widgets/label (or parameter attribute))))
 
-(defn- xyz-schema [{:keys [attribute components]}]
-  (let [bounds (mapv (comp :bounds second) components)]
-    (cond-> {:type :vector :size 3 :semantic/type attribute}
-      (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds)))))
+(defn xyz-schema [{:keys [attribute components]}]
+  (let [schemas (mapv second components)
+        bounds (mapv :bounds schemas)
+        widths (mapv :dmx-bits schemas)]
+    (cond-> {:type :vector :size 3 :semantic/type attribute :component-schemas schemas}
+      (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds))
+      (and (#{8 16} (first widths)) (apply = widths)) (assoc :dmx-bits (first widths)))))
 
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
   (let [{:keys [base]} (xyz-readings show instance components)
