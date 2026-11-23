@@ -1263,7 +1263,8 @@
                    defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
                (when sampling
                  (swap! (:state runtime) assoc :cadence
-                        (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
+                        (cadence/finish (assoc sampling :defer-live-slowdown? defer? :output-slot (:slot output-slot))
+                                        (:model next-state) elapsed)))))))
        (finally
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))

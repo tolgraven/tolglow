@@ -288,6 +288,10 @@ jobs:
             mkdir -p "$artifact_root"
             (
               cd "$source_root"
+              if [[ -f dev/tolglow/perf/weighted_live.clj && -f "$AFTERGLOW_ROOT/src/afterglow/output/timeline.clj" ]]; then
+                lein with-profile +benchmark run -m tolglow.perf.weighted-live \
+                  "$artifact_root/live-weighted-venue.edn" 20000 160 240
+              fi
               ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
                 --warmup 40 --samples 120 --output "$artifact_root/report.edn" \
                 2>&1 | tee "$artifact_root/run.log"

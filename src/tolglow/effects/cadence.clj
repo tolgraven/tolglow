@@ -56,7 +56,7 @@
         quality (quality/prepare (:quality session) epoch ids (:instances model))
         limits (stride-limits (:ceilings session) (:ceilings quality) (:transport model) period-ms (:max-stride options))
         measured @samples
-        timings {:defer-live-slowdown? (:defer-live-slowdown? session)
+        timings {:defer-live-slowdown? (:defer-live-slowdown? session) :output-slot (:output-slot session)
                  :epoch epoch :versions ids :max-strides (:limits limits) :samples (quality/protect measured (:protected quality))
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
     (cond-> {:options options :config config :quality quality :ceilings limits :state (cadence/advance previous timings options)}
