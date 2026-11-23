@@ -2,6 +2,7 @@ import SwiftUI
 import TolglowSensorCore
 
 @MainActor final class PhoneModel: ObservableObject {
+    let audience = AudienceSession()
     let motion = MotionSampler(deviceID: persistentDeviceID(prefix: "iphone"))
     let osc = OSCConnection()
     let relay = WatchRelay()
@@ -20,6 +21,10 @@ import TolglowSensorCore
         }
         osc.onFailure = { [weak self] in self?.disarmPhone(); self?.disarmRelay() }
         relay.onFailure = { [weak self] in self?.disarmRelay() }
+        relay.audienceReceive = { [weak self] effort, steps, pulse in
+            self?.audience.receiveWatch(effort: effort, steps: steps, pulse: pulse) ?? false
+        }
+        relay.audienceEnded = { [weak self] in self?.audience.endWatch() }
         relay.receive = { [weak self] observation in
             guard let self, self.relayArmed, self.osc.ready,
                   observation.deviceID == self.pairedWatchID,
@@ -66,15 +71,26 @@ import TolglowSensorCore
 
 @main struct TolglowPhoneApp: App {
     @StateObject private var model = PhoneModel()
+    @State private var invitation: AudienceInvite?
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             PhoneRoot(model: model)
                 .preferredColorScheme(.dark)
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL, let room = AudienceRadio.room(in: url) {
+                        invitation = AudienceInvite(id: room)
+                    }
+                }
+                .sheet(item: $invitation) { invite in
+                    AudienceView(session: model.audience, room: invite.id).onAppear { model.relay.activate() }
+                }
                 .onChange(of: scenePhase) { _, phase in if phase == .background { model.suspend() } }
         }
     }
 }
+
+private struct AudienceInvite: Identifiable { let id: String }
 
 struct PhoneRoot: View {
     @ObservedObject var model: PhoneModel
@@ -83,6 +99,8 @@ struct PhoneRoot: View {
             PerformView(studio: model.studio).tabItem { Label("Perform", systemImage: "square.grid.3x3.fill") }
             RigCalibrationView(client: model.rigCalibration, scanner: model.rigCalibration.scanner)
                 .tabItem { Label("Scan rig", systemImage: "viewfinder") }
+            AudienceView(session: model.audience).onAppear { model.relay.activate() }
+                .tabItem { Label("Dance floor", systemImage: "figure.dance") }
             WebStudioView().tabItem { Label("Studio", systemImage: "globe") }
             PhoneMotionView(model: model, motion: model.motion, osc: model.osc, relay: model.relay)
                 .tabItem { Label("Conduct", systemImage: "hand.wave.fill") }
