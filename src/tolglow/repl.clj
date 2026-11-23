@@ -198,7 +198,10 @@
       (intern namespace 'runtime (:runtime options))
       (intern namespace 'debug-ns (ns-name debug))
       (doseq [[name value] bindings] (intern namespace name value))
-      (.setDaemon worker true) (reset! (:worker session) worker) (.start worker)
+      (.setContextClassLoader worker (or (:class-loader options) (clojure.lang.RT/baseLoader)))
+      (.setDaemon worker true)
+      (reset! (:worker session) worker)
+      (.start worker)
       session)))
 
 (defn submit!

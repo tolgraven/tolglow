@@ -1,5 +1,6 @@
 """Boot the embedded GraalVM, execute a user's Clojure and load release assets."""
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -32,6 +33,16 @@ def exercise(java, jar, environment):
                 for route, expected in [("/", b"app"), ("/studio/js/main.js", b"function")]:
                     with urllib.request.urlopen(origin + route, timeout=10) as response:
                         assert response.status == 200 and expected in response.read()
+                (folder / "late_fixture.clj").write_text(
+                    '(ns late-fixture) (defn mark [] (spit "late-loaded" "from REPL"))')
+                body = json.dumps({"source": "(require 'late-fixture) (late-fixture/mark)",
+                                   "request-id": "mac-require"}).encode()
+                request = urllib.request.Request(origin + "/api/repl/eval", data=body,
+                                                 headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    events = [json.loads(line[6:]) for line in response if line.startswith(b"data: ")]
+                assert events[-1]["status"] == "completed", events
+                assert (folder / "late-loaded").read_text() == "from REPL"
             finally:
                 process.stdin.close()
                 try:
