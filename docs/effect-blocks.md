@@ -73,6 +73,24 @@ The same maps work in the application's EDN config. Enable `:prefabs` and `:vari
 
 For example, place `{:block :venue/copper-ripple}` in the color stages of two independent effects. Each published revision captures the shared definitions it uses under `:imported-prefabs`. A later library edit takes effect in global variable chains on the next frame. Republish an effect to adopt the edit there. Pinned and archived revisions keep their original look across Transit saves and reloads. An effect can override a shared material by providing the same ID in its own `:prefabs` map.
 
+## Read a live audio or sensor input
+
+Use `{:op :variable :path [...]}` to take a numeric source from the current show frame. The path starts inside `:variables`. The same expression works as an output, a private varying's base, a stage input, a wet amount or a component of an expression. For example, let bass energy set the strength of a gel while a controller chooses its RGB transmission.
+
+```clojure
+{:outputs {:color [0.8 0.7 1.0]
+           :dimmer {:op :variable :path [:audio/energy]}}
+ :blocks {[:outputs :color]
+          {:stages [{:block :optics/gel
+                     :inputs {:transmission {:op :variable :path [:controllers "watch" :tint]
+                                             :type :vec3}}
+                     :amount {:op :variable :path [:audio :features :low-rms]}}]}}}
+```
+
+The audio analyzer publishes `:low-rms` and `:audio/energy`. Provide the controller tint as a three-component vector. Paths accept keyword keys, string keys and nonnegative vector indices. A scalar defaults to `:number`. Declare `:vec2`, `:vec3` or `:vec4` on each read of a vector, or on its variable binding. All uses of one path must agree on type. A plan supports up to 64 distinct inputs.
+
+A shared material can put this expression in its `:inputs` defaults and each stage can override it. The material designer takes one snapshot of the running show’s resolved variables for each draft preview. When a source is missing, the draft remains available to save and the preview reports which input it needs. Effects sample the resolved signal once for a frame and supply it to their numeric fields. The graph inspector uses that frame's captured inputs. Changing a consumed variable refreshes a predicted keyframe. The musical forecast stays in place when an unrelated variable changes. The unmodified source and the material definition are both available after a Transit restore.
+
 ## Shared variables
 
 Attach a chain to `[:variables :weather :density]` in an effect and read it through `{:op :variable :path [:weather :density]}`. This resolves the input privately for that effect. To shape it for every running effect, configure the same path in show settings.

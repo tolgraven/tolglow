@@ -1,6 +1,7 @@
 (ns tolglow.effects.material-design-test
   (:require [afterglow.render.blocks :as blocks]
             [clojure.test :refer [deftest is]]
+            [tolglow.demo :as demo]
             [tolglow.effects.material-design :as design]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -61,3 +62,26 @@
       (is (= 200 (first (put! :tour/gel (blocks/library :optics/gel) nil))))
       (is (= #{id} (set (keys (:materials (inventory))))))
       (finally (show/stop! runtime)))))
+
+(deftest draft-renders-the-committed-resolved-input-and-leaves-the-show-untouched
+  (let [model (-> (demo/model)
+                  (assoc-in [:variables :audio :features :low-rms] 0.25)
+                  (assoc-in [:settings :variable-blocks :bindings [:variables :stage :level]]
+                            {:base {:op :variable :path [:audio :features :low-rms]} :stages []}))
+        rt (show/create-runtime {:model model :workspace-options nil})
+        handler (studio/handler rt)
+        material {:name "Live transmission" :mode :multiply
+                  :inputs {:level {:op :variable :path [:stage :level]}} :glsl "level"}
+        inspect (fn [draft] (let [response (handler (request :post "/api/materials/preview" {:material draft :dry 0.5}))]
+                              (is (= 200 (:status response))) (wire/decode (:body response))))]
+    (try
+      (show/tick! rt 25.0)
+      (let [before @(:state rt)
+            view (inspect material)]
+        (is (= 0.125 (:min view) (:max view)))
+        (is (= [[32 32 32]] (distinct (:rgb view))))
+        (let [pending (inspect (assoc-in material [:inputs :level :path] [:not-yet-connected]))]
+          (is (:unavailable? pending))
+          (is (re-find #":not-yet-connected" (:message pending))))
+        (is (identical? before @(:state rt))))
+      (finally (show/stop! rt)))))
