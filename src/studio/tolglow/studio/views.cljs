@@ -27,6 +27,7 @@
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-visualization :as visualization]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
@@ -235,7 +236,9 @@
         type (cond (waveform/waveform-schema? schema) "waveform" (seq choices) "choice" :else (:type schema "number"))
         change! (or (:change handlers) #(input! [:studio/param-set (:id instance) parameter %]))
         component! (or (:component handlers) #(input! [:studio/param-component (:id instance) parameter %1 %2]))
-        overlay (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter]))
+        source (when-not handlers (sources/reading instance parameter))
+        overlay (if (and source (some? (:effective-value source))) (:effective-value source)
+                  (when-not handlers @(rf/subscribe [:performance/parameter-overlay (:id instance) parameter])))
         bounds (:bounds schema) title (or (:name schema) (label parameter))
         fader? (and (:strip? options) (#{:fader "fader"} (:ui/widget schema)))]
     [:div.param-row {:data-param (name parameter) :class (when (:strip? options) "strip-control")}
@@ -284,10 +287,10 @@
                             :on-change #(when-let [n (number-value %)] (change! n))}])]]
          [number-input {:type "number" :aria-label title :value (or value 0) :step (if (= "integer" type) 1 "any")
                         :on-change #(when-let [n (number-value %)] (change! n))}]))
-     (when (and (nil? handlers) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
+     (when (and (nil? handlers) (:id instance)) [sources/trigger (:id instance) parameter title source])
+     (when (and (sources/driven? instance parameter) (not (:strip? options)) (#{"number" "integer" "vector" "color" "range"} type)
                 (or (not (:compact? options)) (visualization/spatial-kind schema)))
-       [visualization/studio schema (if (some? overlay) overlay value)])
-     (when-not (or handlers (:compact? options)) [modulation/parameter-widget (:id instance) parameter schema value])]))
+       [sources/result-visual visualization/studio instance parameter schema])]))
 
 (defn- preview-film-controls [settings]
   [:details.preview-film

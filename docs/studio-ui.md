@@ -554,3 +554,11 @@ In **Compose**, select a cue and use **Add cue** to append a slot. Each row keep
 In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
 
 After an optimized build, run `lein run -m tolglow.qa.performance-layout target/authoring-layout authoring` to start a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.
+
+### Live parameter sources
+
+In **Perform → Live**, each running parameter has a **Source** action. Choose a registered waveform, enter its period in beats, bars or phrases (fractions such as `3/2` work), and set its phase and output range. Color, vector, integer and choice parameters keep their own value types. Grouped XYZ controls share one source editor with an axis selector. Changes apply to the selected running instance.
+
+The knob still edits the base value. Editing the base or choosing **Use base value** temporarily gives it control, **Resume LFO** resumes the generator, and **Detach LFO** removes that binding. Source details also identify random controllers, live patches, Live automation, spatial inputs, response envelopes and fixture blocks when the server reports them.
+
+Manual controls use the available strip width. A running source adds an observed result to the strip. When several parameters are driven, the monitor selector switches between them. A steady signal still drives its chart. Using the manual base or encountering a source error removes the trace when that was the only driver. Its source controls remain available. A fixture block shows the native result for the fixture named above its chart. Its source editor can select a different fixture. When the rig has no matching fixtures, the monitor reports that state. Waveform selectors always preview the registered shape. These shape previews describe the selected waveform; time histories show samples from the show.
