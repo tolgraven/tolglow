@@ -41,7 +41,7 @@ async function verifyControls(page,touch) {
   const sweep=page.locator('article',{has:page.getByRole('heading',{name:'Slow sweep',exact:true})});
   const fader=sweep.getByRole('slider',{name:'width',exact:true});
   assert.equal(await fader.isVisible(),true,'Authored sweep width fader stays available in the strip');
-  assert.equal(await sweep.locator('.strip-fader-bounds').innerText(),'0\n0.45');
+  assert.deepEqual(await sweep.locator('.strip-fader-bounds>span').allTextContents(),['0','0.45']);
   const card = page.locator('article', {has:page.getByRole('heading',{name:'Orbital wash'})});
   const activate = async button => touch ? button.tap() : button.click();
   const strip = card.getByRole('group',{name:'Parameter strip'});
@@ -50,7 +50,7 @@ async function verifyControls(page,touch) {
   assert.equal(new Set(ids).size,8);
   const picker=card.getByLabel('Monitored parameter');
   await picker.scrollIntoViewIfNeeded();
-  await picker.selectOption('aim');
+  await picker.selectOption({label:'Orbit aim'});
   await card.locator('.strip-monitor .parameter-space').waitFor();
   const input=strip.getByRole('slider',{name:'Intensity rotary'});
   await input.focus();
@@ -59,7 +59,7 @@ async function verifyControls(page,touch) {
   await page.waitForFunction(([id,old])=>Number(document.querySelector(
     '[data-live-instance="'+id+'"] [aria-label="Intensity rotary"]').getAttribute('aria-valuenow'))!==old,
     [await card.getAttribute('data-live-instance'),previous]);
-  await picker.selectOption('dimmer');
+  await picker.selectOption({label:'Intensity'});
   await card.locator('.strip-monitor .parameter-history svg path').first().waitFor({state:'attached'});
   await activate(card.getByRole('button',{name:'Pause',exact:true}));
   await card.getByRole('button',{name:'Resume',exact:true}).waitFor();
@@ -76,7 +76,7 @@ async function verifyControls(page,touch) {
   await aim.getByRole('img',{name:'Last 8 beats'}).waitFor();
   await activate(aim.getByRole('button',{name:'3D'}));
   await activate(card.getByRole('button',{name:'Collapse Orbital wash controls'}));
-  await picker.selectOption('aim');
+  await picker.selectOption({label:'Orbit aim'});
 }
 
 try {

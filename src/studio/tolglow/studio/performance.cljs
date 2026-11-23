@@ -291,8 +291,10 @@
          [action-button target "instance/remove" "Remove now" {:class "performance-remove" :title "Remove selected instances immediately."}]]])
      (when error [:p.performance-error {:role "alert"} error])]))
 
-(defn- control-id [{:keys [attribute parameter]}]
-  (wire (or parameter attribute)))
+(defn control-id [{:keys [attribute components parameter]}]
+  (if components
+    (str "group/" (pr-str [(wire attribute) (mapv (comp wire first) components)]))
+    (str "param/" (wire parameter))))
 
 (defn- control-title [{:keys [attribute parameter schema]}]
   (or (:name schema) (widgets/label (or parameter attribute))))
@@ -315,7 +317,7 @@
                    components ["X" "Y" "Z"])
         update! (fn [index value]
                   (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]
-    [:div.param-row {:data-param (control-id control) :class (when compact? "strip-control")}
+    [:div.param-row {:data-group (control-id control) :class (when compact? "strip-control")}
      [:label title]
      [widgets/axes-control title axes base update!]
      (when-not compact? [visualization/studio (xyz-schema control) effective])]))
@@ -334,10 +336,13 @@
   (or (seq components)
       (#{:integer :number :range :vector :color} (widgets/parameter-kind schema))))
 
-(defn- resolve-monitor [controls requested preferred]
+(defn resolve-monitor [controls requested preferred]
   (let [choices (filterv viewable? controls)
-        matching (fn [id] (some #(when (= (control-id %) (wire id)) %) choices))]
-    {:choices choices :selected (or (matching requested) (matching preferred) (first choices))}))
+        specific (fn [id] (some #(when (= (control-id %) id) %) choices))
+        preferred-id (wire preferred)
+        parameter (some #(when (and (:parameter %) (= (wire (:parameter %)) preferred-id)) %) choices)
+        group (some #(when (and (:components %) (= (wire (:attribute %)) preferred-id)) %) choices)]
+    {:choices choices :selected (or (specific requested) parameter group (first choices))}))
 
 (rf/reg-event-db :performance/monitor-select
   (fn [db [_ id parameter]] (store db (assoc-in (state db) [:monitor id] parameter))))

@@ -175,3 +175,15 @@
   (let [chosen (:db (transition base [:performance/monitor-select "4:2" "tilt"]))]
     (is (= {"4:2" "tilt"} (get-in chosen [:ui :performance :monitor])))
     (is (nil? (get-in (:db (transition chosen [:performance/runtime-change])) [:ui :performance :monitor])))))
+
+(deftest grouped-xyz-and-an-independent-aim-parameter-keep-distinct-monitors
+  (let [param {:parameter :aim :schema {:type :vector :size 3}}
+        group {:attribute :aim :components [[:x {}] [:y {}] [:z {}]]}
+        sibling (assoc group :components [[:a {}] [:b {}] [:c {}]])
+        namespaced {:parameter :group/aim :schema {:type :number}}
+        controls [group sibling namespaced param]]
+    (is (= 4 (count (set (map performance/control-id controls)))))
+    (is (= param (:selected (performance/resolve-monitor controls nil :aim))))
+    (doseq [control controls]
+      (is (= control (:selected (performance/resolve-monitor controls (performance/control-id control) :aim)))))
+    (is (= group (:selected (performance/resolve-monitor [group] nil :aim))))))
