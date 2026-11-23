@@ -132,7 +132,7 @@ import TolglowSensorCore
         let freshAxes = shareMotionAxes && ProcessInfo.processInfo.systemUptime - lastMotion <= 0.6 ? axes : nil
         guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm, motion: freshAxes) else { return }
         serial &+= 1
-        relay.sendAudience(sample)
+        relay.sendAudience(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {

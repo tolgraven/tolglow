@@ -27,7 +27,7 @@ final class AudienceSession: ObservableObject {
     private var taps: UInt32 = 0
     private var tapTime = -Double.infinity
     private var lastPhoneSteps: UInt32?
-    private var watch: (sample: AudienceSample, time: Double)?
+    private var watch: (sample: AudienceSample, time: Double, motionTime: Double?)?
     private var phoneMotion: AudienceMotion?
     @Published var shareMotionAxes = false
     private var lastWatchSteps: UInt32?
@@ -98,11 +98,11 @@ final class AudienceSession: ObservableObject {
         taps &+= 1; tapTime = now
     }
 
-    @discardableResult func receiveWatch(_ sample: AudienceSample) -> Bool {
+    @discardableResult func receiveWatch(_ sample: AudienceSample, motionTime: Double?) -> Bool {
         guard client.joined else { return false }
         let time = ProcessInfo.processInfo.systemUptime
         if time - (watch?.time ?? -.infinity) > 2 { lastWatchSteps = nil }
-        watch = (sample, time)
+        watch = (sample, time, motionTime)
         if watchOnlyInBackground { publish() }
         return true
     }
@@ -142,7 +142,7 @@ final class AudienceSession: ObservableObject {
         }
         lastPhoneSteps = phoneSteps
         let phoneAxes = shareMotionAxes && now - lastInputTime <= 0.6 ? phoneMotion : nil
-        let wristAxes = watch.flatMap { now - $0.time <= 0.6 ? $0.sample.motion : nil }
+        let wristAxes = watch.flatMap { $0.sample.motion?.fresh(measured: $0.motionTime, at: now) }
         if let packet = AudienceSample(serial: serial, steps: totalSteps, effort: effort,
                                        pulse: watch?.sample.pulse, motion: wristAxes ?? phoneAxes) {
             client.offer(packet); serial &+= 1

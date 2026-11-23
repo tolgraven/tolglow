@@ -18,6 +18,16 @@ final class AudienceMotionTests: XCTestCase {
         XCTAssertNil(AudienceMotion(values: ["accel-x": 1]))
     }
 
+    func testDelayedWristPacketCannotSupersedeFreshPhoneAxes() throws {
+        let axes = try XCTUnwrap(AudienceMotion(acceleration: .zero, rotation: .zero))
+        let measured = AudienceMotion.wristTimestamp(ageAtSend: 0.15, sent: 50, received: 50.1, uptime: 100)
+        XCTAssertEqual(axes.fresh(measured: measured, at: 100.2), axes)
+        XCTAssertNil(axes.fresh(measured: measured, at: 100.4))
+        let delayed = AudienceMotion.wristTimestamp(ageAtSend: 0.1, sent: 50, received: 51, uptime: 100)
+        XCTAssertNil(axes.fresh(measured: delayed, at: 100))
+        XCTAssertNil(AudienceMotion.wristTimestamp(ageAtSend: .nan, sent: 50, received: 50, uptime: 100))
+    }
+
     func testOnlyConsentingGuestsContributeAndWithdrawingClearsEachAxis() throws {
         let a = UUID(), b = UUID(), c = UUID()
         var floor = AudienceFloor()
