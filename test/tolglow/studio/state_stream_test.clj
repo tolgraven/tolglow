@@ -454,7 +454,10 @@
             cursor [:subscriptions query :value]
             initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager)))]
         (try
-          (acknowledge client (receive client))
+          (let [initial (receive client)]
+            (is (= 0 (:frame-number (show/snapshot runtime))))
+            (is (= 0 (get-in initial [:view :frame-number])))
+            (acknowledge client initial))
           (send-control client {:op :queries :queries [query]})
           (let [initial (receive client)
                 initial-status (get-in (:view initial) cursor)]

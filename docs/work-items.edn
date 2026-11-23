@@ -2,11 +2,11 @@
  :updated "2026-11-23",
  :items
  [{:id :studio/workspace-status-push :title "Push the selected development workspace across the Studio Transit socket"
-   :kind :implementation :status :in-progress :owner "Workspace status subscriptions"
+   :kind :implementation :status :done :owner "Workspace status subscriptions"
    :paths ["tolglow/src/tolglow/development/workspace.clj" "tolglow/src/tolglow/studio/query_stream.clj" "tolglow/src/studio/tolglow/studio/workspace.cljs"]
    :depends-on [:development/workspace-service-v1]
    :acceptance ["Open a workspace, receive an external check completion while the show is idle, release demand on leaving, and issue no periodic status reads."]
-   :evidence []}
+   :evidence ["Chromium on the optimized Studio bundle observed a check started outside the page enter running and passed, reconnected to its final status, and recorded zero workspace-status HTTP reads with the show held at frame zero. The real Transit socket integration also verifies the last subscriber releases the workspace watch. Reproduce with lein run -m tolglow.qa.workspace-status."]}
   {:id :studio/developer-output-push :title "Stream coding-agent events and terminal output to their active panes"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/application_agents.cljs" "tolglow/src/studio/tolglow/studio/terminal.cljs" "tolglow/src/tolglow/development"]

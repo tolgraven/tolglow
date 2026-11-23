@@ -158,3 +158,5 @@ fingerprints and temporary-view cleanup.
 The full pure lane on this branch passed **457 tests / 3,610 assertions**.
 
 Run `lein run -m tolglow.qa.workspace-layout` after building Studio to exercise the paired Git workflow, compact layout and bundled Neovim in Chromium. The harness creates two temporary local repositories and uses the preview output sink.
+
+Run `lein run -m tolglow.qa.workspace-status` with the built Studio bundle to inspect live check delivery. It holds the lighting clock before frame 1, starts a Git check outside the page, and releases that check only after Chromium has observed its running state. The browser verifies the final result again after reconnecting.
