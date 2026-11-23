@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
@@ -24,6 +25,7 @@
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
+            [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.effects.prefabs :as prefabs]
@@ -100,8 +102,8 @@
             [afterglow.control.devices.repl :as devices]
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope])
-  (:import [java.util UUID]
-           [java.util.concurrent LinkedBlockingQueue Executors ScheduledExecutorService TimeUnit]))
+  (:import [java.util Arrays UUID]
+           [java.util.concurrent LinkedBlockingQueue]))
 
 (defn- clock-time [clock]
   (let [{:keys [origin-nanos time-ms]} @clock]
@@ -119,10 +121,14 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
-(defn project-snapshot [runtime {:keys [model output status modulation-view]}]
-  (let [optics (reflections/plan-for (:optics-plan runtime) (:rig model))
+(defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
+  (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
+        responses? (some #(not= false (:enabled? %)) (:responses model))
+        resolve-inputs (waveforms/resolved-inputs snapshot response/monitor-middleware)
+        optics (reflections/plan-for (:optics-plan runtime) (:rig model))
         fixtures (get-in model [:rig :fixtures])
         patch @(:patch runtime)
+        definitions (precision/model-definitions (:parameter-precision runtime) model)
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))]
@@ -138,15 +144,18 @@
             :receiver-surfaces (:receivers optics)
             :surface-aim (get-in model [:variables :surface-aim] {})
             :event-subscribers (select-keys (:event-subscribers model {:subscribers []}) [:subscribers :last-error :dropped])
+            :parameter-waveforms (parameter-sources/waveform-options model)
             :waveform-revision (get-in model [:waveforms :revision] 0)
             :fixture-types (vec (sort-by (comp str :id) (vals (get-in model [:registry :fixtures]))))
             :category-colors registry/category-colors
-            :effects (mapv #(assoc % :categories (registry/definition-categories %))
+            :effects (mapv #(assoc (get definitions [% nil]) :categories (registry/definition-categories %))
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
-            :instances (mapv #(-> % (dissoc :state)
-                                  (assoc :categories (registry/definition-categories (:definition %)))
+            :instances (mapv #(-> % (dissoc :state :parameter-bindings)
+                                  (assoc :definition (get definitions [(:definition %) (:targets %)])
+                                         :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
+                                         :categories (registry/definition-categories (:definition %)))
                                   (update :system (fn [s] (merge {:opacity 1.0 :paused? false}
                                                                (select-keys s [:opacity :gain :paused? :attack :release])))))
                              (sort-by :order (vals (:instances model))))
@@ -190,7 +199,7 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
-(declare send-output! heartbeat! submit!)
+(declare prepare-output prepare-safety-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
@@ -275,8 +284,15 @@
                               (connections/close! owned)
                               (throw error)))
            publisher (output-scheduler/create
-                      (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
-                        (:send! sink) (assoc :receipt-capacity 256)
+                      (cond-> {}
+                        (:send! sink)
+                        (assoc :receipt-capacity 256
+                               :prepare-output (fn [buffers source]
+                                                 (prepare-output @runtime-ref (:output-context source) buffers source))
+                               :output-valid-until-ms (fn [source checked-at-ms]
+                                                        (fog-deadline/next-cutoff (:safety-state source) checked-at-ms))
+                               :prepare-safety-output (fn [buffers source] (prepare-safety-output @runtime-ref buffers source))
+                               :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
@@ -293,11 +309,13 @@
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
+      :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
-      :publisher publisher :independent-output? (boolean (:independent-output? options))
+      :publisher publisher :presentation-clock (volatile! 0)
+      :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
-      :scheduler (atom nil) :leases (atom {})
+      :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
@@ -311,6 +329,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
                     :brightness-gains (preview/brightness-gains fixtures)})
@@ -384,10 +403,11 @@
                                                         (:events result))))))
                    result)]
       (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (seq (get-in model [:modulation :controllers]))
+               (or (seq (get-in model [:modulation :controllers]))
+                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
                (not= :patch (get-in payload [:source :type]))
                (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation modulation/hold
+        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
                 {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
         result))))
 
@@ -569,6 +589,10 @@
       {:model (-> model (assoc :registry (:registry result)) (assoc-in [:pages id] (:page result))
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
+    (:modulation-bind :modulation-unbind)
+    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)]
+      {:model (update (edit model payload) :revision inc)
+       :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)}})
     :modulation-start
     {:model (-> model (update :modulation #(modulation/start (or % (modulation/new-state)) payload
                                                             {:time-ms time-ms :transport (:transport model)}))
@@ -756,14 +780,40 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- send-output! [runtime universes frame-number]
-  (when-let [send! (get-in runtime [:sink :send!])]
-    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)
-          memory @(:fog-deadlines runtime)
-          packet (if memory (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms]))) packet)]
-      (send! packet frame-number)
-      (when (:plan @(:venue-fog runtime))
-        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
+(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+  (let [packet (retirement/include-retired retirement universes)]
+    (if (seq safety-state)
+      (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
+                                 ((get-in runtime [:publisher :now-ms])) stale-source?)
+      packet)))
+
+(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
+  (let [{:keys [compiled retirement]} output-context
+        off-bytes (:fog-off-bytes compiled)
+        corrected (prepare-output runtime output-context universes source)
+        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
+                    ;; Old light bytes may now address a pump. Recover it using
+                    ;; the current patch, even if its universe was absent before.
+                    (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
+                          packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
+                      (fog-deadline/apply-off-bytes packet off-bytes))
+                    corrected)]
+    ;; A transport can fail after writing only part of the attempted packet.
+    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+              (and (not (identical? universes corrected))
+                   (some (fn [[universe ^bytes bytes]]
+                           (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                         corrected)))
+      corrected)))
+
+(defn- present-output! [runtime packet frame-number]
+  ((get-in runtime [:sink :send!]) packet frame-number)
+  (when (:plan @(:venue-fog runtime))
+    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+
+(defn- send-output! [runtime universes frame-number fog-demands]
+  (when (get-in runtime [:sink :send!])
+    (present-output! runtime (prepare-output runtime @(:patch runtime) universes {:safety-state fog-demands}) frame-number)))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -894,6 +944,7 @@
             captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])]
         ;; Rebase from the original model once; never merge the new beat first.
         (let [model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
+          (when discontinuity? (vswap! (:presentation-clock runtime) inc))
           ;; A local Play command may already have flipped :playing? before the
           ;; subsequent Link sample arrives. Remember that musical anchors were
           ;; frozen until we have the resumed peer phase to rebase them against.
@@ -957,12 +1008,30 @@
            (when @(:running runtime)
              (swap! (:state runtime) assoc-in [:status :audio-resume-error] (error-data error)))))))
 
+(defn- capture-render-time [runtime time-ms slot]
+  (if-not slot [time-ms nil]
+    (let [physical ((get-in runtime [:publisher :now-ms]))
+          remaining (- (:deadline-ms slot) physical)]
+      (when (pos? remaining)
+        [(+ (now-ms runtime) remaining) (assoc slot :inputs-at-ms physical)]))))
+
+(defn- begin-presentation! [runtime model slot]
+  (let [clock-id [@(:presentation-clock runtime) (get-in model [:transport :playing?])]
+        options (merge {:period-ms (/ 1000.0 (:frame-rate runtime))}
+                       (get-in model [:settings :output :presentation]))
+        compiled (patch! runtime (get-in model [:rig :fixtures]))]
+    (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
+                                   compiled
+                                   options (or (pause-look/blackout? model) (zero? (:master model)))
+                                   (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
   this cycle with fresh command identity and the captured source epoch."
   ([runtime] (tick! runtime (now-ms runtime)))
-  ([runtime time-ms]
+  ([runtime time-ms] (tick! runtime time-ms nil))
+  ([runtime time-ms output-slot]
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
@@ -970,9 +1039,9 @@
          author-request (volatile! nil)]
      (try
        (locking (:lock runtime)
-         (when @(:running runtime)
+         (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
-                 time-ms (max time-ms (get-in before [:model :time-ms]))
+                 time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
                  _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
@@ -1028,37 +1097,43 @@
                  photo-session (photometry/current model)
                  model (if (and photo-session (not= (:base-rig photo-session) (:rig model))) (photometry/disarm model) model)
                  photo-session (photometry/current model)
-                 presentation-token (when (:independent-output? runtime)
-                                      (output-scheduler/begin-frame! (:publisher runtime) (:epoch model)
-                                                                 (patch! runtime (get-in model [:rig :fixtures]))
-                                                                 (get-in model [:settings :output :presentation] {})
-                                                                 (or (pause-look/blackout? model) (zero? (:master model)))))
+                 presentation-token (when (:independent-output? runtime) (begin-presentation! runtime model output-slot))
                  presentation-token (cond-> presentation-token
                                       presentation-token (assoc :calibration (or (photometry/marker photo-session) (calibration/marker model))))
-                 sampling (when-not restored? (cadence/begin runtime before model))
+                 sampling-session (volatile! nil)
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:keyframes (effect-keyframes/restored model)
-                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
-                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
-                    :output (if restored-output
-                              (update restored-output :universes
-                                      #(fog-deadline/restore-packet
-                                         (patch! runtime (get-in model [:rig :fixtures]))
-                                         (get-in model fog-deadline/saved-ids-path)
-                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
-                              (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
-                    :status {:restored? true :frame-ms 0}}
+                   (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})
+                         random (modulation/captured-overrides model)]
+                     {:parameter-samples params :modulation-view {:overrides random}
+                      :resolved-param-overrides (merge-with merge random (:overrides params))
+                      :keyframes (effect-keyframes/restored model)
+                      :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
+                               (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
+                      :output (if restored-output
+                                (update restored-output :universes
+                                        #(fog-deadline/restore-packet
+                                           (patch! runtime (get-in model [:rig :fixtures]))
+                                           (get-in model fog-deadline/saved-ids-path)
+                                           (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
+                                (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
+                      :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
+                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                                      (get-in before [:parameter-samples :plans]))
+                           control-view (if (seq (:overrides parameter-samples))
+                                          (update (:modulation-view before) :overrides
+                                                  #(merge-with merge % (:overrides parameter-samples)))
+                                          (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model before time-ms (reactions runtime) command))
+                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1075,22 +1150,24 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 prior-output)) command (:modulation-view before) prior-output))
+                                                 prior-output)) command control-view prior-output))
                            model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
                            hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
                            hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
-                                                                              (:modulation-view before) hdr-scope) {}))
+                                                                              control-view hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
+                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                                                       (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
+                           sampling (vreset! sampling-session (cadence/begin runtime before model))
                            frame-input (merge {:time-ms time-ms :epoch (:epoch model) :show-id (:show-id model)
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
@@ -1101,7 +1178,9 @@
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
-                                            (keyframes/with-inputs step inputs)))
+                                            ;; Certified literals have no parameter schemas, and
+                                            ;; these transforms touch only declared parameters.
+                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
                            result (engine/advance model frame-input compile-step
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
@@ -1178,6 +1257,8 @@
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :parameter-samples (assoc parameter-samples :spatial-overrides (get-in space [:fields :overrides])
+                                                  :live-routing (live-sync/parameter-routing (connections/sync (:connections runtime))))
                         :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1211,8 +1292,13 @@
                       (swap! (:state runtime) assoc-in [:status :sync-error] (error-data error)))))
              (try (if (:independent-output? runtime)
                     (when-not (get-in next-state [:status :error])
-                      (output-scheduler/complete! (:publisher runtime) presentation-token (:output next-state)))
-                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)))
+                      (output-scheduler/complete! (:publisher runtime)
+                                                  (cond-> presentation-token
+                                                    output-slot (assoc :show-time-ms (get-in next-state [:model :time-ms])
+                                                                       :beat (get-in next-state [:model :transport :beat])))
+                                                  (assoc (:output next-state) :safety-state (get-in next-state [:output :fog-demands]))))
+                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)
+                                  (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
@@ -1232,7 +1318,7 @@
                ((:frame! observer) @(:state runtime)))
              (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)
                    defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
-               (when sampling
+               (when-let [sampling @sampling-session]
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally
@@ -1351,7 +1437,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
-                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))
@@ -1362,7 +1448,6 @@
                                          (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
 
-                              (fn [] (when-let [^ScheduledExecutorService scheduler @(:scheduler runtime)] (.shutdownNow scheduler)))
                               #(.close ^java.io.Closeable (:executor runtime))
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
@@ -1417,6 +1502,7 @@
   Supply the browser executable and optional injected sink in options."
   [runtime options]
   (let [cache (waveforms/create-cache)
+        precision-cache (atom nil)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
     (display/browser-display
@@ -1430,9 +1516,11 @@
                            (assoc-in [:visualization-clock :sample-period-ms]
                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
                     visual (case mode
-                             :parameters (waveforms/project-display cache snapshot view nil)
-                             :audio (waveforms/project-display cache snapshot view
-                                          (audio/waveform (connections/audio (:connections runtime))))
+                             (:parameters :audio)
+                             (let [capture (when (= mode :audio)
+                                             (audio/waveform (connections/audio (:connections runtime))))]
+                               (->> (waveforms/project-display cache snapshot view capture)
+                                    (precision/push-view precision-cache model)))
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))
@@ -1757,22 +1845,28 @@
     (throw (ex-info "Development operation belongs to a previous server process" {})))
   (service (:development runtime) operation payload))
 
+(defn render-slot!
+  "Take the latest inputs at render start and evaluate them for the scheduled
+  output time. The physical clock and the restorable show clock have distinct
+  origins; only the time remaining to the deadline crosses that boundary."
+  [runtime slot]
+  (tick! runtime nil slot))
+
 (defn start!
-  "Start the scheduled show in preview, or explicitly select :ola or :artnet output."
+  "Start the scheduled show in preview or with :ola or :artnet. An embedded
+  host may supply its own sink opener. The show takes ownership of that sink."
   ([] (start! {}))
-  ([{:keys [frame-rate] :or {frame-rate 40} :as options}]
+  ([options] (start! options output/open-sink!))
+  ([{:keys [frame-rate] :or {frame-rate 40} :as options} open-sink!]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (output/open-sink! options)
+   (let [sink (open-sink! options)
          runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
                                               {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
                           (try ((:close! sink)) (catch Throwable cleanup (.addSuppressed error cleanup))))
-                        (throw error)))
-         scheduler (Executors/newSingleThreadScheduledExecutor)]
+                        (throw error)))]
      (try
-       (reset! (:scheduler runtime) scheduler)
-       (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate))
-       (.scheduleAtFixedRate scheduler ^Runnable #(tick! runtime) 0 (long (/ 1000000000 frame-rate)) TimeUnit/NANOSECONDS)
+       (output-scheduler/start! (:publisher runtime) (/ 1000.0 frame-rate) #(render-slot! runtime %))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

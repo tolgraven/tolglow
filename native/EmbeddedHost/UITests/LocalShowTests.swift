@@ -31,6 +31,7 @@ final class LocalShowTests: XCTestCase {
                 .firstMatch.waitForExistence(timeout: 60))
             record("running-\(cycle)")
             app.buttons["Stop show"].tap()
+            XCTAssertTrue(app.staticTexts["Local show stopped."].waitForExistence(timeout: 20))
         }
         XCTAssertTrue(app.buttons["Open included show"].waitForExistence(timeout: 20))
         record("closed")

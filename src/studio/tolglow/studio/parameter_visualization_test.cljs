@@ -1,7 +1,8 @@
 (ns tolglow.studio.parameter-visualization-test
   (:require [cljs.test :refer-macros [deftest is]]
             [tolglow.studio.parameter-visualization :as visual]
-            [tolglow.studio.push-display :as display]))
+            [tolglow.studio.push-display :as display]
+            [tolglow.studio.parameter-widgets :as widgets]))
 
 (deftest spatial-defaults-follow-the-value-domain
   (is (= :spatial (visual/selected-mode {:type "vector" :size 3} nil)))
@@ -14,11 +15,36 @@
   (is (nil? (visual/components {:type :color} nil)))
   (is (= [0 0.5 1] (visual/components {:type :color} [0 0.5 1]))))
 
+(deftest observed-captions-retain-destination-precision
+  (doseq [[bits value expected] [[8 (/ 127 255) "0.498"]
+                                 [8 (/ 128 255) "0.502"]
+                                 [16 (/ 32767 65535) "0.49999"]
+                                 [16 (/ 32768 65535) "0.50001"]
+                                 [nil 0.000123456789 "0.000123"]]]
+    (let [schema {:type :number :bounds [0 1] :dmx-bits bits}
+          point [value 0 1]
+          [_ _ _ caption] (visual/space (assoc schema :type :vector :size 3) point point)
+          [_ _ [_ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)]
+      (is (= [:figcaption (str expected " · 0 · 1")] caption))
+      (is (= expected (peek (first readings))))
+      (is (= [:figcaption [:span "0 … 1"] [:span "4 beats"]] axis)))))
+
+(deftest dmx-domain-labels-distinguish-narrow-bounds
+  (let [bounds [0.50001 0.50004]
+        point [0.50002 0.50002 0.50002]
+        data [{:beat 0 :values [0.50002]}]]
+    (doseq [[bits expected] [[16 "0.50001 … 0.50004"] [nil "0.5 … 0.5"]]]
+      (let [schema {:type :number :bounds bounds :dmx-bits bits}
+            [_ _ _ _ domain] (visual/space (assoc schema :type :vector :size 3) point point)
+            [_ _ _ _ axis] (visual/history-chart schema data 4)]
+        (is (= [:small.parameter-domain expected] domain))
+        (is (= [:figcaption [:span expected] [:span "4 beats"]] axis))))))
+
 (defn history-view [id n v]
   {:display-mode "parameters" :runtime-id "one" :instance-id id :epoch 1 :definition-version 3
    :visualization-clock {:time-ms (* 250 n) :beat (/ n 2)} :history-beats 1 :parameter-view "history"
    :parameters [{:id "point" :schema {:type "vector" :size 3 :bounds [-1 1]}
-                 :base-value [0 0 0] :effective-value v}]})
+                 :base-value [0 0 0] :effective-value v :source-state "active"}]})
 
 (deftest history-is-owned-by-the-visible-bank-and-uses-real-component-samples
   (let [raw (history-view "a" 0 [0 0 0])
@@ -35,6 +61,19 @@
     (is (nil? (:parameter-observations (display/observe-view view (assoc raw :target-picker {:open? true})))))
     (is (map? (get-in (display/observe-view view (assoc raw :parameter-view :auto)) [:parameter-observations "point"])))
     (is (empty? (:parameter-observations (display/observe-view view (assoc raw :parameters [])))))))
+
+(deftest a-manual-held-or-failed-control-keeps-its-widget-without-reading-history
+  (let [raw (history-view "a" 0 [1 0 0])
+        first-frame (display/observe-view nil raw)
+        draw (fn [state frame] (display/observe-view first-frame (assoc-in frame [:parameters 0 :source-state] state)))]
+    (doseq [state [nil "held" "pending" "error"]]
+      (let [frame (draw state raw) row (first (:parameters frame))]
+        (is (empty? (:parameter-observations frame)))
+        (is (= visual/space (first (visual/push frame row))))
+        (is (= widgets/typed-display (first (visual/push frame (assoc row :schema {:type :number})))))))
+    (is (= 2 (count (get-in (draw "active" (history-view "a" 1 [1 0 0])) [:parameter-observations "point"]))))
+    (is (= 1 (count (get-in (draw "active" (assoc-in (history-view "a" 1 [0 1 0]) [:parameters 0 :sample-fixture] {:id :rear}))
+                             [:parameter-observations "point"]))))))
 
 (deftest sampling-is-bounded-and-clock-rewinds-reset-the-trace
   (let [feed #(visual/append-sample %1 {:time-ms (double %2) :beat (* 0.002 %2)} [1])

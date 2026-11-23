@@ -22,15 +22,21 @@ async function capturePush(origin, directory) {
   try {
     await fs.mkdir(path.join(directory, 'frames'), {recursive: true});
     for (const [i, view] of frames.entries()) {
-      const mode = i < 17 || i >= 44 ? 'auto' : 'history';
+      const mode = i < 16 ? 'auto' : 'history';
       const result = await worker.capture({...view, 'parameter-view': mode, 'history-beats': i < 36 ? 4 : 1});
       if (i === 0) {
         assert.equal(await page.locator('.parameter-space').count(), 3);
         assert.equal(await page.getByLabel('orientation in three dimensions').count(), 1);
         assert.equal(await page.locator('.push-component').first().innerText(), 'X');
       }
-      if (i === 33) {
-        assert.equal(await page.locator('.parameter-history').count(), 8);
+      if (i === 16 || i === 35 || i === 45) {
+        assert.equal(await page.locator('.parameter-history').count(), 0);
+        assert.equal(await page.locator('.parameter-space').count(), 3);
+        assert.equal(await page.locator('.push-source-state[data-state="held"]').count(), i === 35 ? 3 : 0);
+      }
+      if (i === 33 || i === 42) {
+        assert.equal(await page.locator('.parameter-history').count(), 3);
+        assert.equal(await page.locator('.push-source-state[data-state="active"]').count(), 3);
         assert.ok((await page.locator('.parameter-history path').first().getAttribute('d')).includes('L'));
       }
       const png = Buffer.from(result.png, 'base64');
@@ -86,6 +92,6 @@ async function inspectStudio(origin, id, directory) {
 async function run(origin, id, directory) {
   assert.ok(origin && id && directory, 'Pass the local show URL, instance ID and capture directory');
   await capturePush(origin, directory);
-  await inspectStudio(origin, id, directory);
+  if (!process.env.TOLGLOW_PUSH_ONLY) await inspectStudio(origin, id, directory);
 }
 run(...process.argv.slice(2)).catch(error => { console.error(error); process.exitCode = 1; });

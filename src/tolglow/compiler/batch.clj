@@ -231,18 +231,42 @@
                               :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
                               :groups (count groups)} block-plan)))))))
 
+(defn- normalized-literal? [value]
+  (and (instance? Double value)
+       ;; Interpolating negative zero can change its sign.
+       (not (neg? (Double/compare (double value) 0.0)))
+       (<= value 1.0)))
+
+(defn- literal-wash? [{:keys [outputs params] :as definition}]
+  ;; Restrict this to plain RGB/white paint with frozen target selection. Other
+  ;; definition features, including authored keyframes, keep their sampler.
+  (and (every? #{:id :version :params :targets :outputs} (keys definition))
+       (empty? params)
+       (map? outputs)
+       (seq outputs)
+       (every? (fn [[attribute value]]
+                 (case attribute
+                   :color (and (vector? value) (= 3 (count value)) (every? normalized-literal? value))
+                   :white (normalized-literal? value)
+                   false))
+               outputs)))
+
 (defn compile-effect
   "Compile the live backend. Future keyframes retain owned numeric samples. A
   deferred GPU rig uses its equivalent CPU field evaluator for predictive
-  endpoints; all other frames keep their ordinary compute backend."
+  endpoints. Plain CPU RGB/white literals already produce the same field at
+  every clock, so automatic windows can share one owned sample."
   ([definition fixtures] (compile-effect definition fixtures {}))
   ([definition fixtures options]
-   (let [step (build-effect definition fixtures options)]
-     (if-not (compiler/predictable-outputs? definition) step
-       (if (= :deferred (:backend (meta step)))
-         (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
-           (keyframes/predictable step (fn [ctx] (@cpu ctx))))
-         (keyframes/predictable step))))))
+   (let [step (build-effect definition fixtures options)
+         backend (:backend (meta step))]
+     (cond
+       (and (= :batch backend) (literal-wash? definition)) (keyframes/time-invariant step)
+       (not (compiler/predictable-outputs? definition)) step
+       (= :deferred backend)
+       (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
+         (keyframes/predictable step (fn [ctx] (@cpu ctx))))
+       :else (keyframes/predictable step)))))
 
 (defn compiler-for-rig
   "Return definition -> step, suitable for engine/advance and a shell-owned cache.

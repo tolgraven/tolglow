@@ -25,7 +25,10 @@ on:
       - 'dev/tolglow/bench_*.clj'
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
+      - 'dev/tolglow/perf/weighted_live*.clj'
+      - 'dev/tolglow/perf/weighted_live/**'
       - 'dev/tolglow/perf/adaptive_keyframes.clj'
+      - 'dev/tolglow/perf/output_deadlines.clj'
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
@@ -50,7 +53,10 @@ on:
       - 'dev/tolglow/bench_movers_reference.clj'
       - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/weighted_venue.clj'
+      - 'dev/tolglow/perf/weighted_live*.clj'
+      - 'dev/tolglow/perf/weighted_live/**'
       - 'dev/tolglow/perf/adaptive_keyframes.clj'
+      - 'dev/tolglow/perf/output_deadlines.clj'
       - 'dev/tolglow/perf/multirate_*.clj'
       - 'dev/tolglow/perf/transient_scheduling.clj'
       - 'dev/tolglow/perf/sampling_cost.clj'
@@ -90,7 +96,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '07b88dfdada4413ed07d0320bba584a810e674f2' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '7e399c58c5e2d66f5a2722be48e6d3cf33af9c00' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
@@ -159,6 +165,22 @@ jobs:
             lein with-profile +benchmark run -m tolglow.perf.weighted-venue "$pixels" 3 5 all \
               "../performance-artifact/weighted-venue-$pixels.edn"
           done
+      - name: Record physical release, fresh input and actual send times
+        if: hashFiles('tolglow/dev/tolglow/perf/output_deadlines.clj') != '' && hashFiles('afterglow/src/afterglow/output/timeline.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein with-profile +benchmark run -m tolglow.perf.output-deadlines \
+            ../performance-artifact/physical-output-deadlines.edn 120 240
+      - name: Capture live mixed venue publication at 40 Hz
+        if: matrix.companion == 'paired' && hashFiles('tolglow/dev/tolglow/perf/weighted_live.clj') != '' && hashFiles('afterglow/src/afterglow/output/timeline.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          lein with-profile +benchmark run -m tolglow.perf.weighted-live \
+            ../performance-artifact/live-weighted-venue.edn 20000 160 240
       - name: Measure adaptive sampling against per-frame effect evaluation
         if: hashFiles('tolglow/dev/tolglow/perf/adaptive_keyframes.clj') != '' && hashFiles('afterglow/src/afterglow/runtime/cadence.clj') != ''
         working-directory: tolglow

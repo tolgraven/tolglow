@@ -6,6 +6,8 @@
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [reagent.core :as r]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
@@ -48,18 +50,68 @@
     (is (< (js/Math.abs (- 0.7 (get-in updated [:show :instances 0 :params :level]))) 0.000001))
     (is (< (js/Math.abs (- 0.7 (get-in updated [:drafts ["7:9" :level] :fields :value]))) 0.000001))))
 
-(deftest released-before-acknowledgement-ends-exact-instance
-  (let [db (assoc-in base [:ui :launch-mode] "held")
-        down (transition db [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}])
-        released (transition (:db down) [:studio/gesture-up 11])
-        ack (transition (:db released) [:studio/held-launched 11 {:instance-id "7:10"}])]
-    (is (= "cue/launch" (:op (first-command down))))
-    (is (= "held" (get-in (first-command down) [:fields :launch :mode])))
-    (is (true? (get-in released [:db :pointers 11 :released?])))
-    (is (= "instance/end" (:op (first-command ack))))
-    (is (= "7:10" (get-in (first-command ack) [:fields :instance-id])))
-    (is (= 7 (:epoch (first-command ack))))
-    (is (empty? (get-in ack [:db :pointers])))))
+(deftest reused-pointer-and-late-held-acknowledgement-stay-independent
+  (let [gesture [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0}]
+        db (-> base (assoc-in [:ui :launch-mode] "held") (assoc-in [:show :runtime-id] "first-show"))
+        first-down (transition db gesture)
+        first-launch (first-command first-down)
+        released (:db (transition (:db first-down) [:studio/gesture-up 11]))
+        new-show (update released :show assoc :epoch 8 :runtime-id "second-show")
+        second-down (transition new-show gesture)
+        second-ack (conj (:on-success (first-command second-down)) {:instance-id "8:1"})
+        holding (:db (transition (:db second-down) second-ack))
+        late (transition holding (conj (:on-success first-launch) {:instance-id "7:10"}))
+        late-failure (transition holding (conj (:on-failure first-launch) "Timed out"))
+        final-release (first-command (transition holding [:studio/gesture-up 11]))]
+    (is (= "held" (get-in first-launch [:fields :launch :mode])))
+    (is (empty? (:pointers released)))
+    (is (= "cue/launch" (:op (first-command second-down))))
+    (is (= "8:1" (get-in holding [:pointers 11 :instance-id])))
+    (is (nil? (:db late)))
+    (is (= (:pointers holding) (get-in late-failure [:db :pointers])))
+    (is (true? (get-in late-failure [:db :recover-held?])))
+    (is (= {:op "instance/end" :epoch 7 :runtime-id "first-show" :fields {:instance-id "7:10"}}
+           (select-keys (update (first-command late) :fields dissoc :command-id) [:op :epoch :runtime-id :fields])))
+    (is (= {:epoch 8 :runtime-id "second-show" :fields {:instance-id "8:1"}}
+           (select-keys (update final-release :fields dissoc :command-id) [:epoch :runtime-id :fields])))))
+
+(deftest uncertain-held-replies-reconcile-only-the-originating-session
+  (let [hold (fn [id gesture session]
+               {:id id :gesture-id gesture :launch-mode "held" :phase "running"
+                :source {:adapter "web" :session-id session}})
+        mine (:session base)
+        db (-> base (assoc-in [:show :instances] [(hold "7:1" "released" mine) (hold "7:2" "pressed" mine)
+                                                  (hold "7:3" "other" "second-ipad")
+                                                  (assoc (hold "7:4" "done" mine) :phase "releasing")])
+               (assoc-in [:pointers 2] {:held? true :press-id "pressed" :epoch 7}))
+        recovered (transition db [:studio/reconcile-held])
+        end-request (first-command recovered)
+        waiting (transition (:db recovered) [:studio/reconcile-held])
+        failed (transition (:db recovered) (conj (:on-failure end-request) "No reply"))
+        retry (transition (:db failed) (get-in failed [:dispatch-later 0 :dispatch]))
+        repeated (transition (:db retry) (:dispatch retry))]
+    (is (= "7:2" (get-in recovered [:db :pointers 2 :instance-id])))
+    (is (= #{"released"} (get-in recovered [:db :ending-holds])))
+    (is (= [{:instance-id "7:1" :command-id "released-end"}] (map (comp :fields second) (:fx recovered))))
+    (is (empty? (:fx waiting)))
+    (is (= (get-in end-request [:fields :command-id]) (get-in (first-command repeated) [:fields :command-id])))
+    (is (empty? (transition (assoc-in db [:connection :connected?] false) [:studio/reconcile-held])))))
+
+(deftest restored-gesture-with-the-same-id-belongs-to-the-replacement-show
+  (let [owner {:press-id "saved" :epoch 7 :runtime-id "host" :held? true}
+        db (-> base (assoc-in [:show :runtime-id] "host")
+               (assoc :pointers {3 owner} :ending-holds #{"saved"}))
+        restored (assoc (:show db) :epoch 8 :show-id :main :instances
+                        [{:id "8:5" :gesture-id "saved" :launch-mode :held :phase :running
+                          :source {:adapter :web :session-id (:session db)}}])
+        installed (full-frame db restored)
+        recovered (transition (:db installed) [:studio/reconcile-held])
+        end (first-command recovered)]
+    (is (some #{[:dispatch [:studio/reconcile-held]]} (:fx installed)))
+    (is (nil? (get-in installed [:db :ending-holds])))
+    (is (nil? (get-in recovered [:db :pointers 3 :instance-id])))
+    (is (= [8 "8:5" "saved-end"] [(:epoch end) (get-in end [:fields :instance-id]) (get-in end [:fields :command-id])]))
+    (is (empty? (transition (:db recovered) [:studio/retry-held-end owner])))))
 
 (deftest independent-pointers-and-page-exit-release
   (let [db (assoc base :pointers {1 {:held? true :instance-id "7:11" :epoch 7}
@@ -72,12 +124,18 @@
     (is (true? (:beacon? (first-command exit))))
     (is (empty? (get-in exit [:db :pointers])))))
 
-(deftest long-press-opens-actions-without-launch
-  (let [down (transition base [:studio/gesture-down {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}])
-        long (transition (:db down) [:studio/gesture-long 1])
-        up (transition (:db long) [:studio/gesture-up 1])]
-    (is (= 500 (get-in down [:dispatch-later 0 :ms])))
-    (is (= :studio/open-actions (first (:dispatch long))))
+(deftest only-the-current-press-can-open-its-cue-actions
+  (let [pad {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}
+        down (transition base [:studio/gesture-down pad])
+        released (:db (transition (:db down) [:studio/gesture-up 1]))
+        rebound (transition released [:studio/gesture-down (assoc pad :cue-id "breathe" :x 1)])
+        timeout #(get-in % [:dispatch-later 0 :dispatch])
+        early (transition (:db rebound) (timeout down))
+        menu (transition (:db rebound) (timeout rebound))
+        up (transition (:db menu) [:studio/gesture-up 1])]
+    (is (= 500 (get-in rebound [:dispatch-later 0 :ms])))
+    (is (empty? early))
+    (is (= [:studio/open-actions {:cue-id "breathe" :x 1 :y 0}] (:dispatch menu)))
     (is (nil? (:dispatch up)))
     (is (empty? (:fx up)))))
 
@@ -453,6 +511,30 @@
     (is (= #{"/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
+
+(deftest device-refresh-failure-leaves-a-running-stage-operable
+  (let [running (-> base
+                    (assoc-in [:show :runtime-id] "stage-host")
+                    (assoc-in [:show :connection-status :stage-invitation]
+                              {:available? true :phase "discoverable" :id "current-stage"
+                               :stage-name "Dance floor" :device-id "audience"}))
+        opened (:db (transition running [:connections/open]))
+        refresh (transition opened [:connections/refresh-devices])
+        ports-request (some (fn [[_ request]] (when (= "/api/sync/ports" (:path request)) request)) (:fx refresh))
+        message "MIDI enumeration timed out"
+        failed (:db (transition opened (conj (:on-failure ports-request) message)))
+        recovered (:db (transition failed (conj (:on-success ports-request) [])))
+        render (fn [db]
+                 (reset! rf-db/app-db db)
+                 (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))
+        before (render opened)
+        during (render failed)
+        after (render recovered)]
+    (is (.includes before ">Stop stage</button>"))
+    (is (.includes during (str ">" message "</p>")))
+    (is (.includes during ">Stop stage</button>"))
+    (is (not (.includes after message)))
+    (is (.includes after ">Stop stage</button>"))))
 
 (deftest midi-selection-keeps-name-guards-until-explicit-reselection
   (let [form (-> connections/sync-defaults (assoc-in [:midi :enabled?] true)

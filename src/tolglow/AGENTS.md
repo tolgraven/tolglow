@@ -6,6 +6,8 @@ and shared [v1 contract](../../docs/implementation-contract-v1.md).
 
 Code that configures lights, devices, saves or providers belongs in the owning show namespace. Use it directly from code, config and Studio. Keep Ring, Jetty and re-frame at the web boundary. See [public module APIs](../../docs/headless-modules.md).
 
+Give each operator-facing show action a discoverable REPL example against the active runtime. Check that Studio can use the same domain operation and observe its outcome. Track missing paths in [REPL and Studio parity](../../docs/repl-studio-parity.md).
+
 ## Module boundaries
 
 - `fixtures.clj` expands the original declarative patch maps into actual Afterglow channels
@@ -64,8 +66,8 @@ Processing sketches or open devices. Capture output and inject transport shells.
 
 Run focused behavioral tests, then applicable integration lanes. Record exact
 scope and counts; distinguish a pure module from a complete UI/workflow and a
-source-derived protocol from physical hardware evidence. Use the work ledger
-for exclusive ownership rather than conflicting implementations of shared APIs.
+source-derived protocol from physical hardware evidence. Record the owner and
+affected shared APIs on the existing GitHub issue before editing.
 
 ## Expanded performance work
 
@@ -103,3 +105,9 @@ Apply the group/rig response to authored light, enforce concurrent budgets, then
 read and score the delivered emitter channels. Keep coarse/fine encoding and
 bulk frame operations in Afterglow. Run the mixed 2,048-pixel/64-head benchmark
 when changing that path. [Operator guide](../../docs/group-lighting-scenes.md)
+
+The scheduled show receives its physical output ticket from Afterglow. Map the
+remaining physical time to the restorable show clock under the owner lock
+before draining commands. Keep inputs immutable across effect workers and
+fence pending physical samples at transport discontinuities. Run the
+two-worker scheduler test when changing clock capture or output handoff.

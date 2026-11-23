@@ -55,6 +55,15 @@
       (is (= [0 0 19] (vec (get (deadline/guard manual packet 7 70) 1))))
       (is (identical? packet (deadline/guard manual packet 8 200))))))
 
+(deftest held-cutoffs-use-current-pump-calibration-and-respect-slot-ownership
+  (let [packet {1 (byte-array [80 10])}
+        leases [{:target-id :jet :until-ms 100 :off-bytes {[1 0] 0}}]
+        recalibrated (frame/compile-patch [(assoc-in jet [:fogger :dmx-range] [196 0])])
+        reclaimed (frame/compile-patch [{:id :light :universe 1 :address 1 :channels {:dimmer 1}}])
+        cutoff #(deadline/guard-source nil % packet leases 150 true)]
+    (is (= [196 10] (mapv #(bit-and 255 %) (get (cutoff recalibrated) 1))))
+    (is (identical? packet (cutoff reclaimed)))))
+
 (deftest independent-delivery-stops-an-automatic-pulse-if-the-renderer-stalls
   (let [wall (atom 0) raw (atom nil) seen (atom [])
         rt (show/create-runtime {:model base :independent-output? true :physical-now-ms #(deref wall)

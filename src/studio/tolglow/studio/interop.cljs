@@ -115,6 +115,32 @@
                                             (:type %)) intents))))
     (js-invoke engine "update" frame)))
 
+(defn bitmap-cadence [now report!]
+  (let [sample (volatile! nil)]
+    {:clear! #(do (vreset! sample nil) (report! nil))
+     :present! (fn [show-id epoch]
+                 (let [t (now)
+                       previous @sample
+                       reset-window! #(vreset! sample {:show-id show-id :epoch epoch :start t :intervals 0})]
+                   (if (and previous (= show-id (:show-id previous)) (= epoch (:epoch previous)))
+                     (let [elapsed (- t (:start previous))
+                           intervals (inc (:intervals previous))]
+                       (if (>= elapsed 1000)
+                         (do (report! (/ (* 1000 intervals) elapsed)) (reset-window!))
+                         (vswap! sample assoc :intervals intervals)))
+                     (do (report! nil) (reset-window!)))))}))
+
+(defn- canvas-rate [component]
+  (or (aget component "canvasRate") (aset component "canvasRate" (r/atom nil))))
+
+(defn- observe-preview! [component engine request]
+  (let [cadence (aget component "bitmapCadence")
+        count-frame (fn [show-id epoch]
+                      (if (and (aget engine "worker") (not (aget engine "fallback")))
+                        ((:present! cadence) show-id epoch)
+                        (when (some? @(canvas-rate component)) ((:clear! cadence)))))]
+    (observations/bind! component engine request count-frame)))
+
 (def preview
   (r/create-class
     {:display-name "room-preview"
@@ -123,10 +149,15 @@
        (let [root (aget this "root")
              owner (get (r/argv this) 2 :perform)]
          (aset this "alive" true)
-         (when-let [changed (get (r/argv this) 3)]
-           (let [handler #(changed (.-detail %))]
-             (aset this "activity-handler" handler)
-             (.addEventListener (.querySelector root "canvas") "tolglow-preview-activity" handler)))
+         (let [rate (canvas-rate this)
+               cadence (bitmap-cadence #(.now js/performance) #(reset! rate %))
+               changed (get (r/argv this) 3)
+               handler (fn [event]
+                         (when-not (.-detail event) ((:clear! cadence)))
+                         (when changed (changed (.-detail event))))]
+           (aset this "bitmapCadence" cadence)
+           (aset this "activity-handler" handler)
+           (.addEventListener (.querySelector root "canvas") "tolglow-preview-activity" handler))
          (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (.-detail %) :keywordize-keys true)])]
            (aset this "rig-editor-handler" handler)
            (.addEventListener (.querySelector root "canvas") "tolglow-editor" handler))
@@ -147,7 +178,7 @@
                                   (js-invoke engine "onNavigationChange"
                                              #(when (identical? engine (preview-engine @engines nil))
                                                 (rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)])))))
-                          (observations/bind! this engine (nth (r/argv this) 4 nil))
+                          (observe-preview! this engine (nth (r/argv this) 4 nil))
                           (when-let [show (second (r/argv this))] (update-preview! this engine show))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"]) owner])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
@@ -155,7 +186,7 @@
      (fn [this old-argv]
        (when-let [engine (aget this "engine")]
          (when-not (= (nth (r/argv this) 4 nil) (nth old-argv 4 nil))
-           (observations/bind! this engine (nth (r/argv this) 4 nil)))
+           (observe-preview! this engine (nth (r/argv this) 4 nil)))
          (let [show (second (r/argv this))]
            (when (and show (not (identical? show (second old-argv))))
              (update-preview! this engine show)))))
@@ -179,11 +210,17 @@
      (fn [show & [owner _activity-changed]]
        (let [this (r/current-component)]
        [:div.preview-stage {:ref #(aset this "root" %)}
-        [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. WASD to explore; drag to look in Explore mode. Arrow keys orbit; Home resets."}]
+        [:canvas {:id (if (= :rig owner) "rig-preview" "preview") :tab-index 0 :aria-label "Three dimensional lighting preview. Move with WASD, HJKL or arrow keys. Drag to orbit or look. Home resets the view."}]
         [:div.preview-overlay
          [:span.preview-status {:id (if (= :rig owner) "rig-preview-status" "preview-status")} "Preparing preview"]
          (when-let [limit (:visible-spatial-limit show)] [:span (str "Showing " limit " spatial volumes")])
-         [:span {:id (if (= :rig owner) "rig-frame-time" "frame-time")} (str (.toFixed (or (get-in show [:status :frame-ms]) 0) 1) " ms")]]
+         (when-some [ms (get-in show [:status :frame-ms])]
+           [:span {:id (if (= :rig owner) "rig-frame-time" "frame-time")
+                   :title "Time the show host spent producing its latest lighting frame"}
+            (str "Show compute · " (.toFixed ms 1) " ms")])
+         (when-let [hz @(canvas-rate this)]
+           [:span {:title "Accepted worker images transferred to this canvas per second"}
+            (str "Canvas · " (.toFixed hz 1) " fps")])]
         [:div.preview-caption "LIGHT, GIVEN SPACE."]]))}))
 
 (def neovim

@@ -21,19 +21,24 @@ private final class ShowThread {
             let failureLog = home.appendingPathComponent("last-start-error.log")
             try? FileManager.default.removeItem(at: failureLog)
             let port = tolglow_open_local(thread, home.path, folder?.path ?? "")
+            var closeResult: Int32 = 0
             if port > 0 {
                 ready(Int(port))
                 stopSignal.wait()
-                _ = tolglow_close_local(thread)
+                closeResult = tolglow_close_local(thread)
             }
-            let closed = graal_tear_down_isolate(thread)
+            let teardownResult = graal_tear_down_isolate(thread)
             if port <= 0 {
                 let trace = try? String(contentsOf: failureLog, encoding: .utf8)
                 let reason = trace?.split(whereSeparator: \.isNewline).first.map { String($0.prefix(240)) }
                 ended(reason.map { "Could not start this show. \($0)" } ?? "Could not start this show. Check its configuration in tolglow.edn or show.clj.")
+            } else if closeResult != 0 {
+                ended("The local show shut down with an error. Saving the latest show state may have failed.")
+            } else if teardownResult != 0 {
+                ended("The local runtime could not finish shutting down.")
+            } else {
+                ended(nil)
             }
-            else if closed != 0 { ended("The local runtime could not finish shutting down.") }
-            else { ended(nil) }
         }
         worker.name = "Tolglow on-device show"
         worker.start()

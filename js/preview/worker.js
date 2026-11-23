@@ -45,7 +45,7 @@ async function render() {
     const bitmapStarted = performance.now(), bitmap = canvas.transferToImageBitmap(); pendingFrame = ++frameId;
     const completed = performance.now();
     engine.lastBitmapTransfer = completed - bitmapStarted; engine.lastWorkerFrame = completed - started;
-    const nominal = 1000 / engine.options.fps;
+    const nominal = 1000 / engine.targetHz;
     engine.frameInterval = Math.max(nominal,
       Math.min(engine.lastWorkerFrame * (engine.softwareRenderer ? 2 : 1.5), previousInterval * 1.5), previousInterval * .5);
     postMessage({type: 'frame', frameId, stateId, actionThrough, generation, bitmap,
@@ -72,9 +72,10 @@ function applyState(message) {
     let lastStatus = '';
     const status = {set textContent(text) {lastStatus = text; send({type: 'status', text});}, get textContent() {return lastStatus;}};
     engine = new SceneRenderer(canvas, status, {worker: true, autoStart: false,
-      viewport: state.viewport, coarsePointer: state.coarsePointer, reducedMotion: state.reducedMotion});
+      viewport: state.viewport, displayHz: state.displayHz, coarsePointer: state.coarsePointer, reducedMotion: state.reducedMotion});
     if (engine.error) throw new Error(engine.error);
   }
+  engine.setDisplayHz(state.displayHz);
   engine.platform.viewport = state.viewport; engine.visible = true;
   if (engine.restorePending) engine.restoreContext();
   engine.reducedMotion.matches = state.reducedMotion;

@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 07b88dfdada4413ed07d0320bba584a810e674f2
+          ref: 7e399c58c5e2d66f5a2722be48e6d3cf33af9c00
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -67,10 +67,10 @@ jobs:
             git show "$BASE_COMMIT:docs/request-coverage.md" > "$RUNNER_TEMP/previous-requests.md"
             echo "TOLGLOW_PREVIOUS_REQUESTS=$RUNNER_TEMP/previous-requests.md" >> "$GITHUB_ENV"
           fi
-      - name: Validate work tracking
-        if: matrix.suite == 'pure'
+      - name: Check archived requests and GitHub Issue links
+        if: matrix.suite == 'pure' && matrix.java == '17'
         working-directory: tolglow
-        run: lein check-roadmap
+        run: lein check-requests
   studio:
     runs-on: ubuntu-latest
     steps:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 07b88dfdada4413ed07d0320bba584a810e674f2
+          ref: 7e399c58c5e2d66f5a2722be48e6d3cf33af9c00
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:
@@ -124,6 +124,20 @@ jobs:
         run: |
           npm run studio:test
           npm run studio:build
+      - name: Check compact cue controls and Studio navigation across viewports
+        id: layouts
+        working-directory: tolglow
+        run: |
+          STUDIO_CARD_LAYOUT_ONLY=1 lein run -m tolglow.qa.performance-layout "$RUNNER_TEMP/studio-layouts/cards"
+          lein run -m tolglow.qa.performance-layout "$RUNNER_TEMP/studio-layouts/shell" shell-alignment
+      - name: Save Studio layout screenshots and measurements
+        if: ${{ !cancelled() && steps.layouts.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: studio-layouts
+          path: ${{ runner.temp }}/studio-layouts
+          if-no-files-found: warn
+          retention-days: 7
       - name: Compare two browser GPU peers with CPU output across two Art-Net universes
         working-directory: tolglow
         timeout-minutes: 5
@@ -156,7 +170,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: 07b88dfdada4413ed07d0320bba584a810e674f2
+          ref: 7e399c58c5e2d66f5a2722be48e6d3cf33af9c00
           path: afterglow
       - uses: actions/setup-java@v6.3.0
         with:

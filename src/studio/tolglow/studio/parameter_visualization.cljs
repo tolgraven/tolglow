@@ -101,9 +101,16 @@
         (mapv blend from to))
       to)))
 
-(defn- compact-number [value]
-  (if (widgets/finite? value)
-    (str (js/Number (.toPrecision value 3))) "—"))
+(defn- compact-number [schema axis value]
+  (let [component (get (:component-schemas schema) axis schema)]
+    (cond
+      (#{8 16} (:dmx-bits component)) (widgets/number-label component value)
+      (widgets/finite? value) (str (js/Number (.toPrecision value 3)))
+      :else "—")))
+
+(defn- domain-label [schema [low high]]
+  (let [display (when (#{8 16} (:dmx-bits schema)) schema)]
+    (str (widgets/number-label display low) " … " (widgets/number-label display high))))
 
 (defn component-label [{:keys [schema component component-label]}]
   (if (and (#{:position :direction :orientation} (spatial-kind schema))
@@ -124,8 +131,9 @@
             [x _ z] point
             [px py] (screen point)
             tint (if color? (widgets/color-css xyz) "var(--push-accent, #bdd49f)")
-            caption (str (widgets/number-label (first domain)) " … " (widgets/number-label (second domain)))]
-        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")}
+            caption (domain-label schema domain)]
+        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")
+                                  :data-dmx-bits (:dmx-bits schema)}
          [:svg {:view-box "0 0 110 79" :role "img" :aria-label (str (str/join ", " xyz) ", range " caption)}
           [:polygon.space-wall {:points (points [[-1 -1 -1] [-1 1 -1] [-1 1 1] [-1 -1 1]])}]
           [:polygon.space-wall.side {:points (points [[-1 -1 -1] [-1 1 -1] [1 1 -1] [1 -1 -1]])}]
@@ -140,7 +148,7 @@
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
             ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
-         [:figcaption (str/join " · " (map compact-number (take 3 actual)))]
+         [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))]
          [:small.parameter-domain caption]]))))
 
 (defn append-sample [previous clock values]
@@ -186,14 +194,14 @@
 
 (defn history-chart [schema history window]
   (let [{:keys [bounds paths]} (chart-paths history window schema)]
-    [:figure.parameter-history {:aria-label "Observed parameter history"}
+    [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading
       (for [[i v] (map-indexed vector (:values (peek history)))]
         ^{:key i} [:span {:style {:color (colors i)}}
                    (when (> (count paths) 1)
                      (str (get (or (:component-labels schema)
                                    (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
-                   (compact-number v)])]
+                   (compact-number schema i v)])]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img"
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]
@@ -201,24 +209,38 @@
       (for [[i d] (map-indexed vector paths)]
         ^{:key i} [:path {:d d :stroke (colors i) :fill "none" :stroke-width 1.6
                           :vector-effect "non-scaling-stroke"}])]
-     [:figcaption [:span (if bounds (str (widgets/number-label (first bounds)) " … " (widgets/number-label (second bounds))) "Awaiting samples")]
+     [:figcaption [:span (if bounds (domain-label schema bounds) "Awaiting samples")]
       [:span (str window " beats")]]]))
 
 (defn selected-mode [schema preference]
   (view-kind schema (if (#{:auto nil} (tag preference)) (:visualization schema) preference)))
 
-(defn- observe-parameter [previous clock preference {:keys [schema effective-value value param id]}]
-  (let [id (or param id) values (components schema (if (some? effective-value) effective-value value))]
-    (case (selected-mode schema preference)
-      :history [id (append-sample (get previous id []) clock values)]
-      :spatial [id (spatial-keyframe (get previous id) clock values)]
-      nil)))
+(defn- push-mode [parameter preference]
+  (let [schema (:schema parameter)
+        mode (selected-mode schema preference)]
+    (if (and (= :history mode) (not= :active (tag (:source-state parameter))))
+      (if (spatial-kind schema) :spatial :controls)
+      mode)))
+
+(defn- observe-parameter [previous clock preference {:keys [schema effective-value value param id] :as parameter}]
+  (when (= :active (tag (:source-state parameter)))
+    (let [id (or param id) values (components schema (if (some? effective-value) effective-value value))]
+      (case (push-mode parameter preference)
+        :history [id (append-sample (get previous id []) clock values)]
+        :spatial [id (spatial-keyframe (get previous id) clock values)]
+        nil))))
 
 (defn update-push [previous next view]
   (let [identity (mapv #(get view %) [:runtime-id :epoch :instance-id :definition-version])
         preference (:parameter-view view) clock (:visualization-clock view)
         same? (and (= identity (:parameter-identity previous)) (= preference (:parameter-view previous)))
-        retained (when same? (:parameter-observations previous))
+        previous-fixtures (into {} (map (juxt #(or (:param %) (:id %)) :sample-fixture)) (:parameters previous))
+        retained (when same?
+                   (select-keys (:parameter-observations previous)
+                                (keep (fn [{:keys [param id sample-fixture]}]
+                                        (let [key (or param id)]
+                                          (when (= sample-fixture (get previous-fixtures key)) key)))
+                                      (:parameters next))))
         visible? (and clock (#{nil :parameters "parameters"} (:display-mode next))
                       (not (get-in next [:target-picker :open?])))
         entries (when visible?
@@ -228,7 +250,7 @@
 
 (defn push [view {:keys [schema effective-value value param id] :as parameter}]
   (let [shown (if (some? effective-value) effective-value value)]
-    (case (selected-mode schema (:parameter-view view))
+    (case (push-mode parameter (:parameter-view view))
       :spatial [space schema shown
                 (if-let [keyframe (get-in view [:parameter-observations (or param id)])]
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))
@@ -261,7 +283,10 @@
 
 (defn- visible-visual [mode schema value window]
   (r/with-let [observed (r/atom (when (= mode :history) []))]
-    [observed-visual mode schema value @(rf/subscribe [::clock]) observed window]))
+    (let [sample (if (fn? value) (value) value)]
+      (if (some? sample)
+        [observed-visual mode schema sample @(rf/subscribe [::clock]) observed window]
+        [:span.block-trace-empty "Awaiting sample…"]))))
 
 (defn monitor
   "A single visible scope per performance strip. Sampling starts only when the

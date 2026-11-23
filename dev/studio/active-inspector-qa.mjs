@@ -16,9 +16,60 @@ const post = (path, body) => read(path, {method:'POST', body:JSON.stringify({...
 const definition = (kind, source) => post('/api/definition', {kind, source});
 const command = (op, body) => post('/api/command', {op, epoch:show.epoch, 'show-id':show['show-id'],
   'command-id':crypto.randomUUID(), source:{adapter:'web', 'session-id':id}, ...body});
-const scalar = '{:type :number :bounds [0 1] :default 0.5}';
-await definition('effects', `{:id :${id} :version 1 :params {:x ${scalar} :y ${scalar} :z ${scalar} :aim-vector {:type :vector :size 3 :bounds [-4 4] :default [0 1 0]}}
-  :outputs {:aim {:op :vec3 :args [{:op :param :key :x} {:op :param :key :y} {:op :param :key :z}]} :dimmer 0.1}}`);
+const depthName = 'Throw distance across stage';
+const labels = ['X', 'Y · lateral', `Z · ${depthName}`];
+
+async function expandedCard(page, instanceId) {
+  await page.goto(origin + '/perform');
+  const card = page.locator(`[data-live-instance="${instanceId}"]`);
+  await card.waitFor({state: 'attached'});
+  const live = page.getByRole('button', {name: /^Live ·/});
+  if (await live.isVisible()) await live.tap();
+  await card.getByRole('button', {name: 'Expand QA geometry controls'}).tap();
+  return card;
+}
+
+async function openAimComponents(page, card) {
+  const axes = card.getByRole('button', {name: 'Edit aim components', exact: true});
+  assert.deepEqual(await axes.locator('span > b').allTextContents(), labels);
+  await axes.tap();
+  const popover = page.getByRole('dialog', {name: 'aim components', exact: true});
+  await popover.getByRole('spinbutton', {name: `aim Z · ${depthName} value`, exact: true}).waitFor();
+  assert.deepEqual(await popover.locator('.axis-component > label').allTextContents(), labels);
+  return popover;
+}
+
+async function assertAxisLayout(popover, width) {
+  const axes = await popover.locator('.axis-component').evaluateAll(components => components.map(component => {
+    const label = component.querySelector('label');
+    const labelBox = label.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const lines = Array.from(range.getClientRects());
+    const knob = component.querySelector('[role="slider"]').getBoundingClientRect();
+    const input = component.querySelector('input').getBoundingClientRect();
+    return {
+      label: label.textContent,
+      lines: lines.length,
+      labelFits: lines.every(line => line.left >= labelBox.left - 0.5 && line.right <= labelBox.right + 0.5
+        && line.top >= labelBox.top - 0.5 && line.bottom <= labelBox.bottom + 0.5),
+      knobCenter: knob.top + knob.height / 2,
+      inputTop: input.top,
+    };
+  }));
+  assert.ok(axes.some(axis => axis.lines > 1), `A label wraps at ${width} px`);
+  assert.ok(axes.every(axis => axis.labelFits), `Labels fit at ${width} px`);
+  for (const edge of ['knobCenter', 'inputTop']) {
+    assert.ok(axes.every(axis => Math.abs(axis[edge] - axes[0][edge]) <= 0.5),
+              `${edge} aligns at ${width} px: ${JSON.stringify(axes)}`);
+  }
+  console.log(`XYZ layout at ${width} px: ${JSON.stringify(axes)}`);
+}
+
+const scalar = ':type :number :bounds [0 1] :default 0.5';
+await definition('effects', `{:id :${id} :version 1 :params {:x {${scalar}} :lateral {${scalar}} :depth {${scalar} :name "${depthName}"}
+  :aim-vector {:type :vector :size 3 :bounds [-4 4] :default [0 1 0]}}
+  :outputs {:aim {:op :vec3 :args [{:op :param :key :x} {:op :param :key :lateral} {:op :param :key :depth}]} :dimmer 0.1}}`);
 await definition('cues', `{:id :${id} :name "QA geometry" :version 1 :effect-id :${id} :reload-policy :preserve-state}`);
 const launched = await command('cue/launch', {'cue-id':id});
 const browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium', args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
@@ -26,14 +77,32 @@ try {
   const page = await browser.newPage({viewport:{width:820,height:980},hasTouch:true});
   const errors = [];
   page.on('pageerror', err => errors.push(err.message));
-  await page.goto(origin);
-  const live = page.getByRole('button', {name:/^Live ·/});
-  if (await live.isVisible()) await live.tap();
-  const card = page.locator('[data-live-instance="' + launched['instance-id'] + '"]');
-  await card.getByRole('button',{name:'Expand QA geometry controls'}).tap();
-  await card.getByRole('button',{name:'Edit aim components', exact:true}).tap();
-  const pop = page.getByRole('dialog',{name:'aim components',exact:true});
-  await pop.getByRole('slider',{name:'aim X · x rotary'}).press('End');
+  const card = await expandedCard(page, launched['instance-id']);
+  const source = card.getByRole('button',{name:'Attach source for aim',exact:true});
+  await source.tap();
+  const editor = card.getByRole('region',{name:/^(x|lateral) source$/});
+  await editor.getByRole('heading').and(page.locator(':focus')).waitFor();
+  const axis = editor.getByRole('combobox',{name:'Source axis'});
+  const editorId = await editor.getAttribute('id');
+  await axis.focus();
+  await axis.selectOption('lateral');
+  await editor.getByRole('heading',{name:'lateral source',exact:true}).waitFor();
+  await axis.and(page.locator(':focus')).waitFor();
+  assert.equal(await editor.getAttribute('id'),editorId);
+  assert.equal(await source.getAttribute('aria-controls'),editorId);
+  await page.keyboard.press('Escape');
+  await source.and(page.locator(':focus')).waitFor();
+  const pop = await openAimComponents(page, card);
+  await assertAxisLayout(pop, 820);
+  const phone = await browser.newPage({viewport: {width: 390, height: 844}, hasTouch: true});
+  try {
+    phone.on('pageerror', err => errors.push(err.message));
+    const phoneCard = await expandedCard(phone, launched['instance-id']);
+    await assertAxisLayout(await openAimComponents(phone, phoneCard), 390);
+  } finally {
+    await phone.close();
+  }
+  await pop.getByRole('slider',{name:'aim X rotary',exact:true}).press('End');
   await pop.getByRole('button',{name:'Done'}).tap();
   await card.getByRole('button',{name:/Edit aim.vector components/i}).tap();
   const vec = page.getByRole('dialog',{name:/aim.vector components/i});
