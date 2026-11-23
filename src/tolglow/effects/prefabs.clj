@@ -1,8 +1,7 @@
 (ns tolglow.effects.prefabs
   "Reusable material definitions and the snapshots owned by published effects."
-  (:require [afterglow.render.blocks :as blocks]
-            [afterglow.render.ir :as ir]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
+            [tolglow.compiler.blocks :as blocks]
             [tolglow.registry :as registry]))
 
 (defn catalog [model]
@@ -15,8 +14,12 @@
                  (#{:replace :add :multiply} (:mode material)) (registry/data? material))
     (throw (ex-info "A material needs a name, input defaults and a stage mode"
                     {:path [:prefabs :definitions id]})))
-  (let [chain {:base 0.0 :stages [{:block id :mode :replace}]}]
-    (ir/expression-type (:expression (blocks/plan {id material} chain)))))
+  (let [chain {:base 0.0 :stages [{:block id :mode :replace}]}
+        definition {:blocks {[:varyings :sample] chain} :prefabs {id material}}
+        ;; Parameter schema belongs to the consuming effect. Here only its
+        ;; numeric shape is needed to validate the reusable expression.
+        parameter (fn [node _ _] (assoc node :type (:type node :number)))]
+    (blocks/prepare definition [] parameter)))
 
 (defn validate! [settings]
   (when (some? settings)

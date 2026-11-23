@@ -6,6 +6,12 @@
    :paths ["tolglow/src/tolglow/effects/prefabs.clj"] :depends-on [:effects/composable-blocks]
    :acceptance ["Publish one material, use it in independent effects and preserve each captured revision through a show file."]
    :evidence ["In the release Studio, two independently published effects selected the same custom material by name. The show runtime tests compare live globals with pinned effect observations and reload the captured definitions from Transit. The screenshot and ten-step recording accompany the change."]}
+  {:id :effects/material-live-inputs :title "Read live signal paths as material inputs"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/compiler/blocks.clj" "afterglow/src/afterglow/runtime/keyframes.clj"]
+   :depends-on [:effects/show-prefabs]
+   :acceptance ["Assign a registered variable to a shader stage input, inspect through the live fixture frame and refresh only dependent keyframes."]
+   :evidence ["Scalar, batched, scalar fallback and predicted frame tests cover direct audio, sensor and indexed variable reads, raw state, trace values and a Transit round trip. A release Studio trace records dimmer modulation from an analyzed 80 Hz amplitude-modulated PCM signal."]}
   {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
