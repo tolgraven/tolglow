@@ -81,6 +81,13 @@
    :depends-on [:foundation/tests]
    :acceptance ["Find a source; edit, save and remove one binding without replacing sibling edits. Observe the live stages only when visible."]
    :evidence ["The Ring/show-owner regression suite covers stale edits, disjoint paths, invalid stages, and source discovery. dev/studio/variable-blocks-browser-qa.mjs edits one saved variable from two browser sessions, reads the wet amount back, observes the live trace, and verifies socket release. The release was exercised at 390, 1024 and 1440 CSS pixels."]}
+  {:id :controllers/push-wide-preview :title "View the venue and rig from the Push display"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/js/preview/push-scene.js" "tolglow/src/tolglow/show/push_scene.clj"
+           "tolglow/src/studio/tolglow/studio/push_scene.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Project a committed venue frame into the passive 960 by 160 device surface. Bound scene traffic, frame and dispose the shared renderer, and verify ordinary and panoramic camera projections."]
+   :evidence ["See docs/push-display-packaging.md. The production Ring page and Chromium worker captured 24 device frames, paged through rig markers and disposed the renderer on return. JVM tests cover 20,000 fixtures. Node tests check fit bounds, cylindrical projection and capture deadlines."]}
   {:id :push/page-overview :title "Browse cue pages in cue and type colors on the Push display"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/control/display.clj" "tolglow/src/tolglow/controllers/page_overview.clj" "tolglow/src/studio/tolglow/studio/page_overview.cljs"]
