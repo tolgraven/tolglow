@@ -53,7 +53,7 @@
                  [(mapping-key key) value]) values)))
 
 (defn- check-endpoint! [endpoint]
-  (let [uri (try (URI. endpoint) (catch Exception _ nil))]
+  (let [^URI uri (try (URI. endpoint) (catch Exception _ nil))]
     (check! (and uri (= "http" (.getScheme uri)) (#{"127.0.0.1" "localhost" "[::1]" "::1"} (.getHost uri))
                  (nil? (.getUserInfo uri)) (nil? (.getFragment uri)))
             "Live bridge endpoint must be an explicit loopback HTTP URL")))

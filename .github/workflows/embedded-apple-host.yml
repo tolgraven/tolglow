@@ -60,3 +60,5 @@ jobs:
           path: |
             build/ipad-media/ipad.png
             build/ipad-media/ipad.gif
+            build/ipad-media/last-start-error.log
+            build/ipad-media/attachments/manifest.json
