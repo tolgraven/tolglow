@@ -43,3 +43,35 @@
     (is (= [nil 26.5 24 nil 50 51] (mapv :sink-gap-ms joined)))
     (is (nil? (:transport (nth joined 3))))
     (is (= 1 (:late-sink-entries (live/summarize [] joined 1 6))))))
+
+(deftest a-lit-and-moving-partial-show-cannot-pass-universe-coverage
+  (let [rows (atom []) t (atom 24.0) sink (transport/sink 256 #(swap! t + 0.1) rows)
+        pixel (byte-array 512) movers (byte-array 512) last-universe (byte-array 256)
+        packets {1 pixel 3 movers 4 last-universe}
+        send! (:send! sink)]
+    (aset-byte pixel 1 (unchecked-byte 192))
+    (send! {} 0)
+    (send! packets 1)
+    (aset-byte movers 5 (unchecked-byte 128))
+    (send! packets 2)
+    (let [[idle a b] @rows]
+      (is (nil? (:incomplete-universes idle)))
+      (is (= [2] (get-in a [:incomplete-universes :missing])))
+      (is (seq (:lit-pixel a)))
+      (is (not= (:aim a) (:aim b)))
+      (let [pack (fn [slot delivery]
+                   {:slot slot :deadline-ms (* 25 slot) :started-at-ms (* 25 slot)
+                    :finished-at-ms (* 25 slot) :frame-id (:id delivery) :source :current
+                    :sink-at-ms (* 25 slot) :transport delivery})
+            ready (fn [i]
+                    {:slot i :deadline-ms (* 25 i) :ready-at-ms (* 25 i) :cost-ms 1
+                     :volume-positions (vec (repeat 4 [0 i 0]))})
+            summary (live/summarize (map ready [1 2]) [(pack 1 a) (pack 2 b)] 1 2)]
+        (is (= [2 2 2 2] (:distinct-volume-poses summary)))
+        (is (= 2 (:distinct-delivered-aim-states summary) (:incomplete-packets summary)))
+        (is (false? (:show-output-exercised? summary)))))
+    (send! (assoc packets 2 (byte-array 32) 5 (byte-array 4)) 3)
+    (is (= [5] (get-in (last @rows) [:incomplete-universes :unexpected])))
+    (is (= {:minimum 512 :actual 32} (get-in (last @rows) [:incomplete-universes :short-payloads 2])))
+    (send! (assoc packets 2 (byte-array 512)) 4)
+    (is (nil? (:incomplete-universes (last @rows))))))

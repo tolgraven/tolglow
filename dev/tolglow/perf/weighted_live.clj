@@ -110,6 +110,11 @@
           (recur more pending previous previous-at (conj result row)))
         result))))
 
+(defn- worker-calls [totals row]
+  (reduce-kv (fn [by-effect _ {:keys [effect-id calls-this-render]}]
+               (update by-effect effect-id (fnil + 0) calls-this-render))
+             totals (:effect-sampling row)))
+
 (defn summarize [renders outputs first-slot last-slot]
   (let [window #(filterv (fn [row] (<= first-slot (:slot row) last-slot)) %)
         rendered (window renders) sent (filter :sink-at-ms (window outputs))
@@ -118,6 +123,8 @@
         poses (mapv (fn [i] (count (distinct (keep #(nth % i nil) positions)))) (range 4))
         aim-states (count (distinct (keep #(get-in % [:transport :aim :crc32]) active)))
         lit (some #(get-in % [:transport :lit-pixel]) active)
+        incomplete (keep #(get-in % [:transport :incomplete-universes]) active)
+        faults (set (mapcat :faults rendered))
         ready (filter :ready-at-ms rendered)
         gaps (keep :sink-gap-ms sent)
         base (deadlines/summary renders outputs first-slot last-slot)]
@@ -128,8 +135,10 @@
            :no-publisher-row (- (:nominal-slots base) (count (window outputs)))
            :source-counts (frequencies (map :source sent))
            :distinct-volume-poses poses :distinct-delivered-aim-states aim-states
-           :first-lit-pixel lit :faulted-instances (set (mapcat :faults rendered))
-           :show-output-exercised? (boolean (and lit (> aim-states 1) (every? #(< 1 %) poses))))))
+           :first-lit-pixel lit :faulted-instances faults :worker-calls (reduce worker-calls {} rendered)
+           :incomplete-packets (count incomplete) :first-coverage-error (first incomplete)
+           :show-output-exercised? (boolean (and lit (empty? faults) (empty? incomplete) (> aim-states 1)
+                                                 (every? #(< 1 %) poses))))))
 
 (defn- observations! [runtime ids]
   (let [owner (:publisher runtime) renders (atom []) outputs (atom []) wakes (atom [])]
@@ -186,6 +195,7 @@
       (assoc (record! runtime volume-ids clock wire (inc warmup) (+ warmup slots))
              :rig {:pixels pixels :moving-heads 64 :washes 8 :volumes 4 :mixed-chart true
                    :selection scene/selection :frame-rate 40 :workers 2 :transport :in-memory-artdmx
+                   :active-effect-ids (mapv :effect-id (sort-by :order (vals (:instances model))))
                    :adaptive-keyframes (:adaptive-keyframes runtime)}
              :environment {:java (System/getProperty "java.version") :clojure (clojure-version)
                            :os (System/getProperty "os.name") :arch (System/getProperty "os.arch")

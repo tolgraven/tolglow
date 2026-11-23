@@ -49,13 +49,18 @@ cues.
 - `:sink-gap-ms` includes the preceding warmup handoff where available.
   `:lower-source-age-at-sink-p95-ms` measures input age through the memory
   transport. The driver retains a nonzero RGBW pixel witness and a checksum of
-  the captured coarse and fine pan/tilt bytes across all 64 heads. The first
-  head also has its four actual bytes in each receipt.
+  the captured coarse and fine pan/tilt bytes across all 64 heads. Every non-idle
+  delivery must contain all 158 expected universes on the full rig, with enough
+  bytes to address each patched RGBW pixel and moving head. Missing, unexpected
+  or short universes are recorded. Each receipt also retains the first head’s
+  four actual pan/tilt bytes.
 - `:effect-sampling` counts actual direct, future endpoint and interpolated
-  instance frames. Each render carries its per-instance call count. The four
+  instance frames. Each render carries its per-instance call count, and
+  `:worker-calls` totals those observations by registered effect. The four
   committed pose counts, rejected controls and faulted instances reveal an
   inactive workload. `:show-output-exercised?` requires delivered pixel light,
-  changing delivered aim and changes to all four volume positions.
+  changing delivered aim, complete universe coverage, changes to all four
+  volume positions and zero recorded instance faults.
 - Allocation is JVM-wide over the recorded start/end sample, including
   controls, packing and observation. CPU time is process-wide. Collector time
   uses JVM management counters. These counters cannot assign cost to an
@@ -63,4 +68,6 @@ cues.
   the sink, so the sender's return includes that inspection.
 
 The final safety blackout runs after the scheduler drains and after the capture
-is frozen. Deadline misses remain in the report.
+is frozen. Deadline misses remain in the report. The dedicated Linux run,
+slot-by-slot diagram and downloadable raw output are linked from
+[the live publication qualification](https://github.com/tolgraven/tolglow/pull/192).
