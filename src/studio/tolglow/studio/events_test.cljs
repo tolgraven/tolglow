@@ -141,6 +141,13 @@
     (is (= "{:id :ember :version 2}" (get-in publish [:studio/http :body :source])))
     (is (true? (get-in publish [:db :ui :definition :publishing?])))))
 
+(deftest changing-the-source-clears-the-previous-validation-result
+  (let [db (update-in base [:ui :definition] merge {:source "{:id" :edit-revision 3
+                                                   :error? true :result "EOF while reading"})
+        edited (:db (transition db [:studio/definition-source "{:id :wash}"]))]
+    (is (= {:source "{:id :wash}" :edit-revision 4 :status "Unpublished changes" :error? false :result ""}
+           (select-keys (get-in edited [:ui :definition]) [:source :edit-revision :status :error? :result])))))
+
 (deftest duration-field-edits-keep-the-other-current-field
   (let [added (transition base [:studio/composition-add "ember"])
         unit (transition (:db added) [:studio/slot-duration 0 nil "bars"])

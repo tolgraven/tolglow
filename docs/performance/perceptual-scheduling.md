@@ -30,6 +30,13 @@ Report limits and measured error alongside time saved for each device. A faster 
   controlled overload and recovery, it inspected two definitions, matched
   every reference flash byte, and returned the wash from stride eight to one.
   [Reference replay](multirate-quality.md) · [Recovery test](../effect-keyframes.md#reproduce-the-transient-and-recovery-test)
+* **Admit effects using evidence from both worker stages.** On 1,024 RGBW pixels
+  and 128 moving heads, stride two saved 0.27–0.66 ms per wash frame and cost
+  0.20–0.24 ms per shared-aim frame. The default threshold kept the aim at
+  full rate. A zero threshold admitted it in both repeat runs.
+  On 512 movers a shallow spatial aim lost time at stride two and saved
+  time at four in both trials. [Admission and interval measurements](keyframe-admission.md)
+
 * **Count the whole interpolation window.** Cheap interpolation frames can hide
   expensive endpoint preparation. On a 1,024-pixel and 64-mover show,
   four-frame spacing reduced worker CPU for a deep RGB wash but increased it
@@ -44,8 +51,28 @@ Report limits and measured error alongside time saved for each device. A faster 
   intents, and all DMX universe bytes for 160 frames.
   [Measured Afterglow change](https://github.com/tolgraven/afterglow/pull/76)
 
+* **Measure motion error where the beam lands.** At four-frame intervals,
+  the same near-target movement displaced a 5° spot by 1.299–1.300 spot radii at
+  p95 and a 40° wash by 0.206 across two calibrated Afterglow packers. Choosing a stride per distance and beam
+  width from one bar met a 0.25-radius budget on the held-out bar. A faster
+  sine sweep exposed the limit of testing the midpoint alone. All 40 intervals
+  passed that check, yet intervening frames drifted by up to 10.82 radii.
+  The live scheduler still needs a reliable curved-motion admission rule.
+  [Calibrated footprints, fork revisions and replay](multirate-quality.md)
+
+* **Reuse display work between lighting commits.** In a 64-pad replay,
+  returning 486 MIDI acknowledgements previously caused 566 whole-grid
+  projections across 80 lighting frames. Reusing the committed grid reduced
+  this to 80 and preserved all 3,598 palette writes. With 32 cues active, a
+  separate replay compared each MIDI message and display publication while
+  Afterglow shared a sorted cue index inside each device refresh. Session CPU
+  averaged 5.87–6.30 ms per lighting frame, down from 14.51–17.61 ms.
+  Both captures used an immediate-acknowledgement MIDI emulator.
+  [Physical-session projection](https://github.com/tolgraven/tolglow/pull/143) · [Active cue indexing and reproducible comparison](https://github.com/tolgraven/afterglow/pull/80)
+
 The paired master profile retains `multirate-quality.edn`,
-`transient-scheduling.edn`, `sampling-cost.edn` and both source revisions.
+`transient-scheduling.edn`, `sampling-cost.edn`, `beam-fidelity.edn` and both
+source revisions.
 Its first complete CI run measured the three replays in 26, 16 and 20 seconds
 respectively. [CI evidence](https://github.com/tolgraven/tolglow/actions/runs/45152359329)
 

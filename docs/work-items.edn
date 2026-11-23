@@ -9,13 +9,13 @@
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
-   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first-connection and the remaining general Studio pages are open."]}
   {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
    :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
    :paths ["tolglow/linux/audience"]
    :depends-on [:foundation/tests]
    :acceptance ["Interoperate with Apple's encrypted v1/v2 frames and paired OSC gesture admission. Exercise ATT/BlueZ hardware and physical capacity on a Pi."]
-   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. Physical Bluetooth controller and Apple device qualification pending."]}
+   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
@@ -30,15 +30,19 @@
    :depends-on [:foundation/tests] :acceptance ["Observe a single dispatch and readback from the show for an eligible multi-effect chain. Test parameter changes, ordering, native alpha, invalidation, precision, barriers and CPU-reference equivalence."] :evidence []}
   {:id :performance/render-work-elimination :title "Measure and eliminate provably unobservable renderer work"
    :kind :research :status :in-progress :owner "Renderer work elimination and GPU compilation"
-   :paths ["tolglow/docs/performance/render-work-elimination.md"]
+   :paths ["tolglow/docs/performance/render-work-elimination.md" "tolglow/src/tolglow/spatial/cues.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."
+              "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
    :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
            "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
-           "tolglow/dev/tolglow/perf/sampling_cost.clj"
+           "tolglow/dev/tolglow/perf/sampling_cost.clj" "tolglow/dev/tolglow/perf/admission_cost.clj"
+           "tolglow/docs/performance/keyframe-admission.md" "tolglow/docs/performance/captures/admission-cost.edn"
+           "tolglow/dev/tolglow/perf/stride_break_even.clj" "tolglow/test/tolglow/stride_break_even_test.clj"
+           "tolglow/docs/performance/captures/stride-break-even.zip"
            "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
@@ -46,7 +50,9 @@
               "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
               "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
               "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
-              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."]}
+              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."
+              "Tolglow #153 and Afterglow #84 measured the complete endpoint/blend cost and retained one checked fixture-position lookup per frozen rig. The 11-universe replay matched full state, output and events."
+              "At 1,024 pixels and 512 moving heads, shallow spatial aim lost worker time at stride two and saved it at four in both held-out trials. All tested intervals retained the full-rate show output. See docs/performance/keyframe-admission.md and the paired raw reports."]}
   {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
    :kind :documentation :status :planned :owner nil
    :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
@@ -1483,6 +1489,7 @@
    :depends-on [:simulator/rig],
    :owner nil :notes "Validate plume shape, settling haze and light transport against a calibrated physical room and record sustained mobile frame times."}
   {:evidence ["Loopback Studio/Ring, Node for Max, Max JS and behavioral Live object graph record and replay edited clip data"
+               "docs/live-routing.md and resources/devices/ableton-live/examples/pickup-automation.mid exercise a Session pickup and repeat with the real recording worker and MIDI mappings"
                "resources/devices/ableton-live/README.md"],
    :paths
    ["tolglow/src/tolglow/integrations/ableton.clj"
@@ -1499,7 +1506,7 @@
    :id :integration/live,
    :kind :implementation,
    :notes
-   "Qualify note and parameter recording, manual clip edits, drum-rack colors, seek and Push mode handoff in licensed Ableton Live/Max with physical controller feedback.",
+   "Qualify note and parameter recording (including the pickup fixture), manual clip edits, drum-rack colors, seek and Push mode handoff in licensed Ableton Live/Max with physical controller feedback.",
    :depends-on [:control/adapters :authoring/registry],
    :owner nil}
   {:evidence ["Tolglow studio/audio_return_test covers actual host routing, returned audio continuing after source stop, confidence gates and cleanup. test/js/ableton-live/audio-patches.test.js exercises the per-channel and drum-pad network. integrations/audio_test covers carrier and residual analysis."],

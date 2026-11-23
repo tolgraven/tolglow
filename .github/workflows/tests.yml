@@ -185,49 +185,47 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+      - name: Test native change selection against Git history
+        run: .github/scripts/test-native-build-required
       - name: Select native build changes
         id: paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
         shell: bash
         run: |
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null &&
-             git diff --quiet "$BASE_SHA" HEAD -- native .github/workflows/tests.yml; then
-            echo 'native=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-          fi
-  audience-onset-timing:
-    needs: native-changes
-    if: needs.native-changes.outputs.native == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Measure detection to encoded OSC with the show frame clock
+          native=$(.github/scripts/native-build-required "$GITHUB_EVENT_NAME" "$BASE_SHA" "$HEAD_SHA")
+          echo "native=$native" >> "$GITHUB_OUTPUT"
+      - name: Exercise audience sensors, camera analysis and gesture timing
+        if: steps.paths.outputs.native == 'true'
         env:
+          TOLGLOW_POSE_TRACE: ${{ runner.temp }}/audience-pose.csv
           TOLGLOW_AUDIENCE_TIMING_DIR: ${{ runner.temp }}/onset-timing
+          TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
         run: |
-          mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR"
-          swift test --package-path native/Core --filter AudienceLatencyTests
+          mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR" "$TOLGLOW_AUDIENCE_GATT_DIR"
+          swift test --package-path native/Core
       - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
+        with:
+          name: audience-camera-pose-trace
+          path: ${{ runner.temp }}/audience-pose.csv
+          if-no-files-found: error
+          retention-days: 10
+      - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
         with:
           name: audience-onset-timing
           path: ${{ runner.temp }}/onset-timing/*.json
           if-no-files-found: error
-      - name: Verify atomic segmented Bluetooth writes
-        env:
-          TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
-        run: |
-          mkdir -p "$TOLGLOW_AUDIENCE_GATT_DIR"
-          swift test --package-path native/Core --filter AudienceGATTTests
+          retention-days: 10
       - uses: actions/upload-artifact@v4
+        if: steps.paths.outputs.native == 'true'
         with:
           name: audience-gatt-qualification
           path: ${{ runner.temp }}/gatt/gatt-traces.json
           if-no-files-found: error
-
+          retention-days: 10
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'

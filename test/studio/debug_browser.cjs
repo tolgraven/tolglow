@@ -22,12 +22,13 @@ const {chromium} = require('playwright-core');
     await root.getByRole('button', {name:'Pause feed'}).click();
     const paused = root.getByRole('button', {name:/Resume/});
     const held = await root.locator('.debug-row').count();
-    await page.waitForFunction(() => /Resume · [1-9]/.test(document.querySelector('.debug-feed-tools button')?.textContent || ''));
+    await root.getByRole('button', {name:/^Resume · [1-9]/}).waitFor();
     assert.equal(await root.locator('.debug-row').count(), held);
     const row = root.locator('.debug-row').first();
     await row.click();
     assert.match(await root.locator('.debug-inspector').innerText(), /Timestamp/);
     const type = await row.locator('strong').innerText();
+    await root.getByRole('button', {name:'Filters',exact:true}).click();
     await root.getByLabel('Event type', {exact:true}).selectOption(type);
     await page.waitForFunction(type => {
       const rows = [...document.querySelectorAll('#view-debug .debug-row strong')];
