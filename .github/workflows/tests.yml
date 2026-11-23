@@ -197,6 +197,37 @@ jobs:
           else
             echo 'native=true' >> "$GITHUB_OUTPUT"
           fi
+  audience-onset-timing:
+    needs: native-changes
+    if: needs.native-changes.outputs.native == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Measure detection to encoded OSC with the show frame clock
+        env:
+          TOLGLOW_AUDIENCE_TIMING_DIR: ${{ runner.temp }}/onset-timing
+        run: |
+          mkdir -p "$TOLGLOW_AUDIENCE_TIMING_DIR"
+          swift test --package-path native/Core --filter AudienceLatencyTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audience-onset-timing
+          path: ${{ runner.temp }}/onset-timing/*.json
+          if-no-files-found: error
+      - name: Verify atomic segmented Bluetooth writes
+        env:
+          TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
+        run: |
+          mkdir -p "$TOLGLOW_AUDIENCE_GATT_DIR"
+          swift test --package-path native/Core --filter AudienceGATTTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audience-gatt-qualification
+          path: ${{ runner.temp }}/gatt/gatt-traces.json
+          if-no-files-found: error
+
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'

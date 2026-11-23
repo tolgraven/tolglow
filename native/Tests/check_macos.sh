@@ -22,7 +22,7 @@ test -f "$phone/TRANSIT-LICENSE"
 test ! -e "$phone/AppClips/TolglowAudienceClip.app/audience-compute.js"
 "$native_root/AudienceCompute/check_mac.sh"
 test -d "$native_root/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app/AppClips/TolglowAudienceClip.app"
-xcrun --sdk macosx swiftc Audience/AudienceRadio.swift Tests/AudienceRadio/main.swift -o DerivedData/audience-radio-check
+xcrun --sdk macosx swiftc Core/Sources/TolglowSensorCore/AudienceGATTWrite.swift Audience/AudienceRadio.swift Tests/AudienceRadio/main.swift -o DerivedData/audience-radio-check
 DerivedData/audience-radio-check
 core_bin="$(swift build --package-path Core --show-bin-path)"
 xcrun --sdk macosx swiftc -D AUDIENCE_RECOVERY_FIXTURE -I "$core_bin/Modules" \
