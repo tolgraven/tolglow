@@ -471,6 +471,8 @@ Each linked PR includes release screenshots, an interaction recording and a repr
 
 Perform also passed in Playwright’s Linux WebKit with iPhone, iPad and desktop profiles. Its iPad view displayed all four cues, a 213 × 83 px spatial monitor and eight controls on Orbital wash. The tests edited a live value, switched between its time graph and spatial view, paused and resumed the cue, opened the XYZ controls and pressed a cue long enough to open its radial menu. Touchscreen taps and keyboard input used Playwright’s input drivers. The hold used a captured mouse pointer. All three profiles had zero document overflow and zero page errors. Physical iPad Safari remains a separate check.
 
+To check cue gestures in Chromium, run `lein run -m tolglow.qa.performance-layout target/cue-gestures gestures` after building Studio. The check holds a touch contact on a cue, opens its actions, then plays two other cues with separate contacts and cancels them both. It also holds back a real Ring launch reply while the same pointer releases and plays the pad again. The late reply ends the original instance and the next press remains live until release. A further check drops an accepted launch reply and the first release request. Studio recovers the instance by its gesture ID in the state socket and retries its exact release. The saved screenshots and instance IDs come from the preview-only show.
+
 After `npm ci` and `npm run studio:build`, install WebKit with `npx --no-install playwright-core install --with-deps webkit`. Run `STUDIO_TEST_BROWSER=webkit lein run -m tolglow.qa.performance-layout target/webkit-perform` for the screenshots and measurements.
 
 ## Build, verification and remaining evidence
