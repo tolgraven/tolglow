@@ -16,17 +16,27 @@
   (cond-> {:type :number :default v} limits (assoc :bounds limits)))
 (defn- vector-param [v] {:type :vector :size 3 :default v})
 
-(defn- dimensions [volume]
-  (let [ball? (= :ball (:shape volume))
-        form (or (:geometry volume) volume)]
+(defn- dimensions [model volume]
+  (let [bounds (get-in model [:settings :spatial :bounds] physics/default-bounds)
+        max-radius (* 0.5 (reduce min (map - (:max bounds) (:min bounds))))
+        ball? (= :ball (:shape volume))
+        form (or (:geometry volume) volume)
+        shape (if (= :ball (:shape form)) :sphere (:shape form))
+        morph? (#{:sphere :rounded-box} shape)
+        radius (or (:radius volume) (:radius form) (when (:size form) (* 0.5 (reduce min (:size form)))))]
     (cond-> {:strength (number-param (:strength volume 1.0) [0 1])
              :inner-m (number-param (get-in volume [:falloff :inner-m] 0.0) [0 10000])
              :outer-m (number-param (get-in volume [:falloff :outer-m] 0.0) [0 10000])
-             :translation (vector-param (:translation volume [0 0 0]))}
+             :translation (vector-param (:translation volume [0 0 0]))
+             :scale (assoc (vector-param (:scale volume [1 1 1])) :bounds [0.000001 10000])}
       (:position volume) (assoc :position (vector-param (:position volume)))
-      (:radius volume) (assoc :radius (number-param (:radius volume) [(if ball? 0.000001 0) 10000]))
-      (:size form) (assoc :size (vector-param (:size form)))
-      (= :rounded-box (:shape form)) (assoc :rounding (number-param (:rounding form 0) [0 1]))
+      (and ball? (= :sphere (:shape (:geometry volume)))) (assoc :shape-radius (number-param (:radius form) [0 10000]))
+      (:radius volume) (assoc :radius (number-param (:radius volume) [(if ball? 0.000001 0) (if ball? max-radius 10000)]))
+      morph? (assoc :shape {:type :enum :values [:sphere :rounded-box] :default shape}
+                    :size (assoc (vector-param (:size form (vec (repeat 3 (* 2 radius)))))
+                                 :bounds [0.000001 10000])
+                    :rounding (number-param (:rounding form 0) [0 1])
+                    :radius (number-param radius [(if ball? 0.000001 0) (if ball? max-radius 10000)]))
       ball? (assoc :restitution (number-param (:restitution volume 0.85) [0 1])
                    :velocity (vector-param (:velocity volume [0 0 0]))))))
 
@@ -71,7 +81,7 @@
     (when transforms (layers/validate-transforms! transforms))
     member))
 
-(defn- cell [page preferred]
+(defn- available-cell [page preferred]
   (let [w (:columns page 8) h (:rows page 8) cells (:cells page {})
         available? (fn [p] (and (vector? p) (= 2 (count p)) (every? nat-int? p)
                                 (< (first p) w) (< (second p) h) (not (contains? cells p))))]
@@ -93,21 +103,26 @@
   (let [id (or id (str "volume-" (:epoch model) "-" (:revision model)))
         page-id (or page-id :spatial)
         page (get-in model [:pages page-id] {:id page-id :name "Spatial" :cells {}})
-        pos (tolglow.spatial.cues/cell page cell)
+        pos (available-cell page cell)
         volume (cond-> volume (vector? (:selection volume)) (update :selection set))
-        paint (or paint {}) sources (or sources {})
+        aim-volume? (= :volume (:aim paint))
+        paint (cond-> (or paint {}) aim-volume? (dissoc :aim))
+        sources (or sources {})
         member-list (into (vec (scene-slots model scene-id)) members)
-        params (merge (dimensions volume) (into {} (map paint-param) paint))
-        spec {:volume volume :sources sources :members (mapv (partial validate-member! model) member-list)}
+        params (merge (dimensions model volume) (into {} (map paint-param) paint))
+        spec (cond-> {:volume volume :sources sources :members (mapv (partial validate-member! model) member-list)}
+               aim-volume? (assoc :aim-at-volume? true))
+        scene-opacity (get-in model [:compositions scene-id :opacity] 1.0)
         effect {:id id :version 1 :name (or name (str id)) :show-control? true
                 :spatial-volume spec :layer {:transforms []} :params params
                 :outputs (into {} (map (fn [attr] [attr {:op :param :key attr}])) (keys paint))}
         cue (cond-> {:id id :effect-id id :name (:name effect) :version 1 :show-control? true}
+              (not= 1.0 (double scene-opacity)) (assoc :system {:opacity scene-opacity})
               priority (assoc :priority priority))]
     (when-not (and (= :spawn op) (id? id) (id? page-id)
                    (not (get-in model [:registry :effects id])) (not (get-in model [:registry :cues id]))
                    (map? paint) (or (nil? members) (vector? members)) (<= (count member-list) 64)
-                   (or (seq paint) (seq member-list))
+                   (or aim-volume? (seq paint) (seq member-list))
                    (map? sources) (every? params (keys sources)) (every? source? (vals sources)))
       (fail! "Choose a new cue ID, a native paint or scene, and valid parameter sources" {:id id}))
     (field/prepare volume)
@@ -151,18 +166,33 @@
       base (:sources spec))))
 
 (defn- volume [template values]
-  (let [shape-key (if (:geometry template) [:geometry] [])
-        geometry (reduce (fn [v k]
-                           (if (contains? values k) (assoc-in v (conj shape-key k) (values k)) v))
-                         template [:size :rounding])]
+  (let [ball? (= :ball (:shape template))
+        shape (:shape values)
+        shape-fields (case shape
+                       :rounded-box {:shape shape :size (:size values) :rounding (:rounding values)}
+                       :sphere {:shape shape :radius (:shape-radius values (:radius values))}
+                       nil)
+        geometry (cond
+                   (nil? shape-fields) template
+                   ball? (if (and (nil? (:geometry template)) (= shape :sphere)) template
+                             (assoc template :geometry (merge (:geometry template) shape-fields
+                                                        {:position (get-in template [:geometry :position] [0 0 0])})))
+                   :else (merge template shape-fields))]
     (-> geometry
-        (merge (select-keys values [:strength :translation :position :radius :velocity :restitution]))
+        (merge (select-keys values [:strength :translation :scale :position :velocity :restitution]))
+        (cond-> ball? (assoc :radius (:radius values)))
         (update :falloff merge (select-keys values [:inner-m :outer-m])))))
+
+(defn- expired? [instance clock]
+  (let [timer (or (:duration-timer instance)
+                  (when-let [duration (:duration-ms instance)]
+                    {:duration {:unit :ms :value duration} :started-at (:started-at-ms instance)}))]
+    (and timer (not (get-in instance [:system :paused?])) (:done? (time/sample timer clock)))))
 
 (defn volumes [model modulation]
   (into {}
         (keep (fn [instance]
-                (when (running? instance)
+                (when (and (running? instance) (not (expired? instance (time/frame-clock model))))
                   (let [spec (get-in instance [:definition :spatial-volume])
                         values (controls model instance modulation)]
                     [(key-for instance) {:instance instance :volume (volume (:volume spec) values)
@@ -194,7 +224,8 @@
 (defn- start-members [model key members now command]
   (reduce-kv
     (fn [[model ids] index {:keys [cue-id effect-id launch]}]
-      (let [source (member-source key index)
+      (let [_ (validate-member! model (get members index))
+            source (member-source key index)
             payload (merge {:source source :launch (or launch {})}
                            (if cue-id {:op :cue/launch :cue-id cue-id} {:op :effect/launch :effect-id effect-id}))
             result (accept model command payload now)]
@@ -216,8 +247,11 @@
                     [model leases]
                     (let [model (stop-members model key old now command)]
                       (if (seq members)
-                        (let [[model ids] (start-members model key members now command)]
-                          [model (assoc leases key {:members members :ids ids})])
+                        (try
+                          (let [[model ids] (start-members model key members now command)]
+                            [model (assoc leases key {:members members :ids ids})])
+                          (catch clojure.lang.ExceptionInfo error
+                            [model (assoc leases key {:members members :error (ex-message error)})]))
                         [model (dissoc leases key)])))))
               [model prior] (sort (into (set (keys prior)) (keys active))))]
         (if (seq leases) (assoc-in model run-path leases) (update model :extensions dissoc ::members))))))
@@ -238,16 +272,33 @@
     (fn [frame key {:keys [volume values instance] :as entry}]
       (let [position (get-in physical [:signals key :position])
             volume (cond-> volume (and (= :ball (:shape volume)) position) (assoc :position position))
+            aim? (get-in instance [:definition :spatial-volume :aim-at-volume?])
             {:keys [weights aims]} (sample volume)
-            opacity (get-in instance [:system :opacity] 1.0)]
+            aims (if (and aim? (not (contains? (:selection volume) :aimable)))
+                   (:aims (sample (assoc volume :selection #{:aimable}))) aims)
+            weights (if (contains? instance :targets) (select-keys weights (:targets instance)) weights)]
         (-> frame
             (update :groups into (group-rows model key entry weights))
+            (cond-> aim? (assoc-in [:aims (:id instance)] (select-keys aims (keys weights))))
             (assoc-in [:overrides (:id instance)] (select-keys values (keys (get-in instance [:definition :spatial-volume :sources]))))
             (assoc-in [:members key] (set (keys weights)))
             (assoc-in [:views key] {:volume volume :cue-id (:cue-id instance) :instance-id (:id instance)
-                                    :paint (select-keys values (keys (get-in instance [:definition :outputs])))
+                                    :paint (cond-> (select-keys values (keys (get-in instance [:definition :outputs])))
+                                             aim? (assoc :aim :volume))
                                     :affected-head-count (count weights)}))))
     {:groups {} :overrides {} :views {} :members {}} active))
+
+(defn with-aims
+  "Add per-head reachable points to the same native layer as the cue's paint."
+  [definition step]
+  (if-not (get-in definition [:spatial-volume :aim-at-volume?]) step
+    (fn [context]
+      (let [result (step context)
+            aims (get-in context [:frame :spatial-aims (get-in context [:instance :id])])]
+        (if (or (:done? result) (empty? aims)) result
+          (update result :assignments into
+                  (map (fn [[head point]] {:target-id head :attribute :aim :value point :blend :replace}))
+                  aims))))))
 
 (defn mask-contributions [result groups]
   (if (empty? groups) result

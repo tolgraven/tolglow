@@ -4,6 +4,8 @@
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
             [tolglow.spatial.cues :as cues]
+            [tolglow.studio.web :as web]
+            [tolglow.transit :as transit]
             [tolglow.spatial-host-test :as host]))
 
 (def request {:op :spawn :id :orb :page-id :main :cell [2 1]
@@ -90,4 +92,45 @@
         (host/submit rt 5 :import {:source (persistence/write-string model)}))
       (host/tick rt 10)
       (is (= [0 255 255 0 127 128 0 0 0] (host/output rt)))
+      (finally (show/stop! rt)))))
+
+(deftest ring-spawn-morphs-a-ball-and-honors-the-ordinary-launch-targets
+  (let [rt (host/runtime true)
+        app (web/app {:heartbeat! (constantly nil) :submit! (fn [op data] (let [receipt (show/submit! rt op data)]
+                                               (host/tick rt 0) receipt))})
+        req (-> request (dissoc :cell) (assoc :launch {:targets [:near]}))
+        response (app {:uri "/api/spatial/cues" :request-method :post
+                       :headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
+                       :body (java.io.ByteArrayInputStream. (.getBytes (transit/encode req) "UTF-8"))})
+        ack (transit/decode (:body response))]
+    (try
+      (is (= 200 (:status response)) (pr-str ack))
+      (is (= :accepted (:status ack)))
+      (is (= [0 0] (:cell ack)))
+      (is (= [0 0 0 128 0 0 0 0 0] (host/output rt)))
+      (let [id (:instance-id ack)
+            key (cues/key-for (get-in (state rt) [:instances id]))]
+        (change! rt 5 id :shape :rounded-box)
+        (change! rt 10 id :size [4 1 1])
+        (change! rt 15 id :rounding 0.75)
+        (change! rt 20 id :scale [1.5 1 1])
+        (let [signal (get-in (state rt) [:variables :spatial :signals key])]
+          (is (= id (:instance-id signal)))
+          (is (= :rounded-box (get-in signal [:volume :geometry :shape])))
+          (is (= 0.75 (get-in signal [:volume :geometry :rounding])))
+          (is (= [1.5 1 1] (get-in signal [:volume :scale])))
+          (is (= 1 (:affected-head-count signal)))
+          (is (= #{:near} (get-in (state rt) [:variables :spatial :members key])))))
+      (finally (show/stop! rt)))))
+
+(deftest timed-scene-releases-its-output-on-the-exact-musical-deadline
+  (let [rt (host/runtime false)]
+    (try
+      (host/submit rt 0 :spatial-cue (assoc request :paint {} :members [{:cue-id :blue}]
+                                           :launch {:mode :one-shot :duration {:beats 1/2}}))
+      (host/tick rt 249)
+      (is (pos? (nth (host/output rt) 2)))
+      (host/tick rt 250)
+      (is (= (vec (repeat 9 0)) (host/output rt)))
+      (is (empty? (:instances (state rt))))
       (finally (show/stop! rt)))))

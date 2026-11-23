@@ -1038,9 +1038,12 @@
                                                    (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides])))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
-                                                         :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                                         :show-id (:show-id model) :spatial-aims (get-in space [:fields :aims])
+                                                         :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
-                                                    (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
+                                                    (fn [definition]
+                                                      (comp (spatial-cues/with-aims definition ((:compile runtime) definition))
+                                                            middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
