@@ -11,7 +11,9 @@ test('intersection, document visibility, window focus and page lifecycle all gat
     observe() {}
     disconnect() {disconnected++;}
   };
-  const gate = new PreviewActivity({}, active => changes.push(active), doc, win);
+  const canvas = new EventTarget(), studioActivity = [];
+  canvas.addEventListener('tolglow-preview-activity', event => studioActivity.push(event.detail));
+  const gate = new PreviewActivity(canvas, active => changes.push(active), doc, win);
   assert.equal(gate.active, false, 'await the first intersection, including clipped ancestors');
   intersect(0, true); intersect(.5); intersect(.75);
   doc.hidden = true; doc.dispatchEvent(new Event('visibilitychange'));
@@ -28,4 +30,5 @@ test('intersection, document visibility, window focus and page lifecycle all gat
   gate.dispose(); intersect(0); win.dispatchEvent(new Event('blur'));
   assert.deepEqual(changes, [true, false, true, false, true]);
   assert.equal(disconnected, 1);
+  assert.deepEqual(studioActivity, changes);
 });

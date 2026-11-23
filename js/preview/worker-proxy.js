@@ -46,7 +46,8 @@ export class WorkerRoomPreview {
         const changed = snapshot !== this.lastSentSnapshot;
         const projection = changed && snapshot ? {...snapshot} : null;
         if (projection && snapshot.rig === this.lastSentSnapshot?.rig) delete projection.rig;
-        if (projection && snapshot.editor === this.lastSentSnapshot?.editor) delete projection.editor;
+        for (const key of ['editor', 'sculpt-guide', 'volume-guides', 'glass-meshes', 'glass-volumes'])
+          if (projection && snapshot[key] === this.lastSentSnapshot?.[key]) delete projection[key];
         this.worker.postMessage({...message, state: {...message.state, snapshot: projection}});
         this.lastSentSnapshot = snapshot;
       });
@@ -152,7 +153,9 @@ export class WorkerRoomPreview {
     this.receivedAt = performance.timeOrigin + performance.now();
     this.snapshot = {'runtime-id': snapshot['runtime-id'], 'time-ms': snapshot['time-ms'],
       'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor ?? null, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
-      'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
+      'frame-number': snapshot['frame-number'], rig: snapshot.rig, 'spatial-volumes': snapshot['spatial-volumes'],
+      'glass-meshes': snapshot['glass-meshes'] ?? null, 'glass-volumes': snapshot['glass-volumes'] ?? null,
+      'sculpt-guide': snapshot['sculpt-guide'] ?? null, 'volume-guides': snapshot['volume-guides'] ?? null, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
     this.room = roomDimensions(snapshot.rig?.room);
     this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();
     this.sendState();

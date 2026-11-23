@@ -28,6 +28,7 @@
             [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.actions :as spatial-actions]
+            [tolglow.spatial.cues :as spatial-cues]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
             [afterglow.runtime.keyframes.storage :as keyframe-storage]
@@ -434,7 +435,8 @@
                                  :let [id (ids (:id instance))
                                        owner (get-in instance [:source :session-id])
                                        layer (get-in instance [:source :native-layer])
-                                       source (or (spatial-actions/session-source saved instance)
+                                       source (or (spatial-cues/session-source saved instance)
+                                                  (spatial-actions/session-source saved instance)
                                                   (conductor-actions/session-source (get-in saved [:extensions :tolglow.autopilot/run :actions]) instance)
                                                   (lighting-scenes/session-source saved instance)
                                                   (if-let [new-owner (owners owner)]

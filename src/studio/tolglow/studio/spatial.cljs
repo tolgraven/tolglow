@@ -6,6 +6,8 @@
             [reagent.core :as r]
             [tolglow.studio.autopilot-signal :as signal]
             [tolglow.studio.spatial-drafts :as drafts]
+            [tolglow.studio.spatial-fields :refer [number-input xyz]]
+            [tolglow.studio.volume-sculpt :as sculpt]
             [tolglow.studio.spatial-picker :as picker]
             [tolglow.studio.spatial-preview :as preview]))
 
@@ -73,22 +75,6 @@
         (save db {:enabled? true :volumes {id (thrown spec point velocity (str (random-uuid)))}} "Ball thrown." nil id)))))
 
 (def cue-target-picker picker/cue-target-picker)
-
-(defn- number-input [caption value commit options]
-  (r/with-let [draft (r/atom nil)]
-    [:label [:span caption]
-     [:input (merge {:type "number" :step "any" :aria-label caption :value (if (nil? @draft) (or value "") @draft)
-                     :on-change #(reset! draft (.. % -target -value))
-                     :on-blur #(let [v (.. % -target -value) n (js/Number v)]
-                                 (when (and @draft (seq v) (js/Number.isFinite n) (.checkValidity (.-target %))) (commit n))
-                                 (reset! draft nil))
-                     :on-key-down #(when (= "Enter" (.-key %)) (.blur (.-target %)))} options)]]))
-
-(defn- xyz [caption values commit]
-  [:fieldset.spatial-xyz [:legend caption]
-   (for [[axis i] [["X" 0] ["Y" 1] ["Z" 2]]]
-     ^{:key i} [number-input (str caption " " axis) (get values i)
-                #(commit (assoc (or values [0 0 0]) i %)) {}])])
 
 (defn- edn-input [title spec apply-value]
   (r/with-let [draft (r/atom nil) error (r/atom nil)]
@@ -226,6 +212,8 @@
       [:button.text-button {:disabled disabled? :on-click #(let [bound (into {} (keep (fn [[k b]] (when (= id (:volume-id b)) [k nil]))) (:bindings settings))]
                                                             (rf/dispatch [::save {:volumes {id nil} :bindings bound} "Volume removed." draft-key]))} "Remove volume"]]
      [preview/watch-visibility (fn [visible?] (when (and visible? (:enabled? settings)) [telemetry id]))]
+     (when (not= :hdr (:shape draft))
+       [:button.button {:on-click #(rf/dispatch [::sculpt/open id draft])} "Sculpt in 3D"])
      [volume-fields id draft edit!]
      [edn-input "Volume definition (EDN)" draft update!]
      [:div.spatial-actions

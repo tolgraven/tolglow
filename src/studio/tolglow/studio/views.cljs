@@ -19,6 +19,7 @@
             [tolglow.studio.interop :as interop]
             [tolglow.studio.rig-editor :as rig-editor]
             [tolglow.studio.spatial :as spatial]
+            [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
             [tolglow.studio.parameter-widgets :as widgets]
@@ -285,7 +286,7 @@
                             :on-click #(send! [:studio/preview-expand])} (if (get-in db [:ui :preview-expanded?]) "Compact" "Expand")]
      [:button.icon-button {:type "button" :aria-label "Fullscreen preview" :title "Fullscreen preview"
                             :on-click #(input! [:studio/preview-fullscreen])} "⛶"]]]
-   [interop/preview (or (:server-presentation db) (:show db))]
+   [spatial-preview/scene (or (:server-presentation db) (:show db)) (get-in db [:server-projection :view :settings :spatial]) :perform]
    [camera-controls/controls]
    (when (get-in db [:ui :preview-controls?])
      [:div.preview-settings
