@@ -68,6 +68,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Project a committed venue frame into the passive 960 by 160 device surface. Bound scene traffic, frame and dispose the shared renderer, and verify ordinary and panoramic camera projections."]
    :evidence ["See docs/push-display-packaging.md. The production Ring page and Chromium worker captured 24 device frames, paged through rig markers and disposed the renderer on return. JVM tests cover 20,000 fixtures. Node tests check fit bounds, cylindrical projection and capture deadlines."]}
+  {:id :push/page-overview :title "Browse cue pages in cue and type colors on the Push display"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/control/display.clj" "tolglow/src/tolglow/controllers/page_overview.clj" "tolglow/src/studio/tolglow/studio/page_overview.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Browse banks, switch palettes and select a page through captured controller input; render a bounded wide display without evaluating inactive pages."]
+   :evidence ["Captured eight real Push profile input transitions with the production Ring/re-frame 960×160 display, tested pinned swatches, stable cache and eight-tile bounds. See docs/push-page-overview.md for screenshot and motion evidence."]}
   {:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]
