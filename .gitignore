@@ -9,3 +9,4 @@ target/
 node_modules
 .shadow-cljs/
 resources/studio/js/
+resources/studio/compute/runtime/

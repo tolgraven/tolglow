@@ -213,16 +213,16 @@
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
-                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
+                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
-  (when (and (= :native-gpu compute-backend) (not batch?))
-    (throw (ex-info "Native GPU expressions require :batch? true" {})))
+  (when (and (contains? #{:native-gpu :distributed} compute-backend) (not batch?))
+    (throw (ex-info "GPU expressions require :batch? true" {})))
   (compute/open!
    (cond-> (select-keys options [:compute-backend :movement-backend :gpu-options])
-     (or (= :native-gpu compute-backend) (= :native-gpu movement-backend))
+     (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
 (defn- configure-runtime

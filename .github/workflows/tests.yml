@@ -112,6 +112,7 @@ jobs:
           export CHROMIUM_PATH="$(node --input-type=module -e 'import {chromium} from "playwright-core"; process.stdout.write(chromium.executablePath())')"
           echo "CHROMIUM_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
           npm run preview:test
+          node --test test/js/compute/*.test.mjs
           bin/profile-mover-shader 64 24
       - name: Exercise show-configured native shader execution and frame deadlines
         working-directory: tolglow
@@ -123,6 +124,12 @@ jobs:
         run: |
           npm run studio:test
           npm run studio:build
+      - name: Compare two browser GPU peers with CPU output across two Art-Net universes
+        working-directory: tolglow
+        timeout-minutes: 5
+        run: |
+          export TOLGLOW_COMPUTE_TOKEN="$(openssl rand -hex 32)"
+          lein run -m tolglow.qa.distributed-render "$RUNNER_TEMP/worker-output" "$CHROMIUM_PATH" 5 170
       - name: Verify energy autopilot and HDR in tablet and phone Studio
         working-directory: tolglow
         timeout-minutes: 5
