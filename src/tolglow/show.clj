@@ -278,8 +278,10 @@
                       (cond-> {}
                         (:send! sink)
                         (assoc :receipt-capacity 256
-                               :prepare-output (fn [buffers id] (prepare-output @runtime-ref buffers id))
-                               :prepare-safety-output (fn [buffers id] (prepare-safety-output @runtime-ref buffers id))
+                               :prepare-output (fn [buffers source]
+                                                 (let [runtime @runtime-ref]
+                                                   (prepare-output runtime @(:patch runtime) buffers source)))
+                               :prepare-safety-output (fn [buffers source] (prepare-safety-output @runtime-ref buffers source))
                                :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
@@ -761,28 +763,37 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- prepare-output [runtime universes frame-number]
-  (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)]
-    (if-let [memory @(:fog-deadlines runtime)]
-      (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms])))
+(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+  (let [packet (retirement/include-retired retirement universes)]
+    (if (seq safety-state)
+      (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
+                                 ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
 
-(defn- prepare-safety-output [runtime universes frame-number]
-  (let [corrected (prepare-output runtime universes frame-number)]
-    (when (and (not (identical? universes corrected))
-               (some (fn [[universe ^bytes bytes]]
-                       (not (Arrays/equals ^bytes (get universes universe) bytes)))
-                     corrected))
-      corrected)))
+(defn- prepare-safety-output [runtime universes {:keys [uncertain?] :as source}]
+  (let [{:keys [compiled retirement] :as patch} @(:patch runtime)
+        off-bytes (:fog-off-bytes compiled)
+        corrected (prepare-output runtime patch universes source)]
+    (if (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+      ;; A failed transport may have changed pump bytes even if our last
+      ;; complete packet shows them off. Use idle bytes for newly mapped pumps.
+      (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
+            packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
+        (fog-deadline/apply-off-bytes packet off-bytes))
+      (when (and (not (identical? universes corrected))
+                 (some (fn [[universe ^bytes bytes]]
+                         (not (Arrays/equals ^bytes (get universes universe) bytes)))
+                       corrected))
+        corrected))))
 
 (defn- present-output! [runtime packet frame-number]
   ((get-in runtime [:sink :send!]) packet frame-number)
   (when (:plan @(:venue-fog runtime))
     (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
 
-(defn- send-output! [runtime universes frame-number]
+(defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])
-    (present-output! runtime (prepare-output runtime universes frame-number) frame-number)))
+    (present-output! runtime (prepare-output runtime @(:patch runtime) universes {:safety-state fog-demands}) frame-number)))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a
@@ -1248,8 +1259,9 @@
                                                   (cond-> presentation-token
                                                     output-slot (assoc :show-time-ms (get-in next-state [:model :time-ms])
                                                                        :beat (get-in next-state [:model :transport :beat])))
-                                                  (:output next-state)))
-                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)))
+                                                  (assoc (:output next-state) :safety-state (get-in next-state [:output :fog-demands]))))
+                    (send-output! runtime (get-in next-state [:output :universes]) (get-in next-state [:model :frame-number] 0)
+                                  (get-in next-state [:output :fog-demands])))
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
@@ -1388,7 +1400,7 @@
                              [#(event-callbacks/close! (:event-callbacks runtime))
                               #(rdm/close! (:rdm runtime))
                               #(output-scheduler/close! (:publisher runtime))
-                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0)
+                              #(send-output! runtime (render/idle-universes (:compiled @(:patch runtime))) 0 nil)
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(duplex/stop! (:audio-returns runtime))

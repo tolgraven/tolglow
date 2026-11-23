@@ -31,7 +31,10 @@ handoff, actual send call, return and lower source input age at the sink.
 When final preparation misses a slot, the publisher can still apply retired
 fixture off values and fog cutoffs to the last physically sent bytes. This
 send is marked `:safety-output?`. The regular frame expires, and the held frame's
-other channels retain their last physical values.
+other channels retain their last completely sent values. Automatic fog cutoffs
+travel with the source frame, even if the producer has advanced many frames.
+After a transport exception, the correction forces every configured pump to its
+physical off bytes because a partial send may have changed individual universes.
 
 ```sh
 AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run -m \
