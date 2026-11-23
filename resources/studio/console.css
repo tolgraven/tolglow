@@ -197,6 +197,7 @@
 .live-source-editor { margin:3px 10px 8px; padding:6px 12px 12px; border:1px solid var(--line); border-inline-start:2px solid var(--instrument); border-radius:6px; background:var(--bg); }
 .live-source-editor>header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .live-source-editor h4 { margin:0; font-size:14px; }
+.live-source-editor h4:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 .live-source-form { display:grid; gap:8px; }
 .source-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,95px),1fr)); align-items:end; gap:6px 8px; }
 .source-fields>:first-child:has(select[aria-label="Waveform source"]) { grid-column:span 2; }

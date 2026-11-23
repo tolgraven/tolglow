@@ -2,8 +2,7 @@
 
 `afterglow.render.presentation` implements a pure policy after effect evaluation
 and fixture packing. It does not advance effects, re-run intent handlers, change
-show state, or own a scheduler/socket. The separate host publisher owns cadence,
-completion admission and transport lifecycle. **Direct is the default**; selecting
+show state, or own a scheduler/socket. The Afterglow output scheduler owns cadence, completion admission and transport lifecycle. **Direct is the default**; selecting
 a smoothing policy changes latency and fallback behavior explicitly.
 
 ## Clock and immutable packet contract
@@ -19,9 +18,13 @@ A completed frame has:
 
 Both times use the same monotonic **physical scheduler clock**, independent of
 paused musical transport or a show-time reset. `:time-ms` is the sample/scheduled
-compute timestamp. A late completion retains it. `:completed-at-ms` records when
-computation finished, and cannot precede the sample. We cannot send a frame into
-the past: presentation records its own current physical time separately.
+output timestamp. A scheduled sample also carries `:started-at-ms`, so it can
+finish early and wait for its slot. The host captures inputs after obtaining the
+show lock and evaluates the musical position at the physical deadline. A late
+completion retains its original target. Direct output discards it. Buffered
+output may still admit it within the configured latency, including fractional
+latencies that fall between physical slots. Presentation records the actual
+time of the send independently.
 
 `freeze-frame` copies renderer-owned byte arrays into immutable vectors. Source
 arrays must remain exclusively owned during this copy. `complete` admits only
@@ -159,7 +162,15 @@ show state in launch/priority order; a separate output thread serializes packets
 so they cannot overtake each other on the wire. Neither thread owns the other
 thread's mutable buffers. The output thread never takes the show-owner lock.
 
-`show/start!` starts both schedules. `create-runtime` remains inert for tests;
+`show/start!` gives the render callback and physical send worker a shared
+monotonic origin. Afterglow reserves recently observed computation time and
+wake-up jitter before each output deadline. Input changes between samples
+can reach the next eligible output. A slow worker, sender, or missed wake
+skips expired slots. A pause, resume or external clock rebase invalidates
+pending output from the old transport position.
+[Input timing and release replay](frame-input-timing.md)
+
+`create-runtime` remains inert for tests;
 `:independent-output? true` enables the same handover with manually driven ticks.
 The sender consumes at most three completions per deadline. Excess pending
 completions coalesce to the newest three. Epoch, fixture patch, policy or blackout
@@ -177,10 +188,11 @@ publication and persists in full show files:
 ```
 
 The other modes are `:direct` and `:buffered-interpolation`; buffered latency
-is `:latency-ms` (25 by default). Physical output timing deliberately uses
+is `:latency-ms` (one physical frame period by default). Physical output timing deliberately uses
 milliseconds. Musical cue durations and transitions continue to use beats,
 bars and phrases. Status is exposed at `:status :output-scheduler`; it reports
-pending/coalesced/published counts and the last source/target times and gain.
+pending/coalesced/published counts, render and publication timing, actual sink
+entry and return, the lower sample’s age at sink entry, and the last gain.
 
 The host regression blocks a real effect worker while independently publishing
 faded frames, proves show state advances only once after completion, and checks
@@ -188,3 +200,35 @@ that the late packet retains its original sample timestamp. Additional tests
 cover immutable buffer ownership, bounded completion storage, epoch/blackout/close
 fencing and saved settings. This establishes functional concurrency, not a
 physical-device latency guarantee.
+
+## Reading the physical timing capture
+
+At 40 Hz there is one opportunity to send light levels every 25 ms. Rendering
+for a slot and getting the packet to the output driver have separate deadlines.
+In the original six-second capture with 1,024 RGBW pixels and 128 moving heads,
+the producer completed 169 renders for 240 slots. Of those 169, 141 took at
+most 25 ms and 28 took longer. Starting early let 151 finish by their target.
+Only 112 of those reached the sender in their own slot. For 37 of the other 39, there was no recorded publication
+attempt for the slot. Two packets expired during preparation.
+
+Slot 142 illustrates the distinction. Its render took 11.79 ms and finished
+20.56 ms early. The sender woke 17.83 ms late and spent another 53.54 ms
+selecting and preparing output before dropping the packet. Slot 143 had a
+62.15 ms render. The original recording measured elapsed time. Identifying a
+CPU-intensive calculation, a wait for CPU time, or a garbage collection
+pause requires a trace from the same frame. [Timing chart and raw captures](https://github.com/tolgraven/afterglow/pull/89)
+
+The release replay enables adaptive keyframes and records actual calls per
+instance on each completed render. A direct sample evaluates the current
+frame. An endpoint samples a future target and may also sample a new origin.
+Interpolation reads an existing window and makes zero worker calls. In the
+1,024-pixel scene the wash, aim and pulse effects all persist. The pulse keeps
+direct sampling to preserve its narrow edges.
+
+Surviving instances also report their cumulative evaluation count, active
+window and next stride. A one-shot that runs and finishes in the same frame
+appears as `:retired-sampled` with its actual call count for that render.
+Ending an instance before its step runs adds no sample. These counters measure
+invocations, including a call that throws. Packet delivery is recorded
+separately at the sink. The summary counts outcomes per instance per completed
+render after warmup. Skipped slots have no effect observations.
