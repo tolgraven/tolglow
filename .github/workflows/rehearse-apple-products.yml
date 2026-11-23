@@ -25,7 +25,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           runner=Path('native/EmbeddedHost/build-macos')
-          runner.write_text(runner.read_text().replace('"$root/native/EmbeddedHost/prepare-jar" macos','"$root/native/EmbeddedHost/prepare-jar" ios-sim').replace('-o TolglowNativeHost','-H:Name=TolglowNativeHost'))
+          runner.write_text(runner.read_text().replace('"$root/native/EmbeddedHost/prepare-jar" macos','"$root/native/EmbeddedHost/prepare-jar" ios-sim').replace('-o TolglowNativeHost','-H:Name=TolglowNativeHost').replace('https://repo.maven.apache.org/maven2/io/github/willena', 'https://maven-central.storage-download.googleapis.com/maven2/io/github/willena'))
           prepare=Path('native/EmbeddedHost/prepare-jar')
           prepare.write_text(prepare.read_text().replace('libnative-image-agent.dylib','libnative-image-agent.so'))
           PY
