@@ -66,6 +66,9 @@
         schema {:type :vector :size 3 :semantic/type :orientation}]
     (is (identical? second (visual/spatial-keyframe second (clock 260) [23 23 23])))
     (is (= [180 10 30] (visual/spatial-value schema second 300)))
+    (is (= [js/Math.PI 0 0]
+           (visual/spatial-value (assoc schema :unit :radians)
+                                 (assoc second :from [3 0 0] :to [-3 0 0]) 300)))
     (is (= [-170 20 60] (visual/spatial-value schema second 400)))
     (is (nil? (:to (visual/spatial-keyframe second (clock 270) nil))))
     (is (= [-20 0 0] (:from (visual/spatial-keyframe second (clock 0) [-20 0 0]))))))

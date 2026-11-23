@@ -101,6 +101,16 @@
         (mapv blend from to))
       to)))
 
+(defn- compact-number [value]
+  (if (widgets/finite? value)
+    (str (js/Number (.toPrecision value 3))) "—"))
+
+(defn component-label [{:keys [schema component component-label]}]
+  (if (and (#{:position :direction :orientation} (spatial-kind schema))
+           (int? component) (<= 0 component 2))
+    (get (or (:component-labels schema) ["X" "Y" "Z"]) component)
+    component-label))
+
 (defn space [schema value plotted]
   (let [actual (components schema value)
         xyz (some->> plotted (take 3) vec)
@@ -130,7 +140,7 @@
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
             ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
-         [:figcaption (str/join " · " (map widgets/number-label (take 3 actual)))]
+         [:figcaption (str/join " · " (map compact-number (take 3 actual)))]
          [:small.parameter-domain caption]]))))
 
 (defn append-sample [previous clock values]
@@ -183,7 +193,7 @@
                    (when (> (count paths) 1)
                      (str (get (or (:component-labels schema)
                                    (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
-                   (widgets/number-label v)])]
+                   (compact-number v)])]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img"
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]

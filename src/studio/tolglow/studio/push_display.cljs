@@ -122,7 +122,7 @@
   [:section.push-parameters {:aria-label "Eight encoder parameters" :class (when compact? "compact")}
    (for [index (range 8) :let [parameter (get (:parameters view) index)
                              touched? (= index (get-in view [:touched-parameter :encoder]))
-                             component (:component-label parameter)]]
+                             component (visualization/component-label parameter)]]
      ^{:key index} [:article.push-parameter {:data-encoder index :class (cond (nil? parameter) "empty" touched? "touched")}
                    [:div.push-parameter-name [:span.push-encoder (inc index)]
                     [:span.push-parameter-label (or (:name parameter) (some-> (:id parameter) widgets/label) "—")]
