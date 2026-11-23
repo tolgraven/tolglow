@@ -5014,18 +5014,18 @@ void integrateFog(out vec4 volumeOutput){
     vec3 samplePosition=eye+ray*(lo+(.2+.6*jitter)*(hi-lo));
     float localDensity=densityAt(samplePosition);
     if(localDensity<=0.)continue;
-    // Jitter resolves fine density; smooth optical distance/profile belongs at
-    // the clipped interval's midpoint, independent of that random sample.
+    // Evaluate optical falloff at interval midpoints, independent of density jitter.
     vec3 opticalPosition=eye+ray*((lo+hi)*.5);
     float foreground=fogTransmission(extinctionPerM,density,lo-begin);
     float chord=hi-lo;
-    // A narrow optical core can cross only one or two coarse steps. Resolve
+    // A narrow optical core can fall mostly within one coarse step. Resolve
     // its profile with two half-interval midpoints and one density sample.
     // Attenuate the second contribution through the first half.
     if(!halo && chord>=.125*baseStep && span.y-span.x<=2.*baseStep){
      float halfSegment=fogTransmission(extinctionPerM,localDensity,chord*.5);
-     vec3 first=eye+ray*(lo+.25*chord),second=eye+ray*(lo+.75*chord);
-     vec3 scattered=incident(i,first,localDensity,false)+halfSegment*incident(i,second,localDensity,false);
+     vec3 first=eye+ray*(lo+.25*chord);
+     vec3 second=eye+ray*(lo+.75*chord);
+     vec3 scattered=incident(i,first,localDensity,halo)+halfSegment*incident(i,second,localDensity,halo);
      radiance+=transmission*foreground*(1.-halfSegment)*.92*scattered;
     }else{
      radiance+=transmission*foreground*(1.-fogTransmission(extinctionPerM,localDensity,chord))*.92*
