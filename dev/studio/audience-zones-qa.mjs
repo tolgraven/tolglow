@@ -73,21 +73,22 @@ try {
   await card.locator('[data-zone="balcony"][data-status="ready"]').waitFor();
   await capture();
   for (const label of ['Dance floor','Balcony']) {
-    await card.getByRole('checkbox',{ name:'Include '+label+' in audience mix' }).check();
+    await card.getByRole('checkbox',{ name:'Include '+label+' in audience mix' }).click();
+    await card.getByRole('checkbox',{ name:'Include '+label+' in audience mix', checked:true }).waitFor();
     await card.getByRole('button',{ name:'Arm '+label,exact:true }).click();
     await card.getByRole('button',{ name:'Disarm '+label,exact:true }).waitFor();
     await capture();
   }
   for (const [name,page] of pages) {
     const meter = page.getByRole('meter',{name:'Crowd dance effort'});
-    await page.getByText('100 BPM',{exact:true}).waitFor();
+    await page.getByText('3 / 8',{exact:true}).waitFor();
     assert.equal(await meter.getAttribute('value'),'45');
     assert.equal(await page.locator('#audience-zones dd').first().innerText(),'8');
     assert.equal(await page.locator('#audience-zones').evaluate(el => el.scrollWidth <= el.clientWidth),true);
     await page.screenshot({ path: join(output,name+'.png') });
   }
-  await card.getByRole('checkbox',{name:'Include Dance floor in audience mix'}).uncheck();
-  await card.getByText('80 BPM',{exact:true}).waitFor();
+  await card.getByRole('checkbox',{name:'Include Dance floor in audience mix'}).click();
+  await card.getByText('1 / 3',{exact:true}).waitFor();
   await capture();
   await stops[1]();
   await card.locator('[data-zone="balcony"][data-status="expired"]').waitFor();
@@ -99,7 +100,7 @@ try {
   assert.equal(await ipad.getByRole('checkbox',{name:'Include Balcony in audience mix'}).isChecked(),true);
   assert.equal(await ipad.getByRole('checkbox',{name:'Include Dance floor in audience mix'}).isChecked(),false);
   assert.deepEqual(errors,[]);
-  console.log('Three viewport sizes received eight dancers, 45% weighted effort, and 100 BPM from three consenting wearers. Zone exclusion, dropout and reload passed.');
+  console.log('Three viewport sizes received eight dancers, 45% weighted effort, and a 3 / 8 opt-in pulse count. Zone exclusion, dropout and reload passed.');
 } finally {
   try { await Promise.all(stops.map(stop => stop())); }
   finally { await browser.close(); }
