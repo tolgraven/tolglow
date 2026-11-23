@@ -4,6 +4,8 @@
             [afterglow.control.devices.push-2 :as push-2]
             [afterglow.control.codecs.push-2 :as codec]
             [tolglow.demo :as demo]
+            [tolglow.show :as show]
+            [afterglow.control.devices.session :as session]
             [tolglow.visualization.cue-pads :as pads]
             [tolglow.studio.query-stream :as queries]))
 
@@ -82,3 +84,26 @@
     (is (zero? (:clients (pads/status service))))
     (is (nil? (::views/pad-colors (render! (assoc local :ready? false)))))
     ((:close! push) handle)))
+
+(deftest push-entry-point-previews-without-starting-a-cue-or-lighting-a-fixture
+  (let [runtime (show/create-runtime {:model (rig) :workspace-options nil})
+        input (atom nil) sent (atom [])
+        capture {:open! (fn [receive!] (reset! input receive!) :capture)
+                 :send! (fn [_ messages] (swap! sent into messages)) :close! (fn [_])}]
+    (try
+      (show/tick! runtime 0)
+      (show/tick! runtime 75)
+      (let [snapshot @(:state runtime)
+            device (show/connect-device! runtime :push-2 {:session-id "captured-push" :midi capture
+                                                         :led-batch-size 16 :schedule! nil})
+            service (:cue-pad-previews runtime)]
+        (doseq [index (range 128)]
+          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (is (some #{(codec/palette-write 0 36 [10 0 0 0])} @sent))
+        (is (identical? (:model snapshot) (:model @(:state runtime))))
+        (is (identical? (:output snapshot) (:output @(:state runtime))))
+        (is (pos? (:clients (pads/status service))))
+        (is (empty? (get-in snapshot [:model :instances])))
+        (session/suspend! device)
+        (is (zero? (:clients (pads/status service)))))
+      (finally (show/stop! runtime)))))
