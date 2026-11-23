@@ -1,0 +1,15 @@
+{
+  "reported": 1.5,
+  "closest": 0.03202702495672982,
+  "accepted": 3,
+  "thread": "worker",
+  "backing": [
+    834,
+    280
+  ],
+  "scene": [
+    626,
+    210
+  ],
+  "device": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+}
