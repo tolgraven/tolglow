@@ -99,9 +99,9 @@ import TolglowSensorCore
         if !stage.join(id) { interrupted?("Stage unavailable. Find your stage again to rejoin.") }
     }
 
-    func send(_ sample: AudienceSample) {
+    func send(_ sample: AudienceSample, motionAge: Double) {
         switch route {
-        case .pairedPhone: phone.sendAudience(sample)
+        case .pairedPhone: phone.sendAudience(sample, motionAge: motionAge)
         case .nearbyStage: stage.offer(sample)
         }
     }

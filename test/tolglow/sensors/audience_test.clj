@@ -18,11 +18,11 @@
   (let [now (atom 0)
         manager (sensors/create-manager {:credential-store (fixture/vault) :now-ms #(deref now)})
         pairs (into {} (map (fn [id] [id (sensors/pair! manager id)])) zones)
-        receive (fn [id serial n effort wearers pulse gestures]
+        receive (fn [id serial n effort wearers pulse gestures & [additional-values]]
                   (let [packet {:version 1 :device-id id :session-id "floor" :sample-id serial
                                 :pairing-token (:pairing-token (pairs id)) :time-ms @now
-                                :values (cond-> {:audience-count n :dance-effort effort :pulse-count wearers}
-                                          pulse (assoc :pulse-bpm pulse))
+                                :values (merge {:audience-count n :dance-effort effort :pulse-count wearers}
+                                               (when pulse {:pulse-bpm pulse}) additional-values)
                                 :gestures gestures}]
                     (sensors/ingest! manager (osc/decode (osc/encode packet)))))
         enroll (fn [model id]
@@ -45,7 +45,7 @@
         (is (:accepted? (receive "balcony" 1 9 0.0 3 80 gesture)))
         (let [result (fixture/advance manager model @now 1)
               m (:model result)]
-          (is (= {:audience-count 12 :dance-effort 0.25 :pulse-count 4 :pulse-bpm 90.0} (levels m)))
+          (is (= {:audience-count 12 :dance-effort 0.25 :motion-count 0 :pulse-count 4 :pulse-bpm 90.0} (levels m)))
           (let [public (sensors/audience-status manager (assoc m :time-ms @now))]
             (is (= {:audience-count 12 :dance-effort 0.25 :pulse-count 4} (:levels public)))
             (is (= #{:armed} (set (map :status (:zones public)))))
@@ -59,9 +59,9 @@
           (let [refreshed (:model (fixture/advance manager m @now 2))]
             (reset! now 1500)
             (let [only-front (:model (fixture/advance manager refreshed @now 3))]
-              (is (= {:audience-count 1 :dance-effort 0.5 :pulse-count 0} (levels only-front)))
+              (is (= {:audience-count 1 :dance-effort 0.5 :motion-count 0 :pulse-count 0} (levels only-front)))
               (reset! now 3000)
-              (is (= {:audience-count 0 :dance-effort 0.0 :pulse-count 0}
+              (is (= {:audience-count 0 :dance-effort 0.0 :motion-count 0 :pulse-count 0}
                      (levels (:model (fixture/advance manager only-front @now 4))))))))))))
 
 (defn- step-batches [tick]
@@ -95,10 +95,47 @@
 (deftest synchronized-steps-arrive-once-for-every-dancer
   (let [{:keys [commands levels admission]} (crowd-rehearsal 15)]
     (is (= (* 6 96) commands))
-    (is (= {:audience-count 96 :dance-effort 0.5 :pulse-count 24 :pulse-bpm 110.0} levels))
+    (is (= {:audience-count 96 :dance-effort 0.5 :motion-count 0 :pulse-count 24 :pulse-bpm 110.0} levels))
     (is (zero? (:queued admission)))
     (is (zero? (get-in admission [:metrics :overflow])))
     (is (zero? (get-in admission [:metrics :rejected])))))
+
+(deftest signed-axis-means-use-motion-contributors-and-clear-on-withdrawal
+  (let [stage (fn [people movers axes]
+                {:state {:armed? true
+                         :channels (merge {:audience-count people :motion-count movers :dance-effort 0.5}
+                                          (zipmap audience/motion-axes axes))}})
+        front (stage 10 1 [9 -1 0 2 -2 0])
+        rear (stage 50 3 [-3 3 0 -2 2 0])
+        mix #(audience/levels {"front" front "rear" %} ["front" "rear"])]
+    (is (= [0.0 2.0 0.0 -1.0 1.0 0.0] (mapv (mix rear) audience/motion-axes)))
+    (is (= 4 (:motion-count (mix rear))))
+    (is (= 1 (:motion-count (mix (stage 50 6 [2 3])))) "A partial reading has no weight")
+    (let [quiet (audience/levels {"front" (stage 10 0 [])} ["front"])]
+      (is (zero? (:motion-count quiet)))
+      (is (empty? (select-keys quiet audience/motion-axes))))))
+
+(defn motion-rehearsal [axis-readings]
+  (with-gateways ["front"]
+    (fn [{:keys [manager now receive model]}]
+      (loop [readings (seq axis-readings) model model tick 1 captured []]
+        (if-not readings
+          captured
+          (let [ms (* 200 tick)
+                axes (first readings)
+                values (assoc (zipmap audience/motion-axes axes) :motion-count (if (seq axes) 1 0))]
+            (reset! now ms)
+            (receive "front" tick 3 0.5 0 nil [] values)
+            (let [next-model (:model (fixture/advance manager model ms (/ ms 500)))]
+              (recur (next readings) next-model (inc tick) (conj captured (levels next-model))))))))))
+
+(deftest gateway-osc-preserves-signed-units-and-withdrawal
+  (let [axes [-9.5 0.5 15.0 -0.25 2.0 -6.0]
+        [live quiet] (motion-rehearsal [axes []])]
+    (is (= axes (mapv live audience/motion-axes)))
+    (is (= 3 (:audience-count quiet)))
+    (is (zero? (:motion-count quiet)))
+    (is (empty? (select-keys quiet audience/motion-axes)))))
 
 (deftest operators-edit-enrolled-zones-and-persist-the-selection
   (let [model (demo/model)

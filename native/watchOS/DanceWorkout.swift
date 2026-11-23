@@ -11,6 +11,9 @@ import TolglowSensorCore
     @Published private(set) var bpm: Int?
     @Published private(set) var status = "Choose where to share your wrist motion."
 
+    @Published var shareMotionAxes = false
+    private var axes: AudienceMotion?
+
     private let store = HKHealthStore()
     private let motion: MotionSampler
     let link: WatchFloorLink
@@ -120,6 +123,7 @@ import TolglowSensorCore
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }
             let now = ProcessInfo.processInfo.systemUptime
             self.meter.observe(strength: sqrt(x*x + y*y + z*z) / 9.80665, at: now)
+            self.axes = self.shareMotionAxes ? AudienceMotion(values: values) : nil
             self.lastMotion = now
         }
         motion.preview()
@@ -142,9 +146,10 @@ import TolglowSensorCore
             return
         }
         bpm = pulse?.bpm(at: now)
-        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm) else { return }
+        let freshAxes = shareMotionAxes && ProcessInfo.processInfo.systemUptime - lastMotion <= 0.6 ? axes : nil
+        guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm, motion: freshAxes) else { return }
         serial &+= 1
-        link.send(sample)
+        link.send(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {
@@ -153,6 +158,7 @@ import TolglowSensorCore
         ticker = nil
         motionUpdates?.cancel()
         motionUpdates = nil
+        axes = nil; shareMotionAxes = false
         link.end()
         if active || requesting {
             motion.stop()
