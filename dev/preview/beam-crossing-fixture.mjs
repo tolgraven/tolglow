@@ -132,11 +132,12 @@ function configure({width, height, quality, separation = 0, roomRig}) {
   };
 }
 
-function configureShadow({auto = false, phase = 'fresh-plume'} = {}) {
+function configureShadow({auto = false, phase = 'fresh-plume', compact = false} = {}) {
   scene = 'shadow-crossing';
   engine.platform.worker = true;
-  engine.platform.viewport = auto ? {width: 1559, height: 700, pixelRatio: 1.8}
-    : {width: 960, height: 540, pixelRatio: 1};
+  engine.platform.viewport = auto
+    ? {width: compact ? 780 : 1559, height: compact ? 350 : 700, pixelRatio: 1.8}
+    : {width: compact ? 480 : 960, height: compact ? 270 : 540, pixelRatio: 1};
   canvas.style.width = engine.platform.viewport.width + 'px';
   canvas.style.height = engine.platform.viewport.height + 'px';
   engine.visible = true; engine.pause();
@@ -236,7 +237,9 @@ function draw({mask = -1, gain = 1, exposure = .85, bloom = .28, grain = 0, yaw 
 }
 
 function measureQuadrature({auto = true} = {}) {
-  const config = configureShadow({auto, phase:'fresh-plume'}), fog = engine.fog;
+  // Keep the real desktop and Auto fog policies while bounding software raster work.
+  const setup = {auto, phase: 'fresh-plume', compact: engine.softwareRenderer};
+  const config = configureShadow(setup), fog = engine.fog;
   const materials = [fog.volumeMaterial, fog.compositeMaterial];
   const shaders = materials.map(material => material.fragmentShader);
   const baseSteps = fog.uniforms.raySteps.value;
@@ -324,7 +327,7 @@ function measureQuadrature({auto = true} = {}) {
   } finally {
     materials.forEach((material,i)=>{material.fragmentShader=shaders[i]; material.needsUpdate=true;});
     fog.uniforms.raySteps.value=baseSteps;
-    configureShadow({auto,phase:'fresh-plume'}); draw({mask:-1,bloom:.22,measure:false});
+    configureShadow(setup); draw({mask:-1,bloom:.22,measure:false});
   }
 }
 

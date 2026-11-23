@@ -21,6 +21,7 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, page;
   const reuseTitle = process.env.CDP_PAGE_TITLE;
+  const directory = process.env.SHADOW_MEDIA_DIR, captures = [];
   try {
     browser = endpoint ? await chromium.connectOverCDP(endpoint) : await chromium.launch({executablePath, headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
@@ -38,7 +39,7 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     if (reuseTitle) await page.evaluate(title => {document.title=title;}, reuseTitle);
     await page.waitForFunction(() => typeof window.shadowCacheTest === 'function');
-    const result = await page.evaluate(() => window.shadowCacheTest());
+    const result = await page.evaluate(fullSizeCapture => window.shadowCacheTest({fullSizeCapture}), Boolean(directory));
     t.diagnostic(JSON.stringify(result));
     assert.deepEqual(errors, []);
     assert.equal(result.glError, 0);
@@ -63,8 +64,8 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     assert.equal(result.glass.inputEnabled, true); assert.equal(result.glass.targetIsComposite, true);
     assert.ok(result.glass.changed.changed > 100);
     assert.deepEqual(result.glass.referenceDifference, {maximum: 0, changed: 0});
-    assert.deepEqual(result.telemetry.pixels, [960, 540]);
-    const directory = process.env.SHADOW_MEDIA_DIR, captures = [];
+    const compact = result.telemetry.softwareRenderer && !directory;
+    assert.deepEqual(result.telemetry.pixels, compact ? [480,270] : [960,540]);
     if (directory) await mkdir(directory, {recursive: true});
     const captureScene = async (name, prefix = '') => {
       const {data, telemetry, capture} = await page.evaluate(name => window.captureShadowCacheScene(name), name);
@@ -80,10 +81,10 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     };
     const names = ['clear-surfaces', 'crossing-shafts', 'fresh-plume', 'dispersed-plume'];
     if (directory) for (const name of names) await captureScene(name);
-    await page.setViewportSize({width: 1580, height: 730});
+    if (!compact) await page.setViewportSize({width: 1580, height: 730});
     const floor = await page.evaluate(() => window.setShadowCaptureAutoFloor());
     assert.deepEqual(floor.pixels, floor.softwareRenderer ? [317,142] : [914,410]);
-    assert.deepEqual(floor.displayPixels, [2806,1260]);
+    assert.deepEqual(floor.displayPixels, compact ? [1404,630] : [2806,1260]);
     assert.deepEqual(floor.fog.targetSize, floor.softwareRenderer ? [104,46] : [301,135]);
     for (const name of directory ? names : ['fresh-plume']) await captureScene(name, 'auto-');
     assert.deepEqual(errors, []);

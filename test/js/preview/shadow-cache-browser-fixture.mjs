@@ -5,11 +5,18 @@ import {SceneRenderer} from '../../../js/preview/scene-renderer.js';
 let engine;
 window.disposeShadowCacheTest = () => engine?.dispose();
 
-window.shadowCacheTest = () => {
+window.shadowCacheTest = ({fullSizeCapture = false} = {}) => {
   const canvas = document.querySelector('canvas');
   engine = new SceneRenderer(canvas, null, {worker: true, autoStart: false, displayHz: 60,
     viewport: {width: 960, height: 540, pixelRatio: 1}});
+  const compact = engine.softwareRenderer && !fullSizeCapture;
+  const resize = (width, height, pixelRatio) => {
+    engine.platform.viewport = {width, height, pixelRatio};
+    canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
+    engine.resize();
+  };
   engine.setQuality('desktop'); engine.setWorkLight(0); engine.setFog(.7);
+  if (compact) resize(480, 270, 1);
   engine.setFilm({bloom: .22, exposure: .85, grain: 0});
   engine.camera.position.set(3.2, 2.8, 7.6); engine.controls.target.set(0, 1.65, -1);
   const cameraPosition = engine.camera.position.clone();
@@ -50,7 +57,7 @@ window.shadowCacheTest = () => {
   const difference = (a, b) => {
     let maximum = 0, changed = 0;
     for (let i = 0; i < a.length; i += 4) {
-      const delta = Math.max(...[0,1,2].map(c => Math.abs(a[i+c] - b[i+c])));
+      const delta = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i+1] - b[i+1]), Math.abs(a[i+2] - b[i+2]));
       maximum = Math.max(maximum, delta); if (delta) changed++;
     }
     return {maximum, changed};
@@ -91,7 +98,7 @@ window.shadowCacheTest = () => {
   update(values); draw();
   let fogBrightened = 0, fogDimmed = 0;
   for (let i = 0; i < clear.pixels.length; i += 4) {
-    const delta = [0,1,2].reduce((sum,c) => sum + fog.pixels[i+c] - clear.pixels[i+c], 0);
+    const delta = fog.pixels[i] - clear.pixels[i] + fog.pixels[i+1] - clear.pixels[i+1] + fog.pixels[i+2] - clear.pixels[i+2];
     if (delta > 9) fogBrightened++;
     if (delta < -9) fogDimmed++;
   }
@@ -121,10 +128,9 @@ window.shadowCacheTest = () => {
       capture: {pixels: [width, height], viewport: [...gl.getParameter(gl.VIEWPORT)], opaqueEdges, brightPixels}};
   };
   window.setShadowCaptureAutoFloor = () => {
-    engine.platform.viewport = {width: 1559, height: 700, pixelRatio: 1.8};
-    canvas.style.width = '1559px'; canvas.style.height = '700px';
     engine.qualityChoice = 'auto'; engine.renderScale = .5; engine.applyTier('low');
-    engine.resize(); return engine.getTelemetry();
+    resize(compact ? 780 : 1559, compact ? 350 : 700, 1.8);
+    return engine.getTelemetry();
   };
   window.recordShadowMotion = async () => {
     window.captureShadowCacheScene('crossing-shafts');

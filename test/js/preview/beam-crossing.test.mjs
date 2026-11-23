@@ -127,7 +127,11 @@ test('Room preview keeps beam crossings additive below the bloom threshold', asy
       const quadrature = await page.evaluate(auto => window.crossing.measureQuadrature({auto}), auto);
       all.push({quadrature}); t.diagnostic(JSON.stringify({quadrature}));
       assert.equal(quadrature.finiteNonnegative, true);
-      assert.ok(quadrature.adaptive.count > 1000);
+      const [width, height] = quadrature.config.telemetry.fog.targetSize;
+      // Scale the original hardware coverage requirement to the actual fog raster.
+      const minimumSamples = Math.max(100, 1000 * Math.min(1, width * height / (301 * 135)));
+      assert.ok(quadrature.adaptive.count > minimumSamples,
+        `Only ${quadrature.adaptive.count} lit ${width} × ${height} reference pixels; expected more than ${minimumSamples}`);
       assert.ok(quadrature.adaptive.p95relative < .05, 'Dense crossings must converge without a coarse bright knot');
       assert.ok(quadrature.adaptive.rmse < quadrature.coarse.rmse / 3);
       assert.ok(quadrature.adaptive.maximumOver < .04);
