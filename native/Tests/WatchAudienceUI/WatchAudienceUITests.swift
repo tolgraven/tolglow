@@ -7,15 +7,22 @@ final class WatchAudienceUITests: XCTestCase {
         let floor = app.buttons["dance-floor"]
         XCTAssertTrue(floor.waitForExistence(timeout: 12))
         floor.tap()
-        let pulse = app.switches["Share heart rate"]
+        let pulse = app.buttons["choose-pulse"]
         for _ in 0..<4 where !pulse.isHittable { app.swipeUp() }
         XCTAssertTrue(pulse.isHittable)
         pulse.tap()
         let consent = app.staticTexts["pulse-consent"]
         XCTAssertTrue(consent.waitForExistence(timeout: 5))
-        XCTAssertTrue(consent.label.contains("saved show")); XCTAssertTrue(consent.label.contains("only you"))
-        for _ in 0..<3 where !consent.isHittable { app.swipeUp() }
+        XCTAssertTrue(consent.label.contains("saved show"))
+        XCTAssertTrue(consent.label.contains("only you"))
         capture("04-pulse-consent", app)
+        let confirm = app.buttons["confirm-pulse"]
+        for _ in 0..<4 where !confirm.isHittable { app.swipeUp() }
+        XCTAssertTrue(confirm.isHittable)
+        confirm.tap()
+        let workout = app.buttons["Start dance workout"]
+        for _ in 0..<4 where !workout.isHittable { app.swipeUp() }
+        XCTAssertTrue(workout.isHittable)
     }
 
     func testChooseSoloStageAndReturnToPairedMode() {
