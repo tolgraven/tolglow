@@ -30,17 +30,21 @@
   (let [channels (if (number? v) [v v v] (take 3 (concat v [0.0])))]
     (mapv #(int (Math/round (* 255.0 (min 1.0 (max 0.0 (double %)))))) channels)))
 
-(defn preview [{:keys [material beat] :or {beat 0.0}}]
+(defn preview [{:keys [material beat dry] :or {beat 0.0 dry 1.0}}]
   (when-not (and (registry/finite-number? beat) (<= 0.0 beat 4.0))
     (throw (ex-info "Choose a sample from the four-beat bar." {})))
+  (when-not (and (registry/finite-number? dry) (<= 0.0 dry 1.0))
+    (throw (ex-info "Dry level must be between zero and one." {})))
   (prefabs/validate! {:definitions {:draft material}})
-  (let [expression (:expression (blocks/plan {:draft material} {:base 1.0 :stages [{:block :draft}]}))
+  (let [expression (:expression (blocks/plan {:draft material} {:base dry :stages [{:block :draft}]}))
         sample (ir/compile-expression expression)
         env {:beat beat :elapsed-beats beat :time-ms (* 500.0 beat) :elapsed-ms (* 500.0 beat)
              :params {} :meter {:beats-per-bar 4 :bars-per-phrase 4}}
         at (fn [x y] (sample (assoc env :position [(/ (* 4.0 x) (dec columns))
                                                     (/ (* 2.0 y) (dec rows)) 0.0])))
-        values (vec (for [y (range rows) x (range columns)] (at x y)))
+        values (if (some #{[:position]} (ir/input-paths expression))
+                 (vec (for [y (range rows) x (range columns)] (at x y)))
+                 (repeat (* rows columns) (at 0 0)))
         channels (mapcat #(if (number? %) [%] %) values)]
     {:columns columns :rows rows :rgb (mapv rgb values)
      :min (reduce min channels) :max (reduce max channels) :beat beat}))

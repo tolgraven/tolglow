@@ -7,7 +7,7 @@ const output = process.env.CAPTURE_DIR;
 const width = Number(process.env.VIEWPORT_WIDTH || 1024);
 const height = width < 600 ? 844 : 768;
 const browser = await chromium.launch({executablePath: process.env.CHROMIUM || "/usr/bin/chromium"});
-const id = "tour/ripple-" + Date.now();
+const id = process.env.MATERIAL_ID || "tour/ripple-" + Date.now();
 const errors = [];
 let shot = 0;
 if (output) await mkdir(output, {recursive: true});
@@ -47,11 +47,11 @@ try {
   await panel.getByText(/^Output /).waitFor();
   await capture(panel.getByLabel("Material preview"));
   const field = panel.locator(".material-field");
-  const before = await field.innerHTML();
+  const before = await field.evaluate(canvas => canvas.toDataURL());
   const beat = panel.getByRole("slider", {name: "Sample beat"});
   await beat.focus();
   await beat.press("End");
-  await page.waitForFunction(previous => document.querySelector(".material-field").innerHTML !== previous, before);
+  await page.waitForFunction(previous => document.querySelector(".material-field").toDataURL() !== previous, before);
   await capture(beat);
   const depth = panel.getByRole("spinbutton", {name: "Depth", exact: true});
   await depth.fill("0.85"); await depth.blur();
@@ -74,9 +74,23 @@ try {
   await panel.getByLabel("GLSL expression").fill("bad_shader");
   await panel.locator(".material-preview .danger").waitFor();
   assert.equal(await panel.getByRole("button", {name: "Save material"}).isDisabled(), true);
-  await panel.getByLabel("GLSL expression").fill("0.1 + 0.85 * abs(sin(3.0 * position.x + position.y + phase))");
+  await panel.getByLabel("Material name").fill("Polar glass");
+  await panel.getByLabel("Material ID").fill("venue/polar-glass");
+  await panel.getByLabel("GLSL expression").fill("vec3(0.08 + 0.7 * abs(sin(position.y + 1.2 * position.x + phase)), 0.3 + 0.68 * cos(0.7 * position.x - position.y) * cos(position.y), 0.48 + 0.48 * sin(1.7 * position.x + position.y))");
   await panel.getByText(/^Output /).waitFor();
   await capture(panel.getByLabel("GLSL expression"));
+  if (output) {
+    const slider = panel.getByRole("slider", {name: "Sample beat"});
+    await slider.scrollIntoViewIfNeeded();
+    const bounds = await slider.boundingBox();
+    for (let sample = 1; sample <= 14; sample++) {
+      const response = page.waitForResponse(r => r.url().endsWith("/api/materials/preview") && r.request().method() === "POST");
+      await slider.tap({position: {x: 8 + (bounds.width - 16) * sample / 15, y: bounds.height / 2}});
+      assert.equal((await response).status(), 200);
+      await panel.getByText(/^Output /).waitFor();
+      await capture(slider);
+    }
+  }
   await panel.getByLabel("Saved material").selectOption(id);
   await panel.getByText(/^Output /).waitFor();
   assert.equal(await panel.getByLabel("Material name").inputValue(), "Tidal glass · deep");

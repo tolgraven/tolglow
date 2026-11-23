@@ -27,6 +27,7 @@
         gel (design/preview {:material (blocks/library :optics/gel)})]
     (is (= [1.0 5.0] ((juxt :min :max) samples)))
     (is (= (* (:columns samples) (:rows samples)) (count (:rgb samples))))
+    (is (= [[83 110 128]] (distinct (:rgb (design/preview {:material (blocks/library :optics/gel) :dry 0.5})))))
     (is (= [[166 219 255]] (distinct (:rgb gel))))
     (is (not= (:rgb (design/preview {:material (blocks/library :optics/through-water) :beat 0}))
               (:rgb (design/preview {:material (blocks/library :optics/through-water) :beat 1}))))

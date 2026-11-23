@@ -22,7 +22,7 @@
 
 (defn- editing [form id material]
   (assoc form :id (if id (slug id) "") :expected (when id material) :draft material
-         :beat 0.0 :error nil :notice nil :confirm-delete? false :preview nil :sample-token nil))
+         :beat 0.0 :dry 1.0 :error nil :notice nil :confirm-delete? false :preview nil :sample-token nil))
 
 (rf/reg-sub ::state (fn [db _] (get-in db path)))
 (rf/reg-event-db ::close (fn [db _] (update db :ui dissoc ::designer)))
@@ -47,11 +47,18 @@
       {:db (assoc-in db path (editing form (when (= kind :materials) id) (get-in form [kind id])))
        :dispatch [::schedule]})))
 
+(rf/reg-event-db ::duplicate
+  (fn [db _]
+    (update-in db path (fn [form]
+                         (-> form
+                             (assoc :id (str (:id form) "-copy") :expected nil :confirm-delete? false :notice nil :error nil)
+                             (update-in [:draft :name] str " copy"))))))
+
 (rf/reg-event-fx ::set
   (fn [{:keys [db]} [_ field value]]
     (let [edit-path (into path field)]
       (cond-> {:db (-> db (assoc-in edit-path value) (assoc-in (conj path :notice) nil))}
-        (#{:draft :beat} (first field)) (assoc :dispatch [::schedule])))))
+        (#{:draft :beat :dry} (first field)) (assoc :dispatch [::schedule])))))
 
 (rf/reg-event-fx ::schedule
   (fn [{:keys [db]} _]
@@ -62,20 +69,31 @@
 (rf/reg-event-fx ::sample
   (fn [{:keys [db]} [_ token]]
     (when (current? db token :sample-token)
-      (let [{:keys [draft beat]} (get-in db path)]
+      (let [{:keys [draft beat dry]} (get-in db path)]
         {:studio/http {:path "/api/materials/preview" :typed? true :raw-response? true
-                       :body {:beat beat :material draft}
+                       :body {:beat beat :dry dry :material draft}
                        :on-success [::sampled token] :on-failure [::failed token :sample-token]}}))))
 
-(defn bands [{:keys [rgb columns]}]
-  (mapv (fn [row]
-          (str "linear-gradient(90deg," (str/join "," (map #(str "rgb(" (str/join " " %) ")") row)) ")"))
-        (partition columns rgb)))
+(defn rgba [pixels]
+  (into [] (mapcat #(conj % 255)) pixels))
+
+(defn- paint-plane! [canvas preview]
+  (when (and canvas preview)
+    (let [{:keys [columns rows rgb]} preview
+          context (.getContext canvas "2d")
+          pixels (.createImageData context columns rows)]
+      (.set (.-data pixels) (to-array (rgba rgb)))
+      (.putImageData context pixels 0 0))))
+
+(defn- sample-plane [preview]
+  [:canvas.material-field {:role "img" :width (:columns preview 40) :height (:rows preview 18)
+                           :aria-label "Spatial sample of material output over a four by two metre plane"
+                           :ref #(paint-plane! % preview)}])
 
 (rf/reg-event-db ::sampled
   (fn [db [_ token result]]
     (if (current? db token :sample-token)
-      (update-in db path assoc :preview (assoc (dissoc result :rgb) :bands (bands result))
+      (update-in db path assoc :preview result
                  :sampling? false :preview-error nil)
       db)))
 
@@ -133,6 +151,23 @@
                      [:option {:value "phrase"} "Phrase"]]]
       :else [:div [:span label] [:code (pr-str value)]])))
 
+(defn- add-input [inputs]
+  (r/with-let [id (r/atom "") kind (r/atom "number")]
+    (let [valid? (and (re-matches #"[a-zA-Z][a-zA-Z0-9_]*" @id)
+                      (not (contains? inputs (keyword @id))))
+          initial {"number" 0.5 "rgb" [1.0 1.0 1.0] "beat" {:op :beat} "bar" {:op :bar}}]
+      [:details.material-new-input
+       [:summary "Add an input"]
+       [:div.material-metadata
+        [:label "Input name" [:input {:value @id :on-change #(reset! id (field-value %))}]]
+        [:label "Input type" [:select {:value @kind :on-change #(reset! kind (field-value %))}
+                              [:option {:value "number"} "Number"] [:option {:value "rgb"} "RGB"]
+                              [:option {:value "beat"} "Beat"] [:option {:value "bar"} "Bar"]]]]
+       [:button.button {:disabled (not valid?)
+                        :on-click #(do (set-field! [:draft :inputs (keyword @id)] (get initial @kind))
+                                       (reset! id ""))}
+        "Add input"]])))
+
 (defn- select-material [{:keys [materials presets expected id]}]
   [:div.material-library-select
    [:label "Saved material"
@@ -148,16 +183,17 @@
      (for [[k m] (sort-by (comp :name val) presets)]
        ^{:key k} [:option {:value (slug k)} (:name m)])]]])
 
-(defn- preview-card [{:keys [preview beat sampling? preview-error]}]
+(defn- preview-card [{:keys [preview beat dry sampling? preview-error]}]
   [:section.material-preview {:aria-label "Material preview"}
-   [:div.material-field {:role "img" :aria-label "Spatial sample of material output over a four by two metre plane"}
-    (for [[i band] (map-indexed vector (:bands preview))]
-      ^{:key i} [:div {:style {:background-image band}}])]
+   [sample-plane preview]
    [:div.material-preview-controls
     [:div.material-readout [:strong "XY plane"] [:span "4 × 2 m"]]
     [:label (str "Sample beat " (.toFixed beat 2))
      [:input {:type "range" :min 0 :max 4 :step 0.05 :value beat :aria-label "Sample beat"
               :on-change #(set-field! [:beat] (parse-double (field-value %)))}]]
+    [:label (str "Dry level " (.toFixed dry 2))
+     [:input {:type "range" :min 0 :max 1 :step 0.01 :value dry :aria-label "Dry level"
+              :on-change #(set-field! [:dry] (parse-double (field-value %)))}]]
     [:output.material-readout {:aria-live "polite"}
      (cond preview-error [:span.danger preview-error]
            sampling? "Sampling…"
@@ -180,12 +216,15 @@
        [:div.material-defaults
         (for [[k v] (sort-by (comp str key) (:inputs draft))]
           ^{:key [k (pr-str v)]} [input-controls k v])]
+       (when (:glsl draft) [add-input (:inputs draft)])
        (when (contains? draft :glsl)
          [:label "GLSL expression" [:textarea {:rows 2 :spell-check false :value (:glsl draft)
                                               :on-change #(set-field! [:draft :glsl] (field-value %))}]])]]
      [:footer.material-actions
       [:button.button.primary {:disabled (or (nil? (material-id id)) (str/blank? (:name draft)) sampling? preview-error)
                                :on-click #(rf/dispatch [::write false])} "Save material"]
+      (when expected
+        [:button.text-button {:on-click #(rf/dispatch [::duplicate])} "Duplicate material"])
       (when expected
         (if confirm-delete?
           [:<> [:button.button.danger {:on-click #(rf/dispatch [::write true])} "Confirm removal"]
