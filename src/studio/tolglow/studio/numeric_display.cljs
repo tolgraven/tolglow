@@ -1,15 +1,13 @@
 (ns tolglow.studio.numeric-display
-  (:require [re-frame.core :as rf]
+  (:require [afterglow.control.resolution :as resolution]
+            [re-frame.core :as rf]
             [reagent.core :as r]))
 
 (defn finite? [v] (and (number? v) (js/Number.isFinite v)))
 
 (defn channel-step [{:keys [dmx-bits bounds]}]
-  (when (#{8 16} dmx-bits)
-    (let [[lo hi] bounds
-          width (if (and (finite? lo) (finite? hi) (< lo hi) (not (<= 0 lo hi 1)))
-                  (- hi lo) 1)]
-      (/ width (if (= 16 dmx-bits) 65535 255)))))
+  (let [[lo hi] bounds]
+    (resolution/fine-step dmx-bits (if (and (finite? lo) (finite? hi) (< lo hi)) bounds [0 1]))))
 
 (defn number-label
   "Format an operator readout without changing the control value. A normalized
