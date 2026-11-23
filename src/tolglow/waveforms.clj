@@ -31,8 +31,9 @@
 (defn effective-params
   "Sample the same modulation then response transforms as the committed frame.
   Uses its captured private clock, including pause; no controller is advanced."
-  [{:keys [model modulation-view]} instance]
-  (let [values (merge (:params instance) (get-in modulation-view [:overrides (:id instance)]))
+  [{:keys [model resolved-param-overrides modulation-view]} instance]
+  (let [overrides (or resolved-param-overrides (:overrides modulation-view))
+        values (merge (:params instance) (get overrides (:id instance)))
         clock (instance-clock model instance)
         middleware (response/compile-middleware (filterv #(not= false (:enabled? %)) (:responses model [])))]
     (get-in (middleware {:instance (assoc instance :params values) :frame clock}) [:instance :params])))

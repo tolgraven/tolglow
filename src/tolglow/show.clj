@@ -1164,6 +1164,7 @@
                         :preview-hdr (when (:hdr? frame-input) (select-keys hdr-opts [:white-mix :max-excess :cue-gains :instance-gains]))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
+                        :resolved-param-overrides input-overrides
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
                      (catch Exception error
