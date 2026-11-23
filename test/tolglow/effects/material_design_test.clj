@@ -31,6 +31,9 @@
     (is (= [[166 219 255]] (distinct (:rgb gel))))
     (is (not= (:rgb (design/preview {:material (blocks/library :optics/through-water) :beat 0}))
               (:rgb (design/preview {:material (blocks/library :optics/through-water) :beat 1}))))
+    (let [dependent (assoc shader :inputs {:phase {:op :param :key :fader}})]
+      (is (true? (:unavailable? (design/preview {:material dependent}))))
+      (is (nil? (:rgb (design/preview {:material dependent})))))
     (is (thrown? Exception (design/preview {:material shader :beat 5})))
     (is (thrown? Exception (design/preview {:material (assoc shader :glsl "unknown") :beat 0})))))
 

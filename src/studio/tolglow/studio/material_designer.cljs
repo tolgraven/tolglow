@@ -22,7 +22,7 @@
 
 (defn- editing [form id material]
   (assoc form :id (if id (slug id) "") :expected (when id material) :draft material
-         :beat 0.0 :dry 1.0 :error nil :notice nil :confirm-delete? false :preview nil :sample-token nil))
+         :beat 0.0 :dry 1.0 :error nil :notice nil :confirm-delete? false :preview nil :sample-token nil :preview-note nil :preview-error nil))
 
 (rf/reg-sub ::state (fn [db _] (get-in db path)))
 (rf/reg-event-db ::close (fn [db _] (update db :ui dissoc ::designer)))
@@ -93,8 +93,8 @@
 (rf/reg-event-db ::sampled
   (fn [db [_ token result]]
     (if (current? db token :sample-token)
-      (update-in db path assoc :preview result
-                 :sampling? false :preview-error nil)
+      (update-in db path #(cond-> (assoc % :sampling? false :preview-error nil :preview-note (:message result))
+                            (not (:unavailable? result)) (assoc :preview result)))
       db)))
 
 (rf/reg-event-db ::failed
@@ -183,7 +183,7 @@
      (for [[k m] (sort-by (comp :name val) presets)]
        ^{:key k} [:option {:value (slug k)} (:name m)])]]])
 
-(defn- preview-card [{:keys [preview beat dry sampling? preview-error]}]
+(defn- preview-card [{:keys [preview beat dry sampling? preview-error preview-note]}]
   [:section.material-preview {:aria-label "Material preview"}
    [sample-plane preview]
    [:div.material-preview-controls
@@ -197,6 +197,7 @@
     [:output.material-readout {:aria-live "polite"}
      (cond preview-error [:span.danger preview-error]
            sampling? "Sampling…"
+           preview-note preview-note
            preview (str "Output " (.toFixed (:min preview) 2) " – " (.toFixed (:max preview) 2)))]]])
 
 (defn- editor [form]
