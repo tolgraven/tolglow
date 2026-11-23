@@ -2,6 +2,8 @@
   (:require [afterglow.reactive :as rx]
             [afterglow.sync :as sync]
             [tolglow.connections :as connections]
+            [tolglow.development.workspace :as workspace]
+            [tolglow.development.workspace-test :as fixture]
             [tolglow.application :as app]
             [tolglow.rig.rdm-gateway :as gateway]
             [tolglow.rig.rdm-test :as rdm-peer]
@@ -433,3 +435,154 @@
           (is (nil? (get-in restored (conj qpath :session-id))))
           (is (= prev @requests))))
       (finally (.abort ^WebSocket (:socket client)) (.stop server) (app/stop! runtime) (close!)))))
+
+(deftest completed-browser-readback-is-private-to-its-socket-and-stops-on-last-reader
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        system (show/reactions runtime)
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        source :preview.rig/center-rgb
+        query [:studio/observation-demand :rig]
+        client (connect server "ipad")
+        other (connect server "ipad")
+        acquire #(rx/acquire! system [:browser/observation source] identity)
+        claim! (fn [client]
+                 (acknowledge client (receive client))
+                 (send-control client {:op :queries :queries [query]})
+                 (let [frame (receive client)]
+                   (acknowledge client frame)
+                   (:view frame)))
+        grants #(get-in % [:subscriptions query :value])
+        next-view (fn [client before]
+                    (let [frame (receive client)] (acknowledge client frame) (apply-patch before frame)))
+        packet (fn [grant rgb]
+                 (merge (select-keys grant [:show :token])
+                        {:op :observation :query query :source source :sequence 1
+                         :frame-number 0 :sampled-ms 500 :completed-ms 501 :value rgb}))]
+    (try
+      (let [base (claim! client)
+            backup (claim! other)
+            reader (acquire)]
+        (is (= {} (grants base) (grants backup)))
+        (let [started (next-view client base) grant (get (grants started) source)]
+          (is (= :center-rgb (:sampler grant)))
+          (send-control other (packet grant [99 99 99]))
+          (send-control other {:op :resync})
+          (next-view other backup)
+          (rx/publish! system)
+          (is (nil? @(:signal reader)) "A second socket cannot borrow the first socket's grant")
+          (send-control client (packet grant [12 34 56]))
+          ;; A :resync is ordered behind its preceding observation on this same
+          ;; socket. The show can stay paused while producers join and leave.
+          (send-control client {:op :resync})
+          (let [synced (next-view client started)]
+            (rx/publish! system)
+            (is (= [12 34 56] (:value @(:signal reader))))
+            ((:close! reader))
+            (let [stopped (next-view client synced) reader (acquire)]
+              (is (= {} (grants stopped)))
+              (let [restarted (next-view client stopped)]
+                (is (not= (:token grant) (get-in (grants restarted) [source :token])))
+                (.abort ^WebSocket (:socket client))
+                (let [promoted (next-view other backup)
+                      next-grant (get (grants promoted) source)]
+                  (is (not= (:token grant) (:token next-grant)))
+                  (send-control other (packet grant [1 2 3]))
+                  (send-control other {:op :resync})
+                  (let [fenced (next-view other promoted)]
+                    (rx/publish! system)
+                    (is (nil? @(:signal reader)))
+                    (send-control other (packet next-grant [2 4 8]))
+                    (send-control other {:op :resync})
+                    (next-view other fenced)
+                    (rx/publish! system)
+                    (is (= [2 4 8] (:value @(:signal reader))))))
+                ((:close! reader)))))))
+      (finally (.abort ^WebSocket (:socket client)) (.abort ^WebSocket (:socket other))
+               (show/stop! runtime) (.stop server)))))
+
+(deftest workspace-check-status-is-pushed-without-advancing-the-show
+  (fixture/with-workspace {}
+    (fn [{:keys [root first second]}]
+      (let [finish (promise)
+            runtime (show/create-runtime
+                      {:workspace-options
+                       {:repositories {:tolglow (str first) :afterglow (str second)}
+                        :workspace-parent (str (.resolve ^java.nio.file.Path root "studio-workspaces"))
+                        :check-profiles {:unit {:repo :tolglow :argv ["git" "status" "--porcelain"]}}
+                        :runner (fn [request] @finish (workspace/run-trusted-process! request))}})
+            manager (get-in runtime [:development :workspaces])
+            _ (workspace/create! manager {:id "lighting"})
+            server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+            client (connect server "workspace&view=queries")
+            query [:development/workspace "lighting"]
+            cursor [:subscriptions query :value]
+            initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager)))]
+        (try
+          (let [initial (receive client)]
+            (is (= 0 (:frame-number (show/snapshot runtime))))
+            (is (= 0 (get-in initial [:view :frame-number])))
+            (acknowledge client initial))
+          (send-control client {:op :queries :queries [query]})
+          (let [initial (receive client)
+                initial-status (get-in (:view initial) cursor)]
+            (is (= "lighting" (:id initial-status)))
+            (is (empty? (:running-checks initial-status)))
+            (is (= (inc initial-watches) (count (.getWatches ^clojure.lang.Atom (:state manager)))))
+            (acknowledge client initial)
+            (let [run (workspace/check! manager "lighting" :unit)
+                  running (receive client)
+                  running-view (apply-patch (:view initial) running)]
+              (is (= :running (get-in running-view (into cursor [:running-checks :unit :status]))))
+              (acknowledge client running)
+              (deliver finish true)
+              ;; The check hashes two real Git worktrees before and after its process.
+              ;; Start the transport deadline once the status actually exists.
+              (is (= :passed (:status (deref (:result run) 30000 nil))))
+              (let [done (receive client)
+                    done-view (apply-patch running-view done)]
+                (is (= :passed (get-in done-view (into cursor [:checks :unit :status]))))
+                (is (= (:frame-number (:view initial)) (:frame-number done-view)))
+                (is (= (:run-id run) (get-in done-view (into cursor [:checks :unit :run-id]))))
+                (acknowledge client done))))
+          (send-control client {:op :queries :queries []})
+          (let [released (receive client)]
+            (is (empty? (get-in released [:view :subscriptions])))
+            (is (= initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager))))))
+          (finally (deliver finish true) (.abort ^WebSocket (:socket client))
+                   (.stop server) (show/stop! runtime)))))))
+
+(deftest output-only-reaches-the-operator-who-requested-that-workspace-and-repository
+  (let [owner (show/create-runtime {:workspace-options nil})
+        session {:workspace-id "lighting" :repo :tolglow :session-id "one" :state :running
+                 :first-cursor 0 :cursor 0 :chunks []}
+        sessions (atom {:sessions {"one" session}})
+        runtime (assoc-in owner [:development :terminal] {:state sessions})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        operator (connect server "terminal&view=queries")
+        spectator (connect server "other-operator&view=queries")
+        own [:development/terminal-output "lighting" :tolglow "one" 0]
+        other [:development/terminal-output "lighting" :afterglow "one" 0]
+        watches #(count (.getWatches ^clojure.lang.Atom sessions))]
+    (try
+      (doseq [client [operator spectator]] (acknowledge client (receive client)))
+      (send-control operator {:op :queries :queries [own]})
+      (let [initial (receive operator)]
+        (is (= "" (get-in initial [:view :subscriptions own :value :data])))
+        (acknowledge operator initial)
+        (send-control spectator {:op :queries :queries [other]})
+        (let [denied (receive spectator)]
+          (is (= {:error :unavailable} (get-in denied [:view :subscriptions other])))
+          (acknowledge spectator denied))
+        (is (= 1 (watches)))
+        (swap! sessions update-in [:sessions "one"] assoc :cursor 1 :chunks [{:start 0 :bytes (byte-array [65])}])
+        (let [changed (receive operator)
+              view (apply-patch (:view initial) changed)]
+          (is (= "QQ==" (get-in view [:subscriptions own :value :data])))
+          (is (= 0 (:frame-number view)))
+          (acknowledge operator changed))
+        (is (silence? spectator)))
+      (send-control operator {:op :queries :queries []})
+      (acknowledge operator (receive operator))
+      (is (zero? (watches)))
+      (finally (.abort ^WebSocket (:socket operator)) (.abort ^WebSocket (:socket spectator))
+               (.stop server) (show/stop! owner)))))

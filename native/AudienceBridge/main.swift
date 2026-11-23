@@ -23,8 +23,12 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var lastCount = 0
     private var timer: Timer?
     private var sending = false
-    private var queue = AudienceSteps()
-    private var lastLevels: AudienceLevels?
+    private var output = AudienceStageOutput()
+    private var frameWork: DispatchWorkItem?
+    private var canSend: Bool {
+        guard radio?.state == .poweredOn, radio.isAdvertising, case .ready = connection?.state else { return false }
+        return true
+    }
 
     init(name: String, oscHost: String, port: NWEndpoint.Port?, token: String?, source: String) {
         self.name = name; self.source = source; self.token = token
@@ -64,7 +68,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         guard peripheral.state == .poweredOn else {
+            reportExpiredSteps(output.reset())
             floor = AudienceFloor()
+            challenges.removeAll()
             peers.keys.forEach { guests?.revoke(participant: $0) }
             peers.removeAll(); grants.removeAll()
             print("Stage Bluetooth unavailable (\(peripheral.state.rawValue))")
@@ -118,6 +124,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         request.value = Data(data.dropFirst(request.offset))
         peripheral.respond(to: request, withResult: .success)
     }
+
     private func sendGrant(on peripheral: CBPeripheralManager, _ request: CBATTRequest) {
         let id = request.central.identifier, now = ProcessInfo.processInfo.systemUptime
         guard let peer = peers[id], now - peer.lastSeen < 8 else {
@@ -135,42 +142,79 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         peripheral.respond(to: request, withResult: .success)
     }
 
+    private func fragment(_ request: CBATTRequest) -> AudienceGATTWrite.Fragment {
+        let field: AudienceGATTWrite.Field?
+        switch request.characteristic.uuid {
+        case AudienceRadio.hello: field = .hello
+        case AudienceRadio.samples: field = .samples
+        default: field = nil
+        }
+        return .init(central: request.central.identifier, field: field, offset: request.offset, value: request.value)
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         guard let first = requests.first else { return }
-        guard requests.count == 1, first.offset == 0, let packet = first.value
-        else { peripheral.respond(to: first, withResult: .invalidOffset); return }
-        let id = first.central.identifier
-        let time = ProcessInfo.processInfo.systemUptime
+        let result: CBATTError.Code
         do {
-            switch first.characteristic.uuid {
-            case AudienceRadio.hello:
-                guard packet.count == 65, peers[id] != nil || peers.count < floor.capacity else {
-                    peripheral.respond(to: first, withResult: .insufficientResources); return
-                }
-                guard let challenge = challenges.removeValue(forKey: id), time - challenge.time < 8 else {
-                    peripheral.respond(to: first, withResult: .insufficientAuthentication); return
-                }
-                let key = try AudienceRadio.key(secret, packet, challenge: challenge.value)
-                guests?.revoke(participant: id); grants.removeValue(forKey: id)
-                peers[id] = (key, time, nil)
-                floor.leave(id)
-            case AudienceRadio.samples:
-                guard (packet.count == 39 || packet.count == 63), let peer = peers[id] else {
-                    peripheral.respond(to: first, withResult: .insufficientAuthentication); return
-                }
-                let data = try AES.GCM.open(AES.GCM.SealedBox(combined: packet), using: peer.key)
-                guard let sample = AudienceSample(bytes: data),
-                      peer.serial.map({ previous in
-                          let delta = sample.serial &- previous
-                          return delta > 0 && delta < (1 << 31)
-                      }) ?? true, floor.receive(sample, from: id, at: time) else {
-                    peripheral.respond(to: first, withResult: .unlikelyError); return
-                }
-                peers[id] = (peer.key, time, sample.serial)
-            default: peripheral.respond(to: first, withResult: .writeNotPermitted); return
+            let write = try AudienceGATTWrite.assemble(requests, inspect: fragment)
+            let now = ProcessInfo.processInfo.systemUptime
+            switch write.field {
+            case .hello: result = try acceptHello(write, at: now)
+            case .samples: result = try acceptSample(write, at: now)
             }
-            peripheral.respond(to: first, withResult: .success)
-        } catch { peripheral.respond(to: first, withResult: .insufficientAuthentication) }
+        } catch AudienceGATTWrite.Failure.unsupported { result = .writeNotPermitted }
+        catch AudienceGATTWrite.Failure.offset { result = .invalidOffset }
+        catch AudienceGATTWrite.Failure.length { result = .invalidAttributeValueLength }
+        catch AudienceGATTWrite.Failure.mixed { result = .unlikelyError }
+        catch { result = .insufficientAuthentication }
+        peripheral.respond(to: first, withResult: result)
+    }
+
+    private func acceptHello(_ write: AudienceGATTWrite, at time: Double) throws -> CBATTError.Code {
+        let id = write.central
+        guard peers[id] != nil || peers.count < floor.capacity else { return .insufficientResources }
+        guard let challenge = challenges[id], time - challenge.time < 8 else { return .insufficientAuthentication }
+        let key = try AudienceRadio.key(secret, write.value, challenge: challenge.value)
+        challenges.removeValue(forKey: id)
+        guests?.revoke(participant: id)
+        grants.removeValue(forKey: id)
+        peers[id] = (key, time, nil)
+        floor.leave(id)
+        return .success
+    }
+
+    private func acceptSample(_ write: AudienceGATTWrite, at time: Double) throws -> CBATTError.Code {
+        let id = write.central
+        guard let peer = peers[id] else { return .insufficientAuthentication }
+        let data = try AES.GCM.open(AES.GCM.SealedBox(combined: write.value), using: peer.key)
+        guard let sample = AudienceSample(bytes: data) else { return .unlikelyError }
+        if let previous = peer.serial {
+            let delta = sample.serial &- previous
+            guard delta > 0, delta < (1 << 31) else { return .unlikelyError }
+        }
+        var overflow: String?
+        let admitted = floor.receive(sample, from: id, at: time) { delta in
+            guard canSend, delta > 0 else { return true }
+            do { try output.onsets.append(delta); return true }
+            catch {
+                overflow = "Gesture queue overflow (\(output.onsets.pending) pending, \(delta) incoming)."
+                return false
+            }
+        }
+        guard admitted else {
+            if let overflow {
+                // Reply to the transaction before closing the failed bridge on the main queue.
+                DispatchQueue.main.async { self.stop(overflow) }
+                return .insufficientResources
+            }
+            return .unlikelyError
+        }
+        peers[id] = (peer.key, time, sample.serial)
+        if connection != nil {
+            _ = floor.takeSteps()
+            if canSend { scheduleFrame(at: time) }
+        }
+        return .success
     }
 
     private func publish() {
@@ -180,49 +224,53 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         peers = peers.filter { time - $0.value.lastSeen < 8 }
         grants = grants.filter { time - $0.value.1 < 5 }
         let levels = floor.drain(at: time)
-        lastLevels = levels
-        if connection != nil {
-            do { try queue.append(levels.steps) }
-            catch {
-                stop("Gesture queue overflow (\(queue.pending) pending, \(levels.steps) incoming).")
-                return
-            }
-        }
         if lastCount != levels.count { print("Participants \(levels.count)") }
-        let wasActive = lastCount > 0
-        guard !sending else { return }
         lastCount = levels.count
-        guard levels.count > 0 || wasActive || queue.pending > 0 else { return }
-        send(levels, at: time)
+        reportExpiredSteps(output.tick(levels, available: canSend))
+        flush(at: time)
     }
 
-    private func send(_ levels: AudienceLevels, at time: Double) {
-        guard let connection, let token else { return }
-        let delivered = queue.takeBatch()
-        var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
-                      "dance-steps": Double(delivered), "pulse-count": Double(levels.pulseCount), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
-        values["motion-count"] = Double(levels.motionCount)
-        values.merge(levels.motion) { _, measured in measured }
-        if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
+    private func reportExpiredSteps(_ count: Int) {
+        if count > 0 { print("Expired \(count) pending dance steps while the stage or its floor was inactive.") }
+    }
+
+    private func scheduleFrame(at time: Double) {
+        guard frameWork == nil, output.onsets.needsFrame else { return }
+        let frame = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.frameWork = nil
+            let now = ProcessInfo.processInfo.systemUptime
+            self.output.onsets.openFrame(at: now)
+            self.flush(at: now)
+            self.scheduleFrame(at: now)
+        }
+        frameWork = frame
+        DispatchQueue.main.asyncAfter(deadline: .now() + (AudienceOnsetFrames.nextBoundary(after: time) - time),
+                                      execute: frame)
+    }
+
+    private func flush(at time: Double) {
+        guard canSend else { reportExpiredSteps(output.reset()); return }
+        guard !sending, let connection, let token, let frame = output.take(from: &floor, at: time) else { return }
+        reportExpiredSteps(frame.expired)
         do {
-            let gestures = (0..<delivered).map { _ in Gesture(type: "dance-step") }
-            let observation = try Observation(deviceID: source, sessionID: session, sampleID: sampleID,
-                timeMS: time * 1000, values: values, gestures: gestures, pairingToken: token)
+            let observation = try frame.levels.observation(steps: frame.steps, source: source, session: session,
+                                                        sampleID: sampleID, at: time, token: token)
             let packet = try SensorOSC.encode(observation)
             sampleID += 1; sending = true
             connection.send(content: packet, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
                 self.sending = false
-                if error != nil { self.stop("OSC send failed with \(delivered) gestures in flight."); return }
-                if self.queue.pending > 0, let latest = self.lastLevels {
-                    self.send(latest, at: ProcessInfo.processInfo.systemUptime)
-                }
+                if error != nil { self.stop("OSC send failed with \(frame.steps) gestures in flight."); return }
+                self.flush(at: ProcessInfo.processInfo.systemUptime)
             })
         } catch { stop("Could not encode audience observation.") }
     }
 
     private func stop(_ reason: String) {
         timer?.invalidate()
+        frameWork?.cancel()
+        frameWork = nil
         radio.stopAdvertising()
         radio.removeAllServices()
         connection?.cancel()
@@ -231,6 +279,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     }
 }
 
+// The packaged host reads status lines through a pipe. Closing the host owns
+// the stage's ephemeral identity even if its JVM exits abruptly.
+setlinebuf(stdout)
 let arguments = CommandLine.arguments
 let environment = ProcessInfo.processInfo.environment
 guard arguments.count == 4, let origin = URL(string: arguments[2]), origin.scheme == "https",
@@ -249,5 +300,10 @@ guard (portText == nil && token == nil) || (port != nil && (token?.count ?? 0) >
 let stage = Stage(name: arguments[1], oscHost: environment["TOLGLOW_AUDIENCE_OSC_HOST"] ?? "127.0.0.1", port: port, token: token, source: environment["TOLGLOW_AUDIENCE_OSC_ID"] ?? "audience")
 do {
     try stage.start(origin: origin, imagePath: arguments[3])
+    if environment["TOLGLOW_AUDIENCE_SUPERVISED"] == "1" {
+        FileHandle.standardInput.readabilityHandler = { handle in
+            if handle.availableData.isEmpty { exit(0) }
+        }
+    }
     RunLoop.main.run()
 } catch { print("Could not start stage. Check the QR output location."); exit(1) }

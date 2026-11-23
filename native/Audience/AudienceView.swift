@@ -10,19 +10,23 @@ struct AudienceView: View {
     #if APPCLIP
     @State private var showFullApp = false
     #endif
-    let room: String?
+    private var room: String? { client.room }
 
-    init(session: AudienceSession, room: String? = nil) {
+    init(session: AudienceSession) {
         self.session = session
         self.client = session.client
-        self.room = room
     }
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text(client.status).font(.headline).accessibilityAddTraits(.updatesFrequently)
-                    if client.joined {
+                    if client.invalidInvitation {
+                        Label("Scan a valid stage invitation to join.", systemImage: "qrcode.viewfinder")
+                    } else if client.reconnecting {
+                        ProgressView()
+                        Button("Cancel reconnection") { client.leave() }
+                    } else if client.joined {
                         Picker("Movement input", selection: $session.input) {
                             ForEach(AudienceInput.allCases) { input in Text(input.rawValue).tag(input) }
                         }.pickerStyle(.segmented)
@@ -60,6 +64,11 @@ struct AudienceView: View {
                             Button("Find nearby stages") { client.discover(room: room) }.buttonStyle(.borderedProminent)
                         }
                     }
+                    #if !APPCLIP
+                    if (room != nil || client.invalidInvitation) && !client.joined && !client.reconnecting && !client.connecting && !client.looking {
+                        Button("Browse without this invitation") { client.browseWithoutInvitation() }
+                    }
+                    #endif
                     #if APPCLIP
                     Button("Use iPhone or Watch motion in Tolglow") { showFullApp = true }
                         .appStoreOverlay(isPresented: $showFullApp) {
@@ -69,9 +78,7 @@ struct AudienceView: View {
                 }.padding()
             }.navigationTitle("Dance floor")
         }
-        .onChange(of: client.joined) { _, joined in if joined { session.startInputs() } }
         .onChange(of: session.input) { _, _ in session.resetInput() }
-        .onChange(of: room) { _, _ in client.leave() }
         .onChange(of: phase) { _, value in
             if value == .background { session.enterBackground() }
             if value == .active { session.foreground() }

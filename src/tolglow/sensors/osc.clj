@@ -129,6 +129,9 @@
     (.setSoTimeout socket 100) (.setDaemon worker true)
     (try (.start worker)
          (catch Throwable error (.close socket) (throw error)))
-    {:port (.getLocalPort socket) :status #(assoc @stats :running? (.get running))
+    {:port (.getLocalPort socket)
+     :accepts-loopback? (let [address (.getLocalAddress socket)]
+                          (or (.isAnyLocalAddress address) (= "127.0.0.1" (.getHostAddress address))))
+     :status #(assoc @stats :running? (.get running))
      :close! (fn [] (when (.compareAndSet running true false) (.close socket)
                      (when-not (identical? (Thread/currentThread) worker) (.join worker 1000))))}))

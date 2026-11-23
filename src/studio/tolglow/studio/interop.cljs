@@ -1,6 +1,7 @@
 (ns tolglow.studio.interop
   "Lifecycle-owned graphics/editor engines. Show state stays in re-frame."
   (:require [afterglow.render.photometry :as photometry]
+            [tolglow.studio.observations :as observations]
             [reagent.core :as r]
             [re-frame.core :as rf]))
 
@@ -146,12 +147,15 @@
                                   (js-invoke engine "onNavigationChange"
                                              #(when (identical? engine (preview-engine @engines nil))
                                                 (rf/dispatch [:camera-navigation/observed (js->clj % :keywordize-keys true)])))))
+                          (observations/bind! this engine (nth (r/argv this) 4 nil))
                           (when-let [show (second (r/argv this))] (update-preview! this engine show))
                           (rf/dispatch [:studio/preview-ready (every? #(fn? (aget engine %)) ["setWorkLight" "setQuality" "setCamera"]) owner])))))
              (.catch #(rf/dispatch [:studio/toast (message %) true])))))
      :component-did-update
      (fn [this old-argv]
        (when-let [engine (aget this "engine")]
+         (when-not (= (nth (r/argv this) 4 nil) (nth old-argv 4 nil))
+           (observations/bind! this engine (nth (r/argv this) 4 nil)))
          (let [show (second (r/argv this))]
            (when (and show (not (identical? show (second old-argv))))
              (update-preview! this engine show)))))
@@ -163,6 +167,7 @@
          (.removeEventListener js/document "fullscreenchange" handler)
          (.removeEventListener js/document "webkitfullscreenchange" handler))
        (when-let [engine (aget this "engine")]
+         (observations/bind! this engine nil)
          (js-invoke engine "dispose")
          (let [owner (get (r/argv this) 2 :perform)]
            (when (identical? engine (preview-engine @engines owner)) (swap! engines update :previews dissoc owner))))

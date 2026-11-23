@@ -46,6 +46,7 @@
             [tolglow.clock :as show-clock]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
+            [tolglow.observations :as observations]
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.cues :as spatial-cues]
@@ -69,6 +70,7 @@
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
+            [tolglow.integrations.audience-invitation :as audience-stage]
             [tolglow.sensors :as sensors]
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
@@ -124,8 +126,9 @@
         gains (if (identical? fixtures (:fixtures patch))
                 (:brightness-gains patch)
                 (preview/brightness-gains fixtures))]
-    (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
+    (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :frame-number (get model :frame-number 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
@@ -210,16 +213,16 @@
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
-                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group compute/prepare-group))]
+                  (compute/expressions-enabled? compute-owner) (assoc :prepare-group (compute/group-preparer compute-owner)))]
     {:fixtures fixtures :compiler (batch/compiler-for-rig fixtures options) :cache (atom {})}))
 
 (defn- open-compute! [{:keys [compute-backend movement-backend batch? frame-rate gpu-budget-ms]
                        :or {batch? true frame-rate 40} :as options}]
-  (when (and (= :native-gpu compute-backend) (not batch?))
-    (throw (ex-info "Native GPU expressions require :batch? true" {})))
+  (when (and (contains? #{:native-gpu :distributed} compute-backend) (not batch?))
+    (throw (ex-info "GPU expressions require :batch? true" {})))
   (compute/open!
    (cond-> (select-keys options [:compute-backend :movement-backend :gpu-options])
-     (or (= :native-gpu compute-backend) (= :native-gpu movement-backend))
+     (or (contains? #{:native-gpu :distributed} compute-backend) (= :native-gpu movement-backend))
      (assoc :budget-ms (or gpu-budget-ms (max 1 (long (/ 500.0 frame-rate))))))))
 
 (defn- configure-runtime
@@ -247,6 +250,7 @@
          compiler-context (atom (compiler-context fixtures batch? compute-owner))
          clock (atom {:origin-nanos (System/nanoTime) :time-ms (:time-ms model)})
          runtime-ref (atom nil)
+         browser-inputs (observations/create (get options :browser-observations observations/defaults))
          rdm-state (rdm/session-state)
          owned (connections/create model (-> (select-keys options [:agent-options :fixture-options :sensor-options :credential-store :credential-path])
                                              (assoc :repl-options (assoc (:repl-options options {}) :runtime-supplier #(deref runtime-ref)))
@@ -255,6 +259,7 @@
                                              (assoc :reactive-options (:reactive-options options)
                                                     :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
                                                                              effect-keyframes/register! block-trace/register!
+                                                                             (observations/register! browser-inputs)
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
@@ -288,6 +293,7 @@
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
+      :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -1687,6 +1693,12 @@
       (:configure :arm :calibrate)
       (deref (submit! runtime ({:configure :sensor-configure :arm :sensor-arm :calibrate :sensor-calibrate} operation) payload)
              5000 {:status :pending :message "Sensor configuration remains queued"})
+      (:stage-start :stage-stop)
+      (let [current (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
+        (if (= :stage-start operation)
+          (sensors/start-stage! current payload)
+          (audience-stage/stop-current! (:stage current) (:stage-id payload))))
+      :stage-qr (audience-stage/png (:stage manager) (:id payload))
       :osc-start
       (let [manager (session-operation! runtime payload (fn [_] (connections/sensors (:connections runtime))))]
         (sensors/start-osc! manager (select-keys payload [:host :port]))

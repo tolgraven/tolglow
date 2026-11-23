@@ -2,6 +2,7 @@
   (:require [reagent.core :as r]
             [re-frame.core :as rf]
             [tolglow.studio.interop :as interop]
+            [tolglow.studio.observations :as observations]
             [tolglow.studio.volume-sculpt :as sculpt]
             [tolglow.studio.volume-geometry :as geometry]
             [tolglow.studio.volume-optics :as optics]))
@@ -59,4 +60,4 @@
                           (assoc :spatial-volumes (bodies config signals) :volume-guides @(rf/subscribe [::fields]))
                           (:limited? optics) (assoc :visible-spatial-limit optics/max-visible)
                           (seq (:objects optics))
-                          (assoc :glass-meshes (:meshes optics) :glass-volumes (:objects optics))) owner changed]))))
+                          (assoc :glass-meshes (:meshes optics) :glass-volumes (:objects optics))) owner changed (when @visible (observations/grant owner))]))))

@@ -50,16 +50,23 @@
     (is (= 100 (count (:order many))))
     (is (= 300 (:cursor many)))))
 
-(deftest one-cursor-poll-at-a-time-and-view-close-does-not-cancel-the-task
-  (let [selected (:db (transition (assoc base :application-agents (assoc agents/defaults :open? true)) [:application-agents/select "task-a"]))
-        sent (transition selected [:application-agents/poll "task-a"])
-        duplicate (transition (:db sent) [:application-agents/poll "task-a"])
-        closed (transition (:db sent) [:application-agents/close])
-        stale (transition (:db closed) (conj (get-in sent [:studio/http :on-success]) {:task-id "task-a" :cursor 1 :events [] :status "running"}))]
-    (is (nil? (:studio/http duplicate)))
+(deftest a-final-task-drains-retained-pages-and-closing-drops-in-flight-results
+  (let [selected (:db (transition (assoc base :application-agents (assoc agents/defaults :open? true))
+                                  [:application-agents/select "task-a"]))
+        page (fn [cursor next available] [:application-agents/progress (agents/token selected) "task-a" cursor
+                                          {:value {:task-id "task-a" :status "completed" :events []
+                                                   :cursor next :available-cursor available}}])
+        partial (transition selected (page 0 2 3))
+        final (transition (:db partial) (page 2 3 3))
+        duplicate (transition (:db final) (page 2 3 3))
+        closed (transition selected [:application-agents/close])
+        stale (transition (:db closed) (page 0 2 3))]
+    (is (false? (get-in partial [:db :application-agents :stream-complete?])))
+    (is (true? (get-in final [:db :application-agents :stream-complete?])))
+    (is (= [:application-agents/status "task-a"] (:dispatch final)))
+    (is (nil? (:db duplicate)))
     (is (= #{:db} (set (keys closed))))
-    (is (nil? (:db stale)))
-    (is (nil? (get-in closed [:studio/http :body :id])))))
+    (is (nil? (:db stale)))))
 
 (deftest check-results-arrive-before-task-completion-and-only-explicit-ready-candidates-are-described-as-ready
   (let [selected (assoc agents/defaults :selected "task-a" :tasks [{:id "task-a" :status "checking"}])
