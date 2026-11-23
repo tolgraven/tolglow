@@ -38,7 +38,7 @@ Use `[:outputs 2]` to attach a stage to the third assignment when an ordered out
 
 ## Planes, mesh surfaces and volumes
 
-World coordinates are in venue metres. To project onto the floor, specify `:coordinates [{:op :position :axis :x} {:op :position :axis :z}]`. Two coordinates imply zero depth. Three expressions can rotate, stretch or animate the sampling space. On a mesh with its own UV layout, choose the `:surface-uv` fragment interface and supply the interpolated `v_uv` varying from the vertex shader. Fixture compute passes receive XYZ. To use baked fixture UVs, supply their two coordinate expressions.
+World coordinates are in venue metres. To project onto the floor, specify `:coordinates [{:op :position :axis :x} {:op :position :axis :z}]`. Two coordinates imply zero depth. Three expressions can rotate, stretch or animate the sampling space. On a folded LED surface, give each fixture or pixel a chart coordinate alongside its physical position, such as `{:position [3.4 1.2 -0.6] :surface-uv [0.75 0.25]}`. Select `:coordinates :surface-uv` on a water stage to follow that chart, then leave a gel stage at its default world coordinates to tint by physical height. UVs can tile beyond the unit square. Each fixture without a chart uses its world X and Y. The target-local block trace includes the resolved UV pair and the physical position of the selected fixture. A saved Transit show retains the original chart.
 
 An effect can extend `:prefabs` with a data-only template. For example, this material makes a soft band that travels across the surface.
 
@@ -48,9 +48,50 @@ An effect can extend `:prefabs` with a data-only template. For example, this mat
              :glsl "0.7 + 0.3 * cos(6.283185307 * (uv.x * frequency - phase))"}}
 ```
 
-A prefab accepts a numeric GLSL expression or a typed IR `:expression`. Supported GLSL includes arithmetic, coordinate components, input names, scalar and vector functions, and vector constructors. For procedural 3D materials, read `position.x`, `position.y` and `position.z`. The compiler checks types and arity and emits actual fragment or transform-feedback shader programs. Texture samplers, loops and arbitrary shader entry points require a separate rendering backend.
+A prefab accepts a numeric GLSL expression or a typed IR `:expression`. Supported GLSL includes arithmetic, coordinate components, input names, scalar and vector functions, and vector constructors. Use `position.x/y/z` for stage-local coordinates, `world.x/y/z` for physical space and `uv.x/y` for the independent chart. The compiler checks types and arity and emits actual fragment or transform-feedback shader programs. Texture samplers, loops and arbitrary shader entry points require a separate rendering backend.
 
 Use `tolglow.signals/waveform-block` to capture a registered waveform as a local prefab. Its selected version and parameter defaults travel with the effect. Use `{:channel :slope}`, `:angular-velocity` or `:jagginess` to drive a second field from the waveform’s motion.
+
+## Reuse a material across the show
+
+In **Definitions → Material library**, choose a template, name the material and give it an ID such as `:tour/ripple` (enter `tour/ripple` in the ID field). Change the blend mode or input defaults. For a custom numeric shader, start from **Travelling ripple** and edit the GLSL expression. **Add an input** gives an expression a named number, RGB triplet, beat or bar source.
+
+The preview samples the draft over a 4 × 2 metre XY plane at Z=0. Scrub one four-beat bar (120 BPM) and change the dry level to test its transmission, offset or replacement. The readout retains the raw range, including values above unity. **Save material** publishes it to the show library. A stale edit reports the conflict and **Reload library** retrieves the current version. Deletion checks running global variable chains for references.
+
+Store reusable definitions under `[:settings :prefabs :definitions]`. In Studio, open **Definitions → Assign blocks**, select an output, cue parameter or private input and choose the material by name. The same stage ID works in a global variable chain.
+
+```clojure
+{:prefabs
+ {:definitions
+  {:venue/copper-ripple
+   {:name "Copper ripple" :mode :multiply
+    :inputs {:phase {:op :bar} :depth 0.4}
+    :glsl "mix(1.0, 0.5 + 0.5 * cos(6.2831853 * (position.x - phase)), depth)"}}}}
+```
+
+The same maps work in the application's EDN config. Enable `:prefabs` and `:variable-blocks` in the default config to register the materials before installing the variable bindings. A show file stores their effective settings alongside the published effects.
+
+For example, place `{:block :venue/copper-ripple}` in the color stages of two independent effects. Each published revision captures the shared definitions it uses under `:imported-prefabs`. A later library edit takes effect in global variable chains on the next frame. Republish an effect to adopt the edit there. Pinned and archived revisions keep their original look across Transit saves and reloads. An effect can override a shared material by providing the same ID in its own `:prefabs` map.
+
+## Read a live audio or sensor input
+
+Use `{:op :variable :path [...]}` to take a numeric source from the current show frame. The path starts inside `:variables`. The same expression works as an output, a private varying's base, a stage input, a wet amount or a component of an expression. For example, let bass energy set the strength of a gel while a controller chooses its RGB transmission.
+
+```clojure
+{:outputs {:color [0.8 0.7 1.0]
+           :dimmer {:op :variable :path [:audio/energy]}}
+ :blocks {[:outputs :color]
+          {:stages [{:block :optics/gel
+                     :inputs {:transmission {:op :variable :path [:controllers "watch" :tint]
+                                             :type :vec3}}
+                     :amount {:op :variable :path [:audio :features :low-rms]}}]}}}
+```
+
+In **Assign blocks**, tap **Map signal** beside a stage input or its wet amount. Type a source name and choose a matching number or vector. The material designer uses the same control beside each input default. For a disconnected controller, choose **Enter a path** and enter its relative path, for example `[:controller "wrist" :tint]`. A stage reset restores the template default. In the material designer, **Use fixed value** switches back to a numeric control. The setting takes effect when you publish the effect or save the material.
+
+The audio analyzer publishes `:low-rms` and `:audio/energy`. Provide the controller tint as a three-component vector. Paths accept keyword keys, string keys and nonnegative vector indices. A scalar defaults to `:number`. Declare `:vec2`, `:vec3` or `:vec4` on each read of a vector, or on its variable binding. All uses of one path must agree on type. A plan supports up to 64 distinct inputs.
+
+A shared material can put this expression in its `:inputs` defaults and each stage can override it. The material designer takes one snapshot of the running show’s resolved variables for each draft preview. When a source is missing, the draft remains available to save and the preview reports which input it needs. Effects sample the resolved signal once for a frame and supply it to their numeric fields. The graph inspector uses that frame's captured inputs. Changing a consumed variable refreshes a predicted keyframe. The musical forecast stays in place when an unrelated variable changes. The unmodified source and the material definition are both available after a Transit restore.
 
 ## Shared variables
 

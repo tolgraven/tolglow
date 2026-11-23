@@ -24,6 +24,8 @@
             [tolglow.effects.authoring :as authoring]
             [tolglow.effects.block-trace :as block-trace]
             [tolglow.effects.variable-blocks :as variable-blocks]
+            [tolglow.effects.prefabs :as prefabs]
+            [tolglow.effects.material-design :as material-design]
             [tolglow.effects.variable-edit :as variable-edit]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
@@ -219,13 +221,14 @@
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
    (let [model (-> (or model (demo/model))
+                   prefabs/startup
                    (update :rig pixel-layout/prepare-startup)
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
-         _ (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]))
+         _ (variable-blocks/compile-model model)
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
              (cadence/settings config))
@@ -346,6 +349,7 @@
 
 (defn- command [model payload time-ms]
   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
+        payload (prefabs/prepare-command model payload)
         ;; Declarative code may use string identities (generated pages do).
         ;; JSON keyword normalization must still address those existing objects.
         payload (reduce (fn [p [field entries]]
@@ -474,9 +478,14 @@
                        (assoc :version (inc (get previous :version 0))))
           errors (registry/validate-definition kind definition)]
       (when (seq errors) (throw (ex-info "Invalid definition" {:errors errors})))
-      (when (= :effects kind) (compiler/compile-effect definition))
+      (when (= :effects kind) (compiler/compile-effect (prefabs/capture (prefabs/catalog model) definition)))
       (update (command model {:op :registry/publish :kind kind :definition definition} time-ms)
               :ack merge {:kind kind :id (:id definition) :version (:version definition)}))
+    :material-edit
+    (let [{:keys [settings] :as result} (material-design/edit model payload)]
+      (if settings
+        (apply-message model {:type :settings :payload settings} time-ms runtime)
+        result))
     :agent-cue
     (let [cue (:cue payload)
           errors (registry/validate-definition :cues cue)
@@ -620,7 +629,11 @@
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
             settings (edit-scoped-settings model scope values (:device-id payload))
-            _ (when (= scope :variable-blocks) (variable-blocks/compile-settings settings))
+            _ (when (= scope :prefabs)
+                (prefabs/validate! settings)
+                (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]) (:definitions settings)))
+            _ (when (= scope :variable-blocks)
+                (variable-blocks/compile-settings settings (prefabs/catalog model)))
             _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
@@ -1059,7 +1072,7 @@
                            input-overrides (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
-                           variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]))
+                           variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]) (prefabs/catalog model))
                            variables (variable-blocks/sample variable-plan model time-ms (:variable-observation before))
                            model (variable-blocks/collect-events model (:variable-observation before) variables)
                            variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))

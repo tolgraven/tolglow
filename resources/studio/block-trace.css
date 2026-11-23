@@ -50,3 +50,14 @@
 .block-stage-add {justify-content:flex-end}
 .block-stage .button,.block-builder .button {min-height:42px}
 .block-stage header strong {color:#d6e7c4}
+
+.signal-picker {min-width:0;max-width:100%}
+.signal-trigger,.signal-options button {font:inherit;color:var(--text);border:1px solid var(--line);background:var(--panel);border-radius:.45rem;padding:.4rem .65rem;min-height:2.75rem;text-align:left;cursor:pointer;overflow-wrap:anywhere}
+.signal-trigger[aria-expanded="true"],.signal-options button:focus-visible {border-color:var(--accent)}
+.signal-choices {display:grid;gap:.45rem;padding:.55rem;border:1px solid var(--line);border-radius:.6rem;min-width:min(14rem,100%);margin:.25rem 0}
+.signal-options {display:grid;gap:.2rem;max-height:11rem;overflow:auto;overscroll-behavior:contain}
+.signal-manual summary {cursor:pointer;min-height:2.75rem;align-content:center}
+.signal-manual input,.signal-choices input {box-sizing:border-box;max-width:100%;width:100%}
+.material-input-source {display:grid;align-content:start;gap:.25rem;min-width:0}
+.material-input-source:has(.signal-choices) {grid-column:1/-1}
+.signal-fixed {display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}

@@ -44,3 +44,5 @@ integer precision. Check every use of an axis, including nested operations
 and operations with more than two arguments.
 
 Compile authored block bindings to the shared Afterglow IR before scalar or batch selection. Keep source variables and cue inputs available as dry values. Inspect a captured pure plan on demand. The effect deadline must never allocate a visual trace for every fixture. [Effect building blocks](../../../docs/effect-blocks.md)
+
+Capture fixture `:surface-uv [u v]` in target order beside world positions. Uncharted heads use their individual world X/Y. Verify scalar, typed, deferred and target-local trace agreement whenever a material can read both spaces.
