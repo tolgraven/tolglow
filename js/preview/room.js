@@ -1,6 +1,20 @@
 import * as THREE from 'three';
 import {box, tube} from './geometry.js';
 
+export function receiverMaterial(wall, reading) {
+  if (reading?.method !== 'bracketed-neutral-card' || !Number.isFinite(reading.estimate) || reading.estimate < 0) return wall;
+  const material = wall.clone();
+  // Camera measured neutral diffuse luminance. A colored wall texture would tint it a second time.
+  material.map = null;
+  material.metalness = 0;
+  material.roughness = 1;
+  material.color.setScalar(Math.min(1, reading.estimate));
+  material.userData.meanMapReflectance = 1;
+  material.onBeforeCompile = wall.onBeforeCompile;
+  material.customProgramCacheKey = wall.customProgramCacheKey;
+  return material;
+}
+
 export function createRoom(dimensions, materials, surfaces = []) {
   const [width, height, depth] = dimensions, root = new THREE.Group(); root.name = 'venue-context';
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), materials.floor);
@@ -59,7 +73,9 @@ export function createRoom(dimensions, materials, surfaces = []) {
     if (!Array.isArray(size) || !size.every(value => Number.isFinite(value) && value > 0)) continue;
     const n = new THREE.Vector3(...normal).normalize(), u = new THREE.Vector3(...surface['u-axis']);
     u.addScaledVector(n, -u.dot(n)).normalize();
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...size), materials.wall);
+    const material = receiverMaterial(materials.wall, surface.reflectance);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...size), material);
+    if (material !== materials.wall) mesh.userData.ownsReceiverMaterial = true;
     mesh.position.fromArray(point);
     mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(u, n.clone().cross(u), n));
     mesh.userData.receiver = String(id); mesh.receiveShadow = mesh.castShadow = true;

@@ -109,3 +109,18 @@ test('a close floor patch casts colored spill onto a nearby panel; a nearer bloc
       assert.deepEqual(observations.occluded,[]); assert.deepEqual(observations.blackout,[]); assert.equal(observations.disabled,0);
     } finally {await browser.close();}
   });
+
+test('a measured receiver uses neutral linear return for direct and reflected light', async () => {
+  const {receiverMaterial} = await import('../../../js/preview/room.js');
+  const {MeshStandardMaterial, Texture} = await import('three');
+  const wall = new MeshStandardMaterial({color: 0xee7777, metalness: .2, map: new Texture()});
+  wall.userData.meanMapReflectance = .34;
+  assert.equal(receiverMaterial(wall, null), wall);
+  const panel = receiverMaterial(wall, {method: 'bracketed-neutral-card', estimate: .27});
+  assert.deepEqual(panel.color.toArray(), [.27,.27,.27]);
+  assert.equal(panel.map, null);
+  assert.equal((1 - panel.metalness) * panel.userData.meanMapReflectance, 1);
+  assert.notEqual(wall.map, null);
+  assert.equal(panel.onBeforeCompile, wall.onBeforeCompile);
+  panel.dispose(); wall.map.dispose(); wall.dispose();
+});

@@ -40,13 +40,29 @@ struct VenueSurface {
     }
 
     func outline() -> SCNNode {
-        let vertices = SCNGeometrySource(vertices: worldCorners)
-        let edges = SCNGeometryElement(indices: [Int32(0), 1, 1, 2, 2, 3, 3, 0], primitiveType: .line)
-        let geometry = SCNGeometry(sources: [vertices], elements: [edges])
+        let root = SCNNode()
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.diffuse.contents = UIColor.systemYellow
-        geometry.materials = [material]
-        return SCNNode(geometry: geometry)
+        material.readsFromDepthBuffer = false
+        material.writesToDepthBuffer = false
+        // Give the selection a finite width in metres. A one-pixel line
+        // coincident with the tracked plane can disappear on Retina displays.
+        let radius = min(0.018, max(0.002, 0.003 * min(size.x, size.y)))
+        for i in worldCorners.indices {
+            let start = worldCorners[i], end = worldCorners[(i + 1) % worldCorners.count]
+            let a = SIMD3<Float>(start.x, start.y, start.z), b = SIMD3<Float>(end.x, end.y, end.z)
+            let length = simd_distance(a, b)
+            guard length > 0 else { continue }
+            let tube = SCNCylinder(radius: CGFloat(radius), height: CGFloat(length))
+            tube.radialSegmentCount = 6
+            tube.materials = [material]
+            let edge = SCNNode(geometry: tube)
+            edge.simdPosition = (a + b) / 2
+            edge.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: (b - a) / length)
+            edge.renderingOrder = 100
+            root.addChildNode(edge)
+        }
+        return root
     }
 }

@@ -3,6 +3,8 @@
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
+            [afterglow.runtime.keyframes :as keyframes]
+            [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
             [tolglow.lighting-match :as matching]
@@ -137,6 +139,10 @@
         prepared
         (select (validate-frame-fixtures! fixtures))))))
 
+(defn predictable-outputs? [definition]
+  (let [outputs (registry/output-entries (:outputs definition))]
+    (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs))))
+
 (defn compile-effect
   "Return a context -> context middleware function. :outputs accepts an
   attribute->expression map or ordered output descriptors. Numeric expressions
@@ -156,7 +162,8 @@
         (compile-plan definition bind-pure)
         positions (when block-plan (blocks/positions rig))
         select-fixtures (fixture-selector rig selected)]
-    (fn [{:keys [frame instance state] :as context}]
+    ((if (predictable-outputs? definition) keyframes/predictable identity)
+     (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
@@ -222,7 +229,7 @@
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) positions))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % []))))))))
+            (update :intents #(or % [])))))))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."
