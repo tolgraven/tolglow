@@ -53,7 +53,7 @@
                                tour-waiting "No lit fixtures · room overview"
                                :else "Finding active fixtures…")]
        (= mode "walk") [:div.camera-explore
-                         [:p.small.muted "Drag to look · WASD to move · Q/E down/up · Shift to move faster"]
+                         [:p.small.muted "Drag to look · WASD, HJKL, arrows or two fingers to move · Q/E down/up · Shift to go faster · Pinch to zoom"]
                          [:div.camera-movement {:role "group" :aria-label "Move camera"}
                           [move-button "left" "Move camera left" "←"]
                           [move-button "forward" "Move camera forward" "↑"]
@@ -61,4 +61,4 @@
                           [move-button "right" "Move camera right" "→"]
                           [move-button "up" "Raise camera" "Rise"]
                           [move-button "down" "Lower camera" "Lower"]]]
-       :else [:p.small.muted "Drag to orbit · pinch or scroll to zoom · WASD starts Explore"])]))
+       :else [:p.small.muted "Drag to orbit · Pinch to zoom · WASD, HJKL, arrows or two fingers start Explore"])]))

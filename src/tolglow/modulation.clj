@@ -191,7 +191,7 @@
   (when-let [hold (get-in holds [id param])]
     (or (nil? (:until-beat hold)) (< beat (:until-beat hold)))))
 
-(defn- owner-definition [model instance]
+(defn owner-definition [model instance]
   (let [current (get-in model [:registry :effects (:effect-id instance)])]
     (if (and (not= :pinned (:reload-policy instance :pinned)) current
              (not= (:version current) (get-in instance [:reload-fault :effect-version]))
@@ -297,6 +297,26 @@
                  :else (clamp value))]
     (if (= :range (:type schema)) (vec (sort result)) result)))
 
+(defn interpolate-value [schema from to fraction]
+  (if (numeric-types (:type schema))
+    (constrain schema (tween/interpolate from to fraction))
+    (if (< fraction 0.5) from to)))
+
+(defn source-index [model diagnostics]
+  (let [errors (into {} (for [{:keys [controller-id instance-id param message]} diagnostics
+                              :when message] [[controller-id instance-id param] message]))]
+    (reduce (fn [result controller]
+              (reduce (fn [out {:keys [instance-id param]}]
+                        (let [id (:id controller) held? (boolean (get-in model [:modulation :holds instance-id param]))
+                              cell (get-in controller [:values instance-id param])
+                              error (get errors [id instance-id param])]
+                          (update-in out [instance-id param] (fnil conj [])
+                                     (cond-> {:type :random :controller-id id :held? held?}
+                                       (not (or held? cell)) (assoc :pending? true)
+                                       error (assoc :error error)))))
+                      result (targets model controller)))
+            {} (sort-by (juxt #(get-in % [:config :priority]) :order) (get-in model [:modulation :controllers])))))
+
 (defn- sample-cell [schema cell beat]
   (if (and (= :glide (:mode cell)) (numeric-types (:type schema)))
     (constrain schema (tween/interpolate (:from cell) (:to cell)
@@ -349,6 +369,26 @@
                      (update :ticks inc))
      :diagnostics (:diagnostics result)}))
 
+(defn- cell-overrides [values targets beat]
+  (reduce (fn [result {:keys [instance-id param schema]}]
+            (if-let [cell (get-in values [instance-id param])]
+              (let [value (sample-cell schema cell beat)]
+                (if (params/valid-value? schema value)
+                  (assoc-in result [instance-id param] value)
+                  (fail! ::invalid-value "Modulated value violates schema" {:param param})))
+              result))
+          {} targets))
+
+(defn captured-overrides
+  "Read saved controller cells at their captured beat without advancing the RNG or schedules."
+  [model]
+  (let [{:keys [last-beat holds controllers]} (:modulation model)]
+    (reduce (fn [result controller]
+              (let [selected (targets model controller)
+                    cells (eligible-values (:values controller) selected holds last-beat)]
+                (merge-with merge result (cell-overrides cells selected last-beat))))
+            {} (sort-by (juxt #(get-in % [:config :priority]) :order) controllers))))
+
 (defn- advance-controller [controller model holds beat]
   (let [targets (targets model controller)
         fraction (if (< beat (:next-beat controller)) -1.0
@@ -364,12 +404,7 @@
     (loop [remaining due controller controller diagnostics []]
       (if (zero? remaining)
         (let [values (eligible-values (:values controller) targets holds beat)
-              overrides (reduce (fn [result {:keys [instance-id param schema]}]
-                                  (if-let [cell (get-in values [instance-id param])]
-                                    (let [value (sample-cell schema cell beat)]
-                                      (if (params/valid-value? schema value) (assoc-in result [instance-id param] value)
-                                        (fail! ::invalid-value "Modulated value violates schema" {:param param}))) result))
-                                {} targets)]
+              overrides (cell-overrides values targets beat)]
           {:controller (assoc controller :values values) :overrides overrides
            :events (if (pos? due) [{:type :modulation/sampled :controller-id (:id controller)
                                     :samples due :ticks (:ticks controller) :next-beat (:next-beat controller)}] [])

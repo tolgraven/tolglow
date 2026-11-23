@@ -1,6 +1,6 @@
 # Engineering handoff
 
-Snapshot for R84, 23 November 2026 UTC. Branches and PRs are durable resume points. Check their current GitHub state before taking an assignment. The [request register](request-coverage.md) retains each original acceptance condition and the [ledger](work-items.edn) holds implementation evidence.
+Snapshot for R84, 23 November 2026 UTC. Branches and PRs are durable resume points. Check their current GitHub state before taking an assignment. The [request register](request-coverage.md) retains each original acceptance condition and [GitHub Issues](https://github.com/tolgraven/tolglow/issues) holds implementation evidence.
 
 | Work | Last verified checkpoint | Remaining acceptance |
 | --- | --- | --- |
@@ -25,4 +25,4 @@ Tolglow's effects integration is commit [4265696](https://github.com/tolgraven/t
 
 ## Resume across interruptions
 
-Before claiming a path, check open PRs, active agents and the ledger. Preserve the branch, last verified SHA, failing command and untested hardware in the handoff. When all slots are occupied, leave the new acceptance check queued. When a slot becomes available, resume a disjoint item. Confirm the intended scope against the actual commit and review before closing it. Continue reporting active scopes by their current descriptive assignments.
+Check the issue, open PRs and active contributors before starting work. Preserve the branch, last verified SHA, failing command and untested hardware in the handoff. When all slots are occupied, leave the new acceptance check queued. When a slot becomes available, resume a disjoint item. Confirm the intended scope against the actual commit and review before closing it. Continue reporting active scopes by their current descriptive assignments.

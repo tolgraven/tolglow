@@ -169,6 +169,7 @@
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
    "/api/variable-block" :variable-block
+   "/api/modulation/bind" :modulation-bind "/api/modulation/unbind" :modulation-unbind
    "/api/modulation/start" :modulation-start "/api/modulation/stop" :modulation-stop
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
    "/api/materials" :material-edit
@@ -334,6 +335,7 @@
         stream (:state-stream! services)
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
+                                   ["/api/compute/stream" {:get (available (:compute-stream! services) "Compute unavailable" (:compute-stream! services))}]
                                    ["/api/debug/events" {:name :api/debug-events
                                                          :get (available (:debug-stream! services) "Debug stream unavailable" (:debug-stream! services))}]
                                    ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
