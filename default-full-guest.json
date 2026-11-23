@@ -1,0 +1,16 @@
+[
+  {
+    "policy": "~:full",
+    "prepared": 2,
+    "returned": 10,
+    "dropped": 1,
+    "rows": 352
+  },
+  {
+    "policy": "~:full",
+    "prepared": 3,
+    "returned": 13,
+    "dropped": 0,
+    "rows": 512
+  }
+]
