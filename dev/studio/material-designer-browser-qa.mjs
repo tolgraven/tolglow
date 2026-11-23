@@ -15,6 +15,12 @@ if (output) await mkdir(output, {recursive: true});
 async function picture(page, locator) {
   if (output) {
     await locator.scrollIntoViewIfNeeded();
+    if (width >= 740) {
+      await page.locator(".material-designer").evaluate(panel => {
+        const top = document.querySelector(".topbar").getBoundingClientRect().bottom;
+        window.scrollBy({top: panel.getBoundingClientRect().top - top - 12, behavior: "instant"});
+      });
+    }
     await page.screenshot({path: output + "/" + String(shot++).padStart(2, "0") + ".png"});
   }
 }

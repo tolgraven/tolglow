@@ -651,7 +651,7 @@
      [heading "MAKE IT YOURS" "Ideas become instruments." "Create declarative effects and cues. Validate, publish, then play."
       [button "generate-registry-page" "Build registry page ↗" [:studio/generate-page]]]
      (when (= :library (:view ui))
-       ^{:key [(:runtime-id show) (:epoch show)]} [materials/panel])
+       ^{:key [(:runtime-id show) (:show-id show) (:epoch show)]} [materials/panel])
      [:div.definition-layout
       [:aside.panel.definition-library
        [:div.panel-top [:span.section-label "DEFINITIONS"] [button "new-definition" "New +" [:studio/definition-new] "text-button"]]
@@ -764,7 +764,7 @@
        [perform-view db]
        (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
        (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
-       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages])}]
+       [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
        [chat/panel db]
        (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
               [expressive/panel (:show db)]])
