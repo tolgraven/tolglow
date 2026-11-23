@@ -124,6 +124,20 @@ jobs:
         run: |
           npm run studio:test
           npm run studio:build
+      - name: Check compact cue controls and Studio navigation across viewports
+        id: layouts
+        working-directory: tolglow
+        run: |
+          STUDIO_CARD_LAYOUT_ONLY=1 lein run -m tolglow.qa.performance-layout "$RUNNER_TEMP/studio-layouts/cards"
+          lein run -m tolglow.qa.performance-layout "$RUNNER_TEMP/studio-layouts/shell" shell-alignment
+      - name: Save Studio layout screenshots and measurements
+        if: ${{ !cancelled() && steps.layouts.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: studio-layouts
+          path: ${{ runner.temp }}/studio-layouts
+          if-no-files-found: warn
+          retention-days: 7
       - name: Compare two browser GPU peers with CPU output across two Art-Net universes
         working-directory: tolglow
         timeout-minutes: 5
