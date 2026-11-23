@@ -251,8 +251,9 @@
         [:div.cue-patch-path
          [:div.cue-patch-inputs
           (if (seq parameters)
-            (for [id parameters]
-              ^{:key (pr-str id)} [:span (wire id) [:b (widgets/value-label {} (get values id))]])
+            (for [id parameters
+                  :let [schema (select-keys (get-in definition [:params id]) [:dmx-bits :bounds])]]
+              ^{:key (pr-str id)} [:span (wire id) [:b (widgets/value-label schema (get values id))]])
             [:span (if (and (map? value) (not= :const (:op value))) "Generator" "Constant")])]
          [:span.cue-patch-wire {:aria-hidden true}]
          [:strong (wire attribute)]]

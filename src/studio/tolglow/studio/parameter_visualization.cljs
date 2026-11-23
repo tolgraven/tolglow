@@ -101,9 +101,16 @@
         (mapv blend from to))
       to)))
 
-(defn- compact-number [value]
-  (if (widgets/finite? value)
-    (str (js/Number (.toPrecision value 3))) "—"))
+(defn- compact-number [schema axis value]
+  (let [component (get (:component-schemas schema) axis schema)]
+    (cond
+      (#{8 16} (:dmx-bits component)) (widgets/number-label component value)
+      (widgets/finite? value) (str (js/Number (.toPrecision value 3)))
+      :else "—")))
+
+(defn- domain-label [schema [low high]]
+  (let [display (when (#{8 16} (:dmx-bits schema)) schema)]
+    (str (widgets/number-label display low) " … " (widgets/number-label display high))))
 
 (defn component-label [{:keys [schema component component-label]}]
   (if (and (#{:position :direction :orientation} (spatial-kind schema))
@@ -124,8 +131,9 @@
             [x _ z] point
             [px py] (screen point)
             tint (if color? (widgets/color-css xyz) "var(--push-accent, #bdd49f)")
-            caption (str (widgets/number-label (first domain)) " … " (widgets/number-label (second domain)))]
-        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")}
+            caption (domain-label schema domain)]
+        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")
+                                  :data-dmx-bits (:dmx-bits schema)}
          [:svg {:view-box "0 0 110 79" :role "img" :aria-label (str (str/join ", " xyz) ", range " caption)}
           [:polygon.space-wall {:points (points [[-1 -1 -1] [-1 1 -1] [-1 1 1] [-1 -1 1]])}]
           [:polygon.space-wall.side {:points (points [[-1 -1 -1] [-1 1 -1] [1 1 -1] [1 -1 -1]])}]
@@ -140,7 +148,7 @@
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
             ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
-         [:figcaption (str/join " · " (map compact-number (take 3 actual)))]
+         [:figcaption (str/join " · " (map-indexed #(compact-number schema %1 %2) (take 3 actual)))]
          [:small.parameter-domain caption]]))))
 
 (defn append-sample [previous clock values]
@@ -186,14 +194,14 @@
 
 (defn history-chart [schema history window]
   (let [{:keys [bounds paths]} (chart-paths history window schema)]
-    [:figure.parameter-history {:aria-label "Observed parameter history"}
+    [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading
       (for [[i v] (map-indexed vector (:values (peek history)))]
         ^{:key i} [:span {:style {:color (colors i)}}
                    (when (> (count paths) 1)
                      (str (get (or (:component-labels schema)
                                    (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
-                   (compact-number v)])]
+                   (compact-number schema i v)])]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img"
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]
@@ -201,7 +209,7 @@
       (for [[i d] (map-indexed vector paths)]
         ^{:key i} [:path {:d d :stroke (colors i) :fill "none" :stroke-width 1.6
                           :vector-effect "non-scaling-stroke"}])]
-     [:figcaption [:span (if bounds (str (widgets/number-label (first bounds)) " … " (widgets/number-label (second bounds))) "Awaiting samples")]
+     [:figcaption [:span (if bounds (domain-label schema bounds) "Awaiting samples")]
       [:span (str window " beats")]]]))
 
 (defn selected-mode [schema preference]
