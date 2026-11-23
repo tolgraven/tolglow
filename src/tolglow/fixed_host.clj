@@ -3,6 +3,9 @@
   (:gen-class :methods [^{:static true} [open [String String] int]
                         ^{:static true} [close [] void]])
   (:require [clojure.java.io :as io]
+            [slf4j-timbre.adapter]
+            [slf4j-timbre.factory]
+            [slf4j-timbre.service-provider]
             [thi.ng.math.core :as math]
             [tolglow.application :as application]
             [tolglow.desktop.launch :as launch]

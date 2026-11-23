@@ -16,7 +16,7 @@
 (def width 960)
 (def height 160)
 
-(defn- thread-factory [name thread-ref]
+(defn- thread-factory ^ThreadFactory [^String name thread-ref]
   (reify ThreadFactory
     (newThread [_ runnable]
       (let [thread (doto (Thread. runnable name) (.setDaemon true))]

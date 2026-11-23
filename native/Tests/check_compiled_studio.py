@@ -65,8 +65,10 @@ def check(app):
             "(def config {:hz (rig/hz) :init {:components [:show] :modules [:web-server]}})")
         ready = root / "port"
         for _ in range(2):
-            with subprocess.Popen([executable, root, ready], cwd=root, stdin=subprocess.PIPE,
-                                  env={**os.environ, "PATH": "/usr/bin:/bin", "JAVA_HOME": "/nonexistent"}) as process:
+            with (tempfile.TemporaryFile(mode="w+", encoding="utf-8") as log,
+                  subprocess.Popen([executable, root, ready], cwd=root, stdin=subprocess.PIPE,
+                                   stdout=log, stderr=subprocess.STDOUT,
+                                   env={**os.environ, "PATH": "/usr/bin:/bin", "JAVA_HOME": "/nonexistent"}) as process):
                 try:
                     origin = wait_for_origin(process, ready)
                     for resource, expected in [("/", b"<html"), ("/studio/js/main.js", b"function")]:
@@ -88,7 +90,11 @@ def check(app):
                     except subprocess.TimeoutExpired:
                         process.kill()
                         raise
+                    log.seek(0)
+                    messages = log.read()
+                    print(messages, end="")
                 assert process.returncode == 0
+                assert "org.eclipse.jetty.server.Server" in messages and "Started " in messages, "Missing Jetty service logs"
             ready.unlink()
 
 
