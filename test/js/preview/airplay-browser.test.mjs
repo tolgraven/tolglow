@@ -10,12 +10,29 @@ import {promisify} from 'node:util';
 import {chromium} from 'playwright-core';
 
 const run = promisify(execFile);
+const uhd = process.env.REQUIRE_UHD === '1';
+const width = uhd ? 3840 : 320;
+const height = uhd ? 2160 : 180;
 
-test('the HLS receiver decodes changing colors from the actual canvas capture', {timeout: 75000}, async t => {
+async function verifyStream(path) {
+  const {stdout} = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,codec_name', '-of', 'json', path]);
+  const [stream] = JSON.parse(stdout).streams;
+  assert.deepEqual(stream, {codec_name: 'h264', width, height});
+  return stream;
+}
+
+test('the HLS receiver decodes changing colors from the actual canvas capture', {timeout: uhd ? 150000 : 75000}, async t => {
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
-  if (!existsSync(executablePath)) return t.skip('Provide Chromium for canvas capture');
-  try { await run('ffmpeg', ['-version']); }
-  catch { return t.skip('Provide FFmpeg for receiver decoding'); }
+  if (!existsSync(executablePath)) {
+    if (uhd) assert.fail('UHD qualification requires Chromium');
+    return t.skip('Provide Chromium for canvas capture');
+  }
+  try { await Promise.all(['ffmpeg', 'ffprobe'].map(tool => run(tool, ['-version']))); }
+  catch (error) {
+    if (uhd) throw error;
+    return t.skip('Provide FFmpeg and FFprobe for receiver decoding');
+  }
 
   const files = new Map();
   const module = readFileSync(new URL('../../../resources/studio/airplay.js', import.meta.url));
@@ -31,7 +48,7 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
     } else if (files.has(file)) {
       response.writeHead(200, {'Content-Type': file.endsWith('.ts') ? 'video/mp2t' : 'application/vnd.apple.mpegurl'}).end(files.get(file));
     } else if (!file) {
-      response.writeHead(200, {'Content-Type': 'text/html'}).end('<canvas width="320" height="180"></canvas>');
+      response.writeHead(200, {'Content-Type': 'text/html'}).end(`<canvas width="${width}" height="${height}"></canvas>`);
     } else response.writeHead(404).end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -71,7 +88,7 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
       }
     });
     if (/no H\.264 encoder/.test(result)) {
-      if (process.env.REQUIRE_H264) assert.fail(result);
+      if (uhd || process.env.REQUIRE_H264) assert.fail(result);
       return t.skip(result);
     }
     assert.equal(result, 'ready');
@@ -89,6 +106,8 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
       const segment = new Uint8Array(await (await fetch(origin + '/' + file)).arrayBuffer());
       const target = join(directory, file);
       await writeFile(target, segment);
+      const stream = await verifyStream(target);
+      if (uhd) t.diagnostic(JSON.stringify(stream));
       const {stdout} = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-threads', '1',
         '-i', target, '-vf', 'scale=1:1', '-frames:v', '1', '-c:v', 'rawvideo', '-threads', '1',
         '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], {encoding: 'buffer', timeout: 10000});
@@ -101,7 +120,7 @@ test('the HLS receiver decodes changing colors from the actual canvas capture', 
     const before = await receipt();
     let last = before;
     let rgb = [r, g];
-    const until = performance.now() + 22000;
+    const until = performance.now() + (uhd ? 50000 : 22000);
     do {
       await new Promise(resolve => setTimeout(resolve, 150));
       const next = await receipt();

@@ -38,7 +38,13 @@ On browsers with video Picture in Picture and canvas capture, use **PiP**, then 
 
 For receiver playback, choose **Share video** in Room. Select the show host’s network interface reachable from the receiver and choose **Start sharing**. The browser encodes the live Room canvas as H.264. Once the first HLS segment is ready, use **AirPlay** in Safari or the packaged WebKit app. The resolution link opens the same read-only playlist in a compatible player. **Stop sharing** releases the encoder and invalidates the receiver URL. A closed tab or failed connection also expires the receiver after 45–90 seconds without uploads. Keep Studio open during playback.
 
-The sender probes encoder support up to 3840 × 2160 at 30 frames per second, subject to the existing canvas resolution. Realtime encoding and the receiver’s buffers add latency. The HLS URL grants access to this preview to anyone who has it on the selected network. Studio operator controls stay on their own listener. System screen mirroring and fullscreen are also available through Control Center. Physical AirPlay output and negotiated display modes require an actual receiver.
+The sender probes encoder support up to 3840 × 2160 at 30 frames per second, subject to the existing canvas resolution. Run the following test with Chromium and FFmpeg to qualify the local encoder at UHD. It requests two colors from a WebGL canvas, receives its HLS segments, checks the coded 3840 × 2160 raster with FFprobe and decodes the colors independently with FFmpeg.
+
+```sh
+REQUIRE_UHD=1 node --test test/js/preview/airplay-browser.test.mjs
+```
+
+Realtime encoding and the receiver’s buffers add latency. The HLS URL grants access to this preview to anyone who has it on the selected network. Studio operator controls stay on their own listener. System screen mirroring and fullscreen are also available through Control Center. Physical AirPlay output and negotiated display modes require an actual receiver.
 
 iPhone and iPad use the existing **Studio** tab to open an enrolled host. The local native calibration, Watch relay and sensor controls remain available. They require their ordinary permissions. The Mac host bundle cannot run as an iOS subprocess.
 
