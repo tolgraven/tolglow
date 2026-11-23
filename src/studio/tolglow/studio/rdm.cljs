@@ -21,14 +21,13 @@
         settings (if (= transport (:transport config :ola)) (merge defaults config) defaults)]
     (into {} (map (fn [[k v]] [k (str v)])) (select-keys settings connection-fields))))
 (defn- discovery-inventory [snapshot universe]
-  (let [jobs (filter (fn [{:keys [operation device]}]
-                       (and (= :discover operation) (= universe (:universe device))))
-                     (reverse (:jobs snapshot)))
-        ;; A completed job can reach the client before its table is saved by the show.
-        latest-uids (when (:connected? snapshot)
-                      (some (fn [job] (when (= :completed (:status job)) (get-in job [:result :uids]))) jobs))
-        uids (or latest-uids (get-in snapshot [:discovered universe]))
-        pending? (some #(#{:queued :running} (:status %)) jobs)
+  (let [uids (get-in snapshot [:discovered universe])
+        pending? (and (:connected? snapshot)
+                      (some (fn [{:keys [operation device status]}]
+                              (and (= :discover operation)
+                                   (= universe (:universe device))
+                                   (#{:queued :running} status)))
+                            (:jobs snapshot)))
         device-count (count uids)]
     {:uids uids
      :status-text (cond

@@ -46,22 +46,28 @@
 (deftest discovery-status-distinguishes-pending-empty-and-unrecorded-inventories
   (let [inventory #(-> (base %) rdm/state :inventory)
         job {:operation :discover :device {:universe 1}}
-        complete (assoc job :status :completed :result {:universe 1 :uids []})
-        empty-result {:uids [] :status-text "Last inventory for universe 1 listed no RDM devices."}]
+        offline {:connected? false :jobs [(assoc job :status :running)]}]
     (is (nil? (inventory nil)))
     (is (= "No RDM inventory recorded for universe 1."
-           (:status-text (inventory {:jobs [(assoc job :status :failed)]}))))
+           (:status-text (inventory {:connected? true :jobs [(assoc job :status :failed)]}))))
     (is (= "No RDM inventory recorded for universe 1."
-           (:status-text (inventory {:jobs [(assoc job :status :running :device {:universe 2})]}))))
+           (:status-text (inventory {:connected? true :jobs [(assoc job :status :running :device {:universe 2})]}))))
     (doseq [status [:queued :running]]
       (is (= "Discovery pending for universe 1."
-             (:status-text (inventory {:jobs [(assoc job :status status)]})))))
-    (is (= {:uids ["1234:01020304"] :status-text "1 RDM device in the last inventory for universe 1."}
-           (inventory {:discovered {1 ["1234:01020304"]}})))
-    (is (= empty-result (inventory {:discovered {1 []}})))
-    (is (= empty-result (inventory {:connected? true :discovered {1 ["1234:01020304"]} :jobs [complete]})))
+             (:status-text (inventory {:connected? true :jobs [(assoc job :status status)]})))))
+    (is (= "No RDM inventory recorded for universe 1." (:status-text (inventory offline))))
+    (is (= {:uids [] :status-text "Last inventory for universe 1 listed no RDM devices."}
+           (inventory (assoc offline :discovered {1 []}))))))
+
+(deftest completed-transport-jobs-do-not-replace-the-recorded-inventory
+  (let [inventory #(-> (base %) rdm/state :inventory)
+        complete {:operation :discover :device {:universe 1} :status :completed
+                  :result {:universe 1 :uids []}}
+        snapshot {:connected? true :jobs [complete]}]
     (is (= "No RDM inventory recorded for universe 1."
-           (:status-text (inventory {:connected? false :jobs [complete]}))))))
+           (:status-text (inventory snapshot))))
+    (is (= {:uids ["1234:01020304"] :status-text "1 RDM device in the last inventory for universe 1."}
+           (inventory (assoc snapshot :discovered {1 ["1234:01020304"]}))))))
 
 (deftest selection-is-local-and-raw-bytes-validate-before-sending
   (reset! db/app-db (base {:bindings {:front/head {:uid "1234:01020304"}}}))
