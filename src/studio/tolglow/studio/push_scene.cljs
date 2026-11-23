@@ -27,13 +27,22 @@
 (defn- dispose! [component]
   (when-let [engine (aget component "engine")]
     (js-invoke engine "dispose")
-    (aset component "engine" nil)))
+    (aset component "engine" nil))
+  (some-> (aget component "canvasMount") (.replaceChildren)))
+
+(defn- acquire! [component module]
+  (let [canvas (.createElement js/document "canvas")]
+    (.setAttribute canvas "aria-label" "Rendered show rig")
+    (set! (.-width canvas) 960)
+    (set! (.-height canvas) 160)
+    (.replaceChildren (aget component "canvasMount") canvas)
+    (let [engine (js/Reflect.construct (aget module "PushScene") #js [canvas])]
+      (aset component "engine" engine)
+      engine)))
 
 (defn- draw! [component ticket scene module]
   (when (and (mounted? component) (= ticket (aget component "ticket")) (not (.-hidden js/document)))
-    (let [canvas (.querySelector (aget component "root") "canvas")
-          engine (or (aget component "engine") (js/Reflect.construct (aget module "PushScene") #js [canvas]))]
-      (aset component "engine" engine)
+    (let [engine (or (aget component "engine") (acquire! component module))]
       (js-invoke engine "update" (prepare-frame component scene))
       (set! (.-textContent (aget component "status")) ""))))
 
@@ -58,9 +67,10 @@
     :component-did-mount
     (fn [component]
       (let [element (aget component "root")
-            on-visibility #(when (.-hidden js/document) (dispose! component))]
+            on-visibility #(if (.-hidden js/document) (dispose! component) (request-frame! component))]
         (vreset! active component)
         (aset component "status" (.querySelector element ".push-scene-status"))
+        (aset component "canvasMount" (.querySelector element ".push-scene-canvas"))
         (aset component "visibility" on-visibility)
         (.addEventListener js/document "visibilitychange" on-visibility)
         (request-frame! component)))
@@ -75,7 +85,7 @@
             rig? (= "rig" (name display-mode))
             camera (some-> (:camera scene) name)]
         [:section.push-scene {:ref #(aset component "root" %) :aria-label (if rig? "Rig configuration space" "Live venue simulator")}
-         [:canvas {:width 960 :height 160 :aria-label "Rendered show rig"}]
+         [:div.push-scene-canvas]
          [:div.push-scene-caption [:strong (if rig? "RIG" "LIVE")]
           [:span (case camera "panorama" "Panorama" "audience" "Audience" "Fit rig")]
           (when-let [fixture (get-in scene [:editor :fixture-name])] [:span.push-rig-fixture fixture])
