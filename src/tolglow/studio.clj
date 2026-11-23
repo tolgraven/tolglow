@@ -81,7 +81,10 @@
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :materials! #(materials/inventory (:model @(:state runtime)))
             :material-preview! #(materials/preview % (show/variables runtime))
-            :variable-sources! #(variable-edit/sources (get-in @(:state runtime) [:model :variables]) (:query %))
+            :variable-sources! (fn [{:keys [query readable?] :as opts}]
+                                 (let [vars (if readable? (show/variables runtime)
+                                              (get-in @(:state runtime) [:model :variables]))]
+                                   (variable-edit/sources vars query opts)))
             :spatial-search! #(targets/search (:model @(:state runtime)) %)
             :event-subscribers! #(subscribers/catalog (:model @(:state runtime)))
             :debug-stream! #(debug-stream/response (:debug-stream bindings) %)

@@ -6,7 +6,8 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
-            [tolglow.studio.parameter-widgets :as widget]))
+            [tolglow.studio.parameter-widgets :as widget]
+            [tolglow.studio.signal-picker :as signal]))
 
 (defn binding-paths [definition]
   (let [outputs (:outputs definition)
@@ -59,14 +60,15 @@
         modes (vec (distinct (concat [:constant :beat :bar :phrase :time] (when (seq params) [:parameter]) [mode])))
         choose (fn [next]
                  (set-input! (case next
-                               :constant (if (or (number? default) (vector? default)) default 0.0)
+                               :constant (if (map? default) (signal/fixed-value (signal/value-type default)) default)
                                :parameter {:op :param :key (first params)}
                                {:op next})))]
     [:div.block-input
      [options label modes mode widget/label choose]
      (cond param? [options (str label " parameter") params (:key value) widget/label #(set-input! {:op :param :key %})]
            (or (number? value) (and (vector? value) (every? number? value))) [numeric-field label value set-input!]
-           (and expr? (not (#{:beat :bar :phrase :time} mode))) [:code (pr-str value)])
+           (and expr? (not (#{:variable :beat :bar :phrase :time} mode))) [:code (pr-str value)])
+     [signal/picker label value (signal/value-type default) set-input!]
      (when (contains? inputs id) [:button.text-button {:type "button" :on-click clear!} "Reset"])]))
 
 (defn- stage-controls [i stage template params change! move! remove! total]
