@@ -4,6 +4,8 @@
             [clojure.test :refer [deftest is]]
             [tolglow.demo :as demo]
             [tolglow.rig.photometry :as photo]
+            [tolglow.rig.reflectance :as reflectance]
+            [tolglow.persistence :as files]
             [tolglow.show :as show]
             [tolglow.studio :as studio]))
 
@@ -73,3 +75,67 @@
             output (photo/current (:model (photo/apply-operation start op 1 true)))]
         (is (some #{:uv-only} (map :target-id (get-in output [:block :assignments]))))
         (is (= 0 (get-in output [:expected-bytes [1 39]])))))))
+
+(def measured-rig
+  (-> rig
+      (assoc :surfaces [{:id :panel :point [0 1 -3] :normal [0 0 1] :u-axis [1 0 0] :size [2 2]}])
+      (update-in [:fixtures 0] assoc :measured-relative-brightness 0.8 :position [0 1 0])))
+
+(defn- reference-options [rig]
+  {:receiver-id "panel" :receiver-revision (:revision (first (reflectance/receivers rig)))
+   :card-fraction 0.18 :card-tolerance 0.01 :shutter-denominator 125})
+
+(deftest reference-card-capture-uses-delivered-light-and-survives-a-show-save
+  (let [now (atom 0)
+        rt (show/create-runtime {:model (assoc (demo/model) :rig measured-rig) :independent-output? true
+                                 :physical-now-ms #(deref now) :sink {:send! (fn [_ _])}})
+        request (fn [body]
+                  (let [identity {:session-id "tripod" :expected-epoch (get-in @(:state rt) [:model :epoch])
+                                  :runtime-id (:id rt)}
+                        reply (show/submit! rt :photometry (merge identity body))]
+                    (show/tick! rt (swap! now + 25))
+                    @reply))
+        start (merge {:op :start-surface :armed? true :fixture-ids ["ref"]} (reference-options measured-rig))]
+    (try
+      (is (= :rejected (:status (request (assoc start :fixture-ids ["spot"])))))
+      (is (= :rejected (:status (request (assoc start :receiver-revision "old")))))
+      (is (= :accepted (:status (request start))))
+      (is (= :rejected (:status (request {:op :apply-surface}))))
+      (doseq [[i level] (map-indexed vector [0.04 0.34 0.06 0.21 0.04 0.34])]
+        (let [phase (if (even? i) :dark :white)
+              _ (request {:op :step :phase phase :fixture-id "ref"})
+              read {:op :read-surface :sample-index i :frame-levels (vec (repeat 15 level))}]
+          (is (= :rejected (:status (request read))))
+          (scheduler/publish! (:publisher rt))
+          (let [proof (select-keys (request {:op :heartbeat}) [:step-index :presentation-generation])]
+            (is (= :rejected (:status (request (merge read proof {:presentation-generation -1})))))
+            (is (= :accepted (:status (request (merge read proof)))))
+            (is (= :rejected (:status (request (merge read proof))))))))
+      (is (= :accepted (:status (request {:op :apply-surface}))))
+      (let [model (:model @(:state rt))
+            result (get-in model [:rig :surfaces 0 :reflectance])]
+        (is (< (abs (- 0.09 (:estimate result))) 1e-10))
+        (is (< (abs (- 0.5 (:relative-to-card result))) 1e-10))
+        (is (< (first (:range result)) (:estimate result) (second (:range result))))
+        (is (= 3.0 (get-in result [:geometry :source-distance-m])))
+        (is (= :ref (get-in result [:geometry :fixture-id])))
+        (is (nil? (photo/current model)))
+        (is (= (:rig model) (get-in (files/read-string (files/write-string model)) [:model :rig]))))
+      (finally (show/stop! rt)))))
+
+(deftest rejected-surface-measurements-leave-the-capture-unapplied
+  (let [fixture (first (:fixtures measured-rig))
+        prepare #(reflectance/prepare measured-rig % (reference-options measured-rig))
+        initial (prepare fixture)
+        sequence (fn [samples]
+                   (reduce (fn [meter [i levels]]
+                             (reflectance/record meter {:sample-index i :frame-levels levels}
+                                                 (if (even? i) :dark :white) true))
+                           initial (map-indexed vector samples)))
+        uniform #(vec (repeat 15 %))
+        good (mapv uniform [0.04 0.34 0.06 0.21 0.04 0.34])]
+    (is (thrown? Exception (prepare (assoc-in fixture [:channels :pan] 9))))
+    (is (thrown? Exception (prepare (assoc fixture :position [0 1 -4]))))
+    (is (thrown? Exception (sequence (assoc good 5 (uniform 0.4))))) ;; bracket drift
+    (is (thrown? Exception (sequence (assoc good 1 (uniform 0.0401))))) ;; weak reference
+    (is (thrown? Exception (sequence (assoc good 3 (vec (take 15 (cycle [0.1 0.5])))))))))

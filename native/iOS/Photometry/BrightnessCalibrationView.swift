@@ -1,17 +1,31 @@
 import AVFoundation
 import SwiftUI
 
-private final class MeterPreviewView: UIView {
+final class MeterPreviewView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
     var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    let samplingArea = CAShapeLayer()
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard samplingArea.superlayer != nil else { return }
+        let area = preview.layerRectConverted(fromMetadataOutputRect: CGRect(x: 0.375, y: 0.375, width: 0.25, height: 0.25))
+        samplingArea.path = UIBezierPath(rect: area).cgPath
+    }
 }
 
-private struct MeterPreview: UIViewRepresentable {
+struct MeterPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    var showsSamplingArea = false
     func makeUIView(context: Context) -> MeterPreviewView {
         let v = MeterPreviewView()
         v.preview.videoGravity = .resizeAspect
         v.preview.session = session
+        if showsSamplingArea {
+            v.samplingArea.fillColor = UIColor.clear.cgColor
+            v.samplingArea.strokeColor = UIColor.systemYellow.cgColor
+            v.samplingArea.lineWidth = 2
+            v.preview.addSublayer(v.samplingArea)
+        }
         return v
     }
     func updateUIView(_ uiView: MeterPreviewView, context: Context) {}

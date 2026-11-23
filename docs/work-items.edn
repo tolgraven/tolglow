@@ -10,6 +10,12 @@
    :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
    :evidence ["The pure/parity CI runner includes tolglow.spatial-cues-test. The host suite captures native DMX across weighted boundaries, Ring grid placement, HSL modulation, reachable aim-only selection, exact beat deadlines and instance remapping through Transit."
               "Editing the room beneath a running volume emits one diagnostic, preserves unrelated pixel output and recovers automatically. The Studio browser scenario submits the sculpted field to the running show using the iPad layout."]}
+  {:id :native/surface-reflectance :title "Measure diffuse receiver brightness against a reference card"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/native/iOS/Photometry" "tolglow/src/tolglow/rig/reflectance.clj" "tolglow/js/preview/room.js"]
+   :depends-on [:native/venue-receivers :native/photometry-camera]
+   :acceptance ["Measure repeated card and surface phases under a confirmed fixed fixture, then apply the reviewed estimate in the preview."]
+   :evidence ["#103. The frame-capture sink and neutral-card tests cover presentation continuity, drift, weak signal, grazing incidence and a Transit round trip. Synthetic camera tests and both unsigned Apple simulator builds passed in run 45124437713. Independent physical tile comparison remains open."]}
   {:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/control/model.clj" "afterglow/src/afterglow/control/params.clj"
@@ -19,11 +25,11 @@
    :acceptance ["Reject a revision that invalidates a current cue before publication. Keep pinned and archived cues independent, and keep the resulting show restorable."]
    :evidence ["Afterglow PR 57 and Tolglow registry_test and persistence_test reproduce narrowed bounds against authored and saved overrides, reject before commit, then save, reopen and relaunch. The paired focused runs passed 54 tests / 364 assertions and 84 tests / 576 assertions."]}
   {:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
-   :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
    :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
    :acceptance ["Tap a tracked room surface, review its metric extent and add or remeasure the named receiver without arming fixture output."]
-   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Physical wall survey comparison is pending."]}
+   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Both unsigned Apple simulator targets and all 18 Swift tests passed in run 45122821982. Physical wall survey comparison is pending."]}
   {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
