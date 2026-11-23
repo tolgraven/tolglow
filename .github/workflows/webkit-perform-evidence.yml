@@ -46,11 +46,15 @@ jobs:
       - name: Exercise the iPhone and iPad WebKit profiles
         working-directory: tolglow
         env:
+          JAVA_TOOL_OPTIONS: -Dclojure.main.report=stderr
           STUDIO_TEST_BROWSER: webkit
         run: |
           npx --no-install playwright-core install --with-deps webkit
           lein run -m tolglow.qa.performance-layout target/webkit-perform
       - name: Recheck the default Chromium runner
+        if: always() && !cancelled()
+        env:
+          JAVA_TOOL_OPTIONS: -Dclojure.main.report=stderr
         working-directory: tolglow
         run: |
           export CHROMIUM_PATH="$(command -v google-chrome)"
