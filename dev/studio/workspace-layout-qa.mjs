@@ -61,6 +61,48 @@ async function exerciseEditor(page) {
   assert.equal(await source.inputValue(),original);
 }
 
+// Hold the provider response in the browser to exercise the pane lifetime without starting an external agent.
+async function delayedStart(page) {
+  let observed,release;
+  const sent=new Promise(resolve=>{observed=resolve;});
+  const allowed=new Promise(resolve=>{release=resolve;});
+  let starts=0,accepted=false;
+  const task={id:'local-ack-fixture',name:'Held command',status:'completed'};
+  await page.route('**/api/application-agents**',async route=>{
+    const op=new URL(route.request().url()).pathname.split('/').pop();
+    let body;
+    if (op==='start') {
+      starts++;observed();await allowed;accepted=true;body=task;
+    } else if (op==='events') {
+      body={'task-id':task.id,status:'completed',cursor:0,events:[]};
+    } else if (op==='status') {
+      body=task;
+    } else {
+      body={'runner-ready?':true,providers:[{id:'codex','configured?':true}],tasks:accepted?[task]:[]};
+    }
+    await route.fulfill({json:body});
+  });
+  const pane=name=>page.getByRole('navigation',{name:'Development workspace views'}).getByRole('button',{name,exact:true});
+  const start=page.locator('#application-agent-start');
+  const prompt=page.locator('#application-agent-prompt');
+  await pane('Coding agent').click();
+  await prompt.fill('First request');
+  await start.click();
+  await sent;
+  await pane('Files').click();
+  await pane('Coding agent').click();
+  assert.equal(await start.isDisabled(),true);
+  await prompt.fill('Keep this new draft');
+  await pane('Files').click();
+  const receipt=page.waitForResponse(r=>r.url().endsWith('/api/application-agents/start'));
+  release();
+  await receipt;
+  await pane('Coding agent').click();
+  await page.locator('.application-agent-task[aria-pressed="true"]').filter({hasText:'Held command'}).waitFor();
+  assert.equal(await prompt.inputValue(),'Keep this new draft');
+  assert.equal(starts,1);
+}
+
 async function verifySize(name,width,height) {
   const page=await browser.newPage({viewport:{width,height},hasTouch:name!=='desktop'});
   const errors=[];
@@ -94,6 +136,7 @@ async function verifySize(name,width,height) {
       await page.getByRole('button',{name:'New workspace'}).tap();
     }
     if (name==='ipad') await exerciseEditor(page);
+    if (name==='desktop') await delayedStart(page);
     assert.deepEqual(errors,[]);
   } finally {await page.close();}
 }
