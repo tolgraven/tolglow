@@ -1,7 +1,15 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
+ [{:id :show/spatial-volume-cues :title "Spawn editable spatial cues that paint native fixture values and scope registered looks"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/spatial/cues.clj" "tolglow/src/tolglow/spatial.clj" "tolglow/src/tolglow/spatial/actions.clj"
+           "afterglow/src/afterglow/render/layers.clj" "afterglow/test/afterglow/render/layers_test.clj" "tolglow/src/tolglow/persistence.clj" "tolglow/src/tolglow/show.clj"
+           "tolglow/src/tolglow/studio/web.clj" "tolglow/test/tolglow/spatial_cues_test.clj"]
+   :depends-on [:show/spatial-bindings]
+   :acceptance ["Spawn through Ring or the headless host into a free grid cell and launch the ordinary versioned cue. Keep per-head native opacity, live sources, bounce and scoped scene ownership through edits, stops and save/restore."]
+   :evidence ["tolglow.spatial-cues-test covers actual captured DMX across field boundaries, native tint over a running cue, an edited/relaunched ball, saved macro ownership, Transit restore and HSL/global sources."]}
+  {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
    :evidence ["Afterglow #55. The spatial suite passed 7 tests and 43 assertions, including a wall impact where a fixture is crossed four times in one physical substep."]}

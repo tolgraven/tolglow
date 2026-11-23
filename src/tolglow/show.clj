@@ -38,6 +38,7 @@
             [afterglow.reactive :as graph]
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
+            [tolglow.spatial.cues :as spatial-cues]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
             [tolglow.waveforms :as waveforms]
@@ -395,6 +396,7 @@
                                                                     :received-epoch expected-epoch})))
   (case type
     :command (command model payload time-ms)
+    :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :event-subscriber (let [updated (subscribers/configure model payload)]
@@ -1005,7 +1007,7 @@
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
-                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path))
+                           space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
                                    (spatial/advance model before time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
@@ -1032,7 +1034,8 @@
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           modulation-middleware (modulation/middleware (:overrides modulation-result))
+                           modulation-middleware (modulation/middleware
+                                                   (merge-with merge (:overrides modulation-result) (get-in space [:fields :overrides])))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
                                                          :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
@@ -1079,7 +1082,9 @@
                                             hdr? (assoc :hdr hdr-opts)
                                             (:observe-hdr? space) (assoc :observe-hdr? true))
                            resolved (effect-faults/resolve-output result
-                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options))
+                                      #(resolve-frame patch (lighting/contributions standby % extra-blocks) render-options)
+                                      (if-let [groups (get-in space [:fields :groups])]
+                                        #(spatial-cues/mask-contributions % groups) identity))
                            result (:result resolved)
                            finished (when (or (get-in model [:settings :output-response :enabled?])
                                               (get-in model [:settings :lighting-budget :enabled?])

@@ -31,13 +31,15 @@
 (defn resolve-output
   "Resolve once on the healthy path. A renderer-attributed effect failure removes
   only that evaluated attempt. The engine rejects repeated/unknown attribution."
-  [result resolve!]
-  (loop [result result]
-    (let [attempt (try {:output (resolve! (:contributions result))}
-                       (catch Exception error {:error error}))]
-      (if-let [error (:error attempt)]
-        (recur (engine/reject-output result error))
-        {:result result :output (:output attempt)}))))
+  ([result resolve!] (resolve-output result resolve! identity))
+  ([result resolve! prepare]
+   (loop [result result]
+     (let [prepared (prepare result)
+           attempt (try {:output (resolve! (:contributions prepared))}
+                        (catch Exception error {:error error}))]
+       (if-let [error (:error attempt)]
+         (recur (engine/reject-output result error))
+         {:result prepared :output (:output attempt)})))))
 
 (defn- file-handler [path]
   (io/make-parents path)
