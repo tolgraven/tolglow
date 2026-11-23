@@ -45,7 +45,7 @@
    :paths ["tolglow/linux/audience"]
    :depends-on [:foundation/tests]
    :acceptance ["Interoperate with Apple's encrypted v1/v2 frames and paired OSC gesture admission. Exercise ATT/BlueZ hardware and physical capacity on a Pi."]
-   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
+   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. Normal QR finder/alignment detection round-tripped all 384 independently seeded stage PNGs after mask selection. The unadjusted encoder failed for two fingerprints. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]

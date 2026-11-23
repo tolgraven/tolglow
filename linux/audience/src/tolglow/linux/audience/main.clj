@@ -1,16 +1,12 @@
 (ns tolglow.linux.audience.main
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [tolglow.linux.audience.bluez :as bluez]
+            [tolglow.linux.audience.qr :as qr]
             [tolglow.linux.audience.stage :as stage]
             [tolglow.sensors.osc :as osc])
-  (:import [com.google.zxing BarcodeFormat]
-           [com.google.zxing.qrcode QRCodeWriter]
-           [java.awt.image BufferedImage]
-           [java.net DatagramPacket DatagramSocket InetSocketAddress URI]
+  (:import [java.net DatagramPacket DatagramSocket InetSocketAddress URI]
            [java.nio.charset StandardCharsets]
            [java.util UUID]
-           [javax.imageio ImageIO]
            [org.freedesktop.dbus.connections IDisconnectCallback]
            [org.freedesktop.dbus.interfaces DBus$NameOwnerChanged DBusSigHandler]))
 
@@ -22,11 +18,8 @@
     (str (.resolve u (str "/audience/" room)))))
 
 (defn write-invitation! [origin room file]
-  (let [url (invitation origin room) matrix (.encode (QRCodeWriter.) url BarcodeFormat/QR_CODE 512 512)
-        img (BufferedImage. 512 512 BufferedImage/TYPE_BYTE_BINARY)]
-    (dotimes [y 512]
-      (dotimes [x 512] (.setRGB img x y (if (.get matrix x y) 0 0xffffff))))
-    (ImageIO/write img "png" (io/file file))
+  (let [url (invitation origin room)]
+    (qr/write-png! file url)
     url))
 
 (defn osc-config [env]
