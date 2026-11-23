@@ -58,3 +58,15 @@
     (is (= measured (layout/materialize measured edit)))
     (is (= {:fixtures [] :pixel-layouts []}
            (layout/materialize measured {:fixtures [] :pixel-layouts []})))))
+
+(deftest an-unrelated-edit-preserves-independent-pose-and-address-corrections
+  (let [manual {:id :desk :universe 4 :address 1 :channels {:dimmer 1}}
+        initial (layout/materialize {:fixtures [] :pixel-layouts [ribbon]})
+        current (-> initial (assoc-in [:fixtures 2 :position] [12 2 7])
+                    (assoc-in [:fixtures 2 :address] 127) (update :fixtures conj manual))
+        save {:fixtures [manual] :room {:width 10 :height 4 :depth 9} :pixel-layouts [ribbon]}
+        edited (layout/materialize current save)
+        moved (layout/materialize current (assoc-in save [:pixel-layouts 0 :points 2] [5 0 1]))]
+    (is (= (:fixtures current) (:fixtures edited)))
+    (is (= [2.0 0.0 1.0] (get-in moved [:fixtures 2 :position])))
+    (is (= 127 (get-in moved [:fixtures 2 :address])))))

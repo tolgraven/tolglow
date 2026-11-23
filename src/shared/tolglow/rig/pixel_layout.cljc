@@ -235,6 +235,42 @@
         (invalid! :fixtures "Generated pixel heads are missing from the patch"))))
   rig)
 
+(def ^:private wire-keys #{:id :fixture-id :pixel-layout-id :pixel-index})
+
+(defn- revised-head [saved before after override-changed?]
+  (reduce-kv (fn [head k v]
+               (if (and (contains? saved k) (not (wire-keys k)) (= (get before k) v)
+                        (not (and (= :position k) override-changed?)))
+                 head
+                 (assoc head k v)))
+             (or saved {}) after))
+
+(defn- expand-edited [owned originals spec]
+  (let [old (get originals (:id spec))
+        unchanged? (= old spec)
+        old-heads (when (and old (not unchanged?)) (fixtures old))
+        old-overrides (:position-overrides old)
+        new-overrides (:position-overrides spec)]
+    (mapv (fn [{i :pixel-index :as generated}]
+            (let [saved (get owned (head-key generated))]
+              (cond
+                (nil? saved) generated
+                (nil? old) (merge saved generated)
+                :else (revised-head saved (if unchanged? generated (get old-heads i)) generated
+                                    (not= (get old-overrides i) (get new-overrides i))))))
+          (fixtures spec))))
+
+(defn- keep-patch-order [current specs manual generated]
+  (let [before (:fixtures current)
+        stable-layouts? (= (map :id specs) (map :id (:pixel-layouts current)))]
+    (if (and (seq before) stable-layouts? (= (count before) (count generated))
+             (= (map :id manual) (into [] (comp (remove :pixel-layout-id) (map :id)) before)))
+      (let [by-id (into {} (map (juxt :id identity)) generated)]
+        (if (and (= (count by-id) (count generated)) (every? #(contains? by-id (:id %)) before))
+          (mapv (comp by-id :id) before)
+          generated))
+      generated)))
+
 (defn materialize
   "Regenerate owned heads from the authored layouts. A compact edit can omit
   generated heads. Their calibration is inherited from the last committed rig."
@@ -248,10 +284,10 @@
        (when-not (vector? previous) (invalid! :fixtures "Expected a fixture vector"))
        (let [specs (restore-layout-ids (:pixel-layouts current) specs)
              owned (merge (owned-heads (:fixtures current)) (owned-heads previous))
-             preserve (fn [f] (merge (get owned (head-key f)) f))
-             manual (filterv #(not (contains? % :pixel-layout-id)) previous)]
-         (assoc rig :pixel-layouts specs
-                    :fixtures (into manual (comp (mapcat fixtures) (map preserve)) specs)))))))
+             originals (into {} (map (juxt :id identity)) (:pixel-layouts current))
+             manual (filterv #(not (contains? % :pixel-layout-id)) previous)
+             generated (into manual (mapcat (partial expand-edited owned originals)) specs)]
+         (assoc rig :pixel-layouts specs :fixtures (keep-patch-order current specs manual generated)))))))
 
 (defn prepare-startup [rig]
   (if (and (seq (:pixel-layouts rig)) (not-any? :pixel-layout-id (:fixtures rig)))
