@@ -10,9 +10,9 @@
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
    :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
-   :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
-   :depends-on [:foundation/tests] :acceptance ["Round unfocused readouts, preserve exact typed edits, distinguish 256 and 65,536 normalized values and verify Shift encoder output to both channel widths."] :evidence []}
+   :depends-on [:foundation/tests] :acceptance ["Round unfocused readouts, preserve exact typed edits, distinguish 256 and 65,536 normalized values and verify Shift encoder output to both channel widths."] :evidence ["Optimized Studio and its passive Push view preserve every distinct normalized 8-bit and 16-bit label. Recording the Push Shift CC and a relative detent through the actual profile produced 7F FF to 80 00 on the paired pan channels and 7F to 80 on the dimmer. The live Studio retained 0.123456789 while its unfocused field showed 0.12346. Reproduce via tolglow.qa.parameter-precision. A physical device is still to be tried."]}
   {:id :render/distributed-workers :title "Use remote client GPU compute for real fixture output"
    :kind :implementation :status :in-progress :owner "Distributed render host and browser compute"
    :paths ["afterglow/src/afterglow/render/distributed.clj" "tolglow/js/compute" "tolglow/src/tolglow/render/workers.clj"]
@@ -127,13 +127,6 @@
    :depends-on [:foundation/tests]
    :acceptance ["Sample continuous effect output at a projected musical clock, inspect or modulate the tween, and restore it at the same point."]
    :evidence ["Afterglow #62 tests future transport projection, native typed fields, faults, parallel workers and actual DMX. Tolglow exercises scalar and batch compilers, a reversing progress source, live reactive inspection, and full Transit save and restore. The 834-pixel Studio touch capture edits both Bézier coordinates, publishes an exact quarter-beat interval, and verifies all three live values. See docs/effect-keyframes.md."]}
-  {:id :control/physical-parameter-readouts :title "Use actual DMX resolution for parameter readouts and fine encoder edits"
-   :kind :implementation :status :done :owner nil
-   :paths ["afterglow/src/afterglow/control/resolution.cljc" "tolglow/src/tolglow/studio/parameter_precision.clj"
-           "tolglow/src/studio/tolglow/studio/numeric_display.cljs" "tolglow/docs/parameter-widget-parity.md"]
-   :depends-on [:foundation/tests]
-   :acceptance ["A Studio or Push inspector distinguishes adjacent values from a patched 8-bit or 16-bit channel. Preserve full floating-point authoring and effect evaluation. Verify Shift turns and the fine-byte carry with an isolated show."]
-   :evidence ["The shared control model follows physical output expressions and fixture targets. Projection tests cover repatching, stale device views and untouched model values. ClojureScript tests enumerate all 256 and 65,536 normalized display labels. The preview-only browser capture is reproducible through tolglow.qa.parameter-precision."]}
   {:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
