@@ -1,82 +1,39 @@
-name: Inspect Native Image logging
+name: Inspect the portable compiled show
 on:
   push:
     branches: [codex/rehearse-apple-compiled-products]
-permissions: {contents: read}
+permissions: {contents: read, actions: read}
 jobs:
-  logger:
+  gluon-17-loopback:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix: {mode: [impl-vars, compiled-namespaces]}
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7.0.1
-        with: {ref: 85231c28fc417f19cdafce433a0e17eb13d77371}
-      - uses: graalvm/setup-graalvm@v1.6.10
-        with: {distribution: graalvm-community, java-version: '25'}
-      - run: .github/scripts/install-lein
-      - name: Compile the application logger dependencies
-        env: {MODE: '${{ matrix.mode }}'}
+        with: {ref: 9239ac6f2e1280a56a2b679b3bc080ab4f924929}
+      - uses: actions/download-artifact@v4
+        with: {repository: tolgraven/tolglow, run-id: 45203669721, name: studio-runtime, github-token: '${{ github.token }}', path: build/release}
+      - name: Exercise the phone's Gluon 17 metadata and show folder on Linux
         run: |
-          mkdir -p probe/src/logging probe/resources/META-INF/native-image/diagnostics
-          cd probe
-          cat > project.clj <<'CLJ'
-          (defproject org.tolglow/native-logger-check "0"
-            :dependencies [[org.clojure/clojure "1.12.7"] [org.slf4j/slf4j-api "2.0.20"]
-                           [com.taoensso/timbre "6.8.0"] [com.fzakaria/slf4j-timbre "0.4.1"]
-                           [com.github.clj-easy/graal-build-time "1.0.6"]]
-            :aot [slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider logging.probe]
-            :main logging.probe)
-          CLJ
-          cat > src/logging/probe.clj <<'CLJ'
-          (ns logging.probe (:gen-class)
-            (:require [slf4j-timbre.adapter] [slf4j-timbre.factory] [slf4j-timbre.service-provider])
-            (:import [com.github.fzakaria.slf4j.timbre TimbreServiceProvider]
-                     [org.slf4j LoggerFactory]))
-          (defn -main [& _]
-            (let [factory (LoggerFactory/getILoggerFactory)]
-              (println "SLF4J selected" (class factory))
-              (try (let [p (TimbreServiceProvider.)]
-                     (.initialize p)
-                     (println "Direct provider" (class (.getLoggerFactory p))))
-                   (catch Throwable failure (.printStackTrace failure)))
-              (.info (LoggerFactory/getLogger "tolglow.native.probe") "Application logging active")
-              (when-not (= "com.github.fzakaria.slf4j.timbre.TimbreLoggerFactory" (.getName (class factory)))
-                (System/exit 1))))
-          CLJ
+          toolchain="$RUNNER_TEMP/gluon-linux"
+          mkdir -p "$toolchain"
+          curl -fLsS --retry 3 https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-linux-gluon-22.1.0.1-Final.tar.gz -o "$toolchain/graal.tgz"
+          echo "70df79831e4e55289414b4e9c4ab78b74e31d7b7db7ba70cfff86ab8f9f8d4ef  $toolchain/graal.tgz" | sha256sum --check
+          tar -xf "$toolchain/graal.tgz" --strip-components 1 -C "$toolchain"
+          export JAVA_HOME="$(dirname "$(dirname "$(find "$toolchain" -name java -path '*/bin/java' -type f -print -quit)")")"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
           python3 - <<'PY'
-          import json
           from pathlib import Path
-          classes = ['com.github.fzakaria.slf4j.timbre.'+c for c in ['TimbreServiceProvider','TimbreLoggerFactory','TimbreLoggerAdapter']]
-          Path('resources/META-INF/native-image/diagnostics/reflect-config.json').write_text(json.dumps([
-            {'name':c,'allDeclaredConstructors':True,'allPublicMethods':True,'allDeclaredMethods':True,'allDeclaredFields':True} for c in classes]))
+          runner=Path('native/EmbeddedHost/build-macos')
+          runner.write_text(runner.read_text().replace('"$root/native/EmbeddedHost/prepare-jar" macos','"$root/native/EmbeddedHost/prepare-jar" ios-sim'))
+          prepare=Path('native/EmbeddedHost/prepare-jar')
+          prepare.write_text(prepare.read_text().replace('libnative-image-agent.dylib','libnative-image-agent.so'))
           PY
-          if [[ "$MODE" == impl-vars ]]; then
-            lein deps
-            mkdir -p src/slf4j_timbre
-            dep="$HOME/.m2/repository/com/fzakaria/slf4j-timbre/0.4.1/slf4j-timbre-0.4.1.jar"
-            for name in adapter factory service_provider; do
-              unzip -p "$dep" "slf4j_timbre/$name.clj" | sed -e 's/(:gen-class/(:gen-class :load-impl-ns false/' -e 's/\[org.slf4j.spi.LocationAwareLogger\]/[org.slf4j.spi.LocationAwareLogger org.slf4j.Logger]/' > "src/slf4j_timbre/$name.clj"
-            done
-          else
-            python3 - <<'PY'
-          import json
-          from pathlib import Path
-          p=Path('resources/META-INF/native-image/diagnostics/reflect-config.json')
-          data=json.loads(p.read_text())+[{'name':'slf4j_timbre.'+n+'__init','allDeclaredMethods':True} for n in ['adapter','factory','service_provider']]
-          p.write_text(json.dumps(data))
-          PY
-          fi
-          lein uberjar
-      - name: Run the native logger and emit its cause
-        env: {MODE: '${{ matrix.mode }}'}
-        run: |
-          cd probe
-          flags=()
-          if [[ "$MODE" == compiled-namespaces ]]; then
-            flags+=('--initialize-at-build-time=com.github.fzakaria.slf4j.timbre' '-H:IncludeResources=slf4j_timbre/.*__init.class')
-          fi
-          native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses "${flags[@]}" \
-            -H:IncludeResources='.*\.clj[cs]?' -jar "$(find target -name '*-standalone.jar' -print -quit)" logger
-          ./logger
+          native/EmbeddedHost/build-macos build/release/studio.jar build/gluon
+          tmpapp="$RUNNER_TEMP/Linux native probe.app"
+          mkdir -p "$tmpapp/Contents/Helpers"
+          cp build/gluon/TolglowNativeHost "$tmpapp/Contents/Helpers/"
+          python3 native/Tests/check_compiled_studio.py "$tmpapp"
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure()
+        with: {name: portable-show-log, path: build/gluon/*.log}
