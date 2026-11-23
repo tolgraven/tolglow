@@ -189,6 +189,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     }
 }
 
+// The packaged host reads status lines through a pipe. Closing the host owns
+// the stage's ephemeral identity even if its JVM exits abruptly.
+setlinebuf(stdout)
 let arguments = CommandLine.arguments
 let environment = ProcessInfo.processInfo.environment
 guard arguments.count == 4, let origin = URL(string: arguments[2]), origin.scheme == "https",
@@ -207,5 +210,10 @@ guard (portText == nil && token == nil) || (port != nil && (token?.count ?? 0) >
 let stage = Stage(name: arguments[1], port: port, token: token, source: environment["TOLGLOW_AUDIENCE_OSC_ID"] ?? "audience")
 do {
     try stage.start(origin: origin, imagePath: arguments[3])
+    if environment["TOLGLOW_AUDIENCE_SUPERVISED"] == "1" {
+        FileHandle.standardInput.readabilityHandler = { handle in
+            if handle.availableData.isEmpty { exit(0) }
+        }
+    }
     RunLoop.main.run()
 } catch { print("Could not start stage. Check the QR output location."); exit(1) }
