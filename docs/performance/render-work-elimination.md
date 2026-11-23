@@ -146,6 +146,21 @@ Across two 36-pair covered replays and one 24-pair uncovered control, all 192 me
 
 The 20,000-pixel shader evaluation median fell from 8.77 to 8.21 ms. Planner time grew from 1.44 to 1.65 ms. The two p95 frames had zero overlapping GC and 3.44 and 148.86 ms of runnable wait on the coordinator. The lower transfer volume and fewer draws reproduced on Mesa software OpenGL. Timing on a physical GPU remains open. [Afterglow #91 and runnable data](https://github.com/tolgraven/afterglow/pull/91)
 
+#### Classifying fixture origins for four spheres in one shader
+
+An experimental shader shares the rig's fixed positions across four moving spheres. For each fixture it returns a single float encoding whether each sphere definitely includes or excludes that origin. The CPU applies the original double-precision fade to the remaining origins. It still computes all beam intersections and surface occlusion. On the 20,000-pixel rig a median of 11,148 of 80,256 origin–sphere pairs needed the CPU fade. The shader read back 80,256 additional bytes per frame.
+
+Two complete show instances ran 36 paired frames after 18 warmups at each size, alternating execution order and implementation. Fixture contacts, show state, effect operations, sampled preview and all ArtDMX bytes matched. The 19,968 dedicated boundary cases also matched. Neither implementation reached 25 ms on any of the 144 timed whole frames.
+
+| Elapsed time or diagnostic count, current → experimental | 10,000 pixels + 64 moving heads | 20,000 pixels + 64 moving heads |
+| --- | ---: | ---: |
+| Whole-frame median | 110.47 → 91.16 ms | 217.94 → 198.49 ms |
+| Whole-frame p95 | 565.65 → 310.33 ms | 479.06 → 466.96 ms |
+| Draws per diagnostic frame | 7 → 8 | 7 → 8 |
+| Bytes read back per diagnostic frame | 200,336 → 240,592 | 400,336 → 480,592 |
+
+At 20,000 pixels, a separate 48-frame comparison timed origin selection alone at 10.15 ms median with the current CPU code, 8.41 ms with a squared-distance CPU shortcut and 6.85 ms with the shader and CPU fade. These measurements used Mesa software OpenGL on shared Linux. The experiment covers four spheres and positions within ±32 metres. Production adoption would require a measured hardware gain, general shape and coordinate handling, and lifecycle and resource ownership in the show host. Run `./replay.sh ./results` from the extracted kit to reproduce both comparisons. [Measurements and portable replay kit](https://raw.githubusercontent.com/tolgraven/afterglow/7243b1a2df037f35adece24ead95eae86757229e/experiments/four-sphere-classification.zip)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
