@@ -264,10 +264,12 @@ React's value/selection restoration consistent. Network operations stay in
 effects. Authoring views receive bounded projections so renderer clock updates
 do not redraw unrelated editors. Standard command/gesture events remain queued.
 
-Responsive layout keeps the full 8×8 grid on phones, uses a bottom navigation bar
-and moves import/export into the footer when the desktop sidebar disappears.
-iPad-sized layouts retain larger cue cells and place preview/inspector alongside
-one another when space permits. There are no remote fonts or UI/CDN assets.
+Studio navigation takes its order, titles and named Lucide icons from the shared
+Reitit page routes. The sidebar and phone navigation use the same links. The
+number keys 1–8 follow their displayed order. Short labels fit the phone bar,
+while each link keeps its full accessible name. Icons ship with the application
+and work offline. On phones all eight cue columns fit across the page, and the
+transport includes the file controls.
 
 ## Assistant and provider connection
 

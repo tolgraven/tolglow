@@ -10,7 +10,7 @@
   .workspace .view-heading { margin-bottom:12px; min-height:42px; }
 }
 @media (min-width: 1200px) {
-  #view-perform .performance-layout { grid-template-columns:minmax(355px,.83fr) minmax(0,1.9fr); gap:14px; }
+  #view-perform .performance-layout { grid-template-columns:minmax(410px,.92fr) minmax(0,1.8fr); gap:14px; }
 }
 .live-board { container-type:inline-size; }
 #view-perform .performance-groups { margin-bottom:5px; }
@@ -238,3 +238,78 @@
 .file-label:has(.studio-file-input) { position:relative; display:inline-flex; align-items:center; min-height:44px; cursor:pointer; }
 .studio-file-input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
 .file-label:focus-within { outline:2px solid var(--instrument,var(--accent)); outline-offset:2px; border-radius:4px; }
+
+/* Use the same icon box and text baseline for every Studio route. */
+.sidebar .nav-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: var(--nav-icon) center / contain no-repeat;
+  mask: var(--nav-icon) center / contain no-repeat;
+}
+.sidebar .nav-title, .sidebar .nav-short { line-height: 1.2; }
+.sidebar .nav-short { display: none; }
+.sidebar .brand { line-height: 1; }
+.sidebar .brand small { white-space: nowrap; letter-spacing: .12em; line-height: 12px; }
+.topbar .session-title { min-width: 0; gap: 2px; }
+.topbar .session-title .eyebrow { line-height: 12px; font-size: 9px; letter-spacing: .09em; }
+.topbar #session-title { line-height: 18px; font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .bpm-label { align-items: baseline; gap: 3px; }
+.topbar #bpm { width: 3.25ch; text-align: end; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.topbar .bpm-label > span, .topbar .master-control > span { font-size: 10px; line-height: 1.2; letter-spacing: .045em; }
+.topbar #master-value { min-width: 4ch; text-align: end; font-size: 12px; line-height: 1.2; }
+
+@media (min-width: 1001px) {
+  .sidebar .brand { gap: 8px; margin-inline: 4px; }
+  .sidebar .nav-item { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 8px; padding-inline: 8px; font-size: 12px; }
+  .sidebar .sidebar-bottom { padding-inline: 8px; }
+}
+@media (max-width: 1000px) {
+  .sidebar .nav-title { display: none; }
+  .sidebar .nav-short { display: block; }
+  .sidebar .nav-item { display: grid; grid-template-rows: 19px 14px; justify-items: center; align-content: center; gap: 4px; padding: 4px 0; font-size: 10px; line-height: 14px; }
+}
+@media (min-width: 601px) and (max-width: 1000px) {
+  .sidebar { width: 72px; padding-inline: 5px; }
+  .sidebar .nav-item { min-height: 52px; }
+  .sidebar nav { margin-top: 6px; }
+  .workspace { margin-left: 72px; }
+}
+@media (max-width: 600px) {
+  .workspace main { padding-inline: 8px; }
+  .sidebar { padding-inline: 4px; }
+  .sidebar nav { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(44px,1fr); gap: 0; overflow-x: auto; scrollbar-width: none; }
+  .sidebar .nav-item { min-height: 48px; }
+  .topbar .transport-group { gap: 4px; }
+  .topbar .session-title .eyebrow { font-size: 8px; }
+}
+
+/* Tabs, modes, pad columns and footer share the same left and right edges. */
+#view-perform .cue-panel { container-type: inline-size; --cue-inset: 12px; }
+#view-perform .cue-panel :is(.panel-top, .grid-toolbar, .cue-grid, .grid-footer) { padding-inline: var(--cue-inset); }
+#view-perform .cue-panel .page-tab { display: inline-grid; place-content: center; font-size: 13px; font-weight: 550; }
+#view-perform .grid-toolbar :is(.segmented button,.edit-button), #view-perform .grid-footer .text-button { font-size: 12px; line-height: 16px; }
+#view-perform .grid-footer .text-button { padding-inline: 0; }
+#view-perform .cue-cell:not(.empty) {
+  display: grid;
+  grid-template: auto 1fr / minmax(0,1fr) 5px;
+  align-items: center;
+  align-content: stretch;
+  gap: 2px;
+  padding: 6px;
+}
+#view-perform .cue-index { position: static; font-size: 9px; font-weight: 500; line-height: 12px; font-variant-numeric: tabular-nums; color: #e3e9dd; opacity: .78; }
+#view-perform .cue-dot { position: static; justify-self: end; }
+#view-perform .cue-name { grid-column: 1 / -1; align-self: end; font-weight: 550; line-height: 1.15; font-size: 12px; overflow-wrap: anywhere; }
+@container (min-width: 660px) {
+  #view-perform .cue-cell:not(.empty) { padding: 8px; }
+  #view-perform .cue-name { font-size: 13px; }
+}
+@container (max-width: 420px) {
+  #view-perform .cue-panel :is(.panel-top, .grid-toolbar, .cue-grid, .grid-footer) { --cue-inset: 6px; }
+  #view-perform .cue-grid { min-width: 371px; gap: 1px; grid-template-columns: repeat(8,minmax(44px,1fr)); }
+  #view-perform .cue-cell:not(.empty) { padding: 4px 1px; }
+  #view-perform .cue-name { font-size: 11px; font-weight: 500; }
+}
