@@ -36,6 +36,8 @@ struct CaptureStage {
         let origin = URL(string: CommandLine.arguments[1])!
         let folder = URL(fileURLWithPath: CommandLine.arguments[2])
         try await post(origin.appendingPathComponent("api/sensors/pair"), ["device-id": "audience", "label": "Dance floor"])
+        let mapping = "{:version 1 :channels [{:id :audience-count :input :audience-count} {:id :dance-effort :input :dance-effort}]}"
+        try await post(origin.appendingPathComponent("api/sensors/configure"), ["device-id": "audience", "source": mapping])
         try await post(origin.appendingPathComponent("api/sensors/osc/start"), ["port": 0])
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
