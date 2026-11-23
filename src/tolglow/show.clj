@@ -6,6 +6,8 @@
             [afterglow.control.devices.expressive :as expressive-mapping]
             [afterglow.control.sensors :as sensor-core]
             [afterglow.runtime.engine :as engine]
+            [afterglow.runtime.keyframes :as keyframes]
+            [tolglow.effects.keyframes :as effect-keyframes]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -231,7 +233,7 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! (spatial/register! nil)))))
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! effect-keyframes/register! (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
                           (catch Exception error (connections/close! owned) (throw error)))]
@@ -256,7 +258,7 @@
                         (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
                                (:event-callback-options options)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options) :log-file (:fault-log-file options)})
-      :state (atom {:model model :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
+      :state (atom {:model (effect-keyframes/without-checkpoints model) :keyframes (effect-keyframes/restored model) :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
@@ -995,7 +997,8 @@
                  started (System/nanoTime)
                  next-state
                  (if restored?
-                   {:model (cond-> model (get-in model fog-deadline/saved-ids-path)
+                   {:keyframes (effect-keyframes/restored model)
+                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
                              (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
                     :output (if restored-output
                               (update restored-output :universes
@@ -1042,9 +1045,12 @@
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
                            result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
+                                                         :keyframes (:keyframes before) :keyframe-params (:overrides modulation-result)
+                                                         :keyframe-generation (:responses model)
                                                          :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
-                                                    (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
+                                                    (fn [definition] (keyframes/with-inputs ((:compile runtime) definition)
+                                                                                   (comp middleware modulation-middleware))))
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
@@ -1114,7 +1120,7 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1153,7 +1159,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
-                   publication (try (connections/publish! (:connections runtime) (:model next-state)
+                   publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (:model next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
                                     (catch Exception error (vreset! reactive-error (error-data error)) nil))
                    trace (:delivery-trace publication)]
@@ -1388,12 +1394,14 @@
 (defn- capture-show [runtime format-show]
   ;; Model/output come from one commit. Serialize after releasing the frame
   ;; owner so that large pixel runs can keep rendering during a download.
-  (let [[model output] (locking (:lock runtime)
-                         (let [{:keys [model output]} @(:state runtime)
-                               atmosphere (venue-fog/for-save runtime output)]
-                           [(cond-> (fog-deadline/save-ids (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model)) output)
-                              atmosphere (assoc-in venue-fog/saved-path atmosphere)) output]))]
-    (format-show model (render/portable-frame output))))
+  (let [[model output windows] (locking (:lock runtime)
+                                 (let [{:keys [model output keyframes]} @(:state runtime)
+                                       atmosphere (venue-fog/for-save runtime output)
+                                       model (merge (fog-scan/disarm model) (connections/export-state (:connections runtime) model))]
+                                   [(cond-> (fog-deadline/save-ids model output)
+                                      atmosphere (assoc-in venue-fog/saved-path atmosphere))
+                                    output keyframes]))]
+    (format-show (effect-keyframes/for-save model windows) (render/portable-frame output))))
 
 (defn export-show
   "Freeze the full domain state and last output from one committed snapshot."

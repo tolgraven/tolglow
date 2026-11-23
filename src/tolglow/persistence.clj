@@ -29,6 +29,7 @@
             [tolglow.spatial.actions :as spatial-actions]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [afterglow.runtime.keyframes.storage :as keyframe-storage]
             [tolglow.event-subscribers :as event-subscribers]
             [tolglow.integrations.live-sync :as live-sync]
             [tolglow.repl.sessions :as repl-manager]
@@ -137,6 +138,9 @@
     (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
     (compiler/compile-effect definition)
     (system/validate-state instance)
+    (when-let [window (:tolglow.effects.keyframes/saved instance)]
+      (try (keyframe-storage/restore window [] 0)
+           (catch Exception e (fail! (conj path :keyframes) (.getMessage e)))))
     (registry/resolve-params (:params definition {}) (:params instance))
     (when-let [recorded (or (get-in r [:versions [:effects (:effect-id instance) (:effect-version instance)]])
                            (let [current (get-in r [:effects (:effect-id instance)])]
