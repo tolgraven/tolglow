@@ -1,0 +1,16 @@
+[
+  {
+    "policy": "~:redundant",
+    "prepared": 2,
+    "returned": 20,
+    "dropped": 1,
+    "rows": 1280
+  },
+  {
+    "policy": "~:redundant",
+    "prepared": 3,
+    "returned": 28,
+    "dropped": 0,
+    "rows": 1792
+  }
+]
