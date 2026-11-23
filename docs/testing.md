@@ -160,7 +160,8 @@ See [compatibility repairs](compatibility-progress.md) and the historical/curren
 - **Device adapters:** independent sessions, held-cue release, stale callbacks,
   reconnect/handoff, palette acknowledgements/timeouts, owned scheduler and
   transport cleanup. Native Wayang/MIDI/OSC activation remains opt-in and was
-  not performed in tests. Push 3 native protocol/display is not claimed.
+  not performed in tests. Tethered Push 3 display routing also has a libusb
+  recording backend and native-size raster replay. See [physical qualification](push-display-packaging.md#tethered-push-3).
 - **Authoring/integration:** deterministic definitions/compilation/composition,
   constrained seeded policy, schema-aware mappings, provider stream parsing,
   actual local HTTP cancellation/timeout and scripted tool calls against the

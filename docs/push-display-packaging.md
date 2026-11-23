@@ -132,3 +132,25 @@ The 24-frame software Chromium check took 25.3 seconds for cold shader compilati
 and first capture. Warm captures had a 3.86-second median and a 6.18-second maximum
 on the shared SwiftShader host. These are software rendering measurements. Hardware
 GPU throughput and transfer to a physical Push remain unmeasured.
+
+## Tethered Push 3
+
+Choose the MIDI input and output of the device’s User port from the port list. Set the actual captured layout, button bindings and expression mode for your unit. In Afterglow, run the read-only tethered display `list` and `inspect` commands to get the USB bus and address. The image sink and MIDI port use separate handles. The application does not select an arbitrary connected Push.
+
+```clojure
+;; runtime is a running tolglow.show host. captured contains this unit’s MIDI
+;; port indexes, :user-mode? true, :layout, bindings and expression settings.
+(def surface
+  (tolglow.show/connect-device!
+    runtime :push-3
+    (assoc captured
+           :session-id "desk-push-3"
+           :display (tolglow.show/push-browser-display
+                      runtime {:device :push-3
+                               :usb {:bus 2 :address 7}
+                               :browser-executable "/usr/bin/chromium"}))))
+```
+
+The offscreen page renders the same CSS parameter widgets, waveform and history views, page grid, simulator and rig controls as Push 2. Bind captured buttons to `:display/parameters`, `:display/pages`, `:display/simulator`, `:display/rig` and `:display/camera` as needed. The bindable actions use the capture’s actual IDs. The display view follows the instance selected by a User Mode or MPE pad. Choosing a different lens or display does not launch a cue. A frame repeatedly sent to USB uses the last packed raster. Only the scheduled display worker asks the browser for new visuals.
+
+The replay uses the production screen encoder and 24 actual Studio simulator captures. Hardware qualification covers colour and edge orientation, Live handoff, continuous audio/MIDI and disconnect. See [Afterglow’s driver, receipts and on-device instructions](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/push-3-display.md).
