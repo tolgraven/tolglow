@@ -1,0 +1,5 @@
+0.5 | Sharing | Active guests 1 | Live steps 1
+1.0 | Reconnecting to Dance floor · 1 of 3 | Active guests 0 | Samples discarded
+2.0 | Stage key verified | Active guests 1 | Resumed at step 408
+2.1 | Duplicate dropped | Active guests 1 | No step emitted
+2.5 | Sharing | Active guests 1 | New live steps 1
