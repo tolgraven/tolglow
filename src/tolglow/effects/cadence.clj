@@ -35,7 +35,8 @@
   (let [{:keys [options epoch period-ms previous samples config]} session
         ids (versions model)
         quality (quality/prepare (:prior-quality session) epoch ids (:instances model))
-        timings {:epoch epoch :versions ids :samples (quality/protect @samples (:protected quality))
+        timings {:defer-live-slowdown? (:defer-live-slowdown? session)
+                 :epoch epoch :versions ids :samples (quality/protect @samples (:protected quality))
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
     {:options options :config config :quality quality :state (cadence/advance previous timings options)}))
 

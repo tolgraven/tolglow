@@ -1,7 +1,102 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
+ [{:id :sensors/nearby-audience :title "Participate in a nearby show from iPhone, Apple Watch or a QR App Clip"
+   :kind :implementation :status :in-progress :owner "Nearby audience participation"
+   :paths ["tolglow/native/Audience" "tolglow/native/AppClip" "tolglow/native/AudienceBridge"]
+   :depends-on [:foundation/tests] :acceptance ["Join without shared Wi-Fi. Map dance effort, timed steps and optional pulse. Qualify individual, aggregated and opt-in full-app compute modes with loss, leave and device churn. Verify the QR App Clip on real hardware."] :evidence []}
+  {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
+   :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
+   :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence []}
+  {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
+   :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
+   :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
+   :depends-on [:foundation/tests] :acceptance ["Round unfocused readouts, preserve exact typed edits, distinguish 256 and 65,536 normalized values and verify Shift encoder output to both channel widths."] :evidence []}
+  {:id :render/distributed-workers :title "Use remote client GPU compute for real fixture output"
+   :kind :implementation :status :in-progress :owner "Distributed render host and browser compute"
+   :paths ["afterglow/src/afterglow/render/distributed.clj" "tolglow/js/compute" "tolglow/src/tolglow/render/workers.clj"]
+   :depends-on [:foundation/tests] :acceptance ["Negotiate an opt-in worker. Split real show fields across clients, join by frame, reject stale work, bound memory and preserve local output on deadline or disconnect. Compare Linux/Raspberry Pi host and Apple client costs."] :evidence []}
+  {:id :render/active-chain-fusion :title "Compile ordered active contributions into a single shader"
+   :kind :implementation :status :in-progress :owner "Active-chain GPU compiler"
+   :paths ["afterglow/src/afterglow/render/chain.clj"]
+   :depends-on [:foundation/tests] :acceptance ["Observe a single dispatch and readback from the show for an eligible multi-effect chain. Test parameter changes, ordering, native alpha, invalidation, precision, barriers and CPU-reference equivalence."] :evidence []}
+  {:id :performance/render-work-elimination :title "Measure and eliminate provably unobservable renderer work"
+   :kind :research :status :in-progress :owner "Renderer work elimination and GPU compilation"
+   :paths ["tolglow/docs/performance/render-work-elimination.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
+   :evidence ["Existing production baselines and candidate experiments are indexed in docs/performance/render-work-elimination.md."]}
+  {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
+   :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
+   :paths ["tolglow/docs/performance/perceptual-scheduling.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
+   :evidence ["The current cue-visualization and keyframe implementations are cross-referenced in docs/performance/perceptual-scheduling.md."]}
+  {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
+   :kind :documentation :status :planned :owner nil
+   :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
+   :acceptance ["Keep ownership disjoint, keep child work until independently verified, link every request to acceptance, and attach screenshots plus motion and exact-head reviews to PRs."] :evidence []}
+  {:id :delivery/history :title "Reconcile historical branches, missing-diff reports and tracked artifacts"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/branch-compatibility.md"] :depends-on [:foundation/tests]
+   :acceptance ["Link both merges and commits. Reconstruct the reported 66k-agent diff if an identifying revision, artifact or equivalent evidence is found."] :evidence []}
+  {:id :control/hardware-qualification :title "Measure expressive surfaces, X-Touch extender feedback and color PWM"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/xtouch.md"] :depends-on [:foundation/tests]
+   :acceptance ["Compare current physical output to the referenced remote script, measure sustained message rate/flicker and provide fallbacks on real units."] :evidence []}
+  {:id :development/editor-parity :title "Complete the source-editing and code-cue workflows in a real bruvbox Neovim"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/docs/product/development-workspace.md"] :depends-on [:foundation/tests]
+   :acceptance ["Exercise WASM nvim, REPL completion and suggestions, scratch form bindings, staged application diffs and a recoverable hot reload from a packaged app."] :evidence []}
+  {:id :development/interop-modernization :title "Audit dev source roots, modern Clojure features and interop boundaries"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/dependency-upgrades.md"] :depends-on [:foundation/tests]
+   :acceptance ["Locate website.dev.stack in its owning checkout. Compare Promise/async/Fetch alternatives and test the chosen API, source paths and build targets. Read the style guide and audit named handlers and oversized reducers."] :evidence []}
+  {:id :native/conductor-qualification :title "Qualify the mobile conductor and automatic rig survey on real devices"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/sensors.md"] :depends-on [:foundation/tests]
+   :acceptance ["Demonstrate adjustable phone and wrist mappings, double tap, gesture events, timed light/pan/tilt recognition and real mounting pose against manual measurements."] :evidence []}
+  {:id :preview/display-qualification :title "Qualify viewport resolution, HDR and adaptive high-refresh display presentation"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/studio-atmosphere.md"] :depends-on [:foundation/tests]
+   :acceptance ["Use matched 1:1 crops and supersampling; verify offscreen AA, full-room fog, bloom/grain, fullscreen, visibility suspension, 4K and SDR/HDR headroom. Measure true geometry resolution and p95 on Retina and iPad hardware."] :evidence []}
+  {:id :show/spatial-response-ranking :title "Rank late-bound targets and score effect candidates for reactive spaces"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/docs/spatial-show.md"] :depends-on [:foundation/tests]
+   :acceptance ["Rank by actual capabilities, group usage, value constraints, registry diffs and contact lifetime. Compare an indexed search option and capture the same rig selection on Push and in Studio."] :evidence []}
+  {:id :web/diagnostic-parity :title "Qualify exception and schema handling across reactive and event boundaries"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/cue-inspector.md"] :depends-on [:foundation/tests]
+   :acceptance ["Prove a broken sub or callback preserves sibling handlers, records the failing path and stack, and appears on the specific active cue in console, file, REPL and Studio."] :evidence []}
+  {:id :control/display-visualization-qualification :title "Qualify spatial parameters, rig camera, page overview and demand-driven pad colors"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/push-display-packaging.md"] :depends-on [:foundation/tests]
+   :acceptance ["Demonstrate physical Push and headless captures, history zoom and both color schemes. Check subscriber cleanup, cold/warm draw cost and visual sampling before live effects."] :evidence []}
+  {:id :native/apple-standalone-studio :title "Deliver and qualify self-contained Studio applications on macOS, iPadOS and iOS"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/native"] :depends-on [:foundation/tests]
+   :acceptance ["Distinguish packaged full Clojure runtime from native-image subset and paired host. Open external config and editable app sources, exercise PiP and actual AirPlay receivers at supported resolutions."] :evidence []}
+  {:id :models/agent-language :title "Expose compact show authoring and shader operations to local and remote agents"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/src/tolglow/agents"] :depends-on [:foundation/tests]
+   :acceptance ["Reuse show/library defaults, mix data and trusted local Clojure one-offs, validate shader changes off the render clock and verify normal Studio/REPL/standalone entry points and rollback."] :evidence []}
+  {:id :models/local-adapters :title "Prepare device-aware local model selection, adapter routing and costed training recipes"
+   :kind :research :status :planned :owner nil
+   :paths ["tolglow/docs/model-lab"] :depends-on [:foundation/tests]
+   :acceptance ["Compare model and adapter revisions, resident memory and thermal limits, size options from phone to Mac. Cost MBP/Studio and NVIDIA through GB200 and test launch preparation without weight updates."] :evidence []}
+  {:id :models/training-data :title "Assemble reproducible GLSL, show-language and paired source datasets"
+   :kind :implementation :status :planned :owner nil
+   :paths ["tolglow/dev/model-lab"] :depends-on [:foundation/tests]
+   :acceptance ["Produce provenance and license-aware train/dev/test sets with family and leakage controls, real shader/command tests and a held-out coding evaluation. Preparation stops before fine-tuning."] :evidence []}
+  {:id :studio/visible-cue-pad-previews :title "Visualize mounted cue pages through musical keyframes"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/tolglow/visualization/cue_pads.clj" "tolglow/src/studio/tolglow/studio/cue_pad_preview.cljs"
+           "afterglow/src/afterglow/control/devices/session.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Share inactive and running samples across visible browser and Push pad cells, clean up every lease and lower visual keyframe frequency before live effects."]
+   :evidence ["Release Chromium observed 16 distinct colors on an inactive cue, switched pages, and recorded Transit query disposal. Paired Afterglow PR #71 verifies fair physical MIDI messages and session cleanup. See docs/cue-pad-previews.md for timing, ownership and reproduction."]}
+  {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
            "afterglow/test/afterglow/render/atmosphere_test.clj" "tolglow/js/preview/fog-optics.generated.js"
@@ -61,6 +156,13 @@
    :depends-on [:foundation/tests]
    :acceptance ["Find a source; edit, save and remove one binding without replacing sibling edits. Observe the live stages only when visible."]
    :evidence ["The Ring/show-owner regression suite covers stale edits, disjoint paths, invalid stages, and source discovery. dev/studio/variable-blocks-browser-qa.mjs edits one saved variable from two browser sessions, reads the wet amount back, observes the live trace, and verifies socket release. The release was exercised at 390, 1024 and 1440 CSS pixels."]}
+  {:id :controllers/push-wide-preview :title "View the venue and rig from the Push display"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/js/preview/push-scene.js" "tolglow/src/tolglow/show/push_scene.clj"
+           "tolglow/src/studio/tolglow/studio/push_scene.cljs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Project a committed venue frame into the passive 960 by 160 device surface. Bound scene traffic, frame and dispose the shared renderer, and verify ordinary and panoramic camera projections."]
+   :evidence ["See docs/push-display-packaging.md. The production Ring page and Chromium worker captured 24 device frames, paged through rig markers and disposed the renderer on return. JVM tests cover 20,000 fixtures. Node tests check fit bounds, cylindrical projection and capture deadlines."]}
   {:id :push/page-overview :title "Browse cue pages in cue and type colors on the Push display"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/control/display.clj" "tolglow/src/tolglow/controllers/page_overview.clj" "tolglow/src/studio/tolglow/studio/page_overview.cljs"]
