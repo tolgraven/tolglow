@@ -1053,15 +1053,15 @@
                    (let [params (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)} {})]
                      {:parameter-samples params :resolved-param-overrides (:overrides params)
                       :keyframes (effect-keyframes/restored model)
-                    :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
-                             (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
-                    :output (if restored-output
-                              (update restored-output :universes
-                                      #(fog-deadline/restore-packet
-                                         (patch! runtime (get-in model [:rig :fixtures]))
-                                         (get-in model fog-deadline/saved-ids-path)
-                                         (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
-                              (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
+                      :model (cond-> (effect-keyframes/without-checkpoints model) (get-in model fog-deadline/saved-ids-path)
+                               (update :extensions dissoc ::fog-deadline/saved-automatic-pumps))
+                      :output (if restored-output
+                                (update restored-output :universes
+                                        #(fog-deadline/restore-packet
+                                           (patch! runtime (get-in model [:rig :fixtures]))
+                                           (get-in model fog-deadline/saved-ids-path)
+                                           (into {} (map (fn [[u values]] [u (byte-array (map unchecked-byte values))])) %)))
+                                (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true}))
                       :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
@@ -1069,9 +1069,15 @@
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command))
+                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
+                                                                      (get-in before [:parameter-samples :plans]))
+                           control-view (if (seq (:overrides parameter-samples))
+                                          (update (:modulation-view before) :overrides
+                                                  #(merge-with merge % (:overrides parameter-samples)))
+                                          (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model before time-ms (reactions runtime) command))
+                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1088,17 +1094,15 @@
                                       (autopilot/prepare model previous-cache patch meter-plan time-ms suspended?
                                         (delay (if (and (:blocks previous-cache) (identical? patch (get-in previous-cache [:plan :patch])))
                                                  (resolve-frame patch (:blocks previous-cache) (:raw-options previous-cache))
-                                                 prior-output)) command (:modulation-view before) prior-output))
+                                                 prior-output)) command control-view prior-output))
                            model (autopilot/start-hdr-clock (or (:model prepared) model) time-ms)
                            hdr? (or conductor? (get-in model [:settings :hdr :enabled?]))
                            hdr-scope (when hdr? (autopilot/standalone-scope (:hdr-scope before) model patch))
                            hdr-opts (when hdr? (or (autopilot/render-options (assoc model :time-ms time-ms) prepared suspended?
-                                                                              (:modulation-view before) hdr-scope) {}))
+                                                                              control-view hdr-scope) {}))
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                                      (get-in before [:parameter-samples :plans]))
                            input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
                                                        (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)

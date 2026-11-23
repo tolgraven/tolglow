@@ -85,7 +85,9 @@
         cache-key [waveform schema binding]
         plan (or (get previous cache-key) (get-in result [:plans cache-key])
                  (prepare registry waveform schema binding))
-        held? (boolean (get-in model [:modulation :holds id param]))
+        hold (get-in model [:modulation :holds id param])
+        held? (boolean (and hold (or (nil? (:until-beat hold))
+                                      (< (get-in model [:transport :beat] (:beat clock)) (:until-beat hold)))))
         result (assoc-in result [:plans cache-key] plan)
         source {:type :lfo :binding binding :held? held?}
         diagnostic (fn [result message]

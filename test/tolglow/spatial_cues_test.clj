@@ -278,3 +278,17 @@
       (is (covered? 3))
       (is (not (covered? 6)))
       (finally (show/stop! rt)))))
+
+(deftest instance-waveform-aims-the-spatial-field-on-the-same-commit
+  (let [rt (host/runtime true)]
+    (try
+      (launch! rt 0 :blue)
+      (let [id (:instance-id (host/submit rt 0 :spatial-cue request))
+            binding {:type :lfo :waveform :sine :from [3 1 0] :to [3 1 0]}
+            addr {:instance-id id :param :position}]
+        (is (= [255 0 0 128 0 128 0 0 255] (host/output rt)))
+        (is (= :accepted (:status (host/submit rt 25 :modulation-bind (assoc addr :binding binding)))))
+        (is (= [0 0 255 0 0 255 255 0 0] (host/output rt)))
+        (is (= :accepted (:status (host/submit rt 50 :modulation-unbind addr))))
+        (is (= [255 0 0 128 0 128 0 0 255] (host/output rt))))
+      (finally (show/stop! rt)))))
