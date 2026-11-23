@@ -1,316 +1,78 @@
-name: Master show performance evidence
-on:
-  workflow_dispatch:
-    inputs:
-      tolglow_ref:
-        description: Tolglow source revision to measure
-        type: string
-        default: master
-      afterglow_ref:
-        description: Optional Afterglow candidate (defaults to the pinned companion)
-        type: string
-        default: ''
-      compare_afterglow_ref:
-        description: Optional baseline Afterglow revision; run baseline then repeat candidate
-        type: string
-        default: ''
-      compare_tolglow_ref:
-        description: Optional baseline Tolglow revision; run baseline then repeat candidate
-        type: string
-        default: ''
-  workflow_call:
-  pull_request:
-    branches: [master]
-    paths:
-      - 'dev/tolglow/bench_*.clj'
-      - 'dev/tolglow/perf/venue_rig.clj'
-      - 'dev/tolglow/perf/weighted_venue.clj'
-      - 'dev/tolglow/perf/weighted_live*.clj'
-      - 'dev/tolglow/perf/weighted_live/**'
-      - 'dev/tolglow/perf/adaptive_keyframes.clj'
-      - 'dev/tolglow/perf/output_deadlines.clj'
-      - 'dev/tolglow/perf/multirate_*.clj'
-      - 'dev/tolglow/perf/transient_scheduling.clj'
-      - 'dev/tolglow/perf/sampling_cost.clj'
-      - 'dev/tolglow/perf/beam_*.clj'
-      - 'dev/tolglow/perf/venue_fog.clj'
-      - 'dev/tolglow/perf/compound_layers.clj'
-      - 'dev/tolglow/perf/independent_effects.clj'
-      - 'src/tolglow/effects/cadence.clj'
-      - 'src/tolglow/effects/sampling_quality.clj'
-      - 'bin/profile-*'
-      - '.github/workflows/performance.yml'
-  push:
-    branches: [master]
-    paths:
-      - 'src/tolglow/**'
-      - 'dev/tolglow/bench_show.clj'
-      - 'dev/tolglow/bench_performance_controls.clj'
-      - 'dev/tolglow/bench_activity_opacity.clj'
-      - 'dev/tolglow/bench_autopilot.clj'
-      - 'dev/tolglow/bench_subscribers.clj'
-      - 'dev/tolglow/bench_movers.clj'
-      - 'dev/tolglow/bench_movers_reference.clj'
-      - 'dev/tolglow/perf/venue_rig.clj'
-      - 'dev/tolglow/perf/weighted_venue.clj'
-      - 'dev/tolglow/perf/weighted_live*.clj'
-      - 'dev/tolglow/perf/weighted_live/**'
-      - 'dev/tolglow/perf/adaptive_keyframes.clj'
-      - 'dev/tolglow/perf/output_deadlines.clj'
-      - 'dev/tolglow/perf/multirate_*.clj'
-      - 'dev/tolglow/perf/transient_scheduling.clj'
-      - 'dev/tolglow/perf/sampling_cost.clj'
-      - 'dev/tolglow/perf/beam_*.clj'
-      - 'dev/tolglow/perf/venue_fog.clj'
-      - 'dev/tolglow/perf/compound_layers.clj'
-      - 'dev/tolglow/perf/independent_effects.clj'
-      - 'bin/profile-master'
-      - 'bin/profile-subscribers'
-      - 'bin/profile-movers'
-      - 'src/shared/tolglow/**'
-      - 'project.clj'
-      - '.github/workflows/tests.yml'
-      - '.github/workflows/performance.yml'
+name: Live weighted venue compact emission comparison
+on: workflow_dispatch
 permissions:
   contents: read
-concurrency:
-  group: show-performance-${{ github.event.pull_request.number || ((inputs.compare_afterglow_ref || inputs.compare_tolglow_ref) && github.run_id) || 'master' }}
-  cancel-in-progress: false
 jobs:
-  profile:
-    name: Profile ${{ matrix.companion }}
-    strategy:
-      fail-fast: false
-      matrix:
-        companion: ${{ fromJSON(github.event_name == 'schedule' && '["paired", "upstream"]' || '["paired"]') }}
+  compare:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
-          # Reusable calls originate on the default branch (currently effects).
-          # Measure master for those calls, never the caller's older source tree.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'push' && github.ref == 'refs/heads/master' && github.sha || inputs.tolglow_ref || 'master' }}
           path: tolglow
-      - name: Resolve paired Afterglow revision once
-        uses: actions/checkout@v7.0.1
+          ref: c4d860a7081b12239a9b51c968dea69e87db4b21
+      - uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '74d0de46ec7dfd4d6985287c01989c9999b2990d' }}
           path: afterglow
-      - name: Resolve optional Afterglow baseline once
-        if: inputs.compare_afterglow_ref != ''
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: tolgraven/afterglow
-          ref: ${{ inputs.compare_afterglow_ref }}
-          path: afterglow-baseline
-      - name: Resolve optional Tolglow baseline once
-        if: inputs.compare_tolglow_ref != ''
-        uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ inputs.compare_tolglow_ref }}
-          path: tolglow-baseline
-      - name: Record immutable measured commits
-        run: |
-          mkdir -p performance-artifact
-          git -C tolglow rev-parse HEAD > performance-artifact/tolglow-commit.txt
-          git -C afterglow rev-parse HEAD > performance-artifact/afterglow-commit.txt
-          if [[ -d afterglow-baseline ]]; then
-            git -C afterglow-baseline rev-parse HEAD > performance-artifact/baseline-afterglow-commit.txt
-          fi
-          if [[ -d tolglow-baseline ]]; then
-            git -C tolglow-baseline rev-parse HEAD > performance-artifact/baseline-tolglow-commit.txt
-          fi
-          date -u +%FT%TZ > performance-artifact/resolved-at.txt
+          ref: 5a4ff8cf9695c0b61ba0ccd65cb209c854d63f9d
+          fetch-depth: 100
       - uses: actions/setup-java@v6.3.0
         with:
           distribution: temurin
           java-version: '21'
-      - name: Install the verified Leiningen release
+      - name: Use the same physical scheduler and optical implementation in all four shows
+        run: |
+          set -euo pipefail
+          git -C afterglow fetch --no-tags --depth=100 origin 74d0de46ec7dfd4d6985287c01989c9999b2990d
+          git -C afterglow -c user.name=Qualification -c user.email=qualification@localhost merge --no-commit --no-ff FETCH_HEAD
+          test "$(git -C afterglow write-tree)" = 7a1067f6c6858094d5053577cb11cef5bcf6a04d
+          git -C tolglow fetch --no-tags --depth=2 origin 7f19dbf3d11813168c3f610ad35a1748a625ae00
+          git -C tolglow diff FETCH_HEAD^ FETCH_HEAD -- src/tolglow/spatial.clj > "$RUNNER_TEMP/compact.patch"
+          mkdir -p results
+      - name: Install the repository's verified Leiningen release
         working-directory: tolglow
         run: .github/scripts/install-lein
-      - name: Cache Maven dependencies
-        uses: actions/cache@v6.1.0
+      - uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.m2/repository
             !~/.m2/repository/**/*.lastUpdated
           key: performance-maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
           restore-keys: performance-maven-${{ runner.os }}-
-      - name: Profile complete mixed shows with scalar oracle
+      - name: Compare complete 40 Hz shows in alternating fresh JVMs
         working-directory: tolglow
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: |
           set -euo pipefail
-          ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
-            --warmup 40 --samples 120 --output ../performance-artifact/report.edn \
-            2>&1 | tee ../performance-artifact/run.log
-      - name: Profile dense 3D rigs with independent ArtDMX capture
-        if: hashFiles('tolglow/dev/tolglow/perf/venue_rig.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          ./bin/profile-master --layout sculpture --heads 10000,20000 --movers 64 --workers 2 \
-            --warmup 12 --samples 32 --output ../performance-artifact/dense-venue.edn
-      - name: Profile registered weighted cue volumes with real output publication
-        if: hashFiles('tolglow/dev/tolglow/perf/weighted_venue.clj') != '' && hashFiles('tolglow/src/tolglow/spatial/cues.clj') != '' && hashFiles('afterglow/src/afterglow/spatial/field.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          for pixels in 10000 20000; do
-            lein with-profile +benchmark run -m tolglow.perf.weighted-venue "$pixels" 3 5 all \
-              "../performance-artifact/weighted-venue-$pixels.edn"
+          cat > "$RUNNER_TEMP/aggregate.clj" <<'CLJ'
+          (require '[clojure.edn :as edn])
+          (let [[path lane blob out] *command-line-args*
+                report (edn/read-string (slurp path))
+                summary (:summary report)]
+            (assert (= 240 (:nominal-slots summary)))
+            (assert (:show-output-exercised? summary) (select-keys summary [:faulted-instances :incomplete-packets :distinct-volume-poses :distinct-delivered-aim-states]))
+            (assert (= 0 (:incomplete-packets summary)))
+            (let [result (assoc (select-keys report [:rig :summary :window-resources :motion])
+                                :variant lane :host-source-blob blob
+                                :workload "c4d860a7081b12239a9b51c968dea69e87db4b21"
+                                :afterglow-tree "7a1067f6c6858094d5053577cb11cef5bcf6a04d")]
+              (spit out (pr-str result))
+              (prn lane (select-keys summary [:nominal-slots :completed-renders :complete-within-25-ms
+                                             :sent :source-counts :incomplete-packets]) (:window-resources report))))
+          CLJ
+          deps=$(lein with-profile +benchmark classpath)
+          for label in A1 B1 B2 A2; do
+            git restore --source=HEAD -- src/tolglow/spatial.clj
+            if [[ "$label" == B* ]]; then git apply "$RUNNER_TEMP/compact.patch"; fi
+            source_blob=$(git hash-object src/tolglow/spatial.clj)
+            lein with-profile +benchmark run -m tolglow.perf.weighted-live "$RUNNER_TEMP/$label.edn" 20000 160 240 > "$RUNNER_TEMP/$label.log"
+            java -cp "$deps" clojure.main "$RUNNER_TEMP/aggregate.clj" "$RUNNER_TEMP/$label.edn" "$label" "$source_blob" "../results/$label.edn"
           done
-      - name: Record physical release, fresh input and actual send times
-        if: hashFiles('tolglow/dev/tolglow/perf/output_deadlines.clj') != '' && hashFiles('afterglow/src/afterglow/output/timeline.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          lein with-profile +benchmark run -m tolglow.perf.output-deadlines \
-            ../performance-artifact/physical-output-deadlines.edn 120 240
-      - name: Capture live mixed venue publication at 40 Hz
-        if: matrix.companion == 'paired' && hashFiles('tolglow/dev/tolglow/perf/weighted_live.clj') != '' && hashFiles('afterglow/src/afterglow/output/timeline.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          lein with-profile +benchmark run -m tolglow.perf.weighted-live \
-            ../performance-artifact/live-weighted-venue.edn 20000 160 240
-      - name: Measure adaptive sampling against per-frame effect evaluation
-        if: hashFiles('tolglow/dev/tolglow/perf/adaptive_keyframes.clj') != '' && hashFiles('afterglow/src/afterglow/runtime/cadence.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          lein with-profile +benchmark run -m tolglow.perf.adaptive-keyframes 4000 24 80 \
-            ../performance-artifact/adaptive-keyframes.edn
-      - name: Verify full-rate color, aim and discrete output across sampling policies
-        if: hashFiles('tolglow/dev/tolglow/perf/multirate_quality.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein run -m tolglow.perf.multirate-quality ../performance-artifact/multirate-quality.edn 1024 64 80 160 cpu
-      - name: Verify flash fidelity and smooth-effect recovery under injected pressure
-        if: hashFiles('tolglow/dev/tolglow/perf/transient_scheduling.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein run -m tolglow.perf.transient-scheduling ../performance-artifact/transient-scheduling.edn
-      - name: Compare worker CPU on direct, endpoint and interpolated frames
-        if: hashFiles('tolglow/dev/tolglow/perf/sampling_cost.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein run -m tolglow.perf.sampling-cost ../performance-artifact/sampling-cost.edn
-      - name: Compare decoded pan and tilt against the projected spot footprint
-        if: hashFiles('tolglow/dev/tolglow/perf/beam_fidelity.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein run -m tolglow.perf.beam-fidelity ../performance-artifact/beam-fidelity.edn 0.25
-      - name: Compare independent worker batches with serial lighting output
-        if: hashFiles('tolglow/dev/tolglow/perf/independent_effects.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          lein run -m tolglow.perf.independent-effects ../performance-artifact/independent-effects.edn 32 80
-      - name: Profile actual acknowledged Studio subscribers
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          set -euo pipefail
-          ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
-            --warmup 40 --samples 120 --period-ms 25 --output ../performance-artifact/subscribers.edn \
-            2>&1 | tee ../performance-artifact/subscribers.log
-      - name: Measure ordered compound cues on 64 moving heads
-        if: hashFiles('tolglow/dev/tolglow/perf/compound_layers.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein with-profile +benchmark run -m tolglow.perf.compound-layers > ../performance-artifact/compound-layers.edn
-      - name: Profile rotated moving heads and competing opacity layers
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: |
-          set -euo pipefail
-          ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
-            --output ../performance-artifact/movers.edn 2>&1 | tee ../performance-artifact/movers.log
-      - name: Measure fogger tracking across 2,048 RGBW pixels
-        if: hashFiles('tolglow/dev/tolglow/perf/venue_fog.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein with-profile +benchmark run -m tolglow.perf.venue-fog 2048 125 300 > ../performance-artifact/venue-fog.edn
-      - name: Measure concurrent limits, response and activity across an animated rig
-        if: hashFiles('tolglow/dev/tolglow/bench_performance_controls.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein with-profile +benchmark run -m tolglow.bench-performance-controls > ../performance-artifact/performance-controls.edn
-      - name: Measure continuous alpha sweeps across layered pixel effects
-        if: hashFiles('tolglow/dev/tolglow/bench_activity_opacity.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein with-profile +benchmark run -m tolglow.bench-activity-opacity > ../performance-artifact/activity-opacity.edn
-      - name: Measure musical decisions, between-beat frames and HDR against the base show
-        if: hashFiles('tolglow/dev/tolglow/bench_autopilot.clj') != ''
-        working-directory: tolglow
-        env:
-          AFTERGLOW_ROOT: ../afterglow
-        run: lein with-profile +benchmark run -m tolglow.bench-autopilot > ../performance-artifact/autopilot.edn
-      - name: Compare baseline and repeat candidate on the same runner
-        if: inputs.compare_afterglow_ref != '' || inputs.compare_tolglow_ref != ''
-        working-directory: tolglow
-        run: |
-          set -euo pipefail
-          comparison_root="$(cd .. && pwd)"
-          for pass in baseline candidate-repeat; do
-            if [[ "$pass" == baseline && -d "$comparison_root/afterglow-baseline" ]]; then
-              export AFTERGLOW_ROOT="$comparison_root/afterglow-baseline"
-            else
-              export AFTERGLOW_ROOT="$comparison_root/afterglow"
-            fi
-            if [[ "$pass" == baseline && -d "$comparison_root/tolglow-baseline" ]]; then
-              source_root="$comparison_root/tolglow-baseline"
-            else
-              source_root="$comparison_root/tolglow"
-            fi
-            artifact_root="$comparison_root/performance-artifact/$pass"
-            mkdir -p "$artifact_root"
-            (
-              cd "$source_root"
-              ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
-                --warmup 40 --samples 120 --output "$artifact_root/report.edn" \
-                2>&1 | tee "$artifact_root/run.log"
-              ./bin/profile-subscribers --heads 1000,10000 --clients 0,1,4 --movers 8 --workers 2 \
-                --warmup 40 --samples 120 --period-ms 25 --output "$artifact_root/subscribers.edn" \
-                2>&1 | tee "$artifact_root/subscribers.log"
-              if [[ -f dev/tolglow/perf/multirate_quality.clj ]]; then
-                lein run -m tolglow.perf.multirate-quality "$artifact_root/multirate-quality.edn" 1024 64 80 160 cpu
-              fi
-              if [[ -f dev/tolglow/perf/transient_scheduling.clj ]]; then
-                lein run -m tolglow.perf.transient-scheduling "$artifact_root/transient-scheduling.edn"
-              fi
-              if [[ -f dev/tolglow/perf/compound_layers.clj ]]; then
-                lein with-profile +benchmark run -m tolglow.perf.compound-layers > "$artifact_root/compound-layers.edn"
-              fi
-              ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
-                --output "$artifact_root/movers.edn" 2>&1 | tee "$artifact_root/movers.log"
-            )
-          done
-      - name: Retain evidence including failures
+      - uses: actions/upload-artifact@v7
         if: always()
-        uses: actions/upload-artifact@v7.0.2
         with:
-          name: master-show-performance-${{ github.run_id }}${{ matrix.companion == 'upstream' && '-upstream' || '' }}
-          path: performance-artifact/
-          retention-days: 90
+          name: compact-emission-live-summary
+          path: results/*.edn
+          if-no-files-found: warn
