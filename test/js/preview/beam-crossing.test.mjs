@@ -133,6 +133,10 @@ test('Room preview keeps beam crossings additive below the bloom threshold', asy
       assert.ok(quadrature.adaptive.count > minimumSamples,
         `Only ${quadrature.adaptive.count} lit ${width} × ${height} reference pixels; expected more than ${minimumSamples}`);
       assert.ok(quadrature.adaptive.p95relative < .05, 'Dense crossings must converge without a coarse bright knot');
+      const fullViewLimit = auto ? .16 : .12;
+      assert.ok(quadrature.fullView.count > quadrature.adaptive.count);
+      assert.ok(quadrature.fullView.p95relative < fullViewLimit,
+        `Narrow shafts across the room exceeded the ${fullViewLimit} relative radiance limit`);
       assert.ok(quadrature.adaptive.rmse < quadrature.coarse.rmse / 3);
       assert.ok(quadrature.adaptive.maximumOver < .04);
       assert.equal(quadrature.counts.haze.minimum, 24);

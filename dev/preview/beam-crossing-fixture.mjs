@@ -264,13 +264,13 @@ function measureQuadrature({auto = true} = {}) {
       material.fragmentShader = material.fragmentShader.replace('n<72','n<192'); material.needsUpdate = true;
     }
     const reference = sample(192), [width,height] = [fog.target.width,fog.target.height];
-    const error = pixels => {
+    const error = (pixels, [left, bottom, right, top]) => {
       let count=0,squared=0,absolute=0,maximumOver=0; const relative=[];
-      for(let y=Math.floor(height*.18);y<height*.6;y++)for(let x=Math.floor(width*.34);x<width*.6;x++) {
+      for(let y=bottom;y<top;y++)for(let x=left;x<right;x++) {
         const i=(y*width+x)*4;
-        const luminance=p=>p[i]*.2126+p[i+1]*.7152+p[i+2]*.0722;
-        const expected=luminance(reference),actual=luminance(pixels);
+        const expected=reference[i]*.2126+reference[i+1]*.7152+reference[i+2]*.0722;
         if(expected<=.02)continue;
+        const actual=pixels[i]*.2126+pixels[i+1]*.7152+pixels[i+2]*.0722;
         const delta=actual-expected; count++; squared+=delta*delta; absolute+=Math.abs(delta);
         relative.push(Math.abs(delta)/expected); maximumOver=Math.max(maximumOver,delta);
       }
@@ -319,7 +319,9 @@ function measureQuadrature({auto = true} = {}) {
       boundary.maximumCompleted=Math.max(boundary.maximumCompleted,boundaryPixels[i+1]);
       boundary.maximumEvaluated=Math.max(boundary.maximumEvaluated,boundaryPixels[i]);
     }
-    return {config,coarse:error(coarse),adaptive:error(adaptive),
+    const crossing=[Math.floor(width*.34),Math.floor(height*.18),Math.ceil(width*.6),Math.ceil(height*.6)];
+    return {config,coarse:error(coarse,crossing),adaptive:error(adaptive,crossing),
+      fullView:error(adaptive,[0,0,width,height]),
       counts:{plume:plumeCounts,mobilePlume:mobilePlumeCounts,desktopPlume:desktopPlumeCounts,
         haze:hazeCounts,mobileHaze:mobileHazeCounts,desktopHaze:desktopHazeCounts,highHaze:highHazeCounts,
         full:fullCounts,mobileFull:mobileFullCounts,desktopFull:desktopFullCounts,highFull:highFullCounts},
