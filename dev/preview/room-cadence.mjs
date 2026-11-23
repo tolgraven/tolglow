@@ -17,6 +17,8 @@ export async function measureRoom(durationMs) {
     samples.push({atMs: performance.now() - boundary, tier: t.quality, scale: t.renderScale,
       scene: t.pixels, targetHz: t.targetRefreshHz, measuredDisplayHz: t.displayHz ?? null, tierMaxHz: t.tierMaxHz ?? null, intervalMs: t.frameIntervalMs,
       workerFrameMs: t.workerFrameMs ?? null, cpuSubmitMs: t.frameCPUms ?? null,
+      fogMaximumDensity: t.fog?.maximumDensity ?? null, fogMeanDensity: t.fog?.meanDensity ?? null,
+      fogActiveSources: t.fog?.activeSources ?? null,
       gpuFenceWaitMs: t.gpuCompletionWaitMs ?? null, gpuTimerMs: t.gpuTimeMs ?? null});
   };
   const mark = () => frames.push(performance.now());

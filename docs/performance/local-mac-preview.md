@@ -3,6 +3,14 @@
 The Studio renderer, lighting computation/keyframes and output publisher are
 independent clocks. A Studio bitmap rate does not measure DMX publication.
 
+Current work is tracked in [preview cadence #307](https://github.com/tolgraven/tolglow/issues/307),
+[beam intersections #392](https://github.com/tolgraven/tolglow/issues/392),
+[fog optics #241](https://github.com/tolgraven/tolglow/issues/241),
+[isolated Mac CI #492](https://github.com/tolgraven/tolglow/issues/492), and
+[native Metal qualification #493](https://github.com/tolgraven/tolglow/issues/493).
+The timings below identify earlier measured revisions; they are not measurements
+of every later shader correction.
+
 On 2026-11-23 the eight-head Ember/Sweep demo's actual scheduled runtime published
 401 captured frames over 10.005 seconds (40.080 Hz). Computation also completed at
 40.080 Hz, with work p50/p95/max 1.567/2.885/5.919 ms. There were no runtime errors,
@@ -58,15 +66,49 @@ replaces this local field and retains its calibrated density/extinction.
 The fog shader rejects rays that miss each light before its marching loop and avoids
 ambient occlusion reads when ambient light is zero. Analytic narrow-beam intervals,
 opaque depth, calibrated extinction, finite apertures and shadow sampling remain.
-Light samples use the existing spatial jitter inside their analytically clipped
-intervals. Previously, sampling each lit interval at its midpoint left visible
-horizontal bands in a dense plume even though viewer transmission was jittered.
-The change adds no shader noise evaluations or passes and preserves thin beams.
+Density samples use spatial jitter inside their analytically clipped intervals.
+Geometric optics use each clipped interval's midpoint, independently of density
+jitter. This preserves the density variation without making smooth falloff and
+shadow lookup move with the random density sample. The unchanged fixed-chord
+orbit oracle exercises the production incident-light calculation.
 Shadow maps are reused across identical, emission-only and camera updates, and
 invalidated by light optics or any caster change, including dark moving heads,
 rig edits, rebuilds and graphics context restoration.
 Without glass, fog composites directly into the postprocessing input, avoiding
 one full HDR image copy. Glass retains its immutable source and existing copy path.
+
+## Bright intersections
+
+The reported bright checkerboard was reproduced in the synthetic eight-head fresh
+plume. HDR readbacks contained no negative, NaN or infinite values. Individual
+lights summed correctly and bloom made only a small change at the crossing. Two
+errors remained in the fog integration: the outer halo also added light inside
+the optical core, and coarse integration oversampled some dense plume features
+while missing neighboring ones. Finite arithmetic alone did not clear the defect.
+
+The halo now starts continuously outside the optical core. During the existing
+density upload, the renderer bounds cells that can enable procedural plume detail,
+including padding for trilinear filtering. Rays subdivide only the base intervals
+crossing that region. Low and Mobile retain their 24/32 base steps, with ceilings
+of 72/64. Desktop distributes up to 24 extra evaluations over its dense intervals,
+retaining 48 steps in uniform haze and a 72-step ceiling. High retains 72. All
+intervals still cover the complete visible ray and account for transmission once.
+
+Actual M4 comparisons use the same field, pixels and corrected optics with a
+192-step reference. Auto's plume-region p95 relative luminance error drops from
+24.71% to 3.41%, RMSE from 0.01703 to 0.002623, and maximum positive error from
+0.11766 to 0.02511. Desktop's corresponding values drop from 8.54% to 2.09%,
+0.006871 to 0.001628, and 0.09223 to 0.02048. Native captures visibly reduce the
+checkerboard without an added blur pass. Auto averages 28.23 evaluations across
+room-intersecting pixels; Desktop averages 50.92, with 80.4% still at 48.
+The original unchanged 2% orbit oracle, calibrated extinction, finite/narrow beams,
+shadowing, opaque depth and thin-foreground fallback pass on the M4. Halo probes
+are zero inside the core, positive outside, and scale linearly with light output.
+
+These correctness checks ran while the isolated CI image was being provisioned.
+Their wall timings are not performance acceptance. `ROOM_PLUME_SCENE=1` adds
+repeated local plumes to the full Studio benchmark and records density throughout
+the sample, so fresh-plume cost cannot be inferred from a dispersed-haze run.
 
 ## Hardware evidence and limits
 
@@ -118,18 +160,24 @@ input exactly matched the former copy path, including when glass was enabled.
 Eight controlled stills and a six-second real-clock clip cover clear surfaces,
 crossing shafts, fresh fog and dispersed fog at Desktop and the actual Auto floor.
 The clip is standalone SceneRenderer visual evidence, not worker throughput.
-Light jitter visibly breaks up the coherent bands, but fine grain and softness
-remain at 301 × 135 / 24-step Auto fog. The historical tolglow-web shaders remain
+The corrected plume integration removes the pronounced crossing checkerboard,
+but softness remains at the 301 × 135 Auto fog target. The historical tolglow-web shaders remain
 a useful reference for coherent wisps and local contrast; no visual-parity claim
 has been established. Physical 120 Hz, iPad and the broader AAA-quality gate remain
 open.
 
 ![Controlled Auto-floor fresh plume on M4](captures/mac-preview/auto-fresh-plume.png)
 
+![Controlled Desktop fresh plume on M4](captures/mac-preview/desktop-fresh-plume.png)
+
 [Six-second real-clock scene capture](captures/mac-preview/auto-motion.webm).
 These synthetic eight-fixture captures use the production SceneRenderer at the
-914 × 410 Auto floor, 301 × 135 fog target, 24 steps, zero worklight and 0.7 fog.
-They precede the integration rebase and contain no live show or user data.
+914 × 410 Auto floor, 301 × 135 fog target, 24 base steps with dense-plume
+subdivision, zero worklight and 0.7 fog. The Desktop still uses a 960 × 540 scene,
+480 × 270 fog target and 48 base steps with bounded subdivision. They include the
+beam-crossing correction and contain no live show or user data. PNGs come from
+the immutable native GL readback, with row orientation corrected and no rescaling;
+this also fixes the separate zoom-dependent CSS screenshot clipping artifact.
 Reproduce with `SHADOW_MEDIA_DIR=target/shadow-cache-visual` and the CDP shadow
 browser test below; the fixture owns and closes its page, renderer and server.
 
@@ -161,7 +209,9 @@ measured companion cannot load that version. With paired Afterglow master
 7,629 assertions. Integrated Studio passed 291 tests / 1,540 assertions; the
 Node preview lane again passed 84 with 11 explicit browser skips. Studio and
 compute-worker production targets built sequentially with zero warnings.
-Tracking validation passed 223 work items and 149 request entries through R94.
+The subsequent GitHub Issues migration removes the legacy work ledger and its
+validator. `lein check-requests` validates the historical request index and its
+GitHub links; active status and new work belong in GitHub Issues.
 The integrated scheduled eight-head runtime independently published 401 frames
 over 10.003 seconds (40.088 Hz), with computation p50/p95/max
 1.612/2.843/4.430 ms, zero runtime errors and zero publication gaps of 50 ms or

@@ -6,21 +6,32 @@ import { build } from 'esbuild';
 import { chromium } from 'playwright-core';
 
 test('orbiting a single illuminated volume keeps optical path and phase separate', async (t) => {
+  const endpoint = process.env.CDP_ENDPOINT;
   const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
-  if (!existsSync(executablePath)) return t.skip('Set CHROMIUM_PATH to run actual WebGL2');
+  if (!endpoint && !existsSync(executablePath)) return t.skip('Set CDP_ENDPOINT or CHROMIUM_PATH to run actual WebGL2');
   const bundle = await build({
     entryPoints: [new URL('./fog-orbit-fixture.mjs', import.meta.url).pathname],
     bundle: true,
     format: 'iife',
     write: false,
   });
-  const browser = await chromium.launch({
+  const browser = endpoint ? await chromium.connectOverCDP(endpoint) : await chromium.launch({
     executablePath,
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
+  let page;
+  const reuseTitle = process.env.CDP_PAGE_TITLE;
   try {
-    const page = await browser.newPage(),
-      output = process.env.FOG_ORBIT_OUTPUT;
+    if (reuseTitle) {
+      if (!endpoint) throw new Error('CDP_PAGE_TITLE requires CDP_ENDPOINT');
+      for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) page = candidate;
+      if (!page) throw new Error('The owned diagnostic page is missing');
+      await page.evaluate(() => {window.crossing?.dispose(); document.body.innerHTML='';});
+    } else page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
+    const output = process.env.FOG_ORBIT_OUTPUT, errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    if (!reuseTitle) await page.bringToFront();
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     if (output) await mkdir(output, { recursive: true });
     const measurements = [];
@@ -82,8 +93,12 @@ test('orbiting a single illuminated volume keeps optical path and phase separate
       await writeFile(output + '/orbit.json', JSON.stringify(measurements, null, 2));
       await writeFile(output + '/edges.json', JSON.stringify({ silhouette, subpixel }, null, 2));
     }
-    await page.evaluate(() => window.closeFogOrbit());
+    assert.deepEqual(errors, []);
   } finally {
+    await page?.evaluate(() => window.closeFogOrbit?.()).catch(() => {});
+    if (!reuseTitle) await page?.close();
+    // CDP close disconnects this transport, preserving the shared browser and
+    // default context. Only the page created above belongs to this test.
     await browser.close();
   }
 });

@@ -2,8 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { FogField, FOG_QUALITY, intersectRoom, intersectCone, integrateHomogeneous } from '../../../js/preview/fog-field.js';
+import { VolumetricFog } from '../../../js/preview/fog.js';
 
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
+
+test('packed plume bounds include boundary cells and reset with authoritative haze and tier copies', () => {
+  // Packing is a CPU operation; this test never asks for a graphics context.
+  const fog = new VolumetricFog(null, {quality:'phone'});
+  const bounds = () => [fog.uniforms.detailMin.value.toArray(), fog.uniforms.detailMax.value.toArray()];
+  const nearBounds = expected => bounds().flat().forEach((value,i)=>near(value,expected.flat()[i]));
+  const empty = () => assert.deepEqual(bounds(), [[1,1,1],[-1,-1,-1]]);
+  try {
+    fog.field.clear(.15); fog.upload(); empty();
+    fog.field.data[0] = .5; fog.upload();
+    nearBounds([[-6,0,-5],[-4.8,5/6,-4]]);
+    const [nx,ny,nz] = fog.field.grid;
+    fog.field.clear(.15); fog.field.data[nx*ny*nz-1] = .5; fog.upload();
+    nearBounds([[4.8,25/6,4],[6,5,5]]);
+    // A tier resample can move nonzero cells; upload derives new coordinates
+    // from the destination grid instead of retaining the previous box.
+    const source = new FogField({grid:[12,8,12],room:[12,5,10],initialHaze:.15,retainedHaze:.15});
+    source.data[6+4*12+6*12*8] = 2;
+    fog.field.copyFrom(source); fog.upload();
+    assert.ok(bounds()[0][0] < .5 && bounds()[1][0] > .5);
+    assert.ok(bounds()[0][2] < 5/12 && bounds()[1][2] > 5/12);
+    for(const [time,density] of [[0,.4],[100,.01],[200,0]]) {
+      fog.setAtmosphere('host', {'sample-time-ms':time,epoch:1,'mixed-density':density,sources:[]});
+      fog.update(0); empty();
+    }
+    fog.setAtmosphere('host',null); fog.field.clear(.15); fog.upload(); empty();
+    assert.equal(fog.stats().raySteps,24);
+    assert.equal(fog.stats().maximumRaySteps,72);
+  } finally {fog.dispose();}
+});
 
 test('analytic positive cone intervals retain narrow shafts and reject the backward cone', () => {
   const hit = intersectCone([-1, 0, -2], [1, 0, 0], [0, 0, 0], [0, 0, -1], .01, [0, 10]);

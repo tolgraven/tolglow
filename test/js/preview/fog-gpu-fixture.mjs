@@ -1,6 +1,6 @@
 // Deterministic browser fixture. No host/show/device access.
 import * as THREE from 'three';
-import {VolumetricFog} from '../../../js/preview/fog.js';
+import {FOG_FRAGMENT, VolumetricFog} from '../../../js/preview/fog.js';
 
 // Both full and half-resolution targets have an exact centre ray.
 const width = 99, height = 99;
@@ -137,6 +137,24 @@ window.fogTest = () => {
   camera.position.x=.26; camera.lookAt(.26,1.5,0); camera.updateMatrixWorld();
   const halo=render([vertical]); result.halo=halo[mid]; result.haloGreen=halo[mid+1];
   result.brighterHalo=render([{...vertical,intensity:320}])[mid];
+  // Probe the production incident function directly: halo is an outside-field
+  // contribution, so it cannot add a second scattering term in the optical core.
+  const optical = fog.volumeMaterial, probe = optical.clone();
+  probe.uniforms = {...optical.uniforms, probePosition:{value:new THREE.Vector3(0,1.5,0)}};
+  probe.fragmentShader = FOG_FRAGMENT.replace('void main(){integrateFog(volumeOutput);}',
+    'uniform vec3 probePosition; void main(){volumeOutput=vec4(incident(0,probePosition,.1,true),1.);}');
+  const probeValue = position => {
+    probe.uniforms.probePosition.value.fromArray(position); render([vertical]);
+    const pixel = new Uint16Array(4);
+    renderer.readRenderTargetPixels(fog.target, 0, 0, 1, 1, pixel);
+    return THREE.DataUtils.fromHalfFloat(pixel[0]);
+  };
+  fog.volumeMaterial = probe;
+  try {
+    result.haloInsideCore = probeValue([0,1.5,0]);
+    result.haloOutsideCore = probeValue([.26,1.5,0]);
+    result.haloAtEdge = probeValue([1.5*Math.tan(vertical.angle),1.5,0]);
+  } finally {fog.volumeMaterial = optical; probe.dispose();}
   fog.setAtmosphere('venue',host(55000,0,0,25.6,0));
   result.dryHalo=render([vertical])[mid];
   result.glError = gl.getError();

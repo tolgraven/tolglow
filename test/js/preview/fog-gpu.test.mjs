@@ -18,14 +18,21 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, page;
+  const reuseTitle = process.env.CDP_PAGE_TITLE;
   try {
     browser = endpoint ? await chromium.connectOverCDP(endpoint) : await chromium.launch({executablePath, headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
-    page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
+    if (reuseTitle) {
+      if (!endpoint) throw new Error('CDP_PAGE_TITLE requires CDP_ENDPOINT');
+      for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) page = candidate;
+      if (!page) throw new Error('The owned diagnostic page is missing');
+      await page.evaluate(() => window.crossing?.dispose());
+    } else page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    if (reuseTitle) await page.evaluate(title => {document.title=title;}, reuseTitle);
     await page.waitForFunction(() => typeof window.fogTest === 'function');
     const result = await page.evaluate(() => window.fogTest());
     t.diagnostic(JSON.stringify(result));
@@ -65,10 +72,13 @@ test('actual WebGL2 fog preserves empty surfaces, opaque depth, extinction and P
     assert.ok(result.opticalCore > result.halo && result.halo > 0);
     assert.equal(result.haloGreen,0);
     assert.ok(Math.abs(result.brighterHalo/result.halo - 2) < .02);
+    assert.equal(result.haloInsideCore, 0);
+    assert.ok(result.haloOutsideCore > 0);
+    assert.ok(result.haloAtEdge < result.haloOutsideCore * .001);
     assert.equal(result.dryHalo,0);
     assert.equal(result.glError, 0);
   } finally {
-    await page?.close();
+    if (!reuseTitle) await page?.close();
     // For connectOverCDP, Playwright closes only its transport here. The shared
     // browser and default context remain open; only this test's page is closed.
     await browser?.close();

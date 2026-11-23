@@ -103,8 +103,22 @@ window.shadowCacheTest = () => {
       const steps = name === 'fresh-plume' ? 40 : 240;
       for (let i = 0; i < steps; i++) engine.fog.field.advance(.05);
     }
-    engine.fog.upload(); draw();
-    return engine.getTelemetry();
+    engine.fog.upload(); const {pixels} = draw();
+    const width = canvas.width, height = canvas.height;
+    const opaque = (x, y) => pixels[(y * width + x) * 4 + 3] === 255;
+    let opaqueEdges = true;
+    for (let x = 0; x < width; x++) opaqueEdges &&= opaque(x, 0) && opaque(x, height - 1);
+    for (let y = 0; y < height; y++) opaqueEdges &&= opaque(0, y) && opaque(width - 1, y);
+    let brightPixels = 0;
+    for (let i = 0; i < pixels.length; i += 4) if (Math.max(pixels[i], pixels[i + 1], pixels[i + 2]) > 100) brightPixels++;
+    // Encode the immutable native readback, reversing only GL's bottom-up rows:
+    // no crop or resampling, and no zoom-dependent element screenshot clipping.
+    const image = new ImageData(width, height), stride = width * 4;
+    for (let y = 0; y < height; y++) image.data.set(pixels.subarray(y * stride, (y + 1) * stride), (height - 1 - y) * stride);
+    const exported = document.createElement('canvas'); exported.width = width; exported.height = height;
+    exported.getContext('2d').putImageData(image, 0, 0);
+    return {data: exported.toDataURL('image/png'), telemetry: engine.getTelemetry(),
+      capture: {pixels: [width, height], viewport: [...gl.getParameter(gl.VIEWPORT)], opaqueEdges, brightPixels}};
   };
   window.setShadowCaptureAutoFloor = () => {
     engine.platform.viewport = {width: 1559, height: 700, pixelRatio: 1.8};

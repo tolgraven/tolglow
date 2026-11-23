@@ -27,6 +27,9 @@ if (passes && (quality === 'auto' || passes.some(p => !allowedPasses.includes(p)
 }
 const scene = process.env.ROOM_SCENE || 'both';
 if (!['both','dense','fixed'].includes(scene)) throw new Error('ROOM_SCENE must be both, dense or fixed.');
+const plumeScene = process.env.ROOM_PLUME_SCENE === '1';
+if (plumeScene && (scene === 'fixed' || passes)) throw new Error('ROOM_PLUME_SCENE requires the full moving renderer.');
+const plume = {position: [-1, .25, .4], direction: [1, .5, -.25], duration: 1.5, strength: 4};
 const endpoint = new URL(cdp);
 if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname)) {
   throw new Error('Pass the local Chrome CDP endpoint.');
@@ -141,7 +144,7 @@ try {
       element.dispatchEvent(new Event('input', {bubbles: true}));
     }, value);
   }
-  async function scenario(name, fog, moving, pass = null) {
+  async function scenario(name, fog, moving, pass = null, emitPlumes = false) {
     // Restore the full moving scene before selecting a different ablation, so
     // a cached-frame sample captures the current lit scenario.
     if (pass) await probeWorker.evaluate(() => self.setRoomPassMode('full'));
@@ -155,6 +158,12 @@ try {
     // including when Safari or a laptop is still compiling a cold program.
     await page.waitForFunction(q => q === 'auto' || document.querySelector('#preview').tolglowPreview.getTelemetry().quality === q,
       quality, {timeout: 90000});
+    if (emitPlumes) await page.evaluate(options => {
+      const preview = document.querySelector('#preview').tolglowPreview;
+      const receipt = window.roomPlumeSample = {accepted: 0, rejected: 0};
+      const burst = () => receipt[preview.burst(options) ? 'accepted' : 'rejected']++;
+      burst(); receipt.timer = setInterval(burst, 4000);
+    }, plume);
     const warmStarted = Date.now();
     const initialFrames = await page.evaluate(() => document.querySelector('#preview').tolglowPreview.getTelemetry().frames);
     await Promise.all([delay(minimumWarmupMs), page.waitForFunction(n => document.querySelector('#preview').tolglowPreview.getTelemetry().frames >= n + 4,
@@ -181,6 +190,17 @@ try {
     const after = await state();
     const settingsAfter = await settings();
     measured.controls = {before: settingsBefore, after: settingsAfter};
+    if (emitPlumes) {
+      measured.plumes = await page.evaluate(() => {
+        const {timer, ...receipt} = window.roomPlumeSample;
+        clearInterval(timer); delete window.roomPlumeSample; return receipt;
+      });
+      Object.assign(measured.plumes, {options: plume, intervalMs: 4000});
+      if (measured.plumes.rejected || measured.plumes.accepted < 5)
+        measured.invalid.push('the production preview did not accept repeated local plumes');
+      if (!measured.policySamples.some(s => s.fogMaximumDensity > .35))
+        measured.invalid.push('the plume sample did not exercise dense local fog');
+    }
     if ([settingsBefore, settingsAfter].some(s => s.quality !== quality || s.lightingMode !== lightingMode || s.workLight !== workLight || s.fog !== fog))
       measured.invalid.push('preview controls differ from the requested benchmark settings');
     if (measured.start.camera.some((v, i) => Math.abs(v - measured.end.camera[i]) > 1e-6))
@@ -216,6 +236,7 @@ try {
   if (scene !== 'fixed') {
     await cue('sweep');
     for (const pass of passes || [null]) await scenario('moving-heads-dense-fog', .7, true, pass);
+    if (plumeScene) await scenario('moving-heads-active-plumes', .7, true, null, true);
   }
   metadata.qualified = metadata.scenarios.every(s => !s.invalid.length && !s.end.softwareRenderer);
   await writeFile(join(outputDir, 'room.json'), JSON.stringify(metadata, null, 2));

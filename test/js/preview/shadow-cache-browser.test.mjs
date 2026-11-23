@@ -20,15 +20,23 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser, page;
+  const reuseTitle = process.env.CDP_PAGE_TITLE;
   try {
     browser = endpoint ? await chromium.connectOverCDP(endpoint) : await chromium.launch({executablePath, headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']});
-    page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
-    await page.setViewportSize({width: 980, height: 600}); await page.bringToFront();
+    if (reuseTitle) {
+      if (!endpoint) throw new Error('CDP_PAGE_TITLE requires CDP_ENDPOINT');
+      for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) page = candidate;
+      if (!page) throw new Error('The owned diagnostic page is missing');
+      await page.evaluate(() => window.crossing?.dispose());
+    } else page = endpoint ? await browser.contexts()[0].newPage() : await browser.newPage();
+    await page.setViewportSize({width: 980, height: 600});
+    if (!reuseTitle) await page.bringToFront();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => {if (message.type() === 'error') errors.push(message.text());});
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    if (reuseTitle) await page.evaluate(title => {document.title=title;}, reuseTitle);
     await page.waitForFunction(() => typeof window.shadowCacheTest === 'function');
     const result = await page.evaluate(() => window.shadowCacheTest());
     t.diagnostic(JSON.stringify(result));
@@ -56,29 +64,37 @@ test('actual room GPU shadows reuse fixed maps and refresh moving dark casters w
     assert.ok(result.glass.changed.changed > 100);
     assert.deepEqual(result.glass.referenceDifference, {maximum: 0, changed: 0});
     assert.deepEqual(result.telemetry.pixels, [960, 540]);
-    if (process.env.SHADOW_MEDIA_DIR) {
-      const directory = process.env.SHADOW_MEDIA_DIR; await mkdir(directory, {recursive: true});
-      const captures = [];
-      for (const name of ['clear-surfaces', 'crossing-shafts', 'fresh-plume', 'dispersed-plume']) {
-        const telemetry = await page.evaluate(name => window.captureShadowCacheScene(name), name);
-        await page.locator('canvas').screenshot({path: join(directory, name + '.png'), scale: 'css'});
-        captures.push({name, telemetry});
-      }
-      await page.setViewportSize({width: 1580, height: 730});
-      const floor = await page.evaluate(() => window.setShadowCaptureAutoFloor());
-      assert.deepEqual(floor.pixels, [914,410]); assert.deepEqual(floor.fog.targetSize, [301,135]);
-      for (const name of ['clear-surfaces', 'crossing-shafts', 'fresh-plume', 'dispersed-plume']) {
-        const telemetry = await page.evaluate(name => window.captureShadowCacheScene(name), name);
-        await page.locator('canvas').screenshot({path: join(directory, 'auto-' + name + '.png'), scale: 'css'});
-        captures.push({name: 'auto-' + name, telemetry});
-      }
+    const directory = process.env.SHADOW_MEDIA_DIR, captures = [];
+    if (directory) await mkdir(directory, {recursive: true});
+    const captureScene = async (name, prefix = '') => {
+      const {data, telemetry, capture} = await page.evaluate(name => window.captureShadowCacheScene(name), name);
+      const png = Buffer.from(data.slice(data.indexOf(',') + 1), 'base64');
+      assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+      assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], telemetry.displayPixels);
+      assert.deepEqual(capture.pixels, telemetry.displayPixels);
+      assert.deepEqual(capture.viewport, [0, 0, ...telemetry.displayPixels]);
+      assert.equal(capture.opaqueEdges, true);
+      assert.ok(capture.brightPixels > 1000, `${prefix}${name} contains the illuminated scene`);
+      if (directory) await writeFile(join(directory, prefix + name + '.png'), png);
+      captures.push({name: prefix + name, telemetry, capture});
+    };
+    const names = ['clear-surfaces', 'crossing-shafts', 'fresh-plume', 'dispersed-plume'];
+    if (directory) for (const name of names) await captureScene(name);
+    await page.setViewportSize({width: 1580, height: 730});
+    const floor = await page.evaluate(() => window.setShadowCaptureAutoFloor());
+    assert.deepEqual(floor.pixels, floor.softwareRenderer ? [317,142] : [914,410]);
+    assert.deepEqual(floor.displayPixels, [2806,1260]);
+    assert.deepEqual(floor.fog.targetSize, floor.softwareRenderer ? [104,46] : [301,135]);
+    for (const name of directory ? names : ['fresh-plume']) await captureScene(name, 'auto-');
+    assert.deepEqual(errors, []);
+    if (directory) {
       const {data, ...motion} = await page.evaluate(() => window.recordShadowMotion());
       await writeFile(join(directory, 'auto-motion.webm'), Buffer.from(data.slice(data.indexOf(',') + 1), 'base64'));
       await writeFile(join(directory, 'evidence.json'), JSON.stringify({scope: 'Controlled browser scene; no host or device output', result, captures, motion, errors}, null, 2));
     }
   } finally {
     await page?.evaluate(() => window.disposeShadowCacheTest?.()).catch(() => {});
-    await page?.close();
+    if (!reuseTitle) await page?.close();
     // Connected-CDP close disconnects Playwright's transport, leaving the
     // shared Chrome browser and default context running.
     await browser?.close(); await new Promise(resolve => server.close(resolve));
