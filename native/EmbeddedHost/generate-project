@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+test -e build/embedded/TolglowRuntime.framework/TolglowRuntime
+ruby -ryaml - <<'RUBY'
+spec = YAML.safe_load_file('project.yml')
+settings = spec.fetch('targets').fetch('TolglowPhone').fetch('settings').fetch('base')
+settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = '$(inherited) TOLGLOW_EMBEDDED_HOST'
+settings['FRAMEWORK_SEARCH_PATHS'] = ['$(inherited)', '$(SRCROOT)/build/embedded']
+spec['targets']['TolglowPhone']['dependencies'] << {'framework' => 'build/embedded/TolglowRuntime.framework', 'embed' => true}
+spec['targets']['LocalStudioUITests'] = {'type' => 'bundle.ui-testing', 'platform' => 'iOS',
+  'sources' => ['EmbeddedHost/UITests'], 'settings' => {'base' => {
+    'PRODUCT_BUNDLE_IDENTIFIER' => 'org.tolglow.local-studio-tests', 'GENERATE_INFOPLIST_FILE' => 'YES',
+    'TEST_TARGET_NAME' => 'TolglowPhone'}}, 'dependencies' => [{'target' => 'TolglowPhone'}]}
+spec['schemes']['TolglowPhone']['test'] = {'targets' => ['LocalStudioUITests']}
+File.write('EmbeddedProject.generated.yml', spec.to_yaml)
+RUBY
+xcodegen generate --spec EmbeddedProject.generated.yml

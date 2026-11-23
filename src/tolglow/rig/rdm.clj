@@ -109,7 +109,7 @@
           (codec/fail! "Unknown RDM model operation" {:operation operation}))]
     (update next-model :revision inc)))
 
-(defn- daemon-factory [name]
+(defn- daemon-factory ^ThreadFactory [^String name]
   (reify ThreadFactory (newThread [_ run] (doto (Thread. run name) (.setDaemon true)))))
 
 (defn session-state [] (atom {:session nil :jobs [] :closed? false}))
