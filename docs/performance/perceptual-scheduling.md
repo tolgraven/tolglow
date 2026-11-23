@@ -44,6 +44,12 @@ Report limits and measured error alongside time saved for each device. A faster 
   intents, and all DMX universe bytes for 160 frames.
   [Measured Afterglow change](https://github.com/tolgraven/afterglow/pull/76)
 
+* **Admit effects using evidence from both worker stages.** On 1,024 RGBW pixels
+  and 128 moving heads, stride two saved 0.27–0.66 ms per wash frame and cost
+  0.20–0.24 ms per shared-aim frame. The default threshold kept the aim at
+  full rate. A zero threshold admitted it in both repeat runs.
+  [Admission experiment and capture](keyframe-admission.md)
+
 The paired master profile retains `multirate-quality.edn`,
 `transient-scheduling.edn`, `sampling-cost.edn` and both source revisions.
 Its first complete CI run measured the three replays in 26, 16 and 20 seconds
