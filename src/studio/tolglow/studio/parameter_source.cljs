@@ -2,6 +2,7 @@
   "Attach a musical source to one running input. The show supplies its sampled result."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [re-frame.db :as rf-db]
             [reagent.core :as r]
             [tolglow.studio.events :as events]
             [tolglow.studio.fixture-picker :as fixtures]
@@ -22,13 +23,44 @@
 (defn- source-of [source kind]
   (some #(when (= kind (keyword (:type %))) %) (:sources source)))
 (defn- selected-parameter [db id] (get-in db [:ui :parameter-source id]))
+(defn- editor-parameters [param components]
+  (if (seq components) (mapv first components) [param]))
+(defn- editor-open? [selected params] (boolean (some #{selected} params)))
+
+(defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))
+(defn- editor-id [id param] (str "source-editor-" id "-" (events/wire-id param)))
+(defn- heading-id [id param] (str "source-editor-heading-" id "-" (events/wire-id param)))
+
+(defn- selection-effects [db id params param]
+  {:db (if (some? param)
+         (assoc-in db [:ui :parameter-source id] param)
+         (update-in db [:ui :parameter-source] dissoc id))
+   ::focus [id params (some? param)]})
 
 (rf/reg-sub ::selection (fn [db [_ id]] (selected-parameter db id)))
-(rf/reg-event-db ::select
-  (fn [db [_ id param]]
-    (if (= param (selected-parameter db id))
-      (update-in db [:ui :parameter-source] dissoc id)
-      (assoc-in db [:ui :parameter-source id] param))))
+(rf/reg-fx ::focus
+  (fn [[id params opening?]]
+    (r/after-render
+     (fn []
+       (let [selected (selected-parameter @rf-db/app-db id)]
+         (when (if opening? (editor-open? selected params) (nil? selected))
+           (let [target ((if opening? heading-id trigger-id) id (first params))]
+             (some-> (.getElementById js/document target) .focus))))))))
+(rf/reg-event-fx ::toggle
+  (fn [{:keys [db]} [_ id params param]]
+    ;; Multiple activations can arrive before the trigger renders again.
+    (selection-effects db id params
+                       (when-not (editor-open? (selected-parameter db id) params) param))))
+(rf/reg-event-fx ::close
+  (fn [{:keys [db]} [_ id params]]
+    (if (editor-open? (selected-parameter db id) params)
+      (selection-effects db id params nil)
+      {})))
+(rf/reg-event-db ::select-axis
+  (fn [db [_ id params param]]
+    (if (and (editor-open? (selected-parameter db id) params) (some #{param} params))
+      (assoc-in db [:ui :parameter-source id] param)
+      db)))
 
 (rf/reg-sub ::waveforms (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
 (rf/reg-sub ::raw-instance
@@ -122,25 +154,25 @@
         block? (some (fn [[k _]] (driving-block (reading instance k))) components)]
     [result-view view instance schema sample block?]))
 
-(defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))
-
-(defn- close! [id param components]
-  (rf/dispatch [::select id param])
-  (when-let [node (.getElementById js/document (trigger-id id (or (ffirst components) param)))] (.focus node)))
+(defn- close! [id params]
+  (rf/dispatch [::close id params]))
 
 (defn trigger [id param title source & [components]]
   (let [selected @(rf/subscribe [::selection id]) inputs (:sources source)
-        chosen (some (fn [[k _]] (when (= k selected) k)) components)
+        params (editor-parameters param components)
+        owner (first params)
+        expanded? (editor-open? selected params)
         state (cond (:error source) :error (some driving-source? inputs) :driving
                     (some :error inputs) :error (some :pending? inputs) :pending (seq inputs) :base)
         action (str (if state "Edit" "Attach") " source for " title)
         status (case state :driving "Source is driving this input" :pending "Awaiting a source sample"
                            :base "Using the manual base value" :error "Source error" nil)]
     [:button.param-source-trigger {:type "button" :class (when (= state :driving) "bound")
-                                  :id (trigger-id id (or (ffirst components) param))
-                                  :aria-expanded (boolean (or (= param selected) chosen))
+                                  :id (trigger-id id owner)
+                                  :aria-expanded expanded?
+                                  :aria-controls (when expanded? (editor-id id owner))
                                   :title (if status (str action " · " status) action) :aria-label action :aria-description status
-                                  :on-click #(rf/dispatch [::select id (or chosen param)])}
+                                  :on-click #(rf/dispatch [::toggle id params param])}
      [:span {:aria-hidden true :class (when (= state :base) "transport-symbol pause")}
       (case state :driving "∿" :base nil :pending "…" :error "!" "+")]
      (if components "Sources" "Source")]))
@@ -256,18 +288,22 @@
 
 (defn editor [instance param schema components]
   (let [id (:id instance) title (or (:name schema) (widgets/label param))
+        params (editor-parameters param components)
+        owner (first params)
         raw @(rf/subscribe [::raw-instance id])
         typed (get-in raw [:definition :params param] schema)
         source (or (reading raw param) (reading instance param)) catalog @(rf/subscribe [::waveforms])
         base (get-in raw [:params param] (get-in instance [:params param] (:default schema)))]
-    [:section.live-source-editor {:aria-label (str title " source")
-                                 :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id param components))}
-     [:header [:h4 (str title " source")]
-      [:button.text-button {:type "button" :aria-label "Close source editor" :on-click #(close! id param components)} "Close"]]
+    [:section.live-source-editor {:id (editor-id id owner) :aria-labelledby (heading-id id owner)
+                                 :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id params))}
+     [:header [:h4 {:id (heading-id id owner) :tab-index -1} (str title " source")]
+      [:button.text-button {:type "button" :aria-label "Close source editor" :on-click #(close! id params)} "Close"]]
      (when (source-of source :blocks) [fixture-selector id])
      (when (seq components)
        [:label.source-field "Axis" [:select {:aria-label "Source axis" :value (events/wire-id param)
-                                          :on-change #(rf/dispatch [::select id (keyword (.. % -target -value))])}
+                                          :on-change #(let [value (.. % -target -value)
+                                                            axis (some (fn [k] (when (= value (events/wire-id k)) k)) params)]
+                                                        (rf/dispatch [::select-axis id params axis]))}
                                   (for [[k axis] components] ^{:key k} [:option {:value (events/wire-id k)} (or (:name axis) (widgets/label k))])]])
      (when-let [error (:error source)] [:p.performance-error {:role "alert"} error])
      (when (seq (:sources source))

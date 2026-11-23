@@ -71,6 +71,56 @@ function sourceChecks(page,touch) {
   return {card,activate,open,close,attach,detach};
 }
 
+async function verifySourceFocus(page,touch,profile) {
+  const {card,activate,close}=sourceChecks(page,touch);
+  const trigger=card.getByRole('button',{name:'Attach source for Intensity',exact:true});
+  const panel=card.getByRole('region',{name:'Intensity source',exact:true});
+  const heading=panel.getByRole('heading',{name:'Intensity source',exact:true});
+  const focused=page.locator(':focus');
+  await trigger.focus();
+  await trigger.press('Enter');
+  await heading.and(focused).waitFor({timeout:5000});
+  const panelId=await panel.getAttribute('id');
+  assert.ok(panelId,'The source editor has a targetable id');
+  assert.equal(await trigger.getAttribute('aria-controls'),panelId);
+  assert.equal(await trigger.getAttribute('aria-expanded'),'true');
+  if(!touch) await page.screenshot({path:join(directory,profile+'-source-focus.png')});
+  if(!touch && !webkitRun) {
+    await page.keyboard.press('Tab');
+    await panel.getByRole('button',{name:'Close source editor'}).and(focused).waitFor({timeout:5000});
+  }
+  await page.keyboard.press('Escape');
+  await panel.waitFor({state:'detached'});
+  await trigger.and(focused).waitFor({timeout:5000});
+  assert.equal(await trigger.getAttribute('aria-expanded'),'false');
+  await activate(trigger);
+  await heading.and(focused).waitFor({timeout:5000});
+  if(touch) await page.screenshot({path:join(directory,profile+'-source-focus.png')});
+  await close(panel);
+  await panel.waitFor({state:'detached'});
+  await trigger.and(focused).waitFor({timeout:5000});
+
+  await card.getByRole('slider',{name:'Intensity rotary',exact:true}).focus();
+  await trigger.evaluate(button => {button.click(); button.click();});
+  await trigger.and(focused).waitFor({timeout:5000});
+  assert.equal(await trigger.getAttribute('aria-expanded'),'false');
+  await panel.waitFor({state:'detached'});
+
+  await activate(trigger);
+  await heading.and(focused).waitFor({timeout:5000});
+  const nextTrigger=card.getByRole('button',{name:'Attach source for Orbit aim',exact:true});
+  const nextPanel=card.getByRole('region',{name:'Orbit aim source',exact:true});
+  await card.evaluate(article => {
+    article.querySelector('button[aria-label="Attach source for Orbit aim"]').click();
+    article.querySelector('button[aria-label="Close source editor"]').click();
+  });
+  await nextPanel.getByRole('heading').and(focused).waitFor({timeout:5000});
+  await panel.waitFor({state:'detached'});
+  assert.equal(await nextTrigger.getAttribute('aria-controls'),await nextPanel.getAttribute('id'));
+  await close(nextPanel);
+  await nextTrigger.and(focused).waitFor({timeout:5000});
+}
+
 async function verifyControls(page,touch,profile) {
   const sweep=page.locator('article',{has:page.getByRole('heading',{name:'Slow sweep',exact:true})});
   const fader=sweep.getByRole('slider',{name:'width',exact:true});
@@ -251,6 +301,7 @@ try {
       continue;
     }
     try {
+      await verifySourceFocus(page,touch,name);
       await verifyControls(page,touch,name);
     } catch (error) {
       await page.screenshot({path:join(directory,name+'-failed.png')});
