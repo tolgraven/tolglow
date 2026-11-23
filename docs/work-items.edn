@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-22",
  :items
- [{:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
+ [{:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
+   :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
+   :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
+   :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
+   :acceptance ["Tap a tracked room surface, review its metric extent and add or remeasure the named receiver without arming fixture output."]
+   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Physical wall survey comparison is pending."]}
+  {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
    :evidence ["Afterglow #55. The spatial suite passed 7 tests and 43 assertions, including a wall impact where a fixture is crossed four times in one physical substep."]}
@@ -65,7 +71,7 @@
    :acceptance ["Edit scope, targets, signal bindings, response and highlight behavior using the headless settings contract, and inspect decisions and measured output."]
    :evidence ["src/studio/tolglow/studio/autopilot_test.cljs exercises scoped edits, waveform bindings, per-stage response and ownership readback. dev/studio/autopilot-browser-qa.mjs drives the Ring-hosted Studio at tablet and phone viewport sizes. Hardware touch and display timing require device verification."]}
   {:id :render/conductor-frame-budget :title "Keep the measured conductor workload within the 40 Hz frame budget"
-   :kind :implementation :status :in-progress :owner "master_render_performance_profiler_and_optimizations"
+   :kind :implementation :status :in-progress :owner "tolglow_dense_mixed_venue_profiling_and_show_host_optimization"
    :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
    :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
    :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
@@ -460,6 +466,7 @@
    :kind :implementation :status :in-progress
    :owner "master_render_performance_profiler_and_optimizations"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/dev/tolglow/perf/venue_rig.clj" "tolglow/docs/performance/dense-venue.md"
            "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
@@ -471,7 +478,8 @@
                 "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
                 "Measure actual acknowledged WebSocket subscribers and withheld-ACK backpressure alongside identical host ticks"
                 "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
-   :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
+   :evidence ["docs/performance/dense-venue.md records scalar-checked twisted 3D rigs with 64 differently mounted moving heads, synchronous ArtDMX and deterministic independent publication."
+              "docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
               "Tolglow #78 delivers 17 ArtDMX universes for four foggers and 2,048 pixels in direct and independent-output modes. The profile identified the #80 batching fix, reducing direct CPU with fog from 24.33 to 5.78 ms/frame. See docs/performance/venue-fog.md for wall-time overruns and allocation."
               "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
               "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
