@@ -1400,7 +1400,7 @@
      (assoc options :project! (fn [view]
                                 (let [snapshot @(:state runtime)
                                       audio (audio/waveform (connections/audio (:connections runtime)))]
-                                  (->> (waveforms/project-display cache snapshot view audio)
+                                  (->> (waveforms/project-display cache (assoc snapshot :runtime-id (:id runtime)) view audio)
                                        (block-trace/project-display (:id runtime) (:model snapshot)))))))))
 
 (defn connect-device!
