@@ -244,7 +244,7 @@ macOS and iPadOS window switching and display refresh need device verification.
 
 ## Comparing the preview with a private camera reference
 
-Use the operator's privately supplied iPhone Cinematic footage as a continuing visual reference for changes to the room renderer. Review the original locally. Keep the footage, extracted stills, identifying metadata and recreations of private artwork out of repositories, CI artifacts and review posts. Public evidence can use a synthetic venue with the same lighting conditions. The reference comparison is open pending private access to the clip.
+Use the operator's privately supplied iPhone Cinematic footage as a continuing visual reference for changes to the room renderer. Review the original locally. Keep the footage, extracted stills, identifying metadata and recreations of private artwork out of repositories, CI artifacts and review posts. Public evidence can use a synthetic venue with the same lighting conditions. The supplied clip has been decoded and inspected privately. The matched renderer comparison and hardware measurement remain open.
 
 1. Select a short passage and record its start and end presentation timestamps in the private notes. Preserve the source timebase and variable frame timing where available. If timing or optical metadata is absent, mark it unknown.
 2. Compare scene properties first. Where the reference makes a property visible, inspect the emitting aperture, footprint and edge softness, lit surfaces, extinction through the room and how those change in motion. Compare the neutral render before adding a camera treatment.
