@@ -1,5 +1,7 @@
 # Tolglow / Afterglow architecture program
 
+[Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
+
 Use the [repository map](../README.md#repository-map) to find the Clojure show
 runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
 and native companions.
