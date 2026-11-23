@@ -27,7 +27,7 @@ jobs:
           unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
           java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(compile 'tolglow.persistence)"
           jar uf studio.jar -C override .
-          native-image --no-fallback --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
+          native-image --no-fallback --initialize-at-run-time=thi.ng.math.core__init --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar -cp sqlite.jar:studio.jar:graal-build-time.jar -H:IncludeResources='studio/.*|tolglow.edn|.*\.edn|.*\.clj[cs]?' -o studio-native tolglow.application 2>&1 | tee native-build.log
           ./studio-native --port 0 >native-start.log 2>&1 &
           child=$!
           trap 'kill "$child" || true' EXIT
@@ -59,9 +59,9 @@ jobs:
       - name: Cross-compile the full Ring application for iOS using GluonFX
         shell: bash
         run: |
-          url='https://github.com/gluonhq/graal/releases/download/gluon-23%2B25.1-dev-2409082136/graalvm-java23-darwin-aarch64-gluon-23%2B25.1-dev.tar.gz'
+          url='https://github.com/gluonhq/graal/releases/download/gluon-22.1.0.1-Final/graalvm-svm-java17-darwin-m1-gluon-22.1.0.1-Final.tar.gz'
           curl -fLsS --retry 3 "$url" -o "$RUNNER_TEMP/gluon.tgz"
-          echo "5081e4fc7c17019710200f9ff10e997f813eeec9c82f3bf4279617a4c45e2f61  $RUNNER_TEMP/gluon.tgz" | shasum -a 256 -c -
+          echo "847b549a616f47687625e77a044ed3e162e96850f227f852db57b04528d09024  $RUNNER_TEMP/gluon.tgz" | shasum -a 256 -c -
           mkdir "$RUNNER_TEMP/gluon"
           tar -xf "$RUNNER_TEMP/gluon.tgz" --strip-components 1 -C "$RUNNER_TEMP/gluon"
           export GRAALVM_HOME="$(dirname "$(dirname "$(find "$RUNNER_TEMP/gluon" -type f -name java -path '*/bin/java' | head -1)")")"
