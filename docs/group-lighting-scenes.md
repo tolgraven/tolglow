@@ -7,6 +7,20 @@
 | Choose between a steady wash and a restless sparkle | The **visual activity** score |
 | Change the show when the music gets louder | The **audio energy** signal |
 
+## Let the dance floor set the wash
+
+With the audience zones selected and armed in **Connections → Audience**, point a lighting group's target at the participant-weighted effort. One guest dancing at full effort and three at rest set the target to 0.25, even across different gateways. When everyone leaves, the crowd reading reaches zero. The group fades its own contribution to black. Other running lights can supply a house look.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(show/submit! runtime :lighting-scene
+  {:op :apply :group-id :wash :effect-ids [] :target 0.0
+   :target-var [:audience :levels :dance-effort]})
+```
+
+Use the name of a group in your patch. An empty effect list lets the scene generate its wash. Set `:brightness-reference :global` to match fixtures against the calibrated brightest source. Individual steps can trigger accents on top of this continuous level. [Enroll the audience gateways](nearby-audience.md)
+
 ## Match unlike fixtures
 
 Select a group in Studio. **Local** brightness measures each source against its own full white. A local group target uses the group’s combined capacity, so an effect can light its members unevenly. **Global** brightness measures each source against the brightest full-white source in the entire patch.
