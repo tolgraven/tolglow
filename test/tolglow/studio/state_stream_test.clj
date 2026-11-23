@@ -486,3 +486,39 @@
             (is (= initial-watches (count (.getWatches ^clojure.lang.Atom (:state manager))))))
           (finally (deliver finish true) (.abort ^WebSocket (:socket client))
                    (.stop server) (show/stop! runtime)))))))
+
+(deftest output-only-reaches-the-operator-who-requested-that-workspace-and-repository
+  (let [owner (show/create-runtime {:workspace-options nil})
+        session {:workspace-id "lighting" :repo :tolglow :session-id "one" :state :running
+                 :first-cursor 0 :cursor 0 :chunks []}
+        sessions (atom {:sessions {"one" session}})
+        runtime (assoc-in owner [:development :terminal] {:state sessions})
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        operator (connect server "terminal&view=queries")
+        spectator (connect server "other-operator&view=queries")
+        own [:development/terminal-output "lighting" :tolglow "one" 0]
+        other [:development/terminal-output "lighting" :afterglow "one" 0]
+        watches #(count (.getWatches ^clojure.lang.Atom sessions))]
+    (try
+      (doseq [client [operator spectator]] (acknowledge client (receive client)))
+      (send-control operator {:op :queries :queries [own]})
+      (let [initial (receive operator)]
+        (is (= "" (get-in initial [:view :subscriptions own :value :data])))
+        (acknowledge operator initial)
+        (send-control spectator {:op :queries :queries [other]})
+        (let [denied (receive spectator)]
+          (is (= {:error :unavailable} (get-in denied [:view :subscriptions other])))
+          (acknowledge spectator denied))
+        (is (= 1 (watches)))
+        (swap! sessions update-in [:sessions "one"] assoc :cursor 1 :chunks [{:start 0 :bytes (byte-array [65])}])
+        (let [changed (receive operator)
+              view (apply-patch (:view initial) changed)]
+          (is (= "QQ==" (get-in view [:subscriptions own :value :data])))
+          (is (= 0 (:frame-number view)))
+          (acknowledge operator changed))
+        (is (silence? spectator)))
+      (send-control operator {:op :queries :queries []})
+      (acknowledge operator (receive operator))
+      (is (zero? (watches)))
+      (finally (.abort ^WebSocket (:socket operator)) (.abort ^WebSocket (:socket spectator))
+               (.stop server) (show/stop! owner)))))
