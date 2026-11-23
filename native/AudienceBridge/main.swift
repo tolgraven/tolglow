@@ -23,10 +23,12 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var lastCount = 0
     private var timer: Timer?
     private var sending = false
-    private var onsets = AudienceOnsetFrames()
+    private var output = AudienceStageOutput()
     private var frameWork: DispatchWorkItem?
-    private var lastLevels: AudienceLevels?
-    private var levelUpdate = false
+    private var canSend: Bool {
+        guard radio?.state == .poweredOn, radio.isAdvertising, case .ready = connection?.state else { return false }
+        return true
+    }
 
     init(name: String, oscHost: String, port: NWEndpoint.Port?, token: String?, source: String) {
         self.name = name; self.source = source; self.token = token
@@ -66,7 +68,9 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         guard peripheral.state == .poweredOn else {
+            reportExpiredSteps(output.reset())
             floor = AudienceFloor()
+            challenges.removeAll()
             peers.keys.forEach { guests?.revoke(participant: $0) }
             peers.removeAll(); grants.removeAll()
             print("Stage Bluetooth unavailable (\(peripheral.state.rawValue))")
@@ -190,10 +194,10 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         }
         var overflow: String?
         let admitted = floor.receive(sample, from: id, at: time) { delta in
-            guard connection != nil, delta > 0 else { return true }
-            do { try onsets.append(delta); return true }
+            guard canSend, delta > 0 else { return true }
+            do { try output.onsets.append(delta); return true }
             catch {
-                overflow = "Gesture queue overflow (\(onsets.pending) pending, \(delta) incoming)."
+                overflow = "Gesture queue overflow (\(output.onsets.pending) pending, \(delta) incoming)."
                 return false
             }
         }
@@ -208,7 +212,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         peers[id] = (peer.key, time, sample.serial)
         if connection != nil {
             _ = floor.takeSteps()
-            scheduleFrame(at: time)
+            if canSend { scheduleFrame(at: time) }
         }
         return .success
     }
@@ -220,21 +224,23 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         peers = peers.filter { time - $0.value.lastSeen < 8 }
         grants = grants.filter { time - $0.value.1 < 5 }
         let levels = floor.drain(at: time)
-        lastLevels = levels
         if lastCount != levels.count { print("Participants \(levels.count)") }
-        let wasActive = lastCount > 0
         lastCount = levels.count
-        if levels.count > 0 || wasActive { levelUpdate = true }
+        reportExpiredSteps(output.tick(levels, available: canSend))
         flush(at: time)
     }
 
+    private func reportExpiredSteps(_ count: Int) {
+        if count > 0 { print("Expired \(count) pending dance steps while the stage or its floor was inactive.") }
+    }
+
     private func scheduleFrame(at time: Double) {
-        guard frameWork == nil, onsets.needsFrame else { return }
+        guard frameWork == nil, output.onsets.needsFrame else { return }
         let frame = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.frameWork = nil
             let now = ProcessInfo.processInfo.systemUptime
-            self.onsets.openFrame(at: now)
+            self.output.onsets.openFrame(at: now)
             self.flush(at: now)
             self.scheduleFrame(at: now)
         }
@@ -244,27 +250,18 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     }
 
     private func flush(at time: Double) {
-        guard !sending, levelUpdate || onsets.ready, let connection, let token else { return }
-        // The admission packet precedes the first onset. Bootstrap once, then reuse the 5 Hz readings.
-        if lastLevels == nil || (lastLevels?.count == 0 && onsets.ready) { lastLevels = floor.drain(at: time) }
-        guard let levels = lastLevels else { return }
-        levelUpdate = false
-        let delivered = onsets.takeBatch()
-        var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
-                      "dance-steps": Double(delivered), "pulse-count": Double(levels.pulseCount), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
-        values["motion-count"] = Double(levels.motionCount)
-        values.merge(levels.motion) { _, measured in measured }
-        if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
+        guard canSend else { reportExpiredSteps(output.reset()); return }
+        guard !sending, let connection, let token, let frame = output.take(from: &floor, at: time) else { return }
+        reportExpiredSteps(frame.expired)
         do {
-            let gestures = (0..<delivered).map { _ in Gesture(type: "dance-step") }
-            let observation = try Observation(deviceID: source, sessionID: session, sampleID: sampleID,
-                timeMS: time * 1000, values: values, gestures: gestures, pairingToken: token)
+            let observation = try frame.levels.observation(steps: frame.steps, source: source, session: session,
+                                                        sampleID: sampleID, at: time, token: token)
             let packet = try SensorOSC.encode(observation)
             sampleID += 1; sending = true
             connection.send(content: packet, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
                 self.sending = false
-                if error != nil { self.stop("OSC send failed with \(delivered) gestures in flight."); return }
+                if error != nil { self.stop("OSC send failed with \(frame.steps) gestures in flight."); return }
                 self.flush(at: ProcessInfo.processInfo.systemUptime)
             })
         } catch { stop("Could not encode audience observation.") }

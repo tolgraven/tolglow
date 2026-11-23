@@ -216,6 +216,15 @@ jobs:
           name: audience-onset-timing
           path: ${{ runner.temp }}/onset-timing/*.json
           if-no-files-found: error
+      - name: Exercise empty stages and return to the dance floor
+        env:
+          TOLGLOW_STAGE_TRACE: ${{ runner.temp }}/stage-heartbeat.json
+        run: swift test --package-path native/Core --filter AudienceStageHeartbeatTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audience-stage-heartbeat
+          path: ${{ runner.temp }}/stage-heartbeat.json
+          if-no-files-found: error
       - name: Verify atomic segmented Bluetooth writes
         env:
           TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
