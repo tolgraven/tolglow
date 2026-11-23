@@ -11,7 +11,7 @@
   align-items: center;
   gap: .55rem;
   min-height: 44px;
-  font-size: .875rem;
+  font-size: .875rem !important;
   cursor: pointer;
 }
 .keyframe-editor input[type=checkbox] {width:1.125rem;height:1.125rem;min-height:0}

@@ -78,10 +78,9 @@ try {
   await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
   const response = await published;
   assert.ok(response.ok(),await response.text());
-  await page.waitForFunction(async ({id}) => {
-    const state = await (await fetch('/api/state',{headers:{accept:'application/json'}})).json();
-    return state.instances.find(x=>x.id===id)?.['effect-version']===2;
-  },{id:launch['instance-id']});
+  // The new definition remounts the timing panel. Wait for the pushed
+  // Studio revision before opening it, rather than racing an HTTP read.
+  await card.getByText(/^v2 ·/).waitFor();
   await open();
   const updated = (await request('/api/state')).instances.find(x=>x.id===launch['instance-id']);
   assert.equal(updated.definition.keyframes.curve.type,'cubic-bezier');
@@ -103,10 +102,7 @@ try {
   const savedCap = page.waitForResponse(r=>r.url().endsWith('/api/definition') && r.request().method()==='POST');
   await card.getByRole('button',{name:'Publish keyframe settings'}).tap();
   assert.ok((await savedCap).ok());
-  await page.waitForFunction(async ({id}) => {
-    const state = await (await fetch('/api/state',{headers:{accept:'application/json'}})).json();
-    return state.instances.find(x=>x.id===id)?.['effect-version']===3;
-  },{id:launch['instance-id']});
+  await card.getByText(/^v3 ·/).waitFor();
   await open();
   assert.equal(await interval.count(),0);
   assert.equal(await editor.getByLabel('Maximum sample interval',{exact:true}).inputValue(),'1/8');
