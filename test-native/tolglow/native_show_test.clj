@@ -60,7 +60,7 @@
     (is (:closed? (gpu/status session)))
     (is (zero? (:resident (gpu/status session))))))
 
-(deftest deferred-pure-steps-and-multi-program-actual-show-output
+(deftest deferred-pure-steps-share-one-program-for-complete-show-output
   (let [cpu-frames (atom {}) gpu-frames (atom {})
         cpu (show/create-runtime {:sink (capture cpu-frames) :workers 2})
         runtime (show/create-runtime {:sink (capture gpu-frames) :workers 2 :compute-backend :native-gpu :gpu-budget-ms 5000
@@ -83,7 +83,7 @@
       (is (comparable-frames? @cpu-frames @gpu-frames))
       (is (some pos? (map #(bit-and 255 %) (get-in (last (sort @gpu-frames)) [1 1]))))
       (let [status (get-in (show/snapshot runtime) [:status :compute])]
-        (is (= 2 (get-in status [:session :resident])))
+        (is (= 1 (get-in status [:session :resident])) "The wash and aim layers share one compiled program")
         (is (pos? (get-in status [:session :hits])))
         (is (pos? (:native-dispatches status)))
         (is (zero? (:cpu-fallbacks status))))
@@ -129,7 +129,8 @@
                                                (try (apply run! args)
                                                     (finally (deliver finished true))))]
         ;; Change a captured uniform so the frame actually requires a new draw.
-        (let [id (:id (first (filter #(= :shader-wash (:cue-id %)) (:instances (show/snapshot runtime)))))
+        (let [before (get-in (show/snapshot runtime) [:status :compute :deadline-fallbacks])
+              id (:id (first (filter #(= :shader-wash (:cue-id %)) (:instances (show/snapshot runtime)))))
               ack (show/submit! runtime :command {:op :param/set :instance-id id :param :gain :value 0.7})
               tick (future (show/tick! runtime 25.0) :published)]
           (is (= true (deref entered 3000 false)))
@@ -139,7 +140,8 @@
           (is (not (realized? finished)))
           (is (= :timeout (get-in (show/snapshot runtime) [:status :movement :reason])))
           (is (= 8 (get-in (show/snapshot runtime) [:status :movement :cpu-heads])))
-          (is (>= (get-in (show/snapshot runtime) [:status :compute :deadline-fallbacks]) 2))
+          (is (= (inc before) (get-in (show/snapshot runtime) [:status :compute :deadline-fallbacks]))
+              "The fused program needs one CPU fallback for the two layers")
           (is (every? (complement :fault) (:instances (show/snapshot runtime))))
           (is (some pos? (map #(bit-and 255 %) (get (val (last (sort @frames))) 1)))))
         (let [epoch (:epoch (show/snapshot runtime))]
