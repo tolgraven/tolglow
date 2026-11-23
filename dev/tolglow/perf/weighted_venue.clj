@@ -115,29 +115,32 @@
         (throw (ex-info "Effect failed during volume run" {:id id :fault (:fault instance)}))))
     frame))
 
+(defn- cue-members [spatial instances id]
+  (let [key (str "spatial-cue/" (get-in instances [id :order]))
+        members (get-in spatial [:members key])
+        reported (get-in spatial [:signals key :affected-head-count])]
+    (when-not (and (set? members) (= (count members) reported))
+      (throw (ex-info "Running cue did not report its weighted heads" {:id id})))
+    members))
+
+(defn- beam-additions [fixtures beam? shape members]
+  (letfn [(check [extra {:keys [id position channels]}]
+            (let [origin? (pos? (reference-weight shape position))
+                  present? (contains? members id)]
+              (cond
+                (= origin? present?) extra
+                (and beam? present?) (update extra (if (:pan channels) :movers :pixels) inc)
+                :else (throw (ex-info "Published members disagree with sphere coverage"
+                                      {:id id :origin? origin? :present? present?})))))]
+    (reduce check {:movers 0 :pixels 0} fixtures)))
+
 (defn- coverage [model ids index beam?]
   (let [fixtures (get-in model [:rig :fixtures])
         spatial (get-in model [:variables :spatial])
         shapes (volumes (count ids) #{:position} (/ index 20.0))
-        members-for (fn [id]
-                      (let [key (str "spatial-cue/" (get-in model [:instances id :order]))
-                            members (get-in spatial [:members key])
-                            reported (get-in spatial [:signals key :affected-head-count])]
-                        (when-not (and (set? members) (= (count members) reported))
-                          (throw (ex-info "Running cue did not report its weighted heads" {:id id})))
-                        members))
-        fields (mapv members-for ids)
+        fields (mapv (partial cue-members spatial (:instances model)) ids)
         counts (frequencies (mapcat seq fields))
-        inspect (fn [shape members]
-                  (reduce (fn [extra {:keys [id position channels]}]
-                            (let [origin? (pos? (reference-weight shape position))
-                                  present? (contains? members id)]
-                              (cond
-                                (= origin? present?) extra
-                                (and beam? present?) (update extra (if (:pan channels) :movers :pixels) inc)
-                                :else (throw (ex-info "Published members disagree with sphere coverage"
-                                                     {:id id :index index :origin? origin? :present? present?})))))
-                          {:movers 0 :pixels 0} fixtures))
+        inspect (partial beam-additions fixtures beam?)
         additions (reduce (partial merge-with +) (map inspect shapes fields))]
     {:positive-pairs (reduce + (map count fields))
      :distinct-heads (count counts)
@@ -177,38 +180,40 @@
           (throw (ex-info "Fixture coverage did not exercise this case" {:fields n :coverage observed})))
         {:scope :host :fields n :selection selection :workers 2 :output :independent
          :coverage observed
-       :result (bench/measure #(dissoc (step host %) :model) expected {:warmup warmup :samples samples})})
+         :result (bench/measure #(dissoc (step host %) :model) expected {:warmup warmup :samples samples})})
       (finally (show/stop! (:runtime host))))))
 
-(defn- venue [pixels]
-  (let [data (bench/corpus pixels 64 :sculpture)]
-    (update data :model
-            #(-> %
-                 (update-in [:rig :fixtures]
-                            (fn [rig] (mapv (fn [fixture] (cond-> fixture (get-in fixture [:channels :pan])
-                                                             (assoc :beam-angle 24.0 :lens-radius-m 0.05))) rig)))
-                 (assoc-in [:rig :room] {:width 24.0 :height 9.0 :depth 24.0})
-                 (assoc-in [:settings :spatial]
-                           {:enabled? true :run-when :enabled
-                            :bounds {:min [-12.0 0.0 -12.0] :max [12.0 9.0 12.0]}})))))
+(defn- emitter [fixture]
+  (cond-> fixture (get-in fixture [:channels :pan]) (assoc :beam-angle 24.0 :lens-radius-m 0.05)))
 
-(defn- optical-case [{:keys [model]} n warmup samples]
+(defn- venue [pixels]
+  (-> (bench/corpus pixels 64 :sculpture)
+      (update-in [:model :rig :fixtures] #(mapv emitter %))
+      (assoc-in [:model :rig :room] {:width 24.0 :height 9.0 :depth 24.0})
+      (assoc-in [:model :settings :spatial]
+                {:enabled? true :run-when :enabled
+                 :bounds {:min [-12.0 0.0 -12.0] :max [12.0 9.0 12.0]}})))
+
+(defn- committed-observations [model]
   (let [{:keys [runtime]} (new-show model false)
         patch (:rig model)
-        rig (spatial/prepare-rig (:fixtures patch))
-        {:keys [width height depth]} (:room patch)
-        opts (try
-               (show/tick! runtime 250)
-               (show/tick! runtime 850)
-               (let [out (:output @(:state runtime))]
-                 {:values (into {} (map (juxt :id identity)) (render/project-compact (:compact out)))
-                  :surfaces (surfaces/receivers patch) :extinction-per-m 0.0
-                  :range-m (Math/hypot (Math/hypot width depth) height)})
-               (finally (show/stop! runtime)))
+        {:keys [width height depth]} (:room patch)]
+    (try
+      (show/tick! runtime 250)
+      (show/tick! runtime 850)
+      (let [compact (get-in @(:state runtime) [:output :compact])]
+        {:values (into {} (map (juxt :id identity)) (render/project-compact compact))
+         :surfaces (surfaces/receivers patch) :extinction-per-m 0.0
+         :range-m (Math/hypot (Math/hypot width depth) height)})
+      (finally (show/stop! runtime)))))
+
+(defn- optical-case [{:keys [model]} n warmup samples]
+  (let [rig (spatial/prepare-rig (get-in model [:rig :fixtures]))
+        opts (field/prepare-observations (committed-observations model))
+        weights (fn [volume] (:weights (field/sample volume rig opts)))
         step (fn [i]
                (let [shapes (volumes n #{:position :beam} (/ i 20.0))
-                     {:keys [value] :as observation}
-                     (elapsed #(mapv (fn [volume] (:weights (field/sample volume rig opts))) shapes))]
+                     {:keys [value] :as observation} (elapsed #(mapv weights shapes))]
                  (assoc (dissoc observation :value) :positive (reduce + (map count value)))))]
     (dotimes [i warmup] (step i))
     {:scope :optics :fields n :surfaces (count (:surfaces opts))
