@@ -6,18 +6,21 @@
             [tolglow.bench-show :as bench]
             [tolglow.demo :as demo]
             [tolglow.perf.admission-cost :as admission]
+            [tolglow.perf.effect-samples :as samples]
             [tolglow.show :as show]))
 
 (defn- percentile [fraction samples]
   (when-let [values (seq (sort samples))]
     (nth values (dec (long (Math/ceil (* fraction (count values))))))))
 
-(defn- observe! [a field rows]
-  (add-watch a field
-             (fn [_ _ before after]
-               (let [row (get after field)]
-                 (when (and row (not (identical? row (get before field))))
-                   (swap! rows conj row))))))
+(defn- observe!
+  ([a field rows] (observe! a field rows identity))
+  ([a field rows project]
+   (add-watch a field
+              (fn [_ _ before after]
+                (let [row (get after field)]
+                  (when (and row (not (identical? row (get before field))))
+                    (swap! rows conj (project row))))))))
 
 (defn- demo-scene []
   (reduce (fn [m cue] (bench/command m [cue :start] {:op :cue/launch :cue-id cue}))
@@ -60,7 +63,8 @@
         ready (count (filter #(and (:ready-at-ms %) (<= (:ready-at-ms %) (:deadline-ms %))) renders))
         matching (filter #(= (:source-time-ms %) (:deadline-ms %)) delivered)
         fresh (count (filter #(< (:sink-at-ms %) (+ (:deadline-ms %) 25)) matching))]
-    {:nominal-slots (inc (- last-slot first-slot)) :renders (count renders)
+    {:effect-sampling (samples/summarize renders)
+     :nominal-slots (inc (- last-slot first-slot)) :renders (count renders)
      :complete-within-25-ms (count (filter #(and (:ready-at-ms %) (<= (:cost-ms %) 25.0)) renders)) :ready-for-deadline ready
      :sent (count delivered) :publisher-attempts (count outputs)
      :late-sink-entries (count late-sink) :short-sink-gaps (count short-gaps)
@@ -114,7 +118,7 @@
                                step))))) host)
         last-slot (+ warmup slots)]
     (try
-      (observe! (:timeline owner) :last renders)
+      (observe! (:timeline owner) :last renders #(samples/capture % @(:state host)))
       (observe! (:timeline owner) :last-missed-wake missed-wakes)
       (observe! (:status owner) :output-timing outputs)
       (scheduler/start! owner 25 #(show/render-slot! work %))

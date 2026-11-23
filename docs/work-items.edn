@@ -4,7 +4,7 @@
  [{:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
-   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/dev/tolglow/perf/effect_samples.clj" "tolglow/test/tolglow/perf/effect_samples_test.clj" "tolglow/docs/browser-observations.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
                 "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
