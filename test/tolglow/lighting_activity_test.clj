@@ -222,3 +222,15 @@
         report (:report (tick nil 0 blocks))]
     (is (< 0.24 (get-in report [:effects :adjust :brightness]) 0.26))
     (is (= 0.5 (get-in report [:effects :base :brightness])))))
+
+(deftest movement-tracking-reads-the-same-coarse-fine-pose-as-rendering
+  (let [fixture {:id :head :universe 1 :address 509 :channels {:dimmer 1 :pan [2 3] :tilt [4 5]}}
+        tick (capture [fixture])]
+    (doseq [code [255 256 32767 32768 65535]]
+      (let [pan (/ code 65535.0)
+            tilt (/ (- 65535 code) 65535.0)
+            expected (:direction (frame/fixture-pose fixture {:pan pan :tilt tilt}))
+            observed (tick nil 0 [(block :sweep [:head] {:dimmer 1.0 :pan pan :tilt tilt})])
+            actual (first (get-in observed [:state :samples :poses]))]
+        (is (= 3 (count actual)))
+        (is (every? #(< (abs %) 1.0e-12) (map - actual expected)) code)))))

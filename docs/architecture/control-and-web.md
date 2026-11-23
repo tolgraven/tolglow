@@ -4,7 +4,8 @@ This document combines the original source audit with the target architecture.
 The shared command model, pure bindings/views/codecs, Push 2/generic sessions and
 re-frame/Reagent/Ring studio are now implemented v1 modules; their observed scope
 is in [studio UI](../studio-ui.md), [show files](../show-files.md) and
-[testing](../testing.md). Native Push 3 display/standalone and the broader
+[testing](../testing.md). The [tethered Push 3 screen](../push-display-packaging.md#tethered-push-3) has an explicit
+USB transport and native-size recording tests. Standalone operation and the broader
 performance workflows remain open. Expanded MPE/Seaboard M, X-Touch/extenders,
 automapping, category widgets, offscreen CSS/webview rendering and Live patchbay
 requirements are specified in [expressive performance](../product/expressive-performance.md).

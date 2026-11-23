@@ -106,3 +106,11 @@ checked-in CI browser tests. Preview rendering was hidden for the control gates
 so they do not establish graphics/control latency; the renderer worker has its
 own integration gate. Chromium viewport emulation does not establish iPad Safari,
 physical Push USB, or real audio-device behavior.
+
+## Physical resolution and operator readouts
+
+Studio inspectors and the passive Push 2 display resolve a control's physical channel width from its effect outputs, captured targets and current rig patch. For mixed targets the finest participating channel wins. For an eight-bit dimmer in normalized units, 127/255 reads **0.498** and 128/255 reads **0.502**. For a moving head with separate coarse and fine pan channels, 32767/65535 reads **0.49999** and 32768/65535 reads **0.50001**. Tilting uses the width of its own physical mapping. Fixture names and parameter names have no bearing on precision.
+
+The controls carry `:dmx-bits` in their projected schemas. A declared unit range such as degrees determines how many decimal places distinguish a physical step. Free-running rates and other continuous parameters keep their native precision and use a compact readout, including scientific notation for very small values. Number fields expose their complete value while editing. Sending a command, evaluating effects, saving a show and packing DMX all use the original value.
+
+The Push **Shift + encoder** gesture takes one physical code step for a parameter connected to an eight- or sixteen-bit channel. Ordinary turns retain the usual coarser editing speed. To reproduce the readout comparison on an isolated preview show, use the paired Afterglow revision pinned in CI, build Studio with `npm run studio:build`, then run `lein run -m tolglow.qa.parameter-precision target/precision`. It checks a real coarse/fine byte carry, captures the 960 × 160 display and edits a number in a live Studio inspector.
