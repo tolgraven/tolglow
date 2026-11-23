@@ -86,6 +86,19 @@
     (is (:send? expired)) (is (zero? (get-in expired [:levels :audience-count])))))
 
 
+(deftest an-empty-stage-publishes-its-ordinary-level-tick
+  (let [host (stage/create)
+        empty-levels {:audience-count 0 :dance-effort 0.0 :pulse-count 0
+                      :pulse-present 0 :motion-count 0}
+        started (main/publication! host {} 1.0)
+        between (main/publication! host started 1.025)
+        still-empty (main/publication! host between 1.201)]
+    (is (true? (:send? started)))
+    (is (false? (:send? between)))
+    (is (true? (:send? still-empty)))
+    (is (= [empty-levels empty-levels] (mapv :levels [started still-empty])))
+    (is (= [0 0 0] (mapv :steps [started between still-empty])))))
+
 (deftest printed-invitation-contains-the-ephemeral-stage-fingerprint
   (let [stage (stage/create) file (java.io.File/createTempFile "tolglow-gatt-invite" ".png")]
     (try
