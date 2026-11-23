@@ -89,14 +89,15 @@ export class PushScene {
       throw new Error(reason);
     }
     this.engine.setQuality(this.engine.softwareRenderer ? 'low' : 'mobile');
-    this.engine.setLightingMode('interpolate');
+    // One draw per capture. Holding the committed endpoint avoids presenting an
+    // older value when a second show frame arrives before the next device draw.
   }
 
   update(frame) {
     if (!this.engine || document.hidden || !this.canvas.isConnected) return;
     const engine = this.engine, now = performance.now();
     // Every worker capture crosses JSON. Preserve structural identity for
-    // unchanged rigs so lighting interpolation and the overlay cache remain valid.
+    // unchanged rigs so fixture geometry and editor overlays keep their caches.
     const key = JSON.stringify(frame.rig);
     if (this.rigKey !== key) {this.rigKey = key; this.rig = frame.rig;}
     frame.rig = this.rig;

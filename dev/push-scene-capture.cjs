@@ -38,10 +38,10 @@ async function captureShow([url, directory, executablePath]) {
         if (!e?.ready) throw Error(document.querySelector('.push-scene-status')?.textContent || 'no rendered scene');
         window.lastVenue = e;
         return {draws: e.draws, lights: e.lightEntries.length, width: canvas.clientWidth, height: canvas.clientHeight,
-                drawingBuffer: [canvas.width, canvas.height], device: e.deviceRenderer,
+                drawingBuffer: [canvas.width, canvas.height], device: e.deviceRenderer, lighting: e.lighting.mode,
                 mode: e.snapshot.editor?.tool || 'simulator', camera: e.snapshot.camera};
       });
-      assert.equal(sample.width, 960); assert.equal(sample.height, 160); assert(sample.lights >= 8);
+      assert.equal(sample.lighting, 'hold'); assert.equal(sample.width, 960); assert.equal(sample.height, 160); assert(sample.lights >= 8);
       sample.captureMs = Math.round(result['capture-ms']); samples.push(sample);
       writeFileSync(join(directory, String(i).padStart(2, '0') + '.png'), Buffer.from(result.png, 'base64'));
     }
