@@ -1,6 +1,6 @@
 # Musical effect keyframes
 
-In the Studio effect builder, enable keyframes, enter an interval and choose its unit. Use a fraction of a beat for short motion, or bar and phrase intervals for longer sweeps. The easing picker includes a two-handle Bézier editor, a damped spring and stepped or smooth curves. Continuous effects can also declare the same settings in the registry.
+In the Studio effect builder, select **Sample at a fixed interval**, enter an interval and choose its unit. Use a fraction of a beat for short motion, or bar and phrase intervals for longer sweeps. The easing picker includes a two-handle Bézier editor, a damped spring and stepped or smooth curves. Continuous effects can also declare the same settings in the registry.
 
 ```clojure
 {:id :beat-wash
@@ -13,6 +13,10 @@ In the Studio effect builder, enable keyframes, enter an interval and choose its
  :outputs {:color [0.8 0.12 0.04]
            :dimmer {:op :fract :args [{:op :multiply :args [0.25 {:op :beat}]}]}}}
 ```
+
+Choose **Limit automatic slowdown** in the builder or an active cue's keyframe inspector to enter the longest permitted automatic sample interval. Leave fixed sampling off to run the effect at the full show rate whenever the governor has sufficient headroom. For example, a wash with `:keyframes {:max-interval {:beats 1/8}}` permits a two-frame interval at 120 BPM and 40 Hz. A tempo change to 240 BPM restores direct evaluation on the frame that receives the command. Other effects in the same compound cue keep their individual cadence.
+
+A fixed interval and an automatic maximum can be enabled independently. The fixed interval always applies, even if deliberately longer than the automatic limit. The automatic maximum governs only additional slowdown. Both controls accept fractions of beats, bars or phrases, as well as explicit milliseconds.
 
 The effect computes its endpoints using the actual and future instance clocks. A live parameter, bass energy from an audio-return mapping or a show variable can then move between those endpoints at every show frame. Set the progress source to elapsed time for regular tweens, replace it for scrubbing in either direction, or offset it to nudge the existing motion. The effect can start its next segment from an intermediate value when the source never reached one.
 
@@ -53,3 +57,13 @@ matches the full-rate reference on all 320 frames. The smooth wash reaches a
 stride of eight frames and returns to one during recovery. Only two definitions
 are inspected over the entire run. This test isolates scheduling decisions. The
 large-rig benchmark measures actual throughput and output error separately.
+
+
+The release browser replay edits the live cue on an 834 px touch viewport,
+publishes a cap-only revision, and reopens the running inspector. It checks
+the stored beat fraction and that the fixed-interval field stays disabled.
+
+```sh
+npm run studio:build
+lein run -m tolglow.qa.studio-browser keyframe-ceilings target/keyframe-ceilings
+```

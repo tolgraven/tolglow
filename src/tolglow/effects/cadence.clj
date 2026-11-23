@@ -37,8 +37,11 @@
             state (:state prior)
             ids (versions model)
             period (/ 1000.0 (:frame-rate runtime))
-            quality (quality/prepare (:quality prior) (:epoch model) ids (:instances model))
-            limits (stride-limits (:ceilings prior) (:ceilings quality) (:transport model) period (:max-stride options))
+            ;; A new capture starts at full rate. Only a surviving version can
+            ;; reuse a prior stride, so its previous cap declaration suffices.
+            quality (:quality prior)
+            limits (when (= (:epoch model) (:epoch state))
+                     (stride-limits (:ceilings prior) (:ceilings quality) (:transport model) period (:max-stride options)))
             intervals (when (= (:epoch model) (:epoch state))
                         (requested-intervals (:effects state) ids period (:max-stride options) (:limits limits)))
             observer (cadence/observer)]

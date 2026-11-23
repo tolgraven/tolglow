@@ -10,6 +10,7 @@
 (def scenarios {"assistant-layout" "dev/studio/assistant-layout-qa.mjs"
                 "audience-zones" "dev/studio/audience-zones-qa.mjs"
                 "event-feed-layout" "dev/studio/event-feed-layout-qa.mjs"
+                "keyframe-ceilings" "dev/studio/keyframe-browser-qa.mjs"
                 "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"})
 
 (defn -main [scenario & [output]]
