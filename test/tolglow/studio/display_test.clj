@@ -1,5 +1,6 @@
 (ns tolglow.studio.display-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [tolglow.studio.display :as display]
             [afterglow.control.devices.transports :as transports])
@@ -260,3 +261,9 @@
           (is (thrown? clojure.lang.ExceptionInfo ((:capture! capture) handle {:title "After close"})))
           (finally ((:close! capture) handle))))
       (finally (io/delete-file script true) (io/delete-file startup true)))))
+
+(deftest frame-requests-retain-qualified-parameter-schema-keys
+  (let [view {:parameters [{:schema {:type :vector :semantic/type :orientation :control/axis :tilt}}]}
+        request (json/read-str (display/frame-request 1 view))]
+    (is (= {"type" "vector" "semantic/type" "orientation" "control/axis" "tilt"}
+           (get-in request ["view" "parameters" 0 "schema"])))))

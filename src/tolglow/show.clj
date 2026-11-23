@@ -1408,7 +1408,7 @@
                                 (let [snapshot @(:state runtime)
                                       audio (audio/waveform (connections/audio (:connections runtime)))]
                                   (-> (block-trace/project-display (:id runtime) (:model snapshot)
-                                        (waveforms/project-display cache snapshot view audio))
+                                        (waveforms/project-display cache (assoc snapshot :runtime-id (:id runtime)) view audio))
                                       (assoc-in [:visualization-clock :sample-period-ms]
                                                 (cue-pads/sample-period-ms (:cue-pad-previews runtime))))))))))
 
