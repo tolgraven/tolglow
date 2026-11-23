@@ -20,8 +20,10 @@ cat > override/tolglow/fixed_image.clj <<'CLOJURE'
   (apply app/-main args))
 CLOJURE
 cp "$root/src/tolglow/fixed_host.clj" override/tolglow/fixed_host.clj
-java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core slf4j-timbre.service-provider slf4j-timbre.factory tolglow.native-resources tolglow.fixed-image tolglow.fixed-host tolglow.native.desktop]] (compile ns))"
+java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core ring.adapter.jetty slf4j-timbre.adapter slf4j-timbre.factory slf4j-timbre.service-provider tolglow.native-resources tolglow.fixed-image tolglow.fixed-host tolglow.native.desktop]] (compile ns))"
 jar uf studio.jar -C override .
+java -cp studio.jar clojure.main "$root/native/EmbeddedHost/register-callbacks.clj"
+jar uf studio.jar -C callbacks META-INF
 if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
   mkdir -p tracing/META-INF/native-image/tolglow/studio
   java -agentlib:native-image-agent=config-output-dir="$PWD/tracing/META-INF/native-image/tolglow/studio" -cp studio.jar tolglow.fixed_image --port 0 >training.log 2>&1 &
@@ -35,6 +37,7 @@ if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
   origin="$(sed -n 's/Tolglow Studio listening on //p' training.log)"
   curl -fsS "$origin/studio/js/main.js" -o /dev/null
   curl -fsS "$origin/api/state" -o /dev/null
+  node "$root/native/Tests/check-state-stream.mjs" "$origin"
   kill -TERM "$trainer"
   wait "$trainer" || test "$?" = 143
   trap - EXIT
@@ -42,7 +45,7 @@ if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
 import json, sys
 from pathlib import Path
 directory=Path('tracing/META-INF/native-image/tolglow/studio')
-prefixes=('org.eclipse.jetty.', 'org.slf4j.', 'com.github.fzakaria.slf4j.', 'com.fasterxml.jackson.')
+prefixes=('ring.adapter.jetty$', 'org.eclipse.jetty.', 'org.slf4j.', 'com.github.fzakaria.slf4j.', 'com.fasterxml.jackson.')
 if sys.argv[1] == 'macos':
     prefixes+=('java.nio.', 'sun.nio.', 'java.io.', 'java.net.', 'java.util.', 'java.time.', 'javax.net.')
 def retained(entry):

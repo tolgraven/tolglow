@@ -20,6 +20,7 @@ for ((i=0; i<120; i++)); do
 done
 origin="$(sed -n 's/^Local compiled Studio listening on //p' "$out/window.log")"
 curl -fsS "$origin/studio/js/main.js" -o /dev/null
+node native/Tests/check-state-stream.mjs "$origin"
 window="$("$out/window-id" "$app_pid")"
 sleep 5
 for cue in ember breathe orchid; do

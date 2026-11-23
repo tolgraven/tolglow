@@ -66,6 +66,8 @@ def check(app):
                     with urllib.request.urlopen(origin + "/api/state", timeout=20) as result:
                         state = json.load(result)
                         assert isinstance(state, dict) and state
+                    probe = Path(__file__).resolve().with_name("check-state-stream.mjs")
+                    subprocess.run(["node", probe, origin], check=True, timeout=25)
                     check_restored_session(origin, root)
                 except BaseException:
                     process.kill()

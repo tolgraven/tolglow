@@ -47,5 +47,6 @@ jobs:
         with:
           name: compiled-studio-window
           path: |
+            build/media/window.log
             build/media/compiled-studio.png
             build/media/compiled-studio.gif
