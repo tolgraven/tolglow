@@ -30,7 +30,8 @@
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.render.workers :as workers]
             [tolglow.observations :as observations]
-            [tolglow.studio.web :as web]))
+            [tolglow.studio.web :as web])
+  (:import [org.eclipse.jetty.server NetworkConnector]))
 
 (defn stream-view
   "Common Studio fields for a committed show state. A client leases spatial
@@ -197,10 +198,12 @@
         bindings (bind! runtime id)]
     (try
       (let [app (access/listener-handler (handler runtime bindings) options)
-            server (jetty/run-jetty app (access/jetty-options host port tls))]
+            server (jetty/run-jetty app (access/jetty-options host port tls))
+            ^NetworkConnector connector (first (.getConnectors server))]
         ;; Streaming clients can remain connected for the lifetime of the show.
         (.setStopTimeout server 0)
-        {:host host :public-origin (:public-origin options) :scheme (if tls :https :http) :port (.getLocalPort (first (.getConnectors server)))
+        {:host host :public-origin (:public-origin options) :scheme (if tls :https :http)
+         :port (.getLocalPort connector)
          :stop! #(try (show/detach-observer! runtime id) (finally (.stop server)))})
       (catch Throwable error
         (show/detach-observer! runtime id)

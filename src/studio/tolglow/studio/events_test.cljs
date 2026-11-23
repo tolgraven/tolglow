@@ -6,6 +6,8 @@
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [reagent.core :as r]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
@@ -509,6 +511,30 @@
     (is (= #{"/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
+
+(deftest device-refresh-failure-leaves-a-running-stage-operable
+  (let [running (-> base
+                    (assoc-in [:show :runtime-id] "stage-host")
+                    (assoc-in [:show :connection-status :stage-invitation]
+                              {:available? true :phase "discoverable" :id "current-stage"
+                               :stage-name "Dance floor" :device-id "audience"}))
+        opened (:db (transition running [:connections/open]))
+        refresh (transition opened [:connections/refresh-devices])
+        ports-request (some (fn [[_ request]] (when (= "/api/sync/ports" (:path request)) request)) (:fx refresh))
+        message "MIDI enumeration timed out"
+        failed (:db (transition opened (conj (:on-failure ports-request) message)))
+        recovered (:db (transition failed (conj (:on-success ports-request) [])))
+        render (fn [db]
+                 (reset! rf-db/app-db db)
+                 (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))
+        before (render opened)
+        during (render failed)
+        after (render recovered)]
+    (is (.includes before ">Stop stage</button>"))
+    (is (.includes during (str ">" message "</p>")))
+    (is (.includes during ">Stop stage</button>"))
+    (is (not (.includes after message)))
+    (is (.includes after ">Stop stage</button>"))))
 
 (deftest midi-selection-keeps-name-guards-until-explicit-reselection
   (let [form (-> connections/sync-defaults (assoc-in [:midi :enabled?] true)

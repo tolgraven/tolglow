@@ -1,14 +1,8 @@
-# Native iPhone and Apple Watch foundation
+# Apple Studio and companions
 
-[Package and run standalone Mac Studio](Packaging/README.md).
+On Apple Silicon, the standalone Mac app runs Studio, its Ring server and its selected show folder in one installation. The release simulator companion includes the iPhone and iPad app, an embedded Watch app and the nearby audience App Clip. The Mac window and both QR generation and decoding ran on hosted Apple hardware. The release archive includes the simulator sizes for each embedded product. [Mac packaging](Packaging/README.md) · [Simulator build and captures](https://github.com/tolgraven/tolglow/actions/runs/45188645351)
 
-
-This is an iOS 18 / watchOS 11 SwiftUI client and a shared pure Swift package.
-[macOS CI](https://github.com/tolgraven/tolglow/actions/runs/44891609591/job/136808451227)
-verified **seven Swift tests and unsigned iOS/watchOS simulator builds** with
-Xcode 16.4 / Swift 6.1.2. Simulator app launch and physical-device behavior remain
-unverified. This is an initial native implementation; full parity with the
-re-frame studio remains ongoing work.
+The embedded-host build adds **On this device** to the Studio tab. It links the Clojure runtime into the iOS application and owns its foreground show locally. The ordinary companion connects to a venue host and can keep controlling that show when the operator returns to the tab. The fixed host executes editable Clojure through SCI. The Mac also offers the full JVM for shows that load JVM classes or compile new application code. [On-device runtime and show folders](EmbeddedHost/README.md)
 
 The **Scan rig** tab captures tap-assisted ARKit/LiDAR observations, identifies
 settled calibration patterns through actual output receipts and submits reviewed

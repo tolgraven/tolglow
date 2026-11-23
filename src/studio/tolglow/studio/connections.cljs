@@ -433,8 +433,6 @@
   [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (get-in s path)) :disabled (boolean disabled?)
                                   :on-change #(edit! path (.. % -target -checked))}] title])
 (defn- status-chip [active? title] [:span.connection-chip {:class (when active? "active")} [:i] title])
-(defn- error-list [s]
-  (for [[key message] (:errors s)] ^{:key key} [:p.connection-error {:role "status"} message]))
 (defn- clock-panel [s transport]
   (let [status (:sync s) clock-projection (:clock status)
         clock (or (:clock clock-projection) (when (= "manual" (get-in status [:config :selected-source] "manual")) transport))
@@ -649,7 +647,8 @@
     [:section#view-connections.view
      [:div.view-heading [:h1 "Connections"]
       [:button.button {:type "button" :on-click #(rf/dispatch [:connections/refresh-devices])} "Refresh device lists"]]
-     [error-list s]
+     (for [[key message] (:errors s)]
+       ^{:key key} [:p.connection-error {:role "status"} message])
      [audience/panel]
      [invitation/panel]
      [clock-panel s (get-in db [:show :transport])]

@@ -75,7 +75,7 @@
      (when-let [stop (:stop prior)] (stop))
      (status manager))))
 
-(defn- daemon! [name f]
+(defn- daemon! [^String name f]
   (doto (Thread. ^Runnable f name) (.setDaemon true) (.start)))
 
 (defn- run-session!

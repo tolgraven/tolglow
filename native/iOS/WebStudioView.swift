@@ -5,6 +5,9 @@ import WebKit
 /// privileged native JavaScript bridge. Loading is an explicit user operation.
 struct WebStudioView: View {
     @AppStorage("studio-origin") private var origin = "http://tolglow.local:8500"
+    #if TOLGLOW_EMBEDDED_HOST
+    @State private var localStudio = false
+    #endif
     @State private var loadedURL: URL?
     @State private var loadID = UUID()
     @State private var status = "Open the configured studio to use its complete web interface"
@@ -20,6 +23,9 @@ struct WebStudioView: View {
                     loadID = UUID()
                     loadedURL = url; status = "Loading studio"
                 }
+                #if TOLGLOW_EMBEDDED_HOST
+                Button("On this device") { localStudio = true }
+                #endif
                 if loadedURL != nil { Button("Close") { loadedURL = nil; status = "Studio closed" } }
             }.padding(.horizontal)
             Text(status).font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
@@ -29,10 +35,13 @@ struct WebStudioView: View {
                 ContentUnavailableView("Web studio", systemImage: "globe", description: Text("Use the same re-frame cues, parameters, editors and tools served by your Tolglow host."))
             }
         }.padding(.top, 8)
+        #if TOLGLOW_EMBEDDED_HOST
+        .sheet(isPresented: $localStudio) { OnDeviceStudio() }
+        #endif
     }
 }
 
-private struct OwnedStudioWebView: UIViewRepresentable {
+struct OwnedStudioWebView: UIViewRepresentable {
     let url: URL
     @Binding var status: String
     func makeCoordinator() -> Coordinator { Coordinator(origin: url, status: $status) }

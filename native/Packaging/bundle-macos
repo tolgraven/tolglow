@@ -29,6 +29,12 @@ rsync -a --exclude=/jmods --exclude=/include --exclude=/man --exclude=/demo \
   --exclude=/lib/src.zip --exclude=/lib/svm --exclude=/lib/static \
   "$JAVA_HOME/" "$resources/runtime/"
 cp "$jar" "$resources/studio.jar"
+if [[ -n "${4:-}" ]]; then
+  test -x "$4"
+  mkdir -p "$app/Contents/Helpers"
+  install -m 755 "$4" "$app/Contents/Helpers/TolglowNativeHost"
+  codesign --force --sign - "$app/Contents/Helpers/TolglowNativeHost"
+fi
 cp "$sources/source-version.txt" "$sources/application-sources.zip" "$resources/"
 "$resources/runtime/bin/java" -version
 # Sign the assembled shell ad hoc for development on this Mac architecture.
