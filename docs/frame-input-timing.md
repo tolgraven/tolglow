@@ -77,6 +77,13 @@ from 37.52 to 37.80 ms. In the eight-mover scene it completed 235 frames
 and sent 230 current samples, versus 232 and 218 with production lead. The
 extra reserve remains a developer benchmark option.
 
+The next dedicated Ubuntu run completed **238 of 240** dense frames within
+25 ms with production lead and sent 229 current sources. The extra reserve
+completed 239 and sent 237. Render p95 was 6.06 ms and 5.90 ms, respectively.
+Median input age at the target rose from 6.31 to 7.67 ms, and p95 age of the
+lower source at the sink rose from 8.78 to 10.19 ms. No sends crossed into
+an expired slot in any of the six cases. [Six-policy Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45199722459/job/137779636192)
+
 ### Recorded local result
 
 On the 1,024-pixel, 128-mover rig, 215 of 240 nominal slots produced a full
@@ -107,6 +114,14 @@ The sender now checks expiry again after packing. Every future release
 replay rejects a sink call for an elapsed slot and counts those dropped
 attempts separately. The raw trace retains cold startup.
 [Measured timeline and replay files](https://github.com/tolgraven/afterglow/pull/89)
+
+A separate capture of the atomic mailbox and source retention revision
+`84b3821` completed **141 of 240** dense frames within 25 ms, with 112
+current-source sends and 39.45 ms render p95 under shared-host load. The
+publisher dropped three dense production-lead attempts after packing. Across
+all six cases, 33 attempts expired before transport handoff. The capture sink
+received zero expired-slot packets. Every new raw capture records the Git
+revision of each project.
 
 ## Measuring the scheduler
 
