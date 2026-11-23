@@ -99,7 +99,16 @@ try {
     });
   });
   const browser = await chromium.connectOverCDP(endpoint.href);
-  page = await browser.contexts()[0].newPage();
+  const reuseTitle = process.env.ROOM_PAGE_TITLE;
+  if (reuseTitle) {
+    const matches = [];
+    for (const candidate of browser.contexts()[0].pages()) if (await candidate.title() === reuseTitle) matches.push(candidate);
+    if (matches.length !== 1) throw new Error('Expected exactly one owned benchmark page with ROOM_PAGE_TITLE.');
+    page = matches[0];
+    await page.evaluate(() => window.crossing?.dispose());
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.clearDeviceMetricsOverride'); await session.detach();
+  } else page = await browser.contexts()[0].newPage();
   if (passes) {
     const response = await fetch(origin + '/studio/preview-worker.js');
     const received = hash(new Uint8Array(await response.arrayBuffer()));
