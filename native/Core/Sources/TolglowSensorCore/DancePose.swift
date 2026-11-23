@@ -23,10 +23,10 @@ public struct DancePose {
     fileprivate func motion(from previous: DancePose, elapsed: Double) -> Double {
         let changes = legs.compactMap { joint, point -> Double? in
             guard let old = previous.legs[joint] else { return nil }
-            return distance(point - center, old - previous.center)
+            return distance((point - center) / scale, (old - previous.center) / previous.scale)
         }
         guard changes.count >= 2, let peak = changes.max() else { return 0 }
-        let hipWidthsPerSecond = peak / (elapsed * (scale + previous.scale) / 2)
+        let hipWidthsPerSecond = peak / elapsed
         return min(1, hipWidthsPerSecond * 0.25)
     }
 }

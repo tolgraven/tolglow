@@ -32,6 +32,21 @@ final class DancePoseTests: XCTestCase {
         }
     }
 
+    func testCameraApproachAndRetreatDoNotCountAsSteps() {
+        var tracker = DancePoseTracker()
+        var meter = DanceMeter()
+        for (frame, width) in [0.05, 0.06, 0.10, 0.13, 0.08, 0.06].enumerated() {
+            let time = Double(frame) / 10
+            let quiet = tracker.strength([dancer(width: width)], at: time)
+            XCTAssertEqual(quiet, 0, accuracy: 1e-8)
+            meter.observe(strength: quiet, at: time)
+        }
+        XCTAssertEqual(meter.steps, 0)
+        let kick = tracker.strength([dancer(width: 0.08, kick: 0.4)], at: 0.6)
+        meter.observe(strength: kick, at: 0.6)
+        XCTAssertEqual(meter.steps, 1)
+    }
+
     func testAmbiguityMissingLandmarksAndReacquisition() {
         var tracker = DancePoseTracker()
         _ = tracker.strength([dancer()], at: 1)
