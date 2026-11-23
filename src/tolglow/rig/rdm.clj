@@ -2,7 +2,9 @@
   "Explicit RDM jobs and portable rig observations. No IO occurs on require,
   construction, status reads, or model transitions."
   (:require [clojure.string :as str]
+            [afterglow.rdm.artnet :as artnet]
             [afterglow.rdm.codec :as codec]
+            [afterglow.reactive :as graph]
             [afterglow.rdm.transport :as transport]
             [afterglow.render.frame :as render])
   (:import [java.util UUID]
@@ -18,13 +20,21 @@
 (defn device-key [{:keys [universe uid sub-device] :or {sub-device 0}}]
   (str universe "/" (codec/uid uid) "/" sub-device))
 (defn configuration [config]
-  (let [c (merge {:host "127.0.0.1" :port 9010 :timeout-ms 2000 :job-timeout-ms 30000} config)]
-    (when-not (and (string? (:host c)) (<= 1 (count (:host c)) 255)
-                   (integer? (:port c)) (<= 1 (:port c) 65535)
-                   (integer? (:timeout-ms c)) (<= 100 (:timeout-ms c) 10000)
-                   (integer? (:job-timeout-ms c)) (<= 1000 (:job-timeout-ms c) 60000))
-      (codec/fail! "OLA RDM needs a host, TCP port and bounded request/job deadlines" {}))
-    (select-keys c [:host :port :timeout-ms :job-timeout-ms])))
+  (let [{:keys [transport timeout-ms job-timeout-ms] :as c}
+        (merge {:transport :ola :timeout-ms 2000 :job-timeout-ms 30000} config)
+        transport (keyword transport)]
+    (when-not (and (integer? timeout-ms) (<= 100 timeout-ms 10000)
+                   (integer? job-timeout-ms) (<= 1000 job-timeout-ms 60000))
+      (codec/fail! "Invalid RDM request or job timeout" {}))
+    (let [endpoint (case transport
+                     :art-net (artnet/configuration c)
+                     :ola (let [{:keys [host port]} (merge {:host "127.0.0.1" :port 9010} c)]
+                            (when-not (and (string? host) (<= 1 (count host) 255)
+                                           (codec/uint? 16 port) (pos? port))
+                              (codec/fail! "OLA RDM requires a host and TCP port" {}))
+                            {:host host :port port})
+                     (codec/fail! "Unknown RDM transport" {:transport transport}))]
+      (assoc endpoint :transport transport :timeout-ms timeout-ms :job-timeout-ms job-timeout-ms))))
 
 (defn- fixture-for [model id]
   (or (some #(when (= (wire-id (:id %)) (wire-id id)) %) (get-in model [:rig :fixtures]))
@@ -79,7 +89,7 @@
                            device (select-keys (codec/validate-command (merge {:pid 0x60} device)) [:uid :universe :sub-device])
                            key (device-key device)]
                        (when-not (= (:universe fixture) (:universe device))
-                         (codec/fail! "The show fixture and RDM device must use the same OLA universe" {}))
+                         (codec/fail! "The show fixture and RDM device must use the same universe" {}))
                        (when (some (fn [[id other]] (and (not= id (:id fixture)) (= key (device-key other)))) (:bindings state))
                          (codec/fail! "This RDM device is already linked to another show fixture" {}))
                        (assoc-in model [:extensions state-key :bindings (:id fixture)] device))
@@ -102,11 +112,13 @@
 (defn- daemon-factory [name]
   (reify ThreadFactory (newThread [_ run] (doto (Thread. run name) (.setDaemon true)))))
 
+(defn session-state [] (atom {:session nil :jobs [] :closed? false}))
+
 (defn create
   "Create an inert session manager. model!/publish! are explicit host boundaries;
-  open! is replaceable only at the external OLA transport boundary for tests."
-  [{:keys [model! identity! publish! open!] :or {open! transport/open!}}]
-  {:state (atom {:session nil :jobs [] :closed? false}) :lock (Object.) :active (atom {})
+  open! is the external transport boundary."
+  [{:keys [model! identity! publish! open! state] :or {open! transport/open!}}]
+  {:state (or state (session-state)) :lock (Object.) :active (atom {})
    :model! model! :identity! identity! :publish! publish! :open! open!
    :executor (ThreadPoolExecutor. 1 1 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. 8) (daemon-factory "tolglow-rdm"))
    :timer (Executors/newSingleThreadScheduledExecutor (daemon-factory "tolglow-rdm-deadlines"))})
@@ -141,25 +153,52 @@
   (.shutdownNow ^ScheduledExecutorService (:timer manager)) nil)
 
 (defn connect! [manager config identity]
-  (let [config (configuration config)]
-    (disconnect! manager)
-    (let [session (locking (:lock manager)
-                    (when (or (:closed? @(:state manager)) (not= identity ((:identity! manager))))
-                      (codec/fail! "RDM session changed before connection admission" {}))
-                    (let [session {:id (str (UUID/randomUUID)) :identity identity :config config}]
-                      (swap! (:state manager) assoc :session session :jobs []) session))]
-      ;; Never invoke a host callback while holding the manager lock.
-      ((:publish! manager) identity {:operation :configure :config config :rdm-session-id (:id session)})
-      {:status :connected :session-id (:id session) :config config})))
+  (let [config (configuration config)
+        session {:id (str (UUID/randomUUID)) :identity identity :config config}
+        retired (locking (:lock manager)
+                  (when (or (:closed? @(:state manager)) (not= identity ((:identity! manager))))
+                    (codec/fail! "RDM session changed before connection admission" {}))
+                  (swap! (:state manager) assoc :session session :jobs [] :epoch (:expected-epoch identity))
+                  (first (reset-vals! (:active manager) {})))]
+    (close-work! retired)
+    (.purge ^ThreadPoolExecutor (:executor manager))
+    ((:publish! manager) identity {:operation :configure :config config :rdm-session-id (:id session)})
+    {:status :connected :session-id (:id session) :config config}))
+
+(defn disconnect-session! [manager id]
+  (let [expected (:session @(:state manager))]
+    (when-not (and expected (= id (:id expected)))
+      (codec/fail! "This RDM session has already been replaced" {}))
+    (disconnect! manager expected)))
+
+(defn- status-view [state epoch saved fixtures]
+  (let [session (:session state)
+        current? (= epoch (:epoch state))
+        connected? (boolean (and current? session (not (:closed? state))))
+        config (or (when connected? (:config session)) (:config saved) (configuration {}))]
+    (merge saved
+           {:connected? connected? :session-id (when connected? (:id session))
+            :config config :transport (:transport config :ola) :jobs (if current? (:jobs state) [])
+            :fixtures (mapv #(select-keys % [:id :name :universe :address :channels :footprint :fixture-type-id]) fixtures)})))
 
 (defn status [manager]
-  (let [state @(:state manager) model ((:model! manager)) session (:session state)
-        connected? (and (not (:closed? state)) session (= (:identity session) ((:identity! manager))))]
-    (merge (saved model)
-           {:connected? (boolean connected?) :session-id (when connected? (:id session))
-            :config (or (:config session) (:config (saved model)) (configuration {}))
-            :transport :ola :direct-artnet? false :jobs (:jobs state)
-            :fixtures (mapv #(select-keys % [:id :name :universe :address :channels :footprint :fixture-type-id]) (get-in model [:rig :fixtures]))})))
+  (let [model ((:model! manager))]
+    (status-view @(:state manager) (:expected-epoch ((:identity! manager)))
+                 (saved model) (get-in model [:rig :fixtures]))))
+
+(defn status-inputs [{:keys [db]} _]
+  (let [model @db] [(:epoch model) (saved model) (get-in model [:rig :fixtures])]))
+
+(defn observed-status [{:keys [cofx subscribe]} _]
+  (let [[epoch saved fixtures] @(subscribe [::status-inputs])]
+    (status-view (cofx ::session-state) epoch saved fixtures)))
+
+(defn register-status! [system state]
+  (graph/reg-ref! system ::session-state state)
+  (doseq [[id handler] [[::status-inputs #'status-inputs] [:rdm/status #'observed-status]]]
+    (graph/reg-sub! system id @handler
+                    {:id id :kind :sub :implementation {:type :var :symbol (str (symbol handler))}}))
+  system)
 
 (defn- record-job! [manager id change]
   (swap! (:state manager) update :jobs
@@ -198,67 +237,87 @@
     (.purge ^ThreadPoolExecutor (:executor manager))
     {:status :cancelled :job-id id}))
 
+(defn- checked-request [manager session operation {:keys [universe full?] :as payload}]
+  (let [direct? (= :art-net (get-in session [:config :transport]))]
+    (when-not (if direct? (and (integer? universe) (<= 1 universe 32768)) (codec/uint? 16 universe))
+      (codec/fail! "Universe outside the selected RDM transport's range" {:universe universe}))
+    (when (and direct? (not= operation :discover) (nil? (get-in session [:config :controller-uid])))
+      (codec/fail! "Configure an individual controller UID before sending GET or SET" {}))
+    (case operation
+      :discover (do (when-not (or (nil? full?) (boolean? full?)) (codec/fail! "Full discovery needs a boolean" {}))
+                    payload)
+      :read (codec/validate-command (merge {:pid 0x60} payload))
+      :command (validate-write! ((:model! manager)) payload)
+      (codec/fail! "Unknown RDM job" {:operation operation}))))
+
+(def ^:private verified-fields {0xf0 :address 0xe0 :personality 0x82 :device-label 0x1000 :identify})
+
+(defn- verify-readback [request observation]
+  (let [{:keys [pid data]} request
+        field (verified-fields pid)
+        readback (get-in observation [:fields field])
+        actual (if (= field :personality) (get-in readback [:value :current]) (:value readback))
+        expected (case field :address (codec/u16 data 0) :personality (first data) (codec/decode-value pid data))]
+    {:status (cond (not= :ack (:status readback)) :unavailable (= expected actual) :verified :else :mismatch)
+     :expected expected :actual actual}))
+
+(defn- run-operation! [manager {:keys [operation device request current? session]} request! deadline]
+  (let [publish! (fn [change]
+                   (when (current?)
+                     ((:publish! manager) (:identity session) (assoc change :rdm-session-id (:id session)))))
+        observe! (fn []
+                   (let [obs (read-device! request! device deadline current?)]
+                     (publish! {:operation :observe :observation obs :device device})
+                     obs))]
+    (case operation
+      :discover (let [table (request! "ForceDiscovery" request)]
+                  (when (> (count (:uids table)) 512) (codec/fail! "Discovery exceeds 512-device limit" {}))
+                  (publish! (assoc table :operation :discovered))
+                  table)
+      :read (observe!)
+      :command (let [request (validate-write! ((:model! manager)) request)
+                     response (transport/command! request! request deadline current?)]
+                 (cond
+                   (not= :ack (:status response)) response
+                   (and (= :set (:command request)) (verified-fields (:pid request)))
+                   (let [obs (observe!)]
+                     (assoc response :readback obs :verification (verify-readback request obs)))
+                   :else (assoc response :value (codec/decode-value (:pid request) (:data response))))))))
+
+(defn- run-job! [manager {:keys [session current? close-ref id] :as job}]
+  (let [config (:config session)
+        ms (:job-timeout-ms config)
+        deadline (+ (System/nanoTime) (* 1000000 ms))
+        expire! #(when-let [close! @close-ref] (close!))
+        register! (fn [close!] (reset! close-ref close!) (when-not (current?) (close!)))
+        timer (.schedule ^ScheduledExecutorService (:timer manager) ^Runnable expire! (long ms) TimeUnit/MILLISECONDS)]
+    (try
+      (when-not (current?) (throw (InterruptedException. "Stale RDM session")))
+      (record-job! manager id {:status :running})
+      (let [{:keys [request! close!]} ((:open! manager) config deadline register!)]
+        (try
+          (let [result (run-operation! manager job request! deadline)]
+            (record-job! manager id {:status (if (current?) :completed :cancelled) :result result}))
+          (finally (close!))))
+      (catch InterruptedException _ (record-job! manager id {:status :cancelled}))
+      (catch Exception error
+        (record-job! manager id {:status (if (current?) :failed :cancelled)
+                                 :error {:message (.getMessage error) :details (ex-data error)}}))
+      (finally (.cancel timer false) (swap! (:active manager) dissoc id)))))
+
 (defn submit!
-  "Admit bounded asynchronous discovery/read/command work. Only a current,
-  explicitly opened session can send requests. All commits remain epoch guarded."
+  "Admit bounded asynchronous discovery/read/command work to the current session."
   [manager operation payload]
-  (let [session (:session @(:state manager)) identity ((:identity! manager))
-        request (case operation
-                  :discover (do (when-not (codec/uint? 16 (:universe payload)) (codec/fail! "Invalid OLA universe" {})) payload)
-                  :read (codec/validate-command (merge {:pid 0x60} payload))
-                  :command (validate-write! ((:model! manager)) payload)
-                  (codec/fail! "Unknown RDM job" {:operation operation}))
+  (let [session (:session @(:state manager))
+        identity ((:identity! manager))
+        request (checked-request manager session operation payload)
         device (select-keys request [:universe :uid :sub-device])
-        id (str (UUID/randomUUID)) close-ref (atom nil)
-        current? #(and (contains? @(:active manager) id)
-                       (= session (:session @(:state manager))) (= identity ((:identity! manager))))
-        task (FutureTask.
-              ^java.util.concurrent.Callable
-              (fn []
-                (let [deadline (+ (System/nanoTime) (* 1000000 (get-in session [:config :job-timeout-ms])))
-                      timeout (.schedule ^ScheduledExecutorService (:timer manager)
-                                         ^Runnable #(when-let [close @close-ref] (close))
-                                         (long (get-in session [:config :job-timeout-ms])) TimeUnit/MILLISECONDS)]
-                  (try
-                    (when-not (current?) (throw (InterruptedException. "Stale RDM session")))
-                    (record-job! manager id {:status :running})
-                    (let [{request! :request! close! :close!}
-                          ((:open! manager) (:config session) deadline
-                           (fn [close!] (reset! close-ref close!) (when-not (current?) (close!))))]
-                      (try
-                        (let [result
-                              (case operation
-                                :discover (let [result (request! "ForceDiscovery" request)]
-                                            (when (> (count (:uids result)) 512) (codec/fail! "Discovery exceeds 512-device limit" {}))
-                                            (when (current?) ((:publish! manager) identity (assoc result :operation :discovered :rdm-session-id (:id session)))) result)
-                                :read (let [observation (read-device! request! device deadline current?)]
-                                        (when (current?) ((:publish! manager) identity {:operation :observe :device device :observation observation :rdm-session-id (:id session)})) observation)
-                                :command (let [_ (validate-write! ((:model! manager)) payload)
-                                               response (transport/command! request! request deadline current?)]
-                                           (if (and (= :set (:command request)) (= :ack (:status response))
-                                                    (#{0xf0 0xe0 0x82 0x1000} (:pid request)))
-                                             (let [observation (read-device! request! device deadline current?)]
-                                               (when (current?) ((:publish! manager) identity {:operation :observe :device device :observation observation :rdm-session-id (:id session)}))
-                                               (let [field (get {0xf0 :address 0xe0 :personality 0x82 :device-label 0x1000 :identify} (:pid request))
-                                                     readback (get-in observation [:fields field])
-                                                     actual (if (= field :personality) (get-in readback [:value :current]) (:value readback))
-                                                     expected (case (:pid request)
-                                                                0xf0 (codec/u16 (:data request) 0)
-                                                                0xe0 (first (:data request))
-                                                                (codec/decode-value (:pid request) (:data request)))]
-                                                 (assoc response :readback observation
-                                                        :verification {:status (cond (not= :ack (:status readback)) :unavailable
-                                                                                     (= expected actual) :verified :else :mismatch)
-                                                                       :expected expected :actual actual})))
-                                             (cond-> response (= :ack (:status response))
-                                               (assoc :value (codec/decode-value (:pid request) (:data response)))))))]
-                          (record-job! manager id {:status (if (current?) :completed :cancelled) :result result}))
-                        (finally (close!))))
-                    (catch InterruptedException _ (record-job! manager id {:status :cancelled}))
-                    (catch Exception error
-                      (record-job! manager id {:status (if (current?) :failed :cancelled)
-                                              :error {:message (.getMessage error) :details (ex-data error)}}))
-                    (finally (.cancel timeout false) (swap! (:active manager) dissoc id))))))]
+        id (str (UUID/randomUUID))
+        close-ref (atom nil)
+        current? #(and (contains? @(:active manager) id) (= session (:session @(:state manager)))
+                       (= identity ((:identity! manager))))
+        job {:operation operation :request request :session session :device device :id id :close-ref close-ref :current? current?}
+        task (FutureTask. ^java.util.concurrent.Callable #(run-job! manager job))]
     (locking (:lock manager)
       (when-not (and session (not (:closed? @(:state manager))) (= identity (:identity session))
                      (= (:session-id payload) (:id session)) (= session (:session @(:state manager))))
