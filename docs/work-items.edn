@@ -4,11 +4,12 @@
  [{:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
-   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md"]
+   :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Phase-lock evaluation and publication, account for host and sink overhead, skip expired slots, and fence clocks across pause, seek and restart."
                 "Measure input age and ready-to-send headroom on the real show path. Compare declared read/write dependencies with serial replay and isolate effect failure."
-                "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."] :evidence []}
+                "Qualify timestamped GPU observations and consumer lifetimes independently from display refresh."]
+   :evidence ["The browser observation rehearsal compares the actual worker and main-thread presented pixels with a consumer's show graph value. It covers zero-demand reads, producer epochs, presented show frame IDs, distinct-value transport and final disposal. Physical GPU timing remains open."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"
    :kind :research :status :in-progress :owner "Mixed venue profiling"
