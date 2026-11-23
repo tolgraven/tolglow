@@ -33,16 +33,29 @@ def exercise(java, jar, environment):
                 for route, expected in [("/", b"app"), ("/studio/js/main.js", b"function")]:
                     with urllib.request.urlopen(origin + route, timeout=10) as response:
                         assert response.status == 200 and expected in response.read()
-                (folder / "late_fixture.clj").write_text(
-                    '(ns late-fixture) (defn mark [] (spit "late-loaded" "from REPL"))')
-                body = json.dumps({"source": "(require 'late-fixture) (late-fixture/mark)",
-                                   "request-id": "mac-require"}).encode()
-                request = urllib.request.Request(origin + "/api/repl/eval", data=body,
-                                                 headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(request, timeout=15) as response:
-                    events = [json.loads(line[6:]) for line in response if line.startswith(b"data: ")]
-                assert events[-1]["status"] == "completed", events
-                assert (folder / "late-loaded").read_text() == "from REPL"
+                def require_new_namespace(name):
+                    filename = name.replace("-", "_") + ".clj"
+                    (folder / filename).write_text(
+                        f'(ns {name}) (defn mark [] (spit "{name}" "from REPL"))')
+                    body = json.dumps({"source": f"(require '{name}) ({name}/mark)",
+                                       "request-id": name}).encode()
+                    request = urllib.request.Request(origin + "/api/repl/eval", data=body,
+                                                     headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(request, timeout=15) as response:
+                        events = [json.loads(line[6:]) for line in response if line.startswith(b"data: ")]
+                    assert events[-1]["status"] == "completed", events
+                    assert (folder / name).read_text() == "from REPL"
+
+                require_new_namespace("late-fixture")
+                with urllib.request.urlopen(origin + "/api/export", timeout=10) as response:
+                    backup = response.read()
+                    transit = response.headers.get_content_type()
+                restore = urllib.request.Request(origin + "/api/import", data=backup,
+                                                 headers={"Content-Type": transit})
+                with urllib.request.urlopen(restore, timeout=20) as response:
+                    result = json.load(response)
+                    assert result.get("ack", result)["status"] == "accepted", result
+                require_new_namespace("after-restore")
             finally:
                 process.stdin.close()
                 try:

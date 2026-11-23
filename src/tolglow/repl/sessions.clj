@@ -40,7 +40,7 @@
      (when (> (count (:sessions saved)) max-sessions) (fail! :session-limit "Saved REPL sessions exceed the configured limit"))
      {:lock (Object.) :runtime-supplier runtime-supplier
       ;; A session can be opened later by a Jetty thread with its own context loader.
-      :session-options (assoc session-options :class-loader (clojure.lang.RT/baseLoader))
+      :session-options (merge {:class-loader (clojure.lang.RT/baseLoader)} session-options)
       :max-sessions max-sessions :open-timeout-ms open-timeout-ms
       :state (atom {:closed? false :saved saved :sessions {} :opening {}})})))
 
