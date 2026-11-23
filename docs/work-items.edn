@@ -66,6 +66,12 @@
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
    :evidence ["Afterglow #55. The spatial suite passed 7 tests and 43 assertions, including a wall impact where a fixture is crossed four times in one physical substep."]}
+  {:id :studio/material-designer :title "Design and preview shared show materials"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/src/studio/tolglow/studio/material_designer.cljs" "tolglow/src/tolglow/effects/material_design.clj"]
+   :depends-on [:effects/show-prefabs]
+   :acceptance ["Preview an unpublished material, edit its defaults and safely save or remove it from a touch device."]
+   :evidence ["Two independent Ring clients edit a material, recover from a stale write and verify protected deletion while a global binding is active. The release Studio at 390, 1024 and 1440 pixels creates a named input, scrubs a four-beat shader sample and validates edits before publishing. The still and recording show the touch workflow."]}
   {:id :show/spatial-bindings :title "Bind ranked registered effects and cues to scoped fixture contact" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/spatial/actions.clj"] :depends-on [:foundation/tests]
    :acceptance ["Retarget a real cue and release only the instances owned by the binding."]

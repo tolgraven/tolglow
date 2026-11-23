@@ -54,6 +54,10 @@ Use `tolglow.signals/waveform-block` to capture a registered waveform as a local
 
 ## Reuse a material across the show
 
+In **Definitions → Material library**, choose a template, name the material and give it an ID such as `:tour/ripple` (enter `tour/ripple` in the ID field). Change the blend mode or input defaults. For a custom numeric shader, start from **Travelling ripple** and edit the GLSL expression. **Add an input** gives an expression a named number, RGB triplet, beat or bar source.
+
+The preview samples the draft over a 4 × 2 metre XY plane at Z=0. Scrub one four-beat bar (120 BPM) and change the dry level to test its transmission, offset or replacement. The readout retains the raw range, including values above unity. **Save material** publishes it to the show library. A stale edit reports the conflict and **Reload library** retrieves the current version. Deletion checks running global variable chains for references.
+
 Store reusable definitions under `[:settings :prefabs :definitions]`. In Studio, open **Definitions → Assign blocks**, select an output, cue parameter or private input and choose the material by name. The same stage ID works in a global variable chain.
 
 ```clojure
