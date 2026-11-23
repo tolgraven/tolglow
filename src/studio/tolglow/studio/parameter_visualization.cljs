@@ -101,9 +101,11 @@
         (mapv blend from to))
       to)))
 
-(defn- compact-number [value]
-  (if (widgets/finite? value)
-    (str (js/Number (.toPrecision value 3))) "—"))
+(defn- compact-number [schema value]
+  (cond
+    (#{8 16} (:dmx-bits schema)) (widgets/number-label schema value)
+    (widgets/finite? value) (str (js/Number (.toPrecision value 3)))
+    :else "—"))
 
 (defn component-label [{:keys [schema component component-label]}]
   (if (and (#{:position :direction :orientation} (spatial-kind schema))
@@ -125,7 +127,8 @@
             [px py] (screen point)
             tint (if color? (widgets/color-css xyz) "var(--push-accent, #bdd49f)")
             caption (str (widgets/number-label (first domain)) " … " (widgets/number-label (second domain)))]
-        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")}
+        [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")
+                                  :data-dmx-bits (:dmx-bits schema)}
          [:svg {:view-box "0 0 110 79" :role "img" :aria-label (str (str/join ", " xyz) ", range " caption)}
           [:polygon.space-wall {:points (points [[-1 -1 -1] [-1 1 -1] [-1 1 1] [-1 -1 1]])}]
           [:polygon.space-wall.side {:points (points [[-1 -1 -1] [-1 1 -1] [1 1 -1] [1 -1 -1]])}]
@@ -140,7 +143,7 @@
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
             ^{:key i} [:text.space-axis {:x tx :y ty :fill (colors i)} (get labels i)])]
-         [:figcaption (str/join " · " (map compact-number (take 3 actual)))]
+         [:figcaption (str/join " · " (map #(compact-number schema %) (take 3 actual)))]
          [:small.parameter-domain caption]]))))
 
 (defn append-sample [previous clock values]
@@ -193,7 +196,7 @@
                    (when (> (count paths) 1)
                      (str (get (or (:component-labels schema)
                                    (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])) i) " "))
-                   (compact-number v)])]
+                   (compact-number schema v)])]
      [:svg {:view-box "0 0 100 44" :preserve-aspect-ratio "none" :role "img"
             :aria-label (str "Last " window " beats")}
       (for [x [0 25 50 75 100]]

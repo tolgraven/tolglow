@@ -15,6 +15,20 @@
   (is (nil? (visual/components {:type :color} nil)))
   (is (= [0 0.5 1] (visual/components {:type :color} [0 0.5 1]))))
 
+(deftest observed-captions-retain-destination-precision
+  (doseq [[bits value expected] [[8 (/ 127 255) "0.498"]
+                                 [8 (/ 128 255) "0.502"]
+                                 [16 (/ 32767 65535) "0.49999"]
+                                 [16 (/ 32768 65535) "0.50001"]
+                                 [nil 0.000123456789 "0.000123"]]]
+    (let [schema {:type :number :bounds [0 1] :dmx-bits bits}
+          point [value 0 1]
+          [_ _ _ caption] (visual/space (assoc schema :type :vector :size 3) point point)
+          [_ _ [_ readings] _ axis] (visual/history-chart schema [{:beat 0 :values [value]}] 4)]
+      (is (= [:figcaption (str expected " · 0 · 1")] caption))
+      (is (= expected (peek (first readings))))
+      (is (= [:figcaption [:span "0 … 1"] [:span "4 beats"]] axis)))))
+
 (defn history-view [id n v]
   {:display-mode "parameters" :runtime-id "one" :instance-id id :epoch 1 :definition-version 3
    :visualization-clock {:time-ms (* 250 n) :beat (/ n 2)} :history-beats 1 :parameter-view "history"
