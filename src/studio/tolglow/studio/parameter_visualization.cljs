@@ -194,7 +194,7 @@
 
 (defn history-chart [schema history window]
   (let [{:keys [bounds paths]} (chart-paths history window schema)]
-    [:figure.parameter-history {:aria-label "Observed parameter history"}
+    [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading
       (for [[i v] (map-indexed vector (:values (peek history)))]
         ^{:key i} [:span {:style {:color (colors i)}}

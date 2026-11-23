@@ -27,6 +27,9 @@
 #push-display .parameter-history{margin-top:3px}
 #push-display .history-reading{height:22px;align-content:start}
 #push-display .parameter-history svg{height:40px}
+#push-display .parameter-history[data-dmx-bits="16"]{display:grid;height:80px;grid-template-rows:auto minmax(0,1fr) auto}
+#push-display .parameter-history[data-dmx-bits="16"] svg{height:100%}
+#push-display .parameter-history[data-dmx-bits="16"] figcaption span:last-child{white-space:nowrap}
 @media (min-width:740px){
   .live-effect-card .param-row:has(>.parameter-visualizer){display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,36%);column-gap:18px;align-items:start}
   .live-effect-card .param-row:has(>.parameter-visualizer)>*{grid-column:1}
