@@ -20,7 +20,11 @@ struct TolglowStudioApp: App {
                         Image(systemName: "light.stage").font(.system(size: 48)).foregroundStyle(.secondary)
                         Text("Tolglow Studio").font(.largeTitle)
                         Text(show.message).foregroundStyle(.secondary)
-                        if !show.running { Button("Open Show Folder…", action: show.choose).controlSize(.large) }
+                        if !show.running {
+                            Button("Open Show Folder…", action: show.choose).controlSize(.large)
+                            Button(show.sourcesInstalled ? "Reveal Application Sources" : "Set Up Editable Application Sources",
+                                   action: show.prepareSources).disabled(show.installingSources)
+                        }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }

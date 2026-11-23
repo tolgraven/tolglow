@@ -8,6 +8,25 @@ final class LocalShow: ObservableObject {
     @Published private(set) var origin: URL?
     @Published private(set) var message = "Open a folder containing tolglow.edn or show.clj."
     @Published private(set) var running = false
+    @Published private(set) var installingSources = false
+    @Published private(set) var sourcesInstalled = ApplicationSources()?.installed ?? false
+
+    func prepareSources() {
+        guard !installingSources, let sources = ApplicationSources() else { return }
+        if sources.installed {
+            NSWorkspace.shared.open(sources.directory)
+            return
+        }
+        installingSources = true
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try sources.install() }.value
+                sourcesInstalled = true
+                message = "Application sources are ready for Studio workspaces."
+            } catch { message = error.localizedDescription }
+            installingSources = false
+        }
+    }
     private var process: Process?
     private var control: Pipe?
     private var readiness: Task<Void, Never>?
@@ -34,6 +53,11 @@ final class LocalShow: ObservableObject {
                                       attributes: [.posixPermissions: 0o700])
             child.executableURL = resources.appendingPathComponent("runtime/bin/java")
             child.currentDirectoryURL = folder
+            if let sources = ApplicationSources(), sources.installed {
+                var environment = ProcessInfo.processInfo.environment
+                environment["TOLGLOW_APPLICATION_SOURCES"] = sources.directory.path
+                child.environment = environment
+            }
             child.arguments = ["-Djava.awt.headless=true", "-cp", resources.appendingPathComponent("studio.jar").path,
                                "clojure.main", "-m", "tolglow.desktop", folder.path, ready.path]
             child.standardInput = pipe

@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 jar="${1:?Pass the release Studio standalone jar}"
 dest="${2:?Pass an empty output directory}"
+sources="${3:?Pass the directory produced by archive-sources}"
 test -s "$jar"
 test ! -e "$dest/Tolglow Studio.app"
 "$JAVA_HOME/bin/java" -version 2>&1 | grep -qi graalvm
@@ -22,6 +23,7 @@ rsync -a --exclude=/jmods --exclude=/include --exclude=/man --exclude=/demo \
   --exclude=/lib/src.zip --exclude=/lib/svm --exclude=/lib/static \
   "$JAVA_HOME/" "$resources/runtime/"
 cp "$jar" "$resources/studio.jar"
+cp "$sources/source-version.txt" "$sources/application-sources.zip" "$resources/"
 "$resources/runtime/bin/java" -version
 # Sign the assembled shell ad hoc for development on this Mac architecture.
 codesign --force --sign - "$app"

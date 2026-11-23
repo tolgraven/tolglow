@@ -52,9 +52,11 @@ jobs:
           npm ci
           npm run studio:build
           lein uberjar
-          cp target/uberjar/*-standalone.jar ../studio.jar
+          mkdir -p ../studio-assets
+          cp target/uberjar/*-standalone.jar ../studio-assets/studio.jar
+          native/Packaging/archive-sources ../studio-assets "$PWD" "$PWD/../afterglow"
       - uses: actions/upload-artifact@v7.0.2
-        with: {name: studio-runtime, path: studio.jar, retention-days: 2}
+        with: {name: studio-runtime, path: studio-assets, retention-days: 2}
 
   mac:
     needs: resources
@@ -76,7 +78,7 @@ jobs:
       - name: Build standalone app and run a real show with bundled Java
         run: |
           command -v xcodegen || brew install xcodegen
-          native/Packaging/bundle-macos build/studio.jar "$PWD/build/deliverables"
+          native/Packaging/bundle-macos build/studio.jar "$PWD/build/deliverables" build
           python3 native/Tests/check_packaged_studio.py "build/deliverables/Tolglow Studio.app"
           ditto -c -k --keepParent "build/deliverables/Tolglow Studio.app" build/Tolglow-Studio-arm64.zip
       - uses: actions/upload-artifact@v7.0.2

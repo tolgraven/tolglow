@@ -25,12 +25,22 @@
       (Files/move temporary ready (into-array StandardCopyOption [StandardCopyOption/ATOMIC_MOVE]))
       (finally (Files/deleteIfExists temporary)))))
 
+(defn- with-application-sources [cfg]
+  (if-let [sources (not-empty (System/getenv "TOLGLOW_APPLICATION_SOURCES"))]
+    (if (contains? (:show cfg) :workspace-options)
+      cfg
+      (assoc-in cfg [:show :workspace-options]
+                {:repositories {:tolglow (str (io/file sources "tolglow"))
+                                :afterglow (str (io/file sources "afterglow"))}
+                 :workspace-parent (str (io/file sources "workspaces"))}))
+    cfg))
+
 (defn run-show! [^File folder ^Path ready input]
   ;; The user's namespace root is scoped to this show process. A URL keeps paths
   ;; containing a colon or spaces intact and leaves bundled resources first.
   (with-open [loader (doto (DynamicClassLoader. (RT/baseLoader)) (.addURL (.toURL (.toURI folder))))]
     (with-bindings {Compiler/LOADER loader}
-      (let [cfg (folder-config folder)
+      (let [cfg (with-application-sources (folder-config folder))
             ;; The window owns a private ephemeral listener even if this folder
             ;; normally starts Studio through TLS or a LAN reverse proxy.
             local-web {:enabled true :host "127.0.0.1" :port 0}

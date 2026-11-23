@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Export exact committed, independently editable Git checkouts for offline Macs.
+set -euo pipefail
+dest="${1:?output directory}"
+tolglow="${2:?Tolglow checkout}"
+afterglow="${3:?Afterglow checkout}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$dest"
+dest="$(cd "$dest" && pwd)"
+archive_repo() {
+  local name="$1" source="$2" sha
+  sha="$(git -C "$source" rev-parse HEAD)"
+  git -C "$work" init --quiet "$name"
+  git -C "$work/$name" fetch --quiet --depth=1 --no-tags "$source" "$sha"
+  git -C "$work/$name" checkout --quiet -b master FETCH_HEAD
+  git -C "$work/$name" remote add origin "https://github.com/tolgraven/$name.git"
+  git -C "$work/$name" update-ref refs/remotes/origin/master "$sha"
+  git -C "$work/$name" branch --quiet --set-upstream-to=origin/master master
+  # Fetch metadata contains the machine-local build checkout location.
+  rm "$work/$name/.git/FETCH_HEAD"
+  rm -rf "$work/$name/.git/logs"
+  test -z "$(git -C "$work/$name" status --porcelain)"
+  echo "$sha"
+}
+t="$(archive_repo tolglow "$tolglow")"
+a="$(archive_repo afterglow "$afterglow")"
+printf '%s-%s\n' "$t" "$a" > "$dest/source-version.txt"
+(cd "$work" && zip -qr "$dest/application-sources.zip" tolglow afterglow)
