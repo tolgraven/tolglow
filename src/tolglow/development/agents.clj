@@ -2,7 +2,8 @@
   "Application editing tasks, isolated from the lighting model and live checkout.
   Production execute! is terminal/streaming-runner; this service has no host CLI
   fallback. Constructing a manager starts no process, task, or credential read."
-  (:require [clojure.data.json :as json]
+  (:require [tolglow.development.observation :as observation]
+            [clojure.data.json :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [tolglow.agents.credentials :as credentials]
@@ -70,13 +71,16 @@
   (let [event (assoc (redact event @(:secret run)) :time-ms ((:now-ms manager)))]
     (locking (:events run)
       (swap! (:events run)
-             (fn [{:keys [cursor entries bytes]}]
+             (fn [{:keys [cursor entries bytes status]}]
                (let [event (assoc event :cursor (inc cursor))
                      size (alength (.getBytes (json/write-str event) StandardCharsets/UTF_8))]
                  (loop [entries (conj entries [event size]) bytes (+ bytes size)]
                    (if (or (> (count entries) (:event-limit manager)) (> bytes (:event-byte-limit manager)))
                      (recur (subvec entries 1) (- bytes (second (first entries))))
-                     {:cursor (inc cursor) :entries entries :bytes bytes}))))))))
+                     {:cursor (inc cursor) :entries entries :bytes bytes
+                      :status (if (= :task/status (:type event))
+                                (or (:status event) status)
+                                status)}))))))))
 
 (defn- publish! [manager run values]
   (swap! (:public run) merge (redact values @(:secret run)))
@@ -168,17 +172,28 @@
           (when-let [delete! (and new-ref (get-in manager [:credentials :delete!]))] (delete! new-ref))
           (throw error))))))
 
+(defn- event-page [id cursor {:keys [entries status] latest :cursor} page-size]
+  (when-not (bounded-int? cursor 0 latest)
+    (fail! :invalid-cursor "Cursor is outside this task's event history"))
+  (let [first-cursor (or (get-in entries [0 0 :cursor]) (inc latest))
+        unseen (filter #(> (get-in % [0 :cursor]) cursor) entries)
+        events (mapv first (take page-size unseen))]
+    {:task-id id :cursor (or (:cursor (peek events)) latest) :available-cursor latest
+     :first-cursor first-cursor :dropped? (< cursor (dec first-cursor))
+     :events events :status status}))
+
 (defn read-events
   "Read retained, ordered progress after cursor. A dropped flag means the client
   must refresh status/diff; reconnect never starts or repeats a task."
   [manager id cursor]
-  (when-not (bounded-int? cursor 0 Long/MAX_VALUE) (fail! :invalid-cursor "Cursor must be a nonnegative integer"))
-  (let [run (task manager id) {:keys [entries] latest :cursor} @(:events run)
-        first-cursor (or (get-in entries [0 0 :cursor]) (inc latest))]
-    (when (> cursor latest) (fail! :invalid-cursor "Cursor is ahead of this task's event stream"))
-    {:task-id id :cursor latest :first-cursor first-cursor :dropped? (< cursor (dec first-cursor))
-     :events (mapv first (filter #(> (get-in % [0 :cursor]) cursor) entries))
-     :status (:status @(:public run))}))
+  (event-page id cursor @(:events (task manager id)) Long/MAX_VALUE))
+
+(defn event-source [manager [_ id cursor :as query]]
+  (if-let [run (when (and manager (= 3 (count query)) (bounded-text? id 64)
+                          (bounded-int? cursor 0 Long/MAX_VALUE))
+                 (get-in @(:state manager) [:runs id]))]
+    (observation/selected (:events run) identity #(event-page id cursor % 16))
+    observation/unavailable))
 
 (defn result "Return the task's completion promise; callers choose their own bounded wait." [manager id]
   (:result (task manager id)))
@@ -363,7 +378,7 @@
   (let [id (str "agent-" (subs (str (UUID/randomUUID)) 0 12))
         run {:public (atom {:id id :status :queued :provider provider :repo repo :policy policy
                            :prompt prompt :created-at-ms ((:now-ms manager)) :application-state :unchanged})
-             :events (atom {:cursor 0 :entries [] :bytes 0}) :protocol (atom {}) :observed (atom nil)
+             :events (atom {:cursor 0 :entries [] :bytes 0 :status :queued}) :protocol (atom {}) :observed (atom nil)
              :result (promise) :cancelled? (atom false) :finished? (atom false) :thread (atom nil)
              :secret (atom nil) :check-cancel (atom nil) :provider-config (get @(:providers manager) provider)}]
     (locking (:lock manager)

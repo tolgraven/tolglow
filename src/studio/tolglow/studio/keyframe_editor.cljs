@@ -122,24 +122,38 @@
                                    (do (.setCustomValidity el "") (change (assoc-in spec [:progress :variable] v)))
                                    (do (.setCustomValidity el "Enter a nonempty EDN path vector.") (.reportValidity el)))))}]])])]))
 
+(defn toggle-duration [spec key duration enabled?]
+  (let [next (if enabled? (assoc (or spec {:curve :linear}) key duration) (dissoc spec key))]
+    (when (or (:interval next) (:max-interval next)) next)))
+
+(defn- duration-option [spec key toggle-label label unit-label default change]
+  (let [[unit amount] (first (get spec key))]
+    [:<>
+     [:label.checkbox-label
+      [:input {:type "checkbox" :checked (some? unit)
+               :on-change #(change (toggle-duration spec key default (.. % -target -checked)))}]
+      toggle-label]
+     (when unit
+       [:div.keyframe-fields
+        [:label [:span label]
+         ^{:key (str unit amount)}
+         [:input {:aria-label label :default-value (duration-text amount)
+                  :on-blur #(if-let [value (parse-interval (text %))]
+                              (do (.setCustomValidity (.-target %) "") (change (assoc spec key {unit value})))
+                              (do (.setCustomValidity (.-target %) "Use a positive duration or fraction.")
+                                  (.reportValidity (.-target %))))}]]
+        [select unit-label unit [:beats :bars :phrases :ms] #(change (assoc spec key {% amount}))]])]))
+
 (defn editor [spec params change]
-  (let [curve (:curve spec :linear) kind (or (:type curve) curve)
-        [unit amount] (first (:interval spec))]
+  (let [curve (:curve spec :linear) kind (or (:type curve) curve)]
     [:section.keyframe-editor {:aria-label "Effect keyframes"}
-     [:label.checkbox-label [:input {:type "checkbox" :checked (boolean spec)
-                                     :on-change #(change (when (.. % -target -checked) defaults))}]
-      "Use effect keyframes"]
+     [duration-option spec :interval "Sample at a fixed interval" "Keyframe interval" "Interval unit"
+      (:interval defaults) change]
+     [duration-option spec :max-interval "Limit automatic slowdown" "Maximum sample interval" "Maximum interval unit"
+      {:beats (parse-interval "1/8")} change]
      (when spec
        [:<>
         [:div.keyframe-fields
-         [:label [:span "Keyframe interval"]
-          ^{:key (str unit amount)}
-          [:input {:aria-label "Keyframe interval" :default-value (duration-text amount)
-                   :on-blur #(if-let [value (parse-interval (text %))]
-                               (do (.setCustomValidity (.-target %) "") (change (assoc spec :interval {unit value})))
-                               (do (.setCustomValidity (.-target %) "Use a positive duration or fraction.")
-                                   (.reportValidity (.-target %))))}]]
-         [select "Interval unit" unit [:beats :bars :phrases :ms] #(change (assoc spec :interval {% amount}))]
          [select "Tween curve" kind curve-types #(change (assoc spec :curve (choose-curve %)))]]
         [chart curve #(change (assoc spec :curve %))]
         (case kind
