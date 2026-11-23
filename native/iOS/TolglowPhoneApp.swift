@@ -21,8 +21,8 @@ import TolglowSensorCore
         }
         osc.onFailure = { [weak self] in self?.disarmPhone(); self?.disarmRelay() }
         relay.onFailure = { [weak self] in self?.disarmRelay() }
-        relay.audienceReceive = { [weak self] effort, steps, pulse in
-            self?.audience.receiveWatch(effort: effort, steps: steps, pulse: pulse) ?? false
+        relay.audienceReceive = { [weak self] sample in
+            self?.audience.receiveWatch(sample) ?? false
         }
         relay.audienceEnded = { [weak self] in self?.audience.endWatch() }
         relay.receive = { [weak self] observation in

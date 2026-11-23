@@ -11,7 +11,7 @@ import WatchConnectivity
     @Published private(set) var discoveredDeviceID = ""
     var receive: ((Observation) -> Bool)?
     var onFailure: (() -> Void)?
-    var audienceReceive: ((Double, UInt32, Int?) -> Bool)?
+    var audienceReceive: ((AudienceSample) -> Bool)?
     var audienceEnded: (() -> Void)?
     private var audienceSession: UUID?
     private var audienceSending = false
@@ -167,7 +167,7 @@ import WatchConnectivity
                 let previous = self.audienceReceiver.current
                 let accepted = self.audienceReceiver.accept(session: audienceID, sample: sample, sent: sent, now: Date().timeIntervalSince1970)
                 if accepted, let previous, previous != audienceID { self.audienceEnded?() }
-                replyHandler(["received": accepted && self.audienceReceive?(sample.effort, sample.steps, sample.pulse) == true])
+                replyHandler(["received": accepted && self.audienceReceive?(sample) == true])
             } else if self.active, let device, !device.isEmpty, device.utf8.count <= 128 {
                 self.discoveredDeviceID = device
                 replyHandler(["received": true])

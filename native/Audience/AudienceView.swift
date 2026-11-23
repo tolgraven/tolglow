@@ -32,6 +32,9 @@ struct AudienceView: View {
                         LabeledContent("Steps", value: String(session.totalSteps))
                         if !session.message.isEmpty { Text(session.message).foregroundStyle(.secondary) }
                         #if !APPCLIP
+                        if session.input == .motion {
+                            Toggle("Share phone acceleration and rotation", isOn: $session.shareMotionAxes)
+                        }
                         Toggle("Keep sharing Watch input when iPhone locks", isOn: $session.allowLockedWatch)
                         #endif
                         Button("Leave stage", role: .destructive) { client.leave() }
