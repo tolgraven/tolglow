@@ -3,7 +3,7 @@
 export class PreviewActivity {
   constructor(canvas, changed, doc = document, win = window) {
     this.focused = doc.hasFocus(); this.visibleDocument = !doc.hidden;
-    this.external = false; this.inViewport = false; this.pageActive = true; this.active = false;
+    this.external = false; this.externalOwners = new Set(); this.inViewport = false; this.pageActive = true; this.active = false;
     this.abort = new AbortController();
     const signal = this.abort.signal;
     const refresh = () => {
@@ -15,7 +15,12 @@ export class PreviewActivity {
       changed(active);
     };
     canvas.addEventListener?.('tolglow-preview-external', event => {
-      this.external = event.detail === true;
+      if (event.detail && typeof event.detail === 'object') {
+        const {owner, active} = event.detail;
+        if (active) this.externalOwners.add(owner); else this.externalOwners.delete(owner);
+      } else if (event.detail === true) this.externalOwners.add('pip');
+      else this.externalOwners.delete('pip');
+      this.external = this.externalOwners.size > 0;
       refresh();
     }, {signal});
     const focus = value => {this.focused = value; refresh();};
