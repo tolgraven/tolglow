@@ -17,6 +17,8 @@ A cue, effect or REPL session can subscribe to the center color actually present
 
 Use `:preview.perform/center-rgb` for Perform and `:preview.rig/center-rgb` for Rig. Values are three display-encoded bytes in red, green, blue order. They include camera placement, work light, fog and postprocessing. A black pixel is a valid result. An absent producer or an observation still awaiting its first result yields `nil`. For positions, velocities and memberships of the show's bouncing bodies use the existing `[:spatial/body id]` and `[:spatial/members id]` subscriptions. They keep working without an open browser.
 
+A second Studio component can consume the same signal. Include `:browser/observation` in the show's `[:settings :studio :public-queries]` and dereference `(rf/subscribe [:studio/remote [:browser/observation :preview.rig/center-rgb]])`. Mounting and disposing that component acquires and releases a real server graph consumer. The public-query setting controls which subscriptions other connected operators can read.
+
 ## Lifetime and time
 
 - An active graph subscription starts its source, including subscriptions reached through a derived reaction. Additional consumers share the same capture.

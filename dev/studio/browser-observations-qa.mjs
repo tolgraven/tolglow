@@ -2,13 +2,14 @@
 // test-only pixel read checks what the host received against the presented frame.
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
-import {mkdir, writeFile} from 'node:fs/promises';
+import {access, mkdir, writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright-core';
 
 const target = process.argv[2] || '/tmp/tolglow-browser-observations';
 await mkdir(target, {recursive: true});
+await access('resources/studio/js/main.js');
 const classpath = execFileSync('lein', ['classpath'], {encoding:'utf8'}).trim();
 const host = spawn('java', ['-cp',classpath,'clojure.main','-m','tolglow.qa.browser-observations'], {stdio:['pipe','pipe','inherit']});
 const output = createInterface({input: host.stdout})[Symbol.asyncIterator]();
@@ -57,12 +58,14 @@ const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH
   args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try {
   const {port} = await response();
+  console.log('Preview host listening on loopback port',port);
   const report = [];
   for (const mode of ['worker', 'main']) {
     const context = await browser.newContext({viewport:{width:1120,height:820},deviceScaleFactor:1});
     const page = await context.newPage(), faults = [];
-    page.setDefaultTimeout(90000);
-    page.on('pageerror', error => faults.push(error.message));
+    page.setDefaultTimeout(120000);
+    page.on('pageerror', error => {faults.push(error.message); console.error(error.message);});
+    page.on('response', response => {if (response.status() >= 400) console.error(response.status(),response.url());});
     await page.addInitScript(trackReadbacks, mode);
     await page.goto('http://127.0.0.1:' + port, {waitUntil:'domcontentloaded'});
     await page.locator('[data-view="perform"]').click();
@@ -70,11 +73,30 @@ try {
     await canvas.scrollIntoViewIfNeeded();
     await page.waitForFunction(() => document.querySelector('#preview')?.tolglowPreview?.ready);
     assert.equal(await canvas.evaluate(c => c.tolglowPreview.worker ? 'worker' : 'main'), mode);
+    console.log('Ready to sample',mode);
     assert.equal(await page.evaluate(() => window.observedPixels.length), 0);
     await response('acquire');
-    await page.waitForFunction(() => window.observedPixels.length > 0);
+    try {await page.waitForFunction(() => window.observedPixels.length > 0);}
+    catch (error) {
+      const state = await canvas.evaluate(c => {
+        const engine = c.tolglowPreview;
+        return {ready:engine.ready,visible:engine.visible,paused:engine.paused,
+          focused:document.hasFocus(),callback:typeof engine.observedFrame,
+          error:engine.error,draws:engine.getTelemetry().draws};
+      });
+      throw new Error('No presented sample: ' + JSON.stringify(state), {cause:error});
+    }
+    console.log('Received first sample from',mode);
     const measurements = [];
     for (const camera of ['audience','overview']) measurements.push(await captureCamera(page,canvas,mode,camera));
+    if (mode === 'worker') {
+      await page.getByLabel('Preview camera', {exact:true}).selectOption('audience');
+      for (let frame = 0; frame < 10; frame++) {
+        const initial = await page.evaluate(() => window.observedPixels.length);
+        await page.waitForFunction(n => window.observedPixels.length > n, initial);
+        await canvas.screenshot({path:target + '/frame-' + String(frame).padStart(2,'0') + '.png'});
+      }
+    }
     await response('release');
     await page.waitForFunction(() => !document.querySelector('#preview').tolglowPreview.observedFrame);
     const released = await page.evaluate(() => window.observedPixels.length);

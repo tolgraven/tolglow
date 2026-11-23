@@ -11,11 +11,22 @@
   (println (str "OBSERVATION-QA " (json/write-str value)))
   (flush))
 
+(defn- light-scene! [runtime]
+  (let [heads (mapv :id (demo/fixtures))]
+    (doseq [[cue targets] [[:orchid (vec (take-nth 2 heads))]
+                           [:ice (vec (take-nth 2 (rest heads)))]
+                           [:sweep heads]]]
+      (let [receipt @(show/submit! runtime :command
+                       {:op :cue/launch :cue-id cue :launch {:mode :persistent :targets targets}})]
+        (when-not (= :accepted (:status receipt))
+          (throw (ex-info "Could not light the rehearsal rig" {:receipt receipt})))))))
+
 (defn -main [& _]
   (let [runtime (show/start! {:model (demo/model) :workspace-options nil})
         studio (studio/listen! runtime {:host "127.0.0.1" :port 0})
         reader (atom nil)]
     (try
+      (light-scene! runtime)
       (emit! {:port (:port studio)})
       (doseq [command (take-while #(not= "quit" %) (line-seq (java.io.BufferedReader. *in*)))]
         (case command
