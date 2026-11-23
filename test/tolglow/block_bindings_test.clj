@@ -121,3 +121,17 @@
         sample (variable-blocks/sample plan {:transport {:beat 1.0}} 25.0)]
     (is (= {:healthy 0.7} (:variables (variable-blocks/resolved {} sample))))
     (is (string? (:error (variable-blocks/inspect sample [:variables :invalid]))))))
+
+(deftest a-beat-tween-can-be-the-dry-signal
+  (let [effect {:id :fade :version 1
+                :outputs {:focus {:op :tween :spec {:keyframes [{:at {:beats 0} :value 0.0}
+                                                                 {:at {:beats 1} :value 1.0}]}}}
+                :blocks {[:outputs :focus] {:stages [{:block :optics/ribbed-glass
+                                                      :coordinates [0.0 0.0]}]}}}
+        frame {:time-ms 750.0 :transport {:beat 11.5} :fixtures rig}
+        ctx {:frame frame :instance {:id :fade :started-at-beat 11 :started-at-ms 500} :assignments []}
+        scalar ((compiler/compile-effect effect) ctx)
+        typed ((batch/compile-effect effect rig) ctx)
+        trace #(runtime/observe % [[:outputs :focus] :near])]
+    (is (= 0.5 (:base (trace scalar)) (:base (trace typed))))
+    (is (= (* 0.5 0.825) (:result (trace scalar)) (:result (trace typed)) (:value (first (:assignments scalar)))))))

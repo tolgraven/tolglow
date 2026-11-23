@@ -3,7 +3,7 @@
   (:require [afterglow.render.blocks :as blocks]
             [afterglow.render.ir :as ir]
             [afterglow.runtime :as runtime]
-            [tolglow.registry :as registry]))
+            [tolglow.composition.tween :as tween]))
 
 (defn- fail! [path message]
   (throw (ex-info message {:errors [{:path (into [:blocks] path) :message message}]})))
@@ -56,11 +56,21 @@
     (= :param (:op node)) (type-param node current)
     :else (fail! current (str "Unknown block input " path))))
 
+(defn- tween-input [{:keys [tweens]} {:keys [spec]}]
+  (or (:input (get @tweens spec))
+      (let [sample (tween/compile-tween spec)
+            type (ir/expression-type {:op :const :value (:value (sample 0))})
+            id (keyword "tolglow.block-tween" (str (count @tweens)))
+            input {:op :param :key id :type type}]
+        (vswap! tweens assoc spec {:input input :sample sample})
+        input)))
+
 (defn- lower [compiler current trail depth node]
   (when (> depth 64) (fail! current "Expression nesting exceeds 64 levels"))
   (if-let [path (and (map? node) (path-of node))]
     (lower-input compiler current trail node path)
     (cond
+      (= :tween (:op node)) (tween-input compiler node)
       (or (number? node) (vector? node)) {:op :const :value node}
       (and (map? node) (contains? node :args))
       (do (when-not (and (vector? (:args node)) (<= (count (:args node)) 64))
@@ -101,12 +111,15 @@
         ;; Identical references share a lowered tree. The cache lives only while
         ;; compiling this definition and never enters the live step or show file.
         prepared (volatile! {})
-        compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared
+        tweens (volatile! {})
+        compiler {:bindings blocks :entries entries :uniforms uniforms :prepared prepared :tweens tweens
                   :catalog (merge blocks/library prefabs)
                   :type-param #(prepare-expression %1 params %2)}]
-    (when (some reserved (keys params)) (fail! [] "Parameter ID collides with a block variable binding"))
+    (when (or (some reserved (keys params)) (some #(= "tolglow.block-tween" (namespace %)) (keys params))) (fail! [] "Parameter ID collides with a block variable binding"))
     (doseq [path (keys blocks)] (binding-plan compiler path #{}))
-    {:outputs (mapv (partial output-entry compiler) (range) entries)
+    (let [outputs (mapv (partial output-entry compiler) (range) entries)]
+      {:outputs outputs
+       :tweens (mapv (fn [{:keys [input sample]}] [(:key input) sample]) (vals @tweens))
      :uniforms uniforms
      :targets (when (some? targets) (set targets))
      :output-bindings (into {} (keep (fn [[kind id :as path]]
@@ -115,13 +128,17 @@
                                            [path {:attribute attribute :targets (when targets (set targets))}]))))
                             (keys blocks))
      :expressions (update-vals @prepared :expression)
-     :traces (update-vals @prepared blocks/compile-trace)}))
+     :traces (update-vals @prepared blocks/compile-trace)})))
 
 (defn with-variables [plan params frame]
   (reduce-kv (fn [result path uniform]
                (let [value (get-in frame path)]
                  (if (nil? value) result (assoc result (:key uniform) value))))
              params (:uniforms plan)))
+
+(defn sample-tweens [plan env]
+  (reduce (fn [out [id sample]] (assoc-in out [:params id] (:value (sample env))))
+          env (:tweens plan)))
 
 (defn positions
   "Index this rig on first inspection. Effects that nobody views never build the index."

@@ -180,6 +180,7 @@
                  :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
                                   (max 0 (- (:beat clock) (:started-at-beat instance))))
                  :meter (time/normalize-meter (:timing-meter instance))}
+            env (if (and (seq (:tweens block-plan)) (not done?)) (blocks/sample-tweens block-plan env) env)
             ;; A tween depends on the instance clock, not fixture geometry.
             ;; Resolve it once per frame, including captured-meter normalization.
             outputs (if done? outputs

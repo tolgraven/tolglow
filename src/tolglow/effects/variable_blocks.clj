@@ -31,11 +31,12 @@
           env {:beat beat :elapsed-beats beat :meter (time/normalize-meter meter)
                :time-ms time-ms :elapsed-ms time-ms :position [0.0 0.0 0.0]
                :params (blocks/with-variables plan {} model)}]
-      (reduce-kv (fn [out path evaluate]
+      (let [env (blocks/sample-tweens plan env)]
+        (reduce-kv (fn [out path evaluate]
                    (try (assoc-in out [:values path] (evaluate env))
                         (catch Exception error
                           (assoc-in out [:errors path] (.getMessage error)))))
-                 {:env env :traces (:traces plan)} (:evaluate plan)))))
+                 {:env env :traces (:traces plan)} (:evaluate plan))))))
 
 (defn resolved [model observation]
   (reduce-kv assoc-in model (:values observation)))
