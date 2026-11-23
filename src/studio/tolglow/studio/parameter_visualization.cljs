@@ -207,18 +207,32 @@
 (defn selected-mode [schema preference]
   (view-kind schema (if (#{:auto nil} (tag preference)) (:visualization schema) preference)))
 
-(defn- observe-parameter [previous clock preference {:keys [schema effective-value value param id]}]
-  (let [id (or param id) values (components schema (if (some? effective-value) effective-value value))]
-    (case (selected-mode schema preference)
-      :history [id (append-sample (get previous id []) clock values)]
-      :spatial [id (spatial-keyframe (get previous id) clock values)]
-      nil)))
+(defn- push-mode [parameter preference]
+  (let [schema (:schema parameter)
+        mode (selected-mode schema preference)]
+    (if (and (= :history mode) (not= :active (tag (:source-state parameter))))
+      (if (spatial-kind schema) :spatial :controls)
+      mode)))
+
+(defn- observe-parameter [previous clock preference {:keys [schema effective-value value param id] :as parameter}]
+  (when (= :active (tag (:source-state parameter)))
+    (let [id (or param id) values (components schema (if (some? effective-value) effective-value value))]
+      (case (push-mode parameter preference)
+        :history [id (append-sample (get previous id []) clock values)]
+        :spatial [id (spatial-keyframe (get previous id) clock values)]
+        nil))))
 
 (defn update-push [previous next view]
   (let [identity (mapv #(get view %) [:runtime-id :epoch :instance-id :definition-version])
         preference (:parameter-view view) clock (:visualization-clock view)
         same? (and (= identity (:parameter-identity previous)) (= preference (:parameter-view previous)))
-        retained (when same? (:parameter-observations previous))
+        previous-fixtures (into {} (map (juxt #(or (:param %) (:id %)) :sample-fixture)) (:parameters previous))
+        retained (when same?
+                   (select-keys (:parameter-observations previous)
+                                (keep (fn [{:keys [param id sample-fixture]}]
+                                        (let [key (or param id)]
+                                          (when (= sample-fixture (get previous-fixtures key)) key)))
+                                      (:parameters next))))
         visible? (and clock (#{nil :parameters "parameters"} (:display-mode next))
                       (not (get-in next [:target-picker :open?])))
         entries (when visible?
@@ -228,7 +242,7 @@
 
 (defn push [view {:keys [schema effective-value value param id] :as parameter}]
   (let [shown (if (some? effective-value) effective-value value)]
-    (case (selected-mode schema (:parameter-view view))
+    (case (push-mode parameter (:parameter-view view))
       :spatial [space schema shown
                 (if-let [keyframe (get-in view [:parameter-observations (or param id)])]
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))

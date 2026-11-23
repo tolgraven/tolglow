@@ -1,5 +1,6 @@
 (ns tolglow.waveforms-test
   (:require [clojure.test :refer [deftest is]]
+            [afterglow.runtime :as runtime]
             [clojure.data.json :as json]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
@@ -255,3 +256,36 @@
     (is (= {:beat 4.0 :time-ms 2000.0} (:visualization-clock plain)))
     (is (= [:audio :spatial 8] ((juxt :display-mode :parameter-view :history-beats) plain)))
     (is (= [:parameters :history 0.5] ((juxt :display-mode :parameter-view :history-beats) device)))))
+
+(deftest push-history-reads-only-an-eligible-displayed-block-target
+  (let [calls (atom [])
+        snapshot (-> (fixture)
+                     (assoc-in [:model :rig :fixtures] [{:id :a} {:id :b :name "Beam B"} {:id :c}])
+                     (update-in [:model :instances "0:1"]
+                                (fn [instance]
+                                  (-> instance
+                                      (assoc :targets [:c :b :a])
+                                      (assoc-in [:definition :targets] [:b :c])
+                                      (assoc-in [:definition :outputs] [{:attribute :dimmer :targets [:b]}])
+                                      (assoc-in [:definition :blocks [:params :width]] [:optics/water])
+                                      (vary-meta assoc ::runtime/observe
+                                                 (fn [query] (swap! calls conj query) {:result 0.85}))))))
+        config {:instance-id "0:1" :epoch 0 :definition-version 1 :parameters [{:param :width}]}
+        read-row (fn [state view] (first (:parameters (waveforms/project-display (waveforms/create-cache) state view nil))))]
+    (is (= {:id :b :name "Beam B"} (:sample-fixture (read-row snapshot config))))
+    (is (= [[[:params :width] :b]] @calls))
+    (is (= 0.85 (:effective-value (read-row snapshot (assoc config :target-id :a)))))
+    (reset! calls [])
+    (doseq [v [(assoc config :display-mode :audio) (assoc config :target-picker {:open? true})
+               (assoc config :epoch 1) (assoc config :parameters [{:param :other}])]]
+      (is (nil? (:source-state (read-row snapshot v)))))
+    (let [empty (assoc-in snapshot [:model :instances "0:1" :targets] [])]
+      (is (= :pending (:source-state (read-row empty config)))))
+    (is (empty? @calls))))
+
+(deftest a-static-push-bank-needs-no-source-or-response-evaluation
+  (let [config {:instance-id "0:1" :epoch 0 :definition-version 1 :parameters [{:param :width}]}]
+    (with-redefs [waveforms/resolved-inputs (fn [& _] (throw (AssertionError. "Static bank should read stored values")))]
+      (let [row (first (:parameters (waveforms/project-display (waveforms/create-cache) (fixture) config nil)))]
+        (is (= 0.25 (:base-value row) (:effective-value row)))
+        (is (nil? (:source-state row)))))))
