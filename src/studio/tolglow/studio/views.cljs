@@ -453,7 +453,7 @@
     [:div#composition-library.compose-catalog {:role "group" :aria-label "Saved compositions"}
      (for [item items]
        ^{:key (:id item)}
-       [:div.list-card
+       [:div.list-card {:data-composition-id (:id item)}
         [:div [:strong (display-name item)]
          [:p (str (label (:mode item)) " · " (count (:slots item)) " slots" (when (:running? item) " · playing"))]]
         [button nil "Open" [:studio/composition-open item]]])]))

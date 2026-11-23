@@ -44,8 +44,10 @@ try {
     await slots.locator('.duration-control').first().waitFor({state:'detached'});
     await slots.nth(1).getByRole('button',{name:'Move earlier: step 2'}).click();
     await slots.first().locator('.slot-title').filter({hasText:'Slow sweep'}).waitFor();
+    const reply=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/composition' && r.request().method()==='POST');
     await page.locator('#save-composition').click();
-    const saved=page.locator('#composition-library .list-card').filter({hasText:name});
+    assert.equal((await reply).ok(),true,'The host accepts the composition');
+    const saved=page.locator('[data-composition-id="layout-'+label+'"]');
     await saved.getByRole('button',{name:'Open'}).click();
     assert.equal(await page.locator('#composition-mode').inputValue(),'macro');
     await page.locator('#composition-mode').selectOption('sequence');
