@@ -251,7 +251,7 @@
        [:button.material-heading
         {:aria-expanded @opened? :on-click #(do (swap! opened? not) (rf/dispatch [(if @opened? ::open ::close)]))}
         [:span [:strong "Material library"] [:small "Optical materials and signal generators"]]
-        [:span (if @opened? "Close ↑" "Design materials ↗")]]
+        [:span (if @opened? "Close" "Design materials")]]
        (when @opened?
          (cond (:draft form) [editor form]
                (:error form) [:div.material-actions [:output.danger (:error form)]

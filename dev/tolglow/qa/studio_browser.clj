@@ -8,7 +8,8 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def scenarios {"assistant-layout" "dev/studio/assistant-layout-qa.mjs"
-                "audience-zones" "dev/studio/audience-zones-qa.mjs"})
+                "audience-zones" "dev/studio/audience-zones-qa.mjs"
+                "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"})
 
 (defn -main [scenario & [output]]
   (let [script (or (scenarios scenario) (throw (ex-info "Unknown browser scenario" {:scenario scenario})))
