@@ -56,7 +56,7 @@
       (contains? instance :targets) (assoc :launch-targets (:targets instance)))))
 
 (defn fixture-options [rig {:keys [targets launch-targets outputs]}]
-  (let [groups (map :targets (if (map? outputs) (vals outputs) outputs))
+  (let [groups (when (vector? outputs) (map :targets outputs))
         output-targets (when (and (seq groups) (every? some? groups)) (into #{} cat groups))
         defined (when (some? targets) (set targets))
         ordered (if (some? launch-targets) (keep (into {} (map (juxt :id identity)) rig) launch-targets) rig)]

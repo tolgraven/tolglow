@@ -42,7 +42,7 @@
 
 (deftest fixture-blocks-observe-real-members-of-a-restricted-rig
   (let [rig (mapv #(hash-map :id % :position [1 2 3]) [:a :b :c])]
-    (is (= [{:id :b}] (source/fixture-options rig {:targets [:a :b] :outputs {:dimmer {:targets [:b :c]}}})))
+    (is (= [{:id :b}] (source/fixture-options rig {:targets [:a :b] :outputs [{:attribute :dimmer :value 1 :targets [:b :c]}]})))
     (is (empty? (source/fixture-options rig {:targets []})))
     (is (empty? (source/fixture-options rig {:launch-targets []})))
     (is (= [:b :a] (mapv :id (source/fixture-options rig {:launch-targets [:b :c :a] :targets [:a :b]}))))
