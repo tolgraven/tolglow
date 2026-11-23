@@ -9,8 +9,11 @@ async function field(panel, label, value) {
 }
 
 async function waitField(page, locator, value, changed = false) {
-  await page.waitForFunction(([input, previous, changed]) => (input.value !== previous) === changed,
-    [await locator.elementHandle(), value, changed], {timeout: 5000});
+  const label = await locator.getAttribute('aria-label');
+  await page.waitForFunction(([label, previous, changed]) => {
+    const input = document.querySelector('[aria-label="' + CSS.escape(label) + '"]');
+    return input && (input.value !== previous) === changed;
+  }, [label, value, changed]);
 }
 
 async function draw(canvas, page, fractions) {

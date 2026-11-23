@@ -8,7 +8,11 @@ export class PreviewActivity {
     const signal = this.abort.signal;
     const refresh = () => {
       const active = this.inViewport && this.visibleDocument && this.focused && this.pageActive;
-      if (active !== this.active) {this.active = active; changed(active);}
+      if (active === this.active) return;
+      this.active = active;
+      // The Studio leases server-side fields on exactly the same gates as the GPU.
+      canvas.dispatchEvent?.(new CustomEvent('tolglow-preview-activity', {detail: active}));
+      changed(active);
     };
     const focus = value => {this.focused = value; refresh();};
     win.addEventListener('focus', () => focus(true), {signal});
