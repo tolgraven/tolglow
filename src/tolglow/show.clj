@@ -1178,7 +1178,9 @@
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
-                                            (keyframes/with-inputs step inputs)))
+                                            ;; Certified literals have no parameter schemas, and
+                                            ;; these transforms touch only declared parameters.
+                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
                            result (engine/advance model frame-input compile-step
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)

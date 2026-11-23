@@ -3,11 +3,14 @@
             [tolglow.compiler :as compiler]
             [tolglow.compiler.batch :as batch]
             [tolglow.composition.response :as response]
+            [tolglow.modulation :as modulation]
             [afterglow.control.model :as control]
             [afterglow.runtime :as runtime]
+            [afterglow.runtime.cadence :as cadence]
             [afterglow.runtime.reuse :as reuse]
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.executor :as executor]
+            [afterglow.runtime.keyframes :as keyframes]
             [afterglow.render.frame :as render]
             [afterglow.output.artnet :as artnet]))
 
@@ -126,6 +129,121 @@
                                                    :command-id id :source :batch-test :time-ms (:time-ms model)} payload))]
     (is (= :accepted (get-in result [:ack :status])))
     (:model result)))
+
+(def ^:private literal-wash
+  {:id :wash :version 1 :outputs {:color [0.23 0.18 0.37] :white 0.15}})
+
+(deftest cpu-literal-wash-reuses-automatic-endpoints-with-identical-artdmx
+  (let [rig (mapv #(assoc-in % [:channels :white] 9) fixtures)
+        repatched (assoc-in rig [2 :address] 41)
+        model (-> (control/new-show)
+                  (command :publish {:op :registry/publish :kind :effects :definition literal-wash})
+                  (command :cue {:op :cue/put :cue {:id :wash :effect-id :wash}})
+                  (command :launch {:op :cue/launch :cue-id :wash :launch {:targets [:a :c]}}))
+        id (first (keys (:instances model)))
+        compile (into {} (map (fn [patch] [patch (batch/compiler-for-rig patch {:bind-pure reuse/evaluator})]))
+                      [rig repatched])
+        advance (fn [wrap previous t]
+                  (let [{:keys [samples measure-effect]} (cadence/observer)
+                        patch (if (< t 200) rig repatched)
+                        model (cond-> (:model previous)
+                                (= t 25) (command :opacity {:op :instance/opacity-set :instance-id id :value 0.5}))
+                        model (case t
+                                225 (command model :pause {:op :instance/pause :instance-id id})
+                                250 (command model :resume {:op :instance/resume :instance-id id})
+                                275 (command model :end {:op :instance/end :instance-id id})
+                                model)
+                        frame {:time-ms t :beat (/ t 500.0) :fixtures patch :keyframes (:keyframes previous)
+                               :measure-effect measure-effect :keyframe-intervals {id {:ms 100}}}
+                        result (engine/advance model frame (comp wrap (compile patch)))]
+                    (assoc result :patch patch :calls (get-in @samples [id :calls] 0))))
+        run #(vec (rest (reductions (partial advance %) {:model model} [0 25 175 200 225 250 275])))
+        reference (run keyframes/predictable)
+        actual (run identity)
+        artdmx (fn [result]
+                 (let [frame (render/resolve-contributions (:patch result) (:contributions result) {})]
+                   (into {} (map (fn [[universe values]] [universe (vec (artnet/artdmx-packet universe 1 values))]))
+                         (:universes frame))))
+        white-values #(get-in % [:contributions 0 :batch :outputs :white :values])]
+    (is (= [2 0 2 2 1 2 0] (mapv :calls reference)))
+    (is (= [1 0 0 1 1 1 0] (mapv :calls actual)))
+    (is (= [true true true true false true false] (mapv #(contains? (:keyframes %) id) actual)))
+    (is (every? empty? (map :fault-events actual)))
+    (is (= (map artdmx reference) (map artdmx actual)))
+    (is (not= (artdmx (first actual)) (artdmx (second actual))))
+    (is (not= (artdmx (actual 2)) (artdmx (actual 3))))
+    (is (= (map :model reference) (map :model actual)))
+    (is (= (map :intents reference) (map :intents actual)))
+    (is (= [:a :c] (get-in actual [0 :contributions 0 :batch :target-ids])))
+    (is (= [0.15 0.15] (vec (white-values (first actual)))))
+    (is (identical? (white-values (first actual)) (white-values (actual 2))))
+    (is (not (identical? (white-values (actual 2)) (white-values (actual 3)))))))
+
+(deftest reloaded-nonliteral-wash-honors-instance-parameters-and-live-overlays
+  (let [rig (mapv #(assoc-in % [:channels :white] 9) fixtures)
+        model (-> (control/new-show)
+                  (command :publish {:op :registry/publish :kind :effects :definition literal-wash})
+                  (command :cue {:op :cue/put :cue {:id :wash :effect-id :wash}})
+                  (command :launch {:op :cue/launch :cue-id :wash :launch {:reload-policy :preserve-state}}))
+        id (first (keys (:instances model)))
+        revised {:id :wash :version 2 :targets [:b]
+                 :params {:level {:type :number :default 0.5 :bounds [0 1]}}
+                 :outputs {:white {:op :param :key :level}}}
+        compile (batch/compiler-for-rig rig)
+        advance (fn [model prior t interval overrides]
+                  (let [{:keys [samples measure-effect]} (cadence/observer)
+                        frame {:time-ms t :fixtures rig :keyframes prior :measure-effect measure-effect
+                               :keyframe-params overrides :keyframe-intervals (when interval {id {:ms interval}})}
+                        build #(keyframes/with-inputs (compile %) (modulation/middleware overrides)
+                                                     {:preserve-time-invariance? true})
+                        result (engine/advance model frame build)]
+                    (assoc result :calls (get-in @samples [id :calls] 0))))
+        initial (advance model nil 0 100 {})
+        bad-overlay (advance (:model initial) (:keyframes initial) 25 100 {id {:level 0.75}})
+        rejected (control/apply-command (:model initial) {:op :param/set :instance-id id :param :level :value 0.4
+                                                          :show-id (:show-id model) :epoch (:epoch model)
+                                                          :command-id :unknown :source :batch-test :time-ms 0})
+        revised-model (command (:model initial) :reload {:op :registry/publish :kind :effects :definition revised})
+        reloaded (advance revised-model (:keyframes initial) 25 100 {})
+        overridden-model (command (:model reloaded) :override {:op :param/set :instance-id id :param :level :value 0.25})
+        overridden (advance overridden-model (:keyframes reloaded) 50 nil {})
+        modulated (advance (:model overridden) (:keyframes overridden) 75 nil {id {:level 0.75}})
+        white #(get-in % [:contributions 0 :batch :outputs :white :values])]
+    (is (= :rejected (get-in rejected [:ack :status])))
+    (is (= [:effect/failed] (mapv :type (:fault-events bad-overlay))))
+    (is (empty? (:contributions bad-overlay)))
+    (is (empty? (:keyframes bad-overlay)))
+    (is (= [1 2 1 1] (mapv :calls [initial reloaded overridden modulated])))
+    (is (= [0.15 0.15 0.15] (vec (white initial))))
+    (is (= [0.5] (vec (white reloaded))))
+    (is (= [0.25] (vec (white overridden))))
+    (is (= [0.75] (vec (white modulated))))
+    (is (= [:b] (get-in modulated [:contributions 0 :batch :target-ids])))
+    (is (= {:level 0.25} (get-in modulated [:model :instances id :params])))
+    (is (= 2 (get-in modulated [:model :instances id :effect-version])))
+    (is (empty? (:keyframes modulated)))
+    (is (every? empty? (map :fault-events [initial reloaded overridden modulated])))))
+
+(deftest other-compilations-keep-ordinary-endpoint-sampling
+  (doseq [definition [(assoc literal-wash :keyframes {:interval {:ms 50}})
+                      (assoc literal-wash :keyframes {:max-interval {:ms 50}})
+                      (assoc literal-wash :envelope {:attack {:ms 50}})
+                      (assoc-in literal-wash [:outputs :white] {:op :multiply :args [0.25 {:op :beat}]})
+                      (-> literal-wash
+                          (assoc :params {:level {:type :number :default 0.5 :bounds [0 1]}})
+                          (assoc-in [:outputs :white] {:op :param :key :level}))
+                      (assoc-in literal-wash [:outputs :direction] [1.0 0.0 0.0])
+                      (assoc-in literal-wash [:outputs :white] -0.0)]
+          :let [step (batch/compile-effect definition fixtures)
+                {:keys [samples measure-effect]} (cadence/observer)
+                input (-> (context definition)
+                          (assoc :effect-id "test")
+                          (update :frame merge {:time-ms 0 :beat 0.0 :bpm 120.0 :measure-effect measure-effect
+                                                :keyframe-intervals {"test" {:ms 100}}}))]]
+    (keyframes/evaluate step input)
+    (is (= 2 (get-in @samples ["test" :calls])) (pr-str definition)))
+  (is (keyframes/predictable? (batch/compile-effect literal-wash fixtures {:enabled? false})))
+  (is (keyframes/predictable? (batch/compile-effect literal-wash fixtures {:prepare-group (constantly {})}))))
 
 (defn launched-show []
   (let [color {:id :color :version 1 :priority -1 :params {:level {:type :number :default 0.4 :bounds [0 1]}}
