@@ -135,7 +135,7 @@
         current? (and instance (= (:epoch view) (get-in snapshot [:model :epoch]))
                       (= (:definition-version view) (:effect-version instance)))
         effective (when current? (effective-params snapshot instance))]
-    (cond-> (update (assoc view :display-mode (get-in snapshot [:model :settings :controllers :push-display :mode] :parameters)) :parameters
+    (cond-> (update (assoc view :display-mode (or (:display-mode view) (get-in snapshot [:model :settings :controllers :push-display :mode]) :parameters)) :parameters
                     (fn [parameters]
                       (mapv (fn [parameter]
                               (let [id (:param parameter (:id parameter))
