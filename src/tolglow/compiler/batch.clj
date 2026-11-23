@@ -33,6 +33,38 @@
       (cond-> (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures))
         (some :surface-uv fixtures) (assoc :surface-uvs (mapv :surface-uv fixtures))))))
 
+(defn- repeated-column [n {:keys [components] :as field}]
+  (let [^doubles sample (:values field)
+        size (* n components)
+        values (double-array size)]
+    (if (= components 1)
+      (java.util.Arrays/fill values (aget sample 0))
+      (do (System/arraycopy sample 0 values 0 components)
+          (loop [filled components]
+            (when (< filled size)
+              (let [amount (min filled (- size filled))]
+                (System/arraycopy values 0 values filled amount)
+                (recur (+ filled amount)))))))
+    (assoc field :values values)))
+
+(defn- cpu-evaluator [plan positions uvs expressions bind-pure]
+  (let [paths (into [] (comp (mapcat ir/input-paths) (distinct)) (vals expressions))
+        n (count positions)
+        components (reduce + (map :components (:outputs plan)))
+        evaluate (fn [env] (ir/evaluate-batch plan env positions uvs))]
+    (cond
+      (nil? bind-pure) evaluate
+      ;; A compiled rig already validated these immutable positions. With no
+      ;; clock, params, position or UV dependency every target sees the same
+      ;; value. Bind just one row and return new owned columns on every call.
+      ;; Larger output sizes must still pass the IR's normal allocation guard.
+      (and (empty? paths) (> n 1) (<= (* n components) 4000000))
+      (let [evaluate-one (bind-pure {:pure? true :inputs []}
+                                    (fn [env] (ir/evaluate-batch plan env [(first positions)])))]
+        (fn [env] (let [row (evaluate-one env)]
+                    {:count n :outputs (update-vals (:outputs row) (partial repeated-column n))})))
+      :else (bind-pure {:pure? true :inputs (into [] (remove #{[:position] [:surface-uv]}) paths)} evaluate))))
+
 (defn- output-groups [outputs prepare-group bind-pure]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
@@ -48,16 +80,11 @@
                        [] outputs)]
     (mapv (fn [{:keys [expressions positions surface-uvs] :as group}]
             (let [plan (ir/compile-batch expressions)
-                  uvs (when (:surface-uv? plan) surface-uvs)
-                  evaluate (fn [env] (ir/evaluate-batch plan env positions uvs))]
+                  uvs (when (:surface-uv? plan) surface-uvs)]
               (if prepare-group
                 (assoc group :prepared (if uvs (prepare-group expressions positions plan uvs)
                                          (prepare-group expressions positions plan)))
-                (let [inputs (into [] (comp (mapcat ir/input-paths)
-                                            (remove #{[:position] [:surface-uv]}) (distinct)) (vals expressions))]
-                  (assoc group :evaluate (if bind-pure
-                                           (bind-pure {:pure? true :inputs inputs} evaluate)
-                                           evaluate))))))
+                (assoc group :evaluate (cpu-evaluator plan positions uvs expressions bind-pure)))))
           groups)))
 
 (defn- finish-fields!
