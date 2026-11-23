@@ -103,7 +103,8 @@ async function verifyConnection() {
     await page.screenshot({path:join(directory,'ipad-conversation.png')});
     await page.locator('.chat-settings .provider-panel summary').click();
     assert.equal(await page.locator('#provider-credential').inputValue(),'');
-    await page.getByLabel('Clear saved key').check();
+    await page.getByLabel('Clear saved key').click();
+    await page.waitForFunction(() => document.querySelector('.provider-clear input')?.checked);
     await page.locator('#save-provider').click();
     await page.getByLabel('Clear saved key').waitFor({state:'detached'});
     assert.equal(calls.length,1);
