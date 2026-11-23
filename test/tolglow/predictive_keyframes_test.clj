@@ -61,3 +61,21 @@
                    (assoc-in definition [:keyframes :progress :param] :bad)
                    (assoc-in definition [:keyframes :interval] {:beats 0})]]
     (is (seq (registry/validate-definition :effects invalid)))))
+
+(deftest a-modulated-param-controls-the-current-frame-without-changing-the-endpoints
+  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})]
+    (try
+      (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :sampled} 0))
+            options {:id :random-progress :seed 42 :every {:beats 1/4} :params [:progress]
+                     :select {:instance-ids [id]} :ranges {:progress [0.1 0.9]}}
+            initial (inspect runtime id)]
+        (is (= :accepted (:status (apply-at! runtime :modulation-start options 100))))
+        (doseq [t [125 250 375]]
+          (show/tick! runtime t)
+          (let [sample (get-in (show/snapshot runtime) [:modulation :overrides id :progress])
+                window (inspect runtime id)]
+            (is (<= 0.1 sample 0.9))
+            (is (== sample (:progress window)))
+            (is (= (:target-clock initial) (:target-clock window)))
+            (is (= [(* 0.25 sample)] (:result window))))))
+      (finally (show/stop! runtime)))))

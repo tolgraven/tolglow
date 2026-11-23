@@ -261,7 +261,10 @@
                         (merge {:trusted-source? (get-in options [:reactive-options :trusted-source?] false)}
                                (:event-callback-options options)))
       :effect-logs (effect-faults/create {:log! (:effect-log! options) :log-file (:fault-log-file options)})
-      :state (atom {:model (effect-keyframes/without-checkpoints model) :keyframes (effect-keyframes/restored model) :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?}) :status {}})
+      :state (atom {:model (effect-keyframes/without-checkpoints model)
+                    :keyframes (effect-keyframes/restored model)
+                    :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
+                    :status {}})
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)

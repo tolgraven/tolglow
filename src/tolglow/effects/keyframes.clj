@@ -6,8 +6,8 @@
 
 (defn for-save [model windows]
   (reduce-kv (fn [out id window]
-               (if (contains? (:instances out) id)
-                 (assoc-in out [:instances id ::saved] (storage/freeze window)) out))
+               (if-let [saved (and (contains? (:instances out) id) (storage/freeze window))]
+                 (assoc-in out [:instances id ::saved] saved) out))
              model windows))
 
 (defn restored [model]
