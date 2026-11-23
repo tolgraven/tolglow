@@ -185,18 +185,17 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+      - name: Test native change selection against Git history
+        run: .github/scripts/test-native-build-required
       - name: Select native build changes
         id: paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
         shell: bash
         run: |
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null &&
-             git diff --quiet "$BASE_SHA" HEAD -- native .github/workflows/tests.yml; then
-            echo 'native=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'native=true' >> "$GITHUB_OUTPUT"
-          fi
+          native=$(.github/scripts/native-build-required "$GITHUB_EVENT_NAME" "$BASE_SHA" "$HEAD_SHA")
+          echo "native=$native" >> "$GITHUB_OUTPUT"
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'
