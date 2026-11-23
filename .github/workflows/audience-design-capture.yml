@@ -13,10 +13,10 @@ jobs:
         with:
           fetch-depth: 0
       - run: command -v xcodegen >/dev/null || brew install xcodegen
-      - name: Capture the shipping Clip and a joined full-app fixture
-        run: bash native/Tests/capture_dance_floor_design.sh "$RUNNER_TEMP/dance-floor"
+      - name: Capture the Clip and separate full-app sensor, rendering and recovery controls
+        run: bash native/Tests/capture_recovery_design.sh "$RUNNER_TEMP/dance-floor"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: dance-floor-simulators
+          name: dance-floor-recovery-simulators
           path: ${{ runner.temp }}/dance-floor

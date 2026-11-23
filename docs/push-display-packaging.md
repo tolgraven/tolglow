@@ -108,8 +108,8 @@ tier at native resolution. Software rasterizers use the low tier. Cold entry has
 (`:scene-startup-timeout-ms`). Subsequent scene captures have a 10-second ceiling
 (`:scene-capture-timeout-ms`). Parameter controls retain their own capture deadline.
 A frame already in progress finishes before the worker reads back its PNG.
-Switching back to parameters or the target picker releases the scene and WebGL
-context. Each capture consumes the latest committed lighting values. It performs
+Hiding the page or switching back to parameters or the target picker releases the scene and WebGL
+context. Returning to a visible scene reacquires a new canvas and renders the latest snapshot. Each capture consumes the latest committed lighting values. It performs
 no additional effect evaluations and opens no Studio state socket.
 
 The device view samples up to 32 fixture bodies across moving and fixed lights,

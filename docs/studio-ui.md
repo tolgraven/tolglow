@@ -265,9 +265,16 @@ one another when space permits. There are no remote fonts or UI/CDN assets.
 
 ## Assistant and provider connection
 
-Assistant offers a streaming conversation and an inline provider form for OpenAI,
-Anthropic, OpenRouter and self-hosted compatible endpoints. Model IDs/endpoints
-are explicit configuration. Credentials are cleared from the form when submitted.
+On the first visit, **Connect a model** puts the provider, model ID and API key
+together. Open **Custom endpoint** to override a hosted provider’s URL. Choosing
+**Self-hosted / compatible** shows the server endpoint immediately and makes the
+API key optional. You can draft a message before saving the connection.
+
+Run `lein run -m tolglow.qa.studio-browser assistant-layout` after building the Studio bundle to exercise first use, connection editing, a loopback model response and restored history in an isolated preview show.
+
+Once the provider is ready, the conversation is the primary workspace. Open
+**Model connection** to edit settings. **Clear saved key** appears when the
+selected provider has a key. Credentials are cleared from the form on submit.
 The server uses its separately configured local credential store when available,
 or session memory otherwise. Only opaque references enter portable show data;
 the actual keys are excluded from public configuration and exports. Saving
@@ -510,3 +517,11 @@ target. If a show variable sets the level, its path appears beside the reading.
 Varying the look preserves that binding. **Set manual target** switches to the
 chosen percentage. **Release group** gives up the scene's fixtures. Active groups have
 disjoint membership.
+
+## Composing on a touch screen
+
+In **Compose**, select a cue and use **Add cue** to append a slot. Each row keeps its move and remove buttons beside its cue name. Open **Parameters** to override inputs or **Layer transforms** to change how this slot affects earlier heads. A sequence exposes each step's duration and musical unit. A macro launches its slots together. Saved compositions appear in a horizontal list when the show has any.
+
+In **Rig & space**, **Explore**, **Move** and **Rotate** use the full editor width for the room. **Draw path** opens duration, playback, curve, target and publication controls beside the canvas on wide screens or below it on phones. Changing tools keeps the path draft. **Aim at surface**, **Pixel layouts** and the volume tools open their own controls. On a narrow screen, swipe the tool row or focus its buttons with Tab to reach the later tools.
+
+After an optimized build, run `lein run -m tolglow.qa.performance-layout target/authoring-layout authoring` to start a disposable, preview-only show with the QA cues. It saves and reopens a macro, switches between sequence and macro controls, changes the rig tool and records geometry at phone, iPad and desktop sizes.

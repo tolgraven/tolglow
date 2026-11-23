@@ -9,13 +9,14 @@ import TolglowSensorCore
     @Published private(set) var effort = 0.0
     @Published private(set) var steps: UInt32 = 0
     @Published private(set) var bpm: Int?
-    @Published private(set) var status = "Join the floor on your iPhone first."
+    @Published private(set) var status = "Choose where to share your wrist motion."
 
     @Published var shareMotionAxes = false
     private var axes: AudienceMotion?
 
     private let store = HKHealthStore()
     private let motion: MotionSampler
+    let link: WatchFloorLink
     private let relay: WatchRelay
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
@@ -31,12 +32,20 @@ import TolglowSensorCore
     init(motion: MotionSampler, relay: WatchRelay) {
         self.motion = motion
         self.relay = relay
+        self.link = WatchFloorLink(phone: relay)
         super.init()
+        link.interrupted = { [weak self] message in self?.stop(message) }
     }
+
+    func prepareConnection() { relay.activate() }
 
     func start(withPulse: Bool) {
         guard !active, !requesting else { return }
-        guard relay.reachable else { relay.activate(); status = "Connect your iPhone and join the floor, then tap again."; return }
+        guard link.canStart else {
+            if link.route == .pairedPhone { relay.activate(); status = "Join the floor on iPhone, or choose Nearby stage for Watch only." }
+            else { status = "Choose a nearby stage before sharing." }
+            return
+        }
         motion.stop()
         relay.cancelPending()
         generation = UUID()
@@ -64,7 +73,16 @@ import TolglowSensorCore
                 }
             }
         } else {
-            beginMotion()
+            requesting = true
+            connectForMotion(token: token)
+        }
+    }
+
+    private func connectForMotion(token: UUID) {
+        status = "Joining the dance floor…"
+        link.begin { [weak self] in
+            guard let self, self.generation == token else { return }
+            self.beginMotion()
         }
     }
 
@@ -85,14 +103,14 @@ import TolglowSensorCore
         live.beginCollection(withStart: now) { [weak self] success, _ in
             Task { @MainActor in
                 guard let self, self.generation == token else { return }
-                if success { self.beginMotion() }
+                if success { self.connectForMotion(token: token) }
                 else { self.stop("Workout collection unavailable. You can join with motion only.") }
             }
         }
     }
 
     private func beginMotion() {
-        guard relay.reachable else { stop("iPhone disconnected. Rejoin when it is reachable."); return }
+        guard link.ready else { stop("Connection lost. Rejoin before sharing."); return }
         requesting = false
         active = true
         meter = DanceMeter()
@@ -100,7 +118,6 @@ import TolglowSensorCore
         steps = 0
         serial = 0
         lastMotion = ProcessInfo.processInfo.systemUptime
-        relay.beginAudience()
         // Skip the last cached observation from any previous conducting session.
         motionUpdates = motion.$values.dropFirst().sink { [weak self] values in
             guard let self, let x = values["accel-x"], let y = values["accel-y"], let z = values["accel-z"] else { return }
@@ -132,7 +149,7 @@ import TolglowSensorCore
         let freshAxes = shareMotionAxes && ProcessInfo.processInfo.systemUptime - lastMotion <= 0.6 ? axes : nil
         guard let sample = AudienceSample(serial: serial, steps: steps, effort: effort, pulse: bpm, motion: freshAxes) else { return }
         serial &+= 1
-        relay.sendAudience(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
+        link.send(sample, motionAge: max(0, ProcessInfo.processInfo.systemUptime - lastMotion))
     }
 
     func stop(_ message: String = "Left the floor. Sharing stopped.") {
@@ -142,8 +159,8 @@ import TolglowSensorCore
         motionUpdates?.cancel()
         motionUpdates = nil
         axes = nil; shareMotionAxes = false
+        link.end()
         if active || requesting {
-            relay.endAudience()
             motion.stop()
         }
         active = false

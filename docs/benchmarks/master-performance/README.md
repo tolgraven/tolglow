@@ -140,3 +140,12 @@ control is explicitly retained for follow-up attribution.
 retains run 44904180335 with Afterglow held fixed. Hoisting the primitive scale
 flag reduces measured 10,000-pixel host allocation by about 2.4 MB/tick in both
 candidate passes, while inconsistent timing and subscriber tails remain visible.
+
+## Optical fields, packed writes and native shader readback
+
+The November 23 archive contains alternate-order full-show frame pairs on
+20,000 pixels and 64 moving heads. It includes a real loopback Studio stream,
+a negative optical-bound experiment, an opaque-wash coverage sweep, same-driver
+GPU comparisons, and a separate float32-to-scalar precision check. The README
+inside gives the two repository revisions, exact workloads and replay commands.
+[Download the raw measurements and runners](render-work-elimination.zip)

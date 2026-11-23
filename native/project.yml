@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     iOS: '18.0'
     watchOS: '11.0'
+    macOS: '14.0'
 packages:
   TolglowSensorCore:
     path: Core
@@ -15,6 +16,16 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     # Set your own development team in Xcode; no signing credentials are stored.
 targets:
+  TolglowStudio:
+    type: application
+    platform: macOS
+    sources: [macOS]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.studio
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to lighting equipment configured by the show operator.
   TolglowPhone:
     type: application
     platform: iOS
@@ -23,6 +34,13 @@ targets:
         excludes: ["**/AGENTS.md"]
       - Shared
       - Audience
+      - AudienceCompute/Shared
+      - path: AudienceCompute/Phone
+        excludes: ["audience-compute.js"]
+      - path: AudienceCompute/Phone/audience-compute.js
+        buildPhase: resources
+      - path: AudienceCompute/GPU/TRANSIT-LICENSE
+        buildPhase: resources
     entitlements:
       path: iOS/TolglowPhone.entitlements
       properties:
@@ -33,6 +51,7 @@ targets:
         CFBundleDisplayName: Tolglow
         UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
+        NSBonjourServices: ["_tolglow-cmp._tcp"]
         NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.
         NSCameraUsageDescription: Estimate dance movement locally or measure fixture brightness, surface reflectance and room fog, or scan room surfaces, fixture lenses and beam targets when you start calibration.
         NSMotionUsageDescription: Read device motion while you conduct lights, preview sensors, or hold a fixed sightline for fog or reflectance measurements.
@@ -81,19 +100,24 @@ targets:
     type: tool
     platform: macOS
     deploymentTarget: '13.0'
-    sources: [AudienceBridge, Audience/AudienceRadio.swift]
+    sources: [AudienceBridge, Audience/AudienceRadio.swift, AudienceCompute/Shared, AudienceCompute/Stage]
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host the audience for this show over nearby Bluetooth.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Offer verified shader work to explicitly enrolled local audience devices.
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.audience-bridge
     dependencies:
       - package: TolglowSensorCore
   TolglowWatch:
     type: application
     platform: watchOS
-    sources: [watchOS, Shared]
+    sources:
+      - watchOS
+      - Shared
+      - Audience/AudienceRadio.swift
+      - Audience/AudienceClient.swift
     entitlements:
       path: watchOS/TolglowWatch.entitlements
       properties:
@@ -105,6 +129,8 @@ targets:
         WKBackgroundModes: [workout-processing]
         NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
         NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
+        NSBluetoothAlwaysUsageDescription: Find and join a nearby lighting stage when you choose to use only your Watch.
+        WKRunsIndependentlyOfCompanionApp: true
         WKApplication: true
         WKCompanionAppBundleIdentifier: org.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
@@ -113,6 +139,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
     dependencies:
       - package: TolglowSensorCore
+  WatchAudienceUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources: [Tests/WatchAudienceUI]
+    dependencies:
+      - target: TolglowWatch
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: TolglowWatch
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.watch-audience-ui-tests
 schemes:
   TolglowAudienceClip:
     build:
@@ -122,6 +159,10 @@ schemes:
     build:
       targets:
         TolglowAudienceBridge: all
+  TolglowStudio:
+    build:
+      targets:
+        TolglowStudio: all
   TolglowPhone:
     build:
       targets:
@@ -130,3 +171,6 @@ schemes:
     build:
       targets:
         TolglowWatch: all
+    test:
+      targets:
+        - WatchAudienceUITests
