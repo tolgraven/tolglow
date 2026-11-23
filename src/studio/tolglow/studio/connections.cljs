@@ -645,8 +645,7 @@
 (defn connection-view [db s]
   (let [active? (boolean (get-in s [:sync :active?])) pending? (boolean (seq (:pending s))) disabled? (or (nil? (:sync s)) active? pending?)]
     [:section#view-connections.view
-     [:div.view-heading [:div [:div.eyebrow "PLAY IN TIME"] [:h1 "Bring the room together."]
-                         [:p "Pair clocks, instruments and audio inputs with the show."]]
+     [:div.view-heading [:h1 "Connections"]
       [:button.button {:type "button" :on-click #(rf/dispatch [:connections/refresh-devices])} "Refresh device lists"]]
      [error-list s]
      [clock-panel s (get-in db [:show :transport])]

@@ -26,13 +26,20 @@
    :paths ["tolglow/docs/performance/render-work-elimination.md"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Existing production baselines and candidate experiments are indexed in docs/performance/render-work-elimination.md."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
-   :paths ["tolglow/docs/performance/perceptual-scheduling.md"]
+   :paths ["tolglow/docs/performance/perceptual-scheduling.md" "tolglow/docs/performance/multirate-quality.md"
+           "tolglow/dev/tolglow/perf/multirate_quality.clj" "tolglow/dev/tolglow/perf/transient_scheduling.clj"
+           "tolglow/dev/tolglow/perf/sampling_cost.clj"
+           "tolglow/src/tolglow/visualization/cue_pads.clj" "afterglow/src/afterglow/runtime/keyframes/values.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Maintain a reference-render comparison with continuous and discrete signals, budget recovery, device load, color/aim error and stage-specific timing. Publish tested and rejected throttling strategies."]
-   :evidence ["The current cue-visualization and keyframe implementations are cross-referenced in docs/performance/perceptual-scheduling.md."]}
+   :evidence ["Merged Tolglow #117 and Afterglow #71 lease presentation work to visible Studio cells and Push 2 pads and reduce visual keyframe frequency before slowing live effects."
+              "Tolglow #124 measures 1,024 RGBW pixels and 64 moving heads against full-rate output. Uniform spacing missed 11 of 16 short flashes. The selective schedule preserved all 16."
+              "Tolglow #125 kept all 320 flash DMX bytes in the controlled-pressure replay. The wash reached stride eight and recovered to stride one after pressure ended."
+              "Tolglow #127 runs all three replays in the existing paired master profiler. Complete worker stages are measured separately for the predicted endpoint and interpolated frames."
+              "Afterglow #76 checks packed aim and direction without expanding per-head rows. A 512-mover release replay matched 160 frames and reduced mean worker CPU per checked endpoint from 4.90–4.93 ms to 1.65–2.10 ms."]}
   {:id :delivery/continuity :title "Carry active and queued work across steering and capacity changes"
    :kind :documentation :status :planned :owner nil
    :paths ["tolglow/docs/request-coverage.md"] :depends-on [:foundation/tests]
@@ -80,15 +87,15 @@
   {:id :models/agent-language :title "Expose compact show authoring and shader operations to local and remote agents"
    :kind :implementation :status :planned :owner nil
    :paths ["tolglow/src/tolglow/agents"] :depends-on [:foundation/tests]
-   :acceptance ["Reuse show/library defaults, mix data and trusted local Clojure one-offs, validate shader changes off the render clock and verify normal Studio/REPL/standalone entry points and rollback."] :evidence []}
+   :acceptance ["Reuse show/library defaults, mix data and trusted local Clojure one-offs, validate shader changes off the render clock and verify normal Studio/REPL/standalone entry points and rollback."] :evidence ["Compact forms use the normal show queue, musical time and trusted REPL functions. Standalone source-rollout and agent routing still need device qualification."]}
   {:id :models/local-adapters :title "Prepare device-aware local model selection, adapter routing and costed training recipes"
    :kind :research :status :planned :owner nil
    :paths ["tolglow/docs/model-lab"] :depends-on [:foundation/tests]
-   :acceptance ["Compare model and adapter revisions, resident memory and thermal limits, size options from phone to Mac. Cost MBP/Studio and NVIDIA through GB200 and test launch preparation without weight updates."] :evidence []}
+   :acceptance ["Compare model and adapter revisions, resident memory and thermal limits, size options from phone to Mac. Cost MBP/Studio and NVIDIA through GB200 and test launch preparation without weight updates."] :evidence ["Nine pinned candidates, both pilot tokenizer preflights, prepared MLX and PEFT launch recipes and costed iPhone to GB200 scenarios are in docs/model-lab. Device memory and thermal measurements are pending."]}
   {:id :models/training-data :title "Assemble reproducible GLSL, show-language and paired source datasets"
-   :kind :implementation :status :planned :owner nil
+   :kind :implementation :status :done :owner nil
    :paths ["tolglow/dev/model-lab"] :depends-on [:foundation/tests]
-   :acceptance ["Produce provenance and license-aware train/dev/test sets with family and leakage controls, real shader/command tests and a held-out coding evaluation. Preparation stops before fine-tuning."] :evidence []}
+   :acceptance ["Produce provenance and license-aware train/dev/test sets with family and leakage controls, real shader/command tests and a held-out coding evaluation. Preparation stops before fine-tuning."] :evidence ["Public MIT/EPL split payloads and owner-local generators, family and prompt leakage checks, shader readback, executable show scoring and Clojure reconstruction evaluation are in dev/model-lab. Both pilot tokenizers were exercised. No training ran."]}
   {:id :studio/visible-cue-pad-previews :title "Visualize mounted cue pages through musical keyframes"
    :kind :implementation :status :done :owner nil
    :paths ["tolglow/src/tolglow/visualization/cue_pads.clj" "tolglow/src/studio/tolglow/studio/cue_pad_preview.cljs"
@@ -102,6 +109,12 @@
            "tolglow/src/studio/tolglow/studio/compute_transport.cljs" "tolglow/js/compute"]
    :acceptance ["Prepare and reuse GPU programs across separate Studio clients. Recover locally when a client departs or misses its deadline. Keep each complete physical output frame consistent."]
    :evidence ["Two Chromium GPU workers drove 64 moving heads across two Art-Net universes. The 40 Hz loopback run verified 774 full frames against the ordered CPU output and deliberately dropped one peer. docs/performance/distributed-compute.md records measured deadlines, fallbacks and native hardware coverage."]}
+  {:id :models/pilot-data-preparation :title "Prepare a source-attributed local model pilot for show control, GLSL and Clojure"
+   :kind :implementation :status :done :owner nil
+   :paths ["tolglow/dev/model-lab" "tolglow/docs/model-lab" "tolglow/src/tolglow/agents/forms.clj" "tolglow/test/tolglow/agents/forms_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Produce deterministic public and owner-local corpora, executable held-out checks, pinned tokenizers and hardware-specific recipes without training."]
+   :evidence ["268 public examples. Owner-local generation assembled 1,123 examples across 88 isolated families. Both model snapshots passed tokenizer-only preparation, and reference replays passed 48 held-out EDN command equivalences and 32 WebGL2 numeric checks. See docs/model-lab/README.md for open training, device and deployment gates."]}
   {:id :render/shared-fog-transmission :title "Use the same calibrated fog transmission for physical state, effect materials and Studio light paths"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/render/fog_law.clj" "afterglow/src/afterglow/render/fog_optics.clj" "afterglow/src/afterglow/render/atmosphere.clj"
