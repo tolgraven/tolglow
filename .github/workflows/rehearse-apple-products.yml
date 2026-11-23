@@ -21,6 +21,8 @@ jobs:
           tar -xf "$toolchain/graal.tgz" --strip-components 1 -C "$toolchain"
           export JAVA_HOME="$(dirname "$(dirname "$(find "$toolchain" -name java -path '*/bin/java' -type f -print -quit)")")"
           export PATH="$JAVA_HOME/bin:$PATH"
+          # Gluon's JDK 17.0.3 predates the hosted Linux cgroup mount layout.
+          export JAVA_TOOL_OPTIONS="-XX:-UseContainerSupport -Xmx6g"
           java -version
           python3 - <<'PY'
           from pathlib import Path
