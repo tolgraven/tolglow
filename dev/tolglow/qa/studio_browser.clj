@@ -11,7 +11,8 @@
                 "audience-zones" "dev/studio/audience-zones-qa.mjs"
                 "event-feed-layout" "dev/studio/event-feed-layout-qa.mjs"
                 "keyframe-ceilings" "dev/studio/keyframe-browser-qa.mjs"
-                "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"})
+                "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"
+                "room-readouts" "dev/studio/room-readout-qa.mjs"})
 
 (defn run-browser! [script output show-options]
   (let [directory (io/file output)
