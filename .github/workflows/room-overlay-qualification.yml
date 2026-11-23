@@ -1,0 +1,51 @@
+name: Observe accepted Room readouts
+on:
+  push:
+    branches: [codex/rehearse-room-readouts]
+permissions: {contents: read}
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: tolglow
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: tolgraven/afterglow
+          ref: 9387c0ae211397734a761ac98c4894cbfeeb83e4
+          path: afterglow
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: tolglow/package-lock.json
+      - name: Install the verified Leiningen release
+        working-directory: tolglow
+        run: .github/scripts/install-lein
+      - name: Cache verified Maven dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/**/*.lastUpdated
+          key: maven-${{ runner.os }}-${{ hashFiles('tolglow/project.clj', 'afterglow/project.clj') }}
+          restore-keys: maven-${{ runner.os }}-
+      - name: Install pinned browser dependencies
+        working-directory: tolglow
+        run: npm ci
+      - name: Build the release and verify both timing readouts
+        working-directory: tolglow
+        run: |
+          npm run studio:test
+          npm run studio:build
+          npx --no-install playwright-core install --with-deps chromium
+          lein run -m tolglow.qa.studio-browser room-readouts target/readouts
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with: {name: room-overlay-readouts, path: tolglow/target/readouts}
