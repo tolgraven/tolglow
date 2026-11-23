@@ -127,8 +127,8 @@ targets:
       properties:
         CFBundleDisplayName: Tolglow
         WKBackgroundModes: [workout-processing]
-        NSHealthShareUsageDescription: Read current heart rate when you choose to share a dance workout with the floor.
-        NSHealthUpdateUsageDescription: Start an optional dance workout for live pulse readings and discard it when you leave.
+        NSHealthShareUsageDescription: Share your current BPM with the stage. A saved show can retain the last average, including your BPM when only you share.
+        NSHealthUpdateUsageDescription: Start a dance workout for optional pulse sharing. The Watch discards the workout when you stop sharing pulse or leave the floor.
         NSBluetoothAlwaysUsageDescription: Find and join a nearby lighting stage when you choose to use only your Watch.
         WKRunsIndependentlyOfCompanionApp: true
         WKApplication: true
