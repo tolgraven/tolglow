@@ -16,10 +16,10 @@
    :title "Measure independent 40 Hz ArtDMX publication under weighted volume motion"
    :kind :research :status :in-progress :owner "Adaptive and perceptual scheduling"
    :paths ["tolglow/dev/tolglow/perf/weighted_live.clj" "tolglow/dev/tolglow/perf/weighted_live" "tolglow/docs/performance/live-weighted-publication.md"]
-   :depends-on [:runtime/publication-clock]
+   :depends-on [:foundation/tests]
    :acceptance ["Run 20,000 RGBW pixels, 64 moving heads, four position-and-beam volumes, the mixed chart and eight washes using the production show scheduler."
                 "Report complete, timely, fresh, held and missing slots, show real moving-head and RGBW bytes, bound control backlog, and retain the source-paired raw observations."]
-   :evidence ["The live probe observes physical ArtDMX handoff, four independently acknowledged positions, actual effect sampling and process allocation over the measured time window."]}
+   :evidence ["The probe runs against the scheduler and sampling revisions in PRs 178 and 185. It observes physical ArtDMX handoff, four independently acknowledged positions, actual effect sampling and process allocation over the measured time window."]}
   {:id :performance/macbook-air-qualification
    :title "Measure the dense mixed rig on the physical MacBook Air"
    :kind :research :status :in-progress :owner "Mixed venue profiling"
