@@ -9,7 +9,8 @@
    :kind :implementation :status :in-progress :owner "Apple Studio packaging and stage invitations"
    :paths ["tolglow/native/Packaging" "tolglow/src/studio/tolglow/studio/audience_invitation.cljs"
            "tolglow/src/tolglow/integrations/audience_invitation.clj"]
-   :depends-on [:sensors/nearby-audience :native/apple-standalone-studio]
+   :depends-on [:foundation/tests]
+   :notes "Extends the shipped macOS bundle in #122 and the nearby stage helper in #130. Physical QR invocation and mobile Native Image qualification have separate acceptance checks."
    :acceptance ["Start, stop and export a stage QR from operator Studio. Scope credentials to the owned process and show. Export the full simulator companion, report embedded Clip size and document signed physical QR qualification."] :evidence []}
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
