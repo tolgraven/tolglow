@@ -26,6 +26,7 @@
             [tolglow.studio.spatial-preview :as spatial-preview]
             [tolglow.studio.modulation :as modulation]
             [tolglow.studio.navigation :as nav]
+            [tolglow.studio.page-routes :as pages]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.parameter-visualization :as visualization]
@@ -92,19 +93,24 @@
     [:input.studio-file-input {:id (if mobile? "mobile-import-show" "import-show") :type "file"
                                :accept ".transit,.edn,application/transit+json" :on-change import-selection!}]]])
 
+(defn- navigation-link [current {:keys [route label short-label icon shortcut]}]
+  [:a.nav-item {:href (nav/href route) :class (when (= route current) "selected")
+                :data-view (name route) :aria-label label :title label
+                :aria-current (when (= route current) "page")}
+   [:span.nav-icon {:aria-hidden true
+                    :style {"--nav-icon" (str "url('/studio/icons/lucide/" (name icon) ".svg')")}}]
+   [:span.nav-title label]
+   [:span.nav-short {:aria-hidden true} (or short-label label)]
+   [:span.nav-key {:aria-hidden true} shortcut]])
+
 (defn- sidebar [db]
   (let [{:keys [ui connection]} db]
     [:aside.sidebar
-     [:a.brand {:href "/" :aria-label "Tolglow studio home"}
+     [:a.brand {:href (nav/href :home) :aria-label "Tolglow studio home"}
       [:span.brand-mark "t" [:span "g"]] [:span "tolglow" [:small "LIGHT IN MOTION"]]]
      [:nav {:aria-label "Studio views"}
-      (for [[view title icon n] [[:perform "Perform" "▦" "1"] [:compose "Compose" "▤" "2"]
-                                 [:rig "Rig & space" "⌑" "3"] [:library "Definitions" "⌘" "4"]
-                                 [:assistant "Assistant" "✦" "5"] [:connections "Connections" "⇄" "6"] [:develop "Develop" "⌨" "7"] [:debug "Debug" "≋" "8"]]]
-        ^{:key view}
-        [:a.nav-item {:href (nav/href view) :class (when (= view (:view ui)) "selected") :data-view (name view)
-                       :aria-current (when (= view (:view ui)) "page")}
-         [:span.nav-icon {:aria-hidden true} icon] title [:span.nav-key n]])]
+      (for [link pages/navigation]
+        ^{:key (:route link)} [navigation-link (:view ui) link])]
      [:div.sidebar-bottom
       [:div.connection [:i#connection-dot {:class (if (:connected? connection) "connected" "failed")}]
        [:span#connection-label (if (:connected? connection) "Studio connected" "Connecting to studio")]]
@@ -234,7 +240,7 @@
       [:button.text-button {:type "button" :aria-pressed (boolean (or (:edit? ui) (:full-grid? ui))) :disabled (boolean (:edit? ui))
                            :on-click #(set-ui! [:full-grid?] (not (:full-grid? ui)))}
        (cond (:edit? ui) "64 slots while editing" (= rows 8) "Compact grid" :else "All 64 slots")]
-      [button "end-all" "Release all ↘" [:studio/end-all] "text-button"]]]))
+      [button "end-all" "Release all" [:studio/end-all] "text-button"]]]))
 
 (defn- parameter-control [instance parameter schema & [handlers options]]
   (let [value (get-in instance [:params parameter] (:default schema))
