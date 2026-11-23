@@ -106,7 +106,8 @@ public struct AudienceFloor {
         guests = guests.filter { time - $0.value.time < timeout }
     }
 
-    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double) -> Bool {
+    @discardableResult public mutating func receive(_ sample: AudienceSample, from id: UUID, at time: Double,
+                                                     reserveSteps: (Int) -> Bool = { _ in true }) -> Bool {
         guard time.isFinite else { return false }
         var credit = 2.0
         if let previous = guests[id], time - previous.time < timeout {
@@ -114,7 +115,7 @@ public struct AudienceFloor {
             let added = sample.steps &- previous.sample.steps
             credit = min(2.0 + 4 * timeout, previous.stepCredit + max(0, time - previous.time) * 4)
             guard time >= previous.time, sequence > 0, sequence < (1 << 31),
-                  Double(added) <= credit else { return false }
+                  Double(added) <= credit, reserveSteps(Int(added)) else { return false }
             credit = min(2.0, credit - Double(added))
             pendingSteps += Int(added)
         } else {

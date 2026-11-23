@@ -9,7 +9,7 @@ import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {displayTransform, EdgePass, FilmPass} from './film.js';
-import {TIERS, rasterSizes, supportedSamples, sceneSamples, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
+import {TIERS, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createMovingHead, createTruss, disposeGeometry} from './geometry.js';
@@ -20,7 +20,7 @@ import {VolumetricFog} from './fog.js';
 import {apertureRadius, opticalFrustum, finiteApertureMaterial} from './optics.js';
 
 import {PreviewActivity} from './preview-activity.js';
-import {DisplayClock} from './display-clock.js';
+import {DisplayClock, DisplayRefresh} from './display-clock.js';
 import {fixtureSlots} from './fixture-selection.js';
 import {LightingSamples} from './lighting-samples.js';
 
@@ -30,6 +30,7 @@ const MAX_LIGHTS = 16;
 /** One lifecycle-owned graphics engine. The JVM owns all lighting output. */
 export class SceneRenderer {
   constructor(canvas, status, platform = {}) {
+    this.displayHz = platform.displayHz ?? (platform.worker ? null : 60);
     this.platform = platform; this.displayClock = new DisplayClock(); this.lighting = new LightingSamples();
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.ready = false; this.disposed = false;
     this.room = [12, 5, 10]; this.snapshot = null; this.key = null; this.fixtures = [];
@@ -48,6 +49,7 @@ export class SceneRenderer {
     this.setCamera('audience');
     if (platform.worker) {try {this.initialize();} catch (error) {this.fail(error); return;}}
     if (!platform.worker) {
+      this.refresh = new DisplayRefresh(hz => this.setDisplayHz(hz));
       this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(canvas);
       this.activity = new PreviewActivity(canvas, active => this.changeActivity(active));
     }
@@ -66,6 +68,12 @@ export class SceneRenderer {
     }
     if (platform.autoStart !== false) this.scheduleFrame(0);
   }
+  get targetHz() {return presentationHz(this.quality, this.qualityChoice, this.softwareRenderer, this.displayHz);}
+  setDisplayHz(hz) {
+    if (!hz || hz === this.displayHz) return;
+    this.displayHz = hz;
+    this.overBudget = this.underBudget = 0;
+  }
   autoQuality() {
     if (this.softwareRenderer) return 'low';
     return (this.platform.worker ? this.platform.coarsePointer || this.platform.viewport.width < 700
@@ -81,7 +89,7 @@ export class SceneRenderer {
     this.gpuTimer = this.platform.worker ? null : new GpuTimer(context);
     this.deviceRenderer = debug ? context.getParameter(debug.UNMASKED_RENDERER_WEBGL) : context.getParameter(context.RENDERER);
     this.softwareRenderer = /swiftshader|llvmpipe|softpipe|software rasterizer/i.test(this.deviceRenderer || '');
-    this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.frameInterval = 1000 / this.options.fps;
+    this.quality = this.autoQuality(); this.options = TIERS[this.quality]; this.frameInterval = 1000 / this.targetHz;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = .85;
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
@@ -162,7 +170,7 @@ export class SceneRenderer {
     if (previousFog) { nextFog.field.copyFrom(previousFog.field); nextFog.showAtmosphere = previousFog.showAtmosphere; nextFog.uniforms.room.value.fromArray(this.room); nextFog.upload(); }
     else nextFog.setRoom(this.room);
     nextFog.setAmount(this.fogAmount);
-    this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.options.fps;
+    this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.targetHz;
     this.fog = nextFog; previousFog?.dispose();
     if (this.width) nextFog.setSize(this.width, this.height);
     if (this.snapshot) this.update(this.snapshot, true);
@@ -318,7 +326,7 @@ export class SceneRenderer {
     // hysteresis so the targets do not resize on every display callback.
     if (this.qualityChoice !== 'auto' || this.draws < 2 || !this.visible) return;
     this.measuredFrameMs = elapsed;
-    const budget = 1000 / this.options.fps;
+    const budget = 1000 / this.targetHz;
     this.overBudget = elapsed > budget * 1.35 ? (this.overBudget || 0) + 1 : 0;
     this.underBudget = elapsed < budget * .65 ? (this.underBudget || 0) + 1 : 0;
     if (now - this.scaleChangedAt < 1000) return;
@@ -383,6 +391,7 @@ export class SceneRenderer {
     this.controls.target.fromArray(fixture.position || [0, 0, 0]); this.camera.position.copy(this.controls.target).add(new THREE.Vector3(1.3, .5, 2)); this.controls.update(); this.cameraName = 'fixture'; return true;
   }
   changeActivity(active) {
+    this.refresh?.setActive(active && !this.paused);
     this.visible = active; if (!active) this.fog?.showAtmosphere?.suspend(); this.lastFrame = 0; this.lighting.latest = this.lighting.previous = null;
     this.displayClock.cancel(); if (!active) this.gpuTimer?.dispose(); this.navigation?.refreshActivity();
     if (!active || this.disposed || this.error) return;
@@ -407,8 +416,8 @@ export class SceneRenderer {
     this.nextFrameAt = performance.now() + delay;
     this.displayClock.at(this.nextFrameAt, time => this.animate(time));
   }
-  pause() {this.paused = true; this.gpuTimer?.dispose(); this.navigation?.refreshActivity(); this.lighting.previous = null; this.displayClock.cancel();}
-  resume() {if (!this.disposed) {this.paused = false; this.navigation?.refreshActivity(); this.lastFrame = 0; this.scheduleFrame(0);}}
+  pause() {this.paused = true; this.refresh?.setActive(false); this.gpuTimer?.dispose(); this.navigation?.refreshActivity(); this.lighting.previous = null; this.displayClock.cancel();}
+  resume() {if (!this.disposed) {this.paused = false; this.refresh?.setActive(this.visible); this.navigation?.refreshActivity(); this.lastFrame = 0; this.scheduleFrame(0);}}
   animate(time) {
     if (this.disposed || this.paused || !this.visible || this.lost) return;
     const dt = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0;
@@ -453,7 +462,7 @@ export class SceneRenderer {
     this.observedFrame?.(this.canvas, this.snapshot?.['show-id'], this.snapshot?.epoch, this.snapshot?.['frame-number'] ?? 0);
     // Backpressure leaves main-thread time for cue/parameter input when a
     // driver blocks on compilation/submission. Recover gradually after it clears.
-    const nominal = 1000 / this.options.fps;
+    const nominal = 1000 / this.targetHz;
     const previous = this.frameInterval || nominal;
     // The worker computes its budget after the GPU completion fence; command
     // submission time alone cannot establish render throughput.
@@ -469,7 +478,7 @@ export class SceneRenderer {
       this.setStatus(`${automatic} · ${this.renderedShadows || 0} shadows · ${this.workLight ? 'work light' : 'dark show'}${capped}`);
   }
   getTelemetry() {
-    return {lightingMode: this.lighting.mode, targetRefreshHz: this.options.fps, ready: this.ready, failed: this.error || null, renderer: `Three.js r${THREE.REVISION}`, quality: this.quality,
+    return {lightingMode: this.lighting.mode, targetRefreshHz: this.targetHz, tierMaxHz: this.options.fps, displayHz: this.displayHz, ready: this.ready, failed: this.error || null, renderer: `Three.js r${THREE.REVISION}`, quality: this.quality,
       deviceRenderer: this.deviceRenderer, softwareRenderer: this.softwareRenderer,
       pixels: [this.width, this.height], displayPixels: [this.displayWidth, this.displayHeight],
       sceneSamples: this.sceneTarget?.samples, edgeFilter: 'FXAA', displayRange: this.displayRange, gpuTimeMs: this.lastGpuMs,

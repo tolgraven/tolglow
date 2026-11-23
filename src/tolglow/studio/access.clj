@@ -54,11 +54,11 @@
       (let [now (quot (System/currentTimeMillis) 1000)]
         (cond
           (valid-session? key now (session-cookie request))
-          (handler request)
+          (handler (assoc request ::operator? true))
 
           (header-authorized? token (get-in request [:headers "authorization"]))
           (let [stamp (str (+ now session-seconds))]
-            (-> (handler request)
+            (-> (handler (assoc request ::operator? true))
                 (assoc-in [:headers "Set-Cookie"]
                           (str cookie-name "=" stamp "." (sign key stamp)
                                "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" session-seconds
