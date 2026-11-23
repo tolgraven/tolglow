@@ -59,6 +59,9 @@ async function exerciseCamera(page) {
   await page.evaluate(() => setTestPose());
   const orbitStart = await page.evaluate(() => pose());
   await page.mouse.move(100, 80); await page.mouse.down();
+  // Ending a separate touch must leave the active mouse drag with OrbitControls.
+  await dispatchTouch(touch, 'touchStart', [[1, 160, 110]]);
+  await dispatchTouch(touch, 'touchEnd');
   await page.mouse.move(147, 99, {steps: 4}); await page.mouse.up();
   const orbitEnd = await page.evaluate(() => pose());
   assert.ok(distance(orbitStart.position, orbitEnd.position) > .05, 'Mouse drag should move the Orbit camera around its target');

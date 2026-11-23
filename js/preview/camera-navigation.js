@@ -200,12 +200,17 @@ export class CameraNavigator {
     p.x = event.clientX; p.y = event.clientY;
   }
   pointerUp(event) {
-    if (this.gesture.points.has(event.pointerId)) {
-      if (event.type === 'pointerup') this.sampleGesture();
+    const touch = this.gesture.points.has(event.pointerId);
+    if (!touch && this.pointer?.id !== event.pointerId) return;
+    // OrbitControls listens for pointerup on the document during mouse drags.
+    // Only let its own pointer finish that drag.
+    event.stopImmediatePropagation();
+    const cancelled = event.type !== 'pointerup';
+    if (touch) {
+      if (!cancelled) this.sampleGesture();
       this.gesture.remove(event.pointerId);
-      if (event.type === 'pointercancel') {this.swipe.set(0, 0); this.zoom = 0; this.look.set(0, 0);}
-    } else if (this.pointer?.id === event.pointerId) this.pointer = null;
-    else return;
+    } else this.pointer = null;
+    if (cancelled) {this.swipe.set(0, 0); this.zoom = 0; this.look.set(0, 0);}
     if (this.canvas.hasPointerCapture?.(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
   }
   sampleGesture() {
