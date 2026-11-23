@@ -325,6 +325,7 @@
   (let [gets (into {} (map (fn [[path handler]] [path (read-methods handler)])) (get-routes services))
         posts (into {} (map (fn [[path handler]] [path {:post (wrap-api-body handler)}])) (post-routes services))
         stream (:state-stream! services)
+        media (available (:airplay-media services) nil (:airplay-media services))
         route-table (into (mapv (fn [[path data]] [path (merge data (read-methods studio-page))]) pages/routes)
                           (concat [["/studio/*path" (read-methods asset)] ["/gpu/*path" (read-methods asset)]
                                    ["/api/debug/events" {:name :api/debug-events
@@ -338,6 +339,7 @@
                                    ["/api/preview/airplay/stop"
                                     {:post (wrap-api-body (available (:airplay-stop! services) "Preview receiver unavailable"
                                                                     #(ok ((:airplay-stop! services) (:json-params %)))))}]
+                                   ["/api/preview/airplay/watch/:token/:file" {:get media :head media}]
                                    ["/api/preview/airplay/:writer/:file"
                                     {:put (available (:airplay-publish! services) "Preview receiver unavailable"
                                                      (:airplay-publish! services))}]

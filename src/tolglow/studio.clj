@@ -105,6 +105,7 @@
   ([runtime bindings]
    (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
+            :airplay-media (partial airplay/studio-media (:airplay bindings))
             :airplay-start! #(airplay/start! (:airplay bindings) (:address %))
             :airplay-stop! #(airplay/stop! (:airplay bindings) (:writer %))
             :airplay-publish! (fn [{:keys [path-params body]}]

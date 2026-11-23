@@ -52,18 +52,18 @@
                   (reset! ui {:phase :idle})))
         failed! (fn [abort error]
                   (when (identical? abort (:abort @session)) (stop!) (notify! error)))
-        ready! (fn [abort url width height]
+        ready! (fn [abort {:keys [url playback-path]} width height]
                  (when (identical? abort (:abort @session))
                    (swap! ui assoc :phase :sharing :url url :width width :height height)
                    (when-let [player @video]
                      (when (seq (.canPlayType player "application/vnd.apple.mpegurl"))
-                       (set! (.-src player) url)))))
-        begin! (fn [abort module {:keys [url writer]}]
+                       (set! (.-src player) (if (= "https:" (.-protocol js/location)) playback-path url))))))
+        begin! (fn [abort module {:keys [writer] :as endpoints}]
                  (if-not (identical? abort (:abort @session))
                    (stop-remote! writer)
                    (do (swap! session assoc :writer writer)
                        (js-invoke module "startVideo" (canvas) (partial upload! writer)
-                                  (partial ready! abort url) (partial failed! abort) (.-signal abort)))))
+                                  (partial ready! abort endpoints) (partial failed! abort) (.-signal abort)))))
         start! (fn []
                  (let [abort (js/AbortController.)
                        address (:address @ui)

@@ -1,6 +1,8 @@
 (ns tolglow.preview.airplay-test
-  (:require [clojure.test :refer [deftest is]]
-            [tolglow.preview.airplay :as relay])
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is]]
+            [tolglow.preview.airplay :as relay]
+            [tolglow.studio.web :as web])
   (:import [java.io ByteArrayInputStream]
            [java.net HttpURLConnection URI]))
 
@@ -17,7 +19,11 @@
 
 (defn- buffer [s] (ByteArrayInputStream. (.getBytes ^String s "UTF-8")))
 (defn- scenario! [service]
-  (let [{:keys [url writer]} (relay/start! service "127.0.0.1")
+  (let [{:keys [url writer playback-path]} (relay/start! service "127.0.0.1")
+        handler (web/app {:airplay-media (partial relay/studio-media service)})
+        request (fn [method path]
+                  (handler {:request-method method :uri path :scheme :https
+                            :headers {"host" "studio.example"}}))
         root (subs url 0 (.lastIndexOf ^String url "/"))
         host (subs root 0 (.lastIndexOf ^String root "/"))
         manifest (str "#EXTM3U\n\n#EXT-X-STREAM-INF:BANDWIDTH=71720,AVERAGE-BANDWIDTH=12072,"
@@ -29,6 +35,11 @@
     (is (thrown? Exception (relay/publish! service writer "master.m3u8" (buffer "#EXTM3U\nhttps://example.org/other.m3u8"))))
     (is (= 204 (:status (relay/publish! service writer "master.m3u8" (buffer manifest)))))
     (is (= [200 manifest] (fetch url "GET")))
+    (is (str/starts-with? playback-path "/api/preview/airplay/watch/"))
+    (is (= manifest (slurp (:body (request :get playback-path)))))
+    (is (= [200 nil] ((juxt :status :body) (request :head playback-path))))
+    (is (= 404 (:status (request :get (str "/api/preview/airplay/watch/" writer "/master.m3u8")))))
+    (is (= 405 (:status (request :put playback-path))))
     (is (= [200 nil] (fetch url "HEAD")))
     (is (= [405 nil] (fetch url "POST")))
     (is (= [404 nil] (fetch (str host "/api/state") "GET")))
@@ -40,6 +51,7 @@
     (is (thrown? Exception (relay/stop! service "stale")))
     (is (= {:status :closed} (relay/stop! service writer)))
     (is (nil? @service))
+    (is (= 404 (:status (request :get playback-path))))
     (is (thrown? java.io.IOException (fetch url "GET")))))
 
 (deftest receiver-is-bounded-revocable-and-has-no-show-control-routes

@@ -5,7 +5,8 @@
             [ring.adapter.jetty :as jetty])
   (:import [java.io ByteArrayInputStream InputStream]
            [java.net Inet4Address NetworkInterface]
-           [java.util UUID Timer TimerTask]))
+           [java.util UUID Timer TimerTask]
+           [org.eclipse.jetty.server NetworkConnector]))
 
 (def ^:private segment-pattern #"segment-1-([1-9][0-9]{0,9})\.ts")
 (def ^:private playlists #{"master.m3u8" "playlist-1.m3u8"})
@@ -37,6 +38,11 @@
                              "Cross-Origin-Resource-Policy" "cross-origin"}
        :body (when (= :get request-method) (ByteArrayInputStream. bytes))}
       {:status 404 :body ""})))
+
+(defn studio-media [service request]
+  (if-let [{:keys [files capability]} @service]
+    (media-response files capability request)
+    {:status 404 :body ""}))
 
 (defn- receiver [files capability]
   (let [fetch (partial media-response files capability)]
@@ -84,12 +90,14 @@
           server (jetty/run-jetty web {:host address :port 0 :join? false
                                        :min-threads 2 :max-threads 12 :acceptors 1 :selectors 1})
           timer (Timer. "Tolglow preview receiver expiry" true)
-          port (.getLocalPort (first (.getConnectors server)))
-          session {:server server :timer timer :files files :writer writer :last-write (atom (System/nanoTime))}]
+          ^NetworkConnector connector (first (.getConnectors server))
+          port (.getLocalPort connector)
+          session {:server server :timer timer :files files :writer writer :capability capability :last-write (atom (System/nanoTime))}]
       (.setStopTimeout server 0)
       (reset! service session)
       (.schedule timer ^TimerTask (expire-task service session) idle-ms idle-ms)
-      {:writer writer :url (str "http://" address ":" port "/" capability "/master.m3u8")})))
+      {:writer writer :url (str "http://" address ":" port "/" capability "/master.m3u8")
+       :playback-path (str "/api/preview/airplay/watch/" capability "/master.m3u8")})))
 
 (defn- retain-segments [files]
   (let [expired (->> (keys files) (keep #(when-let [n (segment-number %)] [n %]))
