@@ -15,6 +15,8 @@
     (is (empty? (performance/driven-controls (dissoc instance :parameter-sources) controls)))
     (is (= [axes] (performance/driven-controls instance controls)))
     (is (source/bound? instance :depth))
+    (is (false? (source/driven? (assoc-in instance [:parameter-sources :depth :sources] [{:type :random :pending? true}]) :depth)))
+    (is (false? (source/driven? (assoc-in instance [:parameter-sources :z :error] "Response resolution failed") :z)))
     (is (nil? (source/result-visual :visual instance :depth {})))
     (is (nil? (source/result-visual :visual instance :level {})))
     (let [steady (assoc-in instance [:parameter-sources :depth :sources] [{:type :random :held? false}])

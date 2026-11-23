@@ -12,8 +12,10 @@
   (get (:parameter-sources instance) (keyword (events/wire-id param))))
 
 (defn bound? [instance param] (boolean (seq (:sources (reading instance param)))))
-(defn- driving-source? [{:keys [held? error]}] (not (or held? error)))
-(defn driven? [instance param] (boolean (some driving-source? (:sources (reading instance param)))))
+(defn- driving-source? [{:keys [held? pending? error]}] (not (or held? pending? error)))
+(defn driven? [instance param]
+  (let [{:keys [sources error]} (reading instance param)]
+    (and (nil? error) (boolean (some driving-source? sources)))))
 (defn- driving-block [source]
   (some #(when (and (driving-source? %) (= :blocks (keyword (:type %)))) %) (:sources source)))
 
@@ -113,7 +115,7 @@
 
 (defn axes-visual [view instance components schema]
   (let [axis (fn [[param spec]]
-               (if (bound? instance param)
+               (if (driven? instance param)
                  (native-value instance param)
                  (get-in instance [:params param] (:default spec))))
         sample (fn [] (let [values (mapv axis components)] (when (every? some? values) values)))
@@ -253,10 +255,11 @@
        [:label.source-field "Axis" [:select {:aria-label "Source axis" :value (events/wire-id param)
                                           :on-change #(rf/dispatch [::select id (keyword (.. % -target -value))])}
                                   (for [[k axis] components] ^{:key k} [:option {:value (events/wire-id k)} (or (:name axis) (widgets/label k))])]])
+     (when-let [error (:error source)] [:p.performance-error {:role "alert"} error])
      (when (seq (:sources source))
        [:div.source-connections
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
-                     (when (:held? input) " · held") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
+                     (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
      ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog]
      [motion/parameter-widget id param schema base]]))
