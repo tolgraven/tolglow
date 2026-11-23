@@ -47,6 +47,12 @@ A 20,000-pixel show with 64 movers, four moving optical volumes and eight stacke
 
 The 10,000-pixel CPU-only control matched the scalar oracle across 52 frames. Median allocation fell from 14.54 to 13.75 MB, and p95 rose from 60.18 to 68.15 ms. The native captures used a 60-second diagnostic deadline and the same CPU moving-head solver in both lanes. All native samples exceeded 25 ms. The eight-frame follow-up on the reviewed gain change also matched every packet. [Afterglow #82 and runnable captures](https://github.com/tolgraven/afterglow/pull/82)
 
+### Fixture entry and exit events
+
+Four moving volumes generated 3,162 fixture entry and exit events on the 10,000-pixel rig. Filtering changed IDs before computing their sort keys reduced median allocation inside the transition calculation from 6.68 to 0.40 MB per frame. Its CPU time fell from 2.94 to 1.40 ms at the median and from 16.10 to 3.99 ms at p95. The two hosts emitted identical ordered event maps and ArtDMX bytes across 14 warmups and 28 timed frames.
+
+Whole-frame p95 on the 10,000-pixel rig fell from 545 to 424 ms. On the 20,000-pixel rig, median allocation fell from 114.69 to 101.10 MB while whole-frame p95 rose from 495 to 502 ms over 32 measured pairs. Both rigs had 64 moving heads and ran under software OpenGL with an extended compute deadline. [Afterglow #83 and raw event comparisons](https://github.com/tolgraven/afterglow/pull/83)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
