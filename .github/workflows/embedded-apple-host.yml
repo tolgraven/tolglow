@@ -37,9 +37,11 @@ jobs:
           unzip -p studio.jar tolglow/agents/credentials.clj | sed 's/\.toAbsolutePath (if/.toAbsolutePath ^Path (if/' > override/tolglow/agents/credentials.clj
           unzip -p studio.jar tolglow/persistence.clj | sed 's/(def \^:private json-factory (JsonFactory\.))/(def ^:private json-factory (delay (JsonFactory.)))/;s/\^JsonFactory json-factory/\^JsonFactory @json-factory/' > override/tolglow/persistence.clj
           unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
+          java -cp dev:studio.jar clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
+          cp src/tolglow/native_resources.clj override/tolglow/native_resources.clj
           cat > override/tolglow/fixed_image.clj <<'CLOJURE'
           (ns tolglow.fixed-image (:gen-class)
-            (:require [thi.ng.math.core :as math] [tolglow.studio] [tolglow.application :as app]))
+            (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
           (defn -main [& args]
             (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
             (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
@@ -47,7 +49,7 @@ jobs:
             (apply app/-main args))
           CLOJURE
           cp src/tolglow/fixed_host.clj override/tolglow/fixed_host.clj
-          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.fixed-image tolglow.fixed-host]] (compile ns))"
+          java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core tolglow.agents.credentials tolglow.persistence tolglow.native-resources tolglow.fixed-image tolglow.fixed-host]] (compile ns))"
           javac --release 17 -d override -cp override:studio.jar:graal-sdk.jar native/EmbeddedHost/StudioRuntime.java
           jar uf studio.jar -C override .
           if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
@@ -99,6 +101,7 @@ jobs:
             </dependencies>
             <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
             <configuration><target>ios-sim</target><releaseConfiguration><skipSigning>true</skipSigning></releaseConfiguration><mainClass>org.tolglow.embedded.StudioRuntime</mainClass><nativeImageArgs>
+              <nativeImageArg>-H:IncludeResources=studio/.*|gpu/.*|js/compute/.*|tolglow/.*\.edn|tolglow\.edn</nativeImageArg>
               <nativeImageArg>-H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings</nativeImageArg>
               <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
               <nativeImageArg>-J-Dtolglow.native.build=true</nativeImageArg>

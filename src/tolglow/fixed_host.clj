@@ -7,6 +7,7 @@
             [tolglow.application :as application]
             [tolglow.data :as data]
             [tolglow.modules :as modules]
+            [tolglow.native-resources]
             [tolglow.studio]))
 
 (defonce ^:private running (atom nil))
