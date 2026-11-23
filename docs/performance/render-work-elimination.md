@@ -130,6 +130,22 @@ Two complete show hosts rendered four moving spheres, eight overlapping washes, 
 On shared Linux, whole-show elapsed p95 fell from 1,255.09 to 901.55 ms at 10,000 pixels and from 1,189.75 to 1,100.24 ms at 20,000 pixels. The separate native-material run used Mesa software OpenGL. At 20,000 pixels its median allocation fell from 46.73 to 41.95 MB while its median elapsed time increased from 200.57 to 218.79 ms. All 72 GPU-material frames missed 25 ms. Samples and bytes matched the CPU run. [Complete traces, comparison and reproduction](https://github.com/tolgraven/afterglow/pull/90)
 
 
+#### Omitting a covered shader before readback
+
+A beat-driven material computes white for each pixel. Four moving spheres paint color, then an opaque wash replaces white on the same fixtures. Afterglow can prove the covered material cannot contribute, including across the independent color masks. Reducing the wash's opacity or releasing it reveals the material on the current beat. A changing parameter that becomes invalid still faults at the source.
+
+Across two 36-pair covered replays and one 24-pair uncovered control, all 192 measured whole frames missed 25 ms. Model, ordered fixture contacts, effect intents and ArtDMX bytes matched for every pair. The two independent show hosts traded planners and evaluation order. Each rig included 64 moving heads.
+
+| Measurement, original → changed | 10,000 pixels, covered | 20,000 pixels, covered | 10,000 pixels, wash removed |
+| --- | ---: | ---: | ---: |
+| Shader draws per diagnostic frame | 7 → 6 | 7 → 6 | 7 → 7 |
+| Shader readback bytes | 200,336 → 160,080 | 400,336 → 320,080 | 200,336 → 200,336 |
+| Median whole-frame allocation | 23.83 → 23.40 MB | 41.24 → 40.41 MB | 22.26 → 22.24 MB |
+| Median whole-frame elapsed | 151.74 → 158.25 ms | 149.82 → 152.60 ms | 219.76 → 219.62 ms |
+| Whole-frame p95 | 527.05 → 296.66 ms | 746.21 → 864.72 ms | 697.65 → 416.76 ms |
+
+The 20,000-pixel shader evaluation median fell from 8.77 to 8.21 ms. Planner time grew from 1.44 to 1.65 ms. The two p95 frames had zero overlapping GC and 3.44 and 148.86 ms of runnable wait on the coordinator. The lower transfer volume and fewer draws reproduced on Mesa software OpenGL. Timing on a physical GPU remains open. [Afterglow #91 and runnable data](https://github.com/tolgraven/afterglow/pull/91)
+
 ### Studio delivery and the next bottleneck
 
 A real Ring/Jetty server and two loopback Transit WebSocket clients exercised the rig before the packed-write and broadcast changes. One client acknowledged every frame and received all four measured deltas of 65,775–70,529 bytes after a 4,229,339-byte initial snapshot. Median committed frame to application took 48 ms. The other client withheld acknowledgement, received one initial message and caught up to the latest state in 9.3 ms after resuming. Both reconstructed views matched the server. Every host tick missed 25 ms. Of 198 sampled CPU stacks, 34% involved packed field merging and 12% involved optical selection. A larger sample on dedicated hardware is needed for a stable ranking. [WebSocket workload](../../dev/tolglow/bench_subscribers.clj)
