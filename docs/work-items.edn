@@ -1,5 +1,5 @@
 {:schema-version 1,
- :updated "2026-11-22",
+ :updated "2026-11-23",
  :items
  [{:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
@@ -7,6 +7,14 @@
    :depends-on [:foundation/tests]
    :acceptance ["Sample continuous effect output at a projected musical clock, inspect or modulate the tween, and restore it at the same point."]
    :evidence ["Afterglow #62 tests future transport projection, native typed fields, faults, parallel workers and actual DMX. Tolglow exercises scalar and batch compilers, a reversing progress source, live reactive inspection, and full Transit save and restore. See docs/effect-keyframes.md."]}
+  {:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
+   :kind :implementation :status :done :owner nil
+   :paths ["afterglow/src/afterglow/control/model.clj" "afterglow/src/afterglow/control/params.clj"
+           "afterglow/test/afterglow/control/model_test.clj" "tolglow/src/tolglow/registry.clj"
+           "tolglow/test/tolglow/registry_test.clj" "tolglow/test/tolglow/persistence_test.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Reject a revision that invalidates a current cue before publication. Keep pinned and archived cues independent, and keep the resulting show restorable."]
+   :evidence ["Afterglow PR 57 and Tolglow registry_test and persistence_test reproduce narrowed bounds against authored and saved overrides, reject before commit, then save, reopen and relaunch. The paired focused runs passed 54 tests / 364 assertions and 84 tests / 576 assertions."]}
   {:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
    :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
    :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
@@ -81,7 +89,7 @@
    :paths ["tolglow/dev/tolglow/bench_autopilot.clj"]
    :depends-on [:show/energy-autopilot :show/conductor-cue-actions :render/spatial-highlight-spill]
    :acceptance ["Report ordinary and decision tick timings at 2,048 changing pixels and 64 moving heads, meet the 25 ms target on the declared performance host and verify complete packet and highlight capture."]
-   :evidence ["The first full-frame run exceeded 25 ms on all 160 measured frames. Mixed integer coordinates now stay on the typed path when the scalar calculation coerces them to double. All 1,440 compared ArtDMX packets matched. Afterglow #52 kept every byte across another 120 frames and 18 universes. Hosted run 45057636738 delivered all 160 measured conductor frames within 25 ms, ordinary p95 13.71 ms and decision p95 20.91 ms. Independent shared-host runs still recorded late decisions. The master profiler archives autopilot.edn for successive runs."]}
+   :evidence ["The first full-frame run exceeded 25 ms on all 160 measured frames. Mixed integer coordinates now stay on the typed path when the scalar calculation coerces them to double. All 1,440 compared ArtDMX packets matched. Afterglow #52 kept every byte across another 120 frames and 18 universes. Hosted run 45057636738 delivered all 160 measured conductor frames within 25 ms, ordinary p95 13.71 ms and decision p95 20.91 ms. Independent shared-host runs still recorded late decisions. The master profiler archives autopilot.edn for successive runs."] :notes "The dedicated profiler owns repeated measurements. Compare ordinary and decision ticks against 25 ms as load and revisions change, retaining missed frames and packet parity."}
   {:id :fixtures/common-brightness :title "Match fixtures against a shared calibrated white reference" :kind :implementation :status :done
    :owner nil :paths ["tolglow/src/tolglow/lighting_capacity.clj"] :depends-on [:foundation/tests]
    :acceptance ["Unequal lamps at the same achievable global target deliver comparable estimated brightness."] :evidence ["Tolglow #94 measures the same common brightness on unequal fixtures at approximately 30% and 60% local drive. Per-source readback includes the white and color-limited ceilings."]}
@@ -470,7 +478,7 @@
   {:id :performance/master-mixed-rig-profiling
    :title "Profile complete mixed rigs on master and optimize measured hot paths"
    :kind :implementation :status :in-progress
-   :owner "master_render_performance_profiler_and_optimizations"
+   :owner "tolglow_dense_mixed_venue_profiling_and_show_host_optimization"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
            "tolglow/dev/tolglow/perf/venue_rig.clj" "tolglow/docs/performance/dense-venue.md"
            "tolglow/src/tolglow/compiler/batch.clj"
@@ -495,7 +503,7 @@
               "PR60 merged1ddb060: same-runner exact-revision candidate/baseline/repeat workflow and subscriber allocation-recording windows; all regression and actual comparison jobs passed"
               "44901945679 raw evidence retained under 2026-11-21-general-row-comparison: mixed10k+8 owner/worker allocation16.693→16.299/16.300MB; no timing claim, unfavorable controls retained"
               "Reverse44903326748 passes all oracles and reproduces +1.199MB on unchanged baseline itself; new mixed16.300MB versus old16.694/17.892MB, so no deterministic pixel-only regression; Afterglow PR30 merged e0e2409"
-              "Tolglow PR62 merged c38397e after exact dfde976 regression/normal profile and fixed-fork comparison44904180335 passed; per-attribute primitive scale flag reduces10k+0 host13.892→11.493/11.493MB and10k+8 host17.893→15.492/15.490MB; inconsistent timings retained under2026-11-21-batch-scale-comparison"]}
+              "Tolglow PR62 merged c38397e after exact dfde976 regression/normal profile and fixed-fork comparison44904180335 passed; per-attribute primitive scale flag reduces10k+0 host13.892→11.493/11.493MB and10k+8 host17.893→15.492/15.490MB; inconsistent timings retained under2026-11-21-batch-scale-comparison"] :notes "Continuous lane. Compare the pinned and current Afterglow matrices and retain the paired revisions with every master performance artifact."}
   {:id :performance/animated-moving-heads
    :title "Measure 64/128 rotated moving heads with overlapping opacity sweeps"
    :kind :implementation :status :done :owner nil
@@ -854,7 +862,7 @@
    :kind :implementation,
    :depends-on [:foundation/tests],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow runtime/replay_test plays a checked-in 36-input recording with seeded RNG, fine movement, cross-universe RGBW, restart and reversed worker completion. The instrumented compiler is a test program."],
    :paths
    ["afterglow/test/afterglow/replay"
     "afterglow/dev/afterglow/replay.clj"],
@@ -868,7 +876,7 @@
    :id :runtime/replay,
    :kind :implementation,
    :depends-on [:foundation/app-compatibility :foundation/tests],
-   :owner nil}
+   :owner nil :notes "Capture original effect output for the same authored show and assert per-frame assignment order and raw universe bytes against the replacement renderer."}
   {:evidence
    ["Control and codec checkpoint: 36 tests / 1234 assertions passed"
     "Latest model-only follow-up: 15 tests / 130 assertions passed, including preserved instance source"
@@ -957,9 +965,7 @@
    :depends-on [:foundation/specifications :render/benchmark],
    :owner nil}
   {:evidence
-   ["Integrated Tolglow pure checkpoint: 88 tests / 513 assertions before final Ring streaming and response-host tests"
-    "Afterglow parity247 /2808 at3b752800; Tolglow parity411 /3294 later checkpoint passed; later publisher/sensor changes separate"
-    "Latest root Afterglow parity269 tests /2943 assertions passed including sensors/presentation; host publisher gate separate"],
+   ["Integrated Tolglow pure checkpoint: 88 tests / 513 assertions before final Ring streaming and response-host tests" "Afterglow parity247 /2808 at3b752800; Tolglow parity411 /3294 later checkpoint passed; later publisher/sensor changes separate" "Latest root Afterglow parity269 tests /2943 assertions passed including sensors/presentation; host publisher gate separate" "Tolglow studio_test drives a real owner, compiler, worker, capture sink, selected response and stale-epoch rejection. studio/state_stream_test exercises Jetty WebSocket cleanup and committed-frame pacing. dev/studio/active-inspector-qa.mjs publishes an edit and renders an attributed effect fault in a browser. Master architecture CI 45070987550 passed."],
    :paths
    ["tolglow/src/tolglow/studio.clj"
     "tolglow/src/tolglow/studio/web.clj"
@@ -980,18 +986,18 @@
     "Wire global/selected response middleware into committed frame evaluation"],
    :title
    "Integrate shared-engine studio host with Ring backend and explicit HTTP adapter",
-   :status :in-progress,
+   :status :done,
    :id :web/studio-v1,
    :kind :implementation,
    :notes
-   "User requires Ring backend and re-frame frontend; separate frontend claims avoid host/renderer overlap. Final integrated counts pending root verification.",
+   "Acceptance verified against the listed regression suites.",
    :depends-on
    [:control/kernel
     :runtime/engine-v1
     :authoring/core-v1
     :render/frame-v1],
-   :owner "root"}
-  {:evidence [],
+   :owner nil}
+  {:evidence ["Afterglow runtime/engine_test, runtime/executor_test and runtime/replay_test exercise serial/worker equality, reverse completion, whole-frame cancellation, concurrent submission and stale epochs. Tolglow studio_test and studio/state_stream_test cover committed-output ownership and independent publication. Master CIs 45068780065 and 45070987550 passed."],
    :paths
    ["afterglow/src/afterglow/runtime"
     "afterglow/test/afterglow/runtime"],
@@ -1006,10 +1012,10 @@
    :id :runtime/coordinator,
    :kind :implementation,
    :notes
-   "Owned v1 executor and studio host exist; this broad milestone still requires whole-frame legacy replay and production publication/intent parity.",
+   "Compare deterministic worker and publication behavior with the original whole-frame oracle tracked under runtime/replay.",
    :depends-on [:runtime/replay :runtime/prototype :control/kernel],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow effects_test characterizes channel, color, direction and aim fades. Tolglow parity_test characterizes the original dimmer through launch/render/stop, while effects_test and native_composition_test exercise the data-driven engine."],
    :paths
    ["afterglow/src/afterglow/effects"
     "afterglow/src/afterglow/show.clj"
@@ -1025,8 +1031,8 @@
    :id :runtime/migration,
    :kind :implementation,
    :depends-on [:runtime/coordinator],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Run matched original/new show histories for scenes and chases, verify effect-kind precedence and inventory remaining live closure/IO entry points."}
+  {:evidence ["Tolglow registry_test and compiler_test cover bounds, versioning, selected effects, stable generated pages and manual placement. Current cue presets and historical pins also undergo a Transit reopen/relaunch regression in persistence_test."],
    :paths ["tolglow/src/tolglow/registry" "tolglow/test/tolglow/registry"],
    :acceptance
    ["Schema validation with units, ranges, semantics and capabilities"
@@ -1039,10 +1045,10 @@
    :id :authoring/registry,
    :kind :implementation,
    :notes
-   "V1 data registry/compiler and generated page reconciliation work. Full schema semantics, UI coverage and fixture library workflow remain open.",
+   "Define and validate parameter units, semantic roles and fixture capability requirements consistently across definitions, compiler entry and controller mapping.",
    :depends-on [:control/kernel :foundation/app-compatibility],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow runtime/engine_test covers pinned, restart and preserve-state revisions, including incompatible running values. Tolglow effects/faults_test covers a failing first execution and studio/restart_host_test covers epoch ownership."],
    :paths
    ["afterglow/src/afterglow/runtime/reload.clj"
     "tolglow/src/tolglow/registry/reload.clj"],
@@ -1057,10 +1063,10 @@
    :id :runtime/hot-reload,
    :kind :implementation,
    :notes
-   "V1 supports pinned/restart/preserve-state definition policies and epochs. Arbitrary state migration and broad legacy live-reload parity remain open.",
+   "Add a state migration operation for changed effect-local schemas. Exercise an accepted migration and a failed migration while other active cues keep rendering.",
    :depends-on [:runtime/coordinator :authoring/registry],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow composition_test replays reusable slots with beat clocks and owned releases. composition/sequence_test, tween_test, envelope_test and response_test check shuffle, ping-pong, curves, ADSR and selected response."],
    :paths
    ["tolglow/src/tolglow/composition" "tolglow/test/tolglow/composition"],
    :acceptance
@@ -1075,10 +1081,10 @@
    :id :authoring/composition,
    :kind :implementation,
    :notes
-   "V1 pure primitives exist; beat/response studio integration is active in authoring/beat-response-host-v1. Full stepped fades and editors remain open.",
+   "Expose curved fades between sequencer slots through playback and the shared slot editor, and verify a transition across an actual tempo change.",
    :depends-on [:authoring/registry :runtime/coordinator],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow automation/random_test and policy_test exercise selected parameters, bounded seeded values, page scope, timed launches, beat scheduling, emission prerequisites, intentional darkness and owned releases. autopilot/actions_test covers manual takeover of generated and registered cues."],
    :paths
    ["tolglow/src/tolglow/automation" "tolglow/test/tolglow/automation"],
    :acceptance
@@ -1092,10 +1098,10 @@
    :id :authoring/automation,
    :kind :implementation,
    :notes
-   "Seeded uniform/triangular sampling with bounds/max-change and emission-aware policy exist. Full user-directed creative auto show remains open.",
+   "Verify the full selector, musical duration, and human override workflow with timed compound cues once authoring/composition is complete.",
    :depends-on [:authoring/composition :control/kernel],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow control/codecs/push_2_test and control/devices/push_2_test cover golden messages, held input, banking, reconnect and feedback. Tolglow studio/display_test covers the packed capture worker and resource cleanup."],
    :paths
    ["afterglow/src/afterglow/controllers/push2"
     "afterglow/test/afterglow/controllers/push2"],
@@ -1110,10 +1116,10 @@
    :id :control/push2,
    :kind :implementation,
    :notes
-   "V1 composable adapter and source-derived codec tests are complete under control/devices. Physical device validation and full workflow parity remain outstanding.",
+   "Verify the interaction and reconnect checklist, display, encoder, touch strip, LED palette and USB capture on a Push 2.",
    :depends-on [:control/kernel],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow control/codecs/push_3_test and control/devices/push_3_test exercise controller-mode expressive note events and session handling. Tolglow expressive_test exercises automatic and manual mappings."],
    :paths
    ["afterglow/src/afterglow/controllers/push3"
     "afterglow/test/afterglow/controllers/push3"],
@@ -1127,10 +1133,10 @@
    :id :control/push3,
    :kind :implementation,
    :notes
-   "Only explicitly configured generic MIDI bindings are available. No verified native Push 3 display, discovery or standalone support.",
+   "Capture real controller-mode MIDI/USB traces and pressure/X/Y motion on a Push 3. Determine display transport and independently qualify any standalone integration.",
    :depends-on [:control/kernel],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow control/sensors_test, control/bindings_test and control/devices/osc_transport_parity_test check calibrated timestamped inputs, exact held IDs, pure commands and session cleanup. Tolglow studio/routing_host_test, sensor_host_test and repl_host_test drive the owner using MIDI, motion, web and REPL commands. Device-specific qualification is tracked under the corresponding device."],
    :paths
    ["afterglow/src/afterglow/control/adapters"
     "afterglow/test/afterglow/control/adapters"],
@@ -1140,14 +1146,14 @@
     "Timestamped calibrated sensor inputs"
     "No adapter directly mutates internal show atoms"],
    :title "Generic MIDI, OSC, web, REPL and sensor adapters",
-   :status :planned,
+   :status :done,
    :id :control/adapters,
    :kind :implementation,
    :notes
-   "V1 session adapters exist for MIDI, OSC, sensor and REPL boundaries. Full transport conformance and calibrated hardware fixtures remain open.",
+   "Acceptance verified against the listed regression suites.",
    :depends-on [:control/kernel],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow src/studio/tolglow/studio/events_test.cljs exercises independent pointer ownership and epoch-safe interaction. docs/studio-ui.md records Chromium desktop and phone/iPad-width WebGL authoring and held-cue checks."],
    :paths
    ["tolglow/src/studio/tolglow/studio" "tolglow/resources/studio"],
    :acceptance
@@ -1161,8 +1167,8 @@
    :id :web/control,
    :kind :implementation,
    :depends-on [:control/kernel :authoring/registry],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Measure touch, keyboard and VoiceOver interactions, radial menu reach and dropped frames on iPad Safari and a real phone; document device, OS, viewport and rig size."}
+  {:evidence ["Tolglow Studio has real Neovim WASM, structured parameter/effect/fixture and slot editors. docs/studio-ui.md records publish, macro playback and mobile editor browser checks. test/studio/bruvbox_browser.cjs covers the editor and console theme."],
    :paths
    ["afterglow/resources/public/editors"
     "afterglow/src/afterglow/web/editors"],
@@ -1178,8 +1184,8 @@
    :kind :implementation,
    :depends-on
    [:web/control :authoring/composition :runtime/hot-reload],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Exercise inline code lint and valid-edit execution, including invalid edits retaining the active definition and recovering in the mounted editor."}
+  {:evidence ["dev/tolglow/bench_show.clj and bench_pipeline.clj profile complete frames, allocations and ArtDMX packing. docs/benchmarks/master-performance contains paired before/after scalar-oracle runs. Master performance CI 45070987585 archived rig, frame tails, missed deadlines and transport scope. Ongoing optimization is tracked separately."],
    :paths
    ["afterglow/src/afterglow/render"
     "afterglow/test/afterglow/render"],
@@ -1195,8 +1201,8 @@
    :kind :implementation,
    :depends-on
    [:runtime/coordinator :runtime/replay :render/benchmark],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Compare packed output against the original whole-frame replay in addition to the existing scalar parity gate."}
+  {:evidence ["Afterglow native render shader CI 45068780080 passed. dev/gpu/profile-movers.cjs and docs/benchmarks/2026-11-21-moving-head-shader.json include aim-solver parity and timings. The WebGL2 runner records upload, submission, fence and readback."],
    :paths
    ["afterglow/src/afterglow/render/ir"
     "afterglow/dev/afterglow/accelerators"],
@@ -1211,8 +1217,8 @@
    :id :render/accelerators,
    :kind :research,
    :depends-on [:render/cpu :authoring/registry],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Qualify the combined geometry, color, aim and focus pipeline and end-to-end fallback on a performance GPU, with explicit coverage of the supported high-level authoring operations."}
+  {:evidence ["Tolglow fixtures/library_test checks search, fetch, offline provenance, upload, mode selection and explicit review. integrations/fixtures_test and gdtf_test check ordinary OFL/QXF and bounded GDTF modes including channel widths and license diagnostics. Studio browser authoring and documented format limitations are in docs/fixture-library.md and docs/studio-ui.md."],
    :paths
    ["tolglow/src/tolglow/fixture_library"
     "afterglow/src/afterglow/fixtures/import"],
@@ -1227,8 +1233,8 @@
    :id :fixtures/library,
    :kind :implementation,
    :depends-on [:authoring/registry :web/control],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "The documented OFL/QXF/GDTF import flow is tested. Verify imported capabilities against the authoring registry and the complete touch review flow. Matrix OFL, multi-break GDTF and vendor console formats have explicit limitations."}
+  {:evidence ["Tolglow rig editor tests and dev/preview/editor-browser-qa.mjs cover stable fixture/truss IDs, graphical placement and WebGL geometry. docs/benchmarks/rig-editor-browser.json records the software-browser scene."],
    :paths
    ["afterglow/resources/public/simulator" "tolglow/src/tolglow/rig"],
    :acceptance
@@ -1241,8 +1247,8 @@
    :id :simulator/rig,
    :kind :implementation,
    :depends-on [:web/control :fixtures/library :control/kernel],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Measure dense-rig editing and independent hardware-output timing on representative iPad and phone quality tiers."}
+  {:evidence ["Tolglow venue_fog_test and test/js/preview/fog-gpu.test.mjs cover elapsed DMX emission, clearing tails and depth. dev/preview/fog-visual-qa.mjs and docs/media/venue-fog retain dry, plume and room-haze captures."],
    :paths ["afterglow/resources/public/simulator/volumetrics"],
    :acceptance
    ["Persistent density with emission/advection/diffusion/dissipation"
@@ -1255,7 +1261,7 @@
    :id :simulator/volumetrics,
    :kind :research,
    :depends-on [:simulator/rig],
-   :owner nil}
+   :owner nil :notes "Validate plume shape, settling haze and light transport against a calibrated physical room and record sustained mobile frame times."}
   {:evidence ["Loopback Studio/Ring, Node for Max, Max JS and behavioral Live object graph record and replay edited clip data"
                "resources/devices/ableton-live/README.md"],
    :paths
@@ -1273,10 +1279,10 @@
    :id :integration/live,
    :kind :implementation,
    :notes
-   "Durable scalar parameter lanes, Session and Arrangement clip destinations, edited playback, recording and placement implemented. Physical Live verification remains open.",
+   "Qualify note and parameter recording, manual clip edits, drum-rack colors, seek and Push mode handoff in licensed Ableton Live/Max with physical controller feedback.",
    :depends-on [:control/adapters :authoring/registry],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow studio/audio_return_test covers actual host routing, returned audio continuing after source stop, confidence gates and cleanup. test/js/ableton-live/audio-patches.test.js exercises the per-channel and drum-pad network. integrations/audio_test covers carrier and residual analysis."],
    :paths
    ["tolglow/src/tolglow/integrations/audio" "tolglow/resources/devices/ableton-live/tolglow-bus-"],
    :acceptance
@@ -1290,10 +1296,10 @@
    :id :integration/audio,
    :kind :research,
    :notes
-   "Tested sine/pitch/level/residual analysis primitives exist; real audio device routing, effect-chain tails and latency calibration remain open.",
+   "Measure latency, confidence and release through a real Live effects rack and audio device, including echo bursts after stop and independent drum-pad returns.",
    :depends-on [:integration/live :authoring/composition],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow studio_test runs a streaming agent through the owner, authoring a cue and varying a group. agents_test and studio/application_agent_host_test exercise provider ownership, tool calls and isolated application edits."],
    :paths
    ["tolglow/src/tolglow/agents"
     "afterglow/resources/public/chat"
@@ -1310,14 +1316,14 @@
    :id :integration/agents,
    :kind :implementation,
    :notes
-   "Tested provider parsing/loopback HTTP and scripted tool loop exist. Bounded studio sessions active; real external provider and complete prompt-to-show behavior unverified.",
+   "Qualify actual provider/CLI sessions and a long-running fixture-aware authored show with manual takeover. Record tool/REPL parity and session reconnection.",
    :depends-on
    [:control/adapters
     :authoring/automation
     :runtime/hot-reload
     :web/editors],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow rig-editor browser QA covers editable scene dimensions, trusses and fixture coordinates. The shared rig is the geometry used by runtime and preview."],
    :paths
    ["tolglow/environments"
     "afterglow/resources/public/simulator/import"],
@@ -1331,7 +1337,7 @@
    :id :simulator/environments,
    :kind :research,
    :depends-on [:simulator/rig],
-   :owner nil}
+   :owner nil :notes "Ship licensed environment prefabs with scale, axes and editable surfaces. Validate phone-derived geometry separately from a visual splat and retain provenance for each venue."}
   {:evidence [],
    :paths ["tolglow/src/tolglow/integrations/robotics"],
    :acceptance
@@ -1341,11 +1347,11 @@
     "Separate robot control loop from lighting render deadlines"],
    :title
    "Later: trainable dancing robot duck telemetry as lighting control",
-   :status :planned,
+   :status :blocked,
    :id :integration/duck,
    :kind :research,
    :depends-on [:control/adapters],
-   :owner nil}
+   :owner nil :notes "The existing sensor adapter can consume timestamped robot telemetry once a device protocol is available." :blocker "The robot model, SDK and supported telemetry protocol have not been identified."}
   {:evidence
    ["Root removed runtime/legacy.clj and its tests after explicit no-compatibility-layer instruction"],
    :paths
@@ -1988,7 +1994,7 @@
    :kind :implementation,
    :depends-on [:control/devices-v1],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Afterglow control/system_test exercises atomic grouped actions, and control/categories_test derives tags from effect outputs. Studio performance_test.cljs covers opacity, musical envelopes and overlapping selections."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Stable metadata across web/controllers/Live"
@@ -1998,20 +2004,20 @@
    :id :authoring/category-performance,
    :kind :implementation,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Verify the same category tags and category swatches on Push and Live feedback while retaining independent cue-grid colors and performer ownership."}
+  {:evidence ["Tolglow studio/display_test and test/js/push-display/worker.test.cjs exercise capture, latest-view coalescing, process cleanup and device-independent views. docs/studio-ui.md records 60 actual browser PNG captures and observed fps. src/studio/tolglow/studio/push_display_test.cljs tests capability-based widgets and the shared projection."],
    :paths ["tolglow/docs/architecture/control-and-web.md"],
    :acceptance
    ["Execute host/render/capture prototype and measure latency/cleanup"
     "Capabilities select widgets and no competing show state"],
    :title
    "Evaluate rich shared Push widgets through offscreen re-frame/CSS rendering",
-   :status :planned,
+   :status :done,
    :id :control/webview-widgets,
    :kind :research,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Physical display throughput remains a Push 2/3 device acceptance check."}
+  {:evidence ["Tolglow integrations/patch_test exercises ranges, curve/envelope shape, timing, dropout and origin suppression. studio/routing_host_test drives the live owner. test/js/ableton-live/live_api.test.js covers recorded and edited playback with a behavioral Live host."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Typed ports, curves/ranges/envelopes and visible routing"
@@ -2022,8 +2028,8 @@
    :id :integration/musical-patchbay,
    :kind :implementation,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Run acknowledgement, record, edit and playback against an actual Live set with a Session and Arrangement clip and measure alignment after seek."}
+  {:evidence ["Tolglow studio/link_pause_test covers transport ownership and pause lighting. docs/live-routing.md identifies AbleSet's versioned OSC addressing and the two-host verification procedure."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Verified APIs and explicit clock/output authority"
@@ -2034,8 +2040,8 @@
    :id :integration/link-ableset,
    :kind :research,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Implement AbleSet song/section identity, authority handoff and peer-loss recovery. Run two-host simulation followed by verification on two machines with Live, Link and AbleSet."}
+  {:evidence ["docs/live-routing.md pins and inspects afterglow-max source and license. test/js/ableton-live/live_api.test.js and node_bridge.test.js exercise the separate-engine Max bridge and behavioral session host."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Inspect source/license/process and supported host versions"
@@ -2046,8 +2052,8 @@
    :id :integration/max-host,
    :kind :research,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
-  {:evidence [],
+   :owner nil :notes "Profile installation, timing, save/reopen, restart and REPL isolation in an actual supported Live/Max release before choosing an additional embedded host."}
+  {:evidence ["Tolglow persistence_test exercises full local show documents and rejects raw credentials. Registry version history already stores dependencies by effect identity. These provide inputs to a separately scoped export."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Versioned manifests, provenance, dependencies and reviewable imports"
@@ -2058,7 +2064,7 @@
    :id :sharing/artifacts,
    :kind :implementation,
    :depends-on [:documentation/expressive-performance],
-   :owner nil}
+   :owner nil :notes "Implement a user-selected artifact manifest, dependency resolution, license/provenance and reviewable collision handling, then test authenticated publish and download between two users."}
   {:evidence
    ["Clock/routing aggregate 88 tests / 693 assertions passed; docs/clock-domains.md and docs/routing-host.md"],
    :paths
@@ -2075,7 +2081,7 @@
    :kind :implementation,
    :depends-on [:runtime/musical-time-v1 :authoring/modulation-v1],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow integrations/patch_test exercises gate, stale inputs and confidence. signals_test and studio/waveform_test.cljs cover the composed waveform preview, and studio/audio_return_test covers processed return windows."],
    :paths ["tolglow/docs/product/expressive-performance.md"],
    :acceptance
    ["Typed audio values/events with confidence/dropout behavior"
@@ -2086,7 +2092,7 @@
    :id :authoring/audio-signal-graph,
    :kind :implementation,
    :depends-on [:authoring/signals-v1 :integration/audio-analysis-v1],
-   :owner nil}
+   :owner nil :notes "Expose a captured return as a reusable, phase-aligned waveform definition and verify bounded delays and rejection of zero-delay cycles through the routing editor."}
   {:evidence
    ["Source-grounded current/proposed specification with independent lifecycle and evidence gates"],
    :paths ["tolglow/docs/product/development-workspace.md"],
@@ -2212,17 +2218,17 @@
    :kind :implementation,
    :depends-on [:documentation/development-workspace],
    :owner nil}
-  {:evidence [],
+  {:evidence ["Tolglow src/studio/tolglow/studio/performance_test.cljs exercises owned commands, independent controls, grouping, mixed group values, gesture coalescing and keyboard-editable inputs. docs/parameter-widget-parity.md records six simultaneous active instances on desktop, iPad-width and phone-width Chromium."],
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"],
    :acceptance
    ["Shared command selectors and independent system controls"
     "Accessible category controls and real browser evidence"],
    :title "Expose category and per-instance performance controls",
-   :status :in-progress,
+   :status :done,
    :id :web/performance-ui-v1,
    :kind :implementation,
    :depends-on [:control/category-system-v1 :web/reframe-views-v1],
-   :owner "studio_push_touch_interface"}
+   :owner nil}
   {:evidence
    ["Pure middleware11 tests /71 assertions; host/OSC/connections31 /239 passed"
     "Actual Capacitor Motion8.0.1 package smoke3 assertions; docs/sensors.md"
@@ -2291,7 +2297,7 @@
    :kind :implementation,
    :depends-on [:control/sensors-v1],
    :owner nil}
-  {:evidence [],
+  {:evidence ["docs/benchmarks/2026-11-21-sensor-library-smoke.json confirms the actual @capacitor/motion package; sensors_test.cljs exercises SI units, missing values, explicit permission, fresh session arming and owned cleanup. studio/sensor_host_test sends phone mappings and gestures through Ring to real engine commands."],
    :paths
    ["tolglow/src/studio/tolglow/studio/sensors.cljs"
     "tolglow/src/studio/tolglow/studio/sensors_test.cljs"
@@ -2301,11 +2307,11 @@
     "No token in durable browser settings; fresh-session explicit output arm"],
    :title
    "Expose real browser motion permissions, calibration and arming",
-   :status :in-progress,
+   :status :done,
    :id :web/sensors-v1,
    :kind :implementation,
    :depends-on [:control/sensors-v1 :web/reframe-views-v1],
-   :owner "studio_push_touch_interface"}
+   :owner nil :notes "Physical gesture accuracy and on-device browser permission ergonomics remain in mobile control acceptance."}
   {:evidence
    ["Late solos in 64/128-head rich and compact frames and across a 1024-pixel strip use bounded active rows. Chromium mobile-quality framebuffer readback verifies color changes and unchanged mesh, spotlight, shadow texture and shader allocations."
     "Afterglow PR 25 and the Chromium fixture-pose scene regression cover a hung moving head at its physical end stops and the yoke, lens, shadow and fog beam."
@@ -2329,11 +2335,11 @@
     "Actual rendered visual review, no AAA claim from source tests"],
    :title
    "Replace rudimentary preview with shared-model Three scene and fixture optics",
-   :status :in-progress,
+   :status :planned,
    :id :render/scene-v2,
    :kind :implementation,
    :depends-on [:render/frame-v1],
-   :owner "room_renderer_fog_fixture_optics"}
+   :owner nil :notes "Compare emitted-cone size, optical placement and highlighted fixtures against the real venue and retain visual acceptance. CI readback and screenshots qualify particular scene behaviors."}
   {:evidence
    ["Tolglow #74 and #85 exercised dry air, a concentrated plume and mixed room haze in Chromium on the live Studio stream. The operator guide includes all three captures. Physical venue comparison and device-specific frame-time measurements remain open."],
    :paths
@@ -2348,13 +2354,13 @@
     "Actual visual acceptance and performance tier evidence"],
    :title
    "Implement shaped spatial fog and depth-aware volumetric light",
-   :status :in-progress,
+   :status :planned,
    :id :render/fog-v2,
    :kind :implementation,
    :notes
-   "One renderer owner now owns scene and fog; runtime_design graphics claim retired per user direction.",
+   "Qualify wall/floor shadows, room-wide haze and the measured beam profile in a real fogged venue. Record physical tablet/phone GPU frame and thermal budgets.",
    :depends-on [:render/frame-v1],
-   :owner "room_renderer_fog_fixture_optics"}
+   :owner nil}
   {:evidence
    ["Policy11tests64assertions green; real renderer"
     "100universes measured; docs/output-presentation.md; publisher scheduler remains separate"],

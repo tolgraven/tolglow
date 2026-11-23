@@ -519,7 +519,7 @@
           [:line.rig-plan-hit {:x1 (- x dx) :y1 (- z dz) :x2 (+ x dx) :y2 (+ z dz)}]
           [:line.rig-plan-beam {:x1 (- x dx) :y1 (- z dz) :x2 (+ x dx) :y2 (+ z dz)}]
           [:text {:x x :y (- z 0.25) :text-anchor "middle"} (display-name truss)]])
-       (for [[index fixture] (take 128 (map-indexed vector (:fixtures rig)))
+       (for [[index fixture] (take 128 (remove (comp :pixel-layout-id second) (map-indexed vector (:fixtures rig))))
              :let [[x _ z] (:position fixture [0 3 0])]]
          ^{:key (:id fixture)}
          [:g.rig-plan-fixture (interaction :fixtures index fixture)
@@ -527,7 +527,7 @@
           [:circle.rig-plan-dot {:cx x :cy z :r 0.12}]
           [:text {:x x :y (+ z 0.4) :text-anchor "middle"} (str (inc index))]])]]
      [:p#rig-plan-help.small.muted "Drag fixtures and trusses to position them. Arrow keys move 0.1 m; Shift moves 1 m. Height stays unchanged. Save rig to apply."]
-     (when (> (count (:fixtures rig)) 128) [:p.small.muted "The plan shows the first 128 fixtures; all fixtures remain available in the list."])]))
+     (when (> (count (:fixtures rig)) 128) [:p.small.muted "The plan shows up to 128 fixtures. Use the 3D editor to inspect pixel layouts."])]))
 
 (defn- truss-editor [rig]
   [:section.panel.truss-editor
@@ -585,8 +585,10 @@
                                         (let [raw (input-value e)]
                                           (if (empty? raw) (input! [:studio/rig-atmosphere field nil])
                                             (when-let [n (number-value e)] (input! [:studio/rig-atmosphere field n])))))}]])]
+        (when (seq (:pixel-layouts rig))
+          [:p.small.muted "Use Pixel layouts above to edit strips, grids and individual pixels."])
         [:div#fixture-list.fixture-list
-         (for [[index fixture] (map-indexed vector (:fixtures rig))]
+         (for [[index fixture] (map-indexed vector (:fixtures rig)) :when (nil? (:pixel-layout-id fixture))]
            ^{:key (:id fixture)} [:div.fixture-card
             [:div.fixture-card-head
              [:input {:aria-label (str "Fixture " (inc index) " name") :value (or (:name fixture) (:id fixture))

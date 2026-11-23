@@ -77,6 +77,26 @@
                          (assoc-in [:model :registry :versions [:cues :ember (:version cue)] :saved-params] bad))]
         (is (thrown? clojure.lang.ExceptionInfo (files/thaw (demo/model) document)))))))
 
+(deftest incompatible-effect-edits-leave-a-restorable-cue
+  (let [before (demo/model)
+        cue (-> (get-in before [:registry :cues :ember])
+                (dissoc :version)
+                (assoc :saved-params {:level 0.9}))
+        saved (:model (command before :preset {:op :cue/put :cue cue}))
+        revision (-> (get-in saved [:registry :effects :ember])
+                     (assoc :version 2)
+                     (assoc-in [:params :level :bounds] [0 0.8])
+                     (assoc-in [:params :level :recommended] [0.2 0.7]))
+        attempt (control/apply-command saved {:show-id (:show-id saved) :epoch (:epoch saved)
+                                              :source :test :command-id :edit :time-ms (:time-ms saved)
+                                              :op :registry/publish :kind :effects :definition revision})
+        reopened (files/read-string (files/write-string (:model attempt)))
+        restored (files/thaw before reopened)
+        launch (command restored :relaunch {:op :cue/launch :cue-id :ember})]
+    (is (= :incompatible-cue-presets (get-in attempt [:ack :code])))
+    (is (identical? saved (:model attempt)))
+    (is (= 0.9 (get-in launch [:model :instances (get-in launch [:ack :instance-id]) :params :level])))))
+
 (deftest complete-portable-roundtrip-preserves-musical-progress
   (let [model (rich-model)
         source (files/write-string model)

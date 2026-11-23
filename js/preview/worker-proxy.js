@@ -46,6 +46,7 @@ export class WorkerRoomPreview {
         const changed = snapshot !== this.lastSentSnapshot;
         const projection = changed && snapshot ? {...snapshot} : null;
         if (projection && snapshot.rig === this.lastSentSnapshot?.rig) delete projection.rig;
+        if (projection && snapshot.editor === this.lastSentSnapshot?.editor) delete projection.editor;
         this.worker.postMessage({...message, state: {...message.state, snapshot: projection}});
         this.lastSentSnapshot = snapshot;
       });
@@ -150,7 +151,7 @@ export class WorkerRoomPreview {
     // the render boundary, and only emitted output drives the scene.
     this.receivedAt = performance.timeOrigin + performance.now();
     this.snapshot = {'runtime-id': snapshot['runtime-id'], 'time-ms': snapshot['time-ms'],
-      'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
+      'blackout?': snapshot['blackout?'], master: snapshot.master, 'cut?': snapshot['cut?'], editor: snapshot.editor ?? null, 'show-id': snapshot['show-id'], epoch: snapshot.epoch, revision: snapshot.revision,
       'frame-number': snapshot['frame-number'], rig: snapshot.rig, output: {values: snapshot.output?.values, atmosphere: snapshot.output?.atmosphere}};
     this.room = roomDimensions(snapshot.rig?.room);
     this.camera.far = Math.max(100, 3 * Math.hypot(...this.room)); this.camera.updateProjectionMatrix();

@@ -607,8 +607,8 @@
           path [:room :measured-fog]
           typed (get-in db (into [:server-projection :view :rig] path))
           ;; Preserve the phone's typed method and metadata on unrelated layout edits.
-          body (if (and typed (= (get-in rig path) (projection/presentation typed)))
-                 (assoc-in rig path typed) rig)]
+          body (cond-> (projection/rig-request rig (get-in db [:server-projection :view :rig]))
+                 (and typed (= (get-in rig path) (projection/presentation typed))) (assoc-in path typed))]
       (if-let [message (fog/room-error (:room rig))]
         {:dispatch [:studio/toast message true]}
         {:studio/http {:path "/api/rig" :body body
