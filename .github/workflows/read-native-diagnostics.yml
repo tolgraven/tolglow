@@ -1,0 +1,20 @@
+name: Inspect compiled application diagnostics
+on:
+  push:
+    branches: [codex/inspect-native-host-diagnostics]
+permissions: {contents: read, actions: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-image-diagnostics
+          repository: tolgraven/tolglow
+          run-id: 45155788576
+          github-token: ${{ github.token }}
+      - name: Read startup training and native compilation diagnostics
+        run: |
+          for log in training.log native-start.log native-build.log; do
+            if test -f "$log"; then echo "$log"; tail -80 "$log"; fi
+          done
