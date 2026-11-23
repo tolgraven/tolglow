@@ -1,7 +1,13 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
+ [{:id :effects/composable-blocks :title "Compose shader-backed generator and modulation stages"
+   :kind :implementation :status :in-progress :owner "effect-blocks"
+   :paths ["afterglow/src/afterglow/render/blocks.clj" "tolglow/src/tolglow/compiler/blocks.clj"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Use one chain for fixture outputs, private inputs, cue parameters and variables. Trace dry, intermediate and final values on demand in Studio and Push. Compare numeric CPU and shader results."]
+   :evidence []}
+  {:id :authoring/cue-preset-revisions :title "Keep authored and saved cue presets valid across effect edits"
    :kind :implementation :status :done :owner nil
    :paths ["afterglow/src/afterglow/control/model.clj" "afterglow/src/afterglow/control/params.clj"
            "afterglow/test/afterglow/control/model_test.clj" "tolglow/src/tolglow/registry.clj"

@@ -7,7 +7,7 @@
 
 (def defaults
   #{:clock/beat :clock/beat-in-bar :clock/bar :clock/phrase :clock/phase
-    :spatial/scene :spatial/body :spatial/members :rdm/status})
+    :runtime/block-trace :runtime/block-library :spatial/scene :spatial/body :spatial/members :rdm/status})
 
 (defn create [get-graph wake!]
   {:get-graph get-graph :wake! wake! :state (atom {})})

@@ -5,6 +5,7 @@
             [afterglow.runtime :as runtime]
             [afterglow.time :as time]
             [tolglow.compiler :as compiler]
+            [tolglow.compiler.blocks :as blocks]
             [tolglow.lighting-match :as matching]
             [tolglow.registry :as registry]))
 
@@ -165,7 +166,7 @@
    (let [definition (or (when (and enabled? (matching/active? definition))
                           (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
                         definition)
-         {:keys [schemas defaults outputs selected envelope-fn envelope-attributes]} (compiler/compile-plan definition)
+         {:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]} (compiler/compile-plan definition)
          selected-outputs (into [] (keep (partial select-targets fixtures selected)) outputs)
          numeric (numeric-contract selected-outputs)
          reasons (cond-> (:reasons numeric)
@@ -189,6 +190,7 @@
                    _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
                        (fail! [:frame :time-ms] "Effect frame/start time must be finite milliseconds"))
                    params (registry/resolve-params schemas (merge defaults (:params instance)))
+                   params (if block-plan (blocks/with-variables block-plan params frame) params)
                    releasing? (= :releasing (:phase instance))
                    clock (time/frame-clock frame)
                    envelope-result (when envelope-fn
@@ -209,6 +211,7 @@
                               (mapv #(contribution % env envelope-result envelope-attributes (:hdr? frame)) groups))]
                (if exact? (scalar-step context)
                    (-> context
+                       (blocks/observed block-plan env frame)
                        (assoc :state state :done? done?)
                        (runtime/append-contributions blocks)
                        (update :intents #(or % []))))))

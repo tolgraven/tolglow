@@ -19,6 +19,8 @@
             [tolglow.autopilot :as autopilot]
             [tolglow.autopilot.config :as autopilot-config]
             [tolglow.effects.authoring :as authoring]
+            [tolglow.effects.block-trace :as block-trace]
+            [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.agents.venue :as venue-tools]
             [clojure.java.io :as io]
             [tolglow.compiler :as compiler]
@@ -170,7 +172,8 @@
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
   [runtime]
-  (get-in @(:state runtime) [:model :variables]))
+  (let [{:keys [model variable-observation]} @(:state runtime)]
+    (:variables (variable-blocks/resolved model variable-observation))))
 
 (declare send-output! heartbeat! submit!)
 
@@ -216,6 +219,7 @@
              (throw (ex-info "Effect log sink must be callable" {})))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (variable-blocks/compile-settings (get-in model [:settings :variable-blocks]))
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [s (get-in model [:settings :spatial])] (spatial/settings s))
          _ (when-let [opts (get-in model [:settings :lighting-capacity])] (capacity/settings opts))
@@ -234,7 +238,7 @@
                                              (assoc :audio-options (assoc (:audio-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :sync-options (assoc (:sync-options options {}) :now-ms #(clock-time clock)))
                                              (assoc :reactive-options (:reactive-options options)
-                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register!
+                                                    :register-reactive! #(-> % reactive-clock/register! effect-faults/register! block-trace/register!
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
@@ -269,7 +273,7 @@
       :executor worker-pool
       :scheduler (atom nil) :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
-      :scene-eligible (atom {}) :scene-plans (volatile! {})
+      :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
       :sync-input (atom {:epoch (:epoch model) :events []})
@@ -601,6 +605,7 @@
       (let [values (cond-> values (and (= scope :output) (contains? values :pause-look))
                      (update :pause-look pause-look/normalize))
             settings (edit-scoped-settings model scope values (:device-id payload))
+            _ (when (= scope :variable-blocks) (variable-blocks/compile-settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -1035,8 +1040,12 @@
                            model (assoc model :modulation (:state modulation-result))
                            modulation-middleware (modulation/middleware (:overrides modulation-result))
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
-                           result (engine/advance model {:time-ms time-ms :epoch (:epoch model)
+                           variable-plan (variable-blocks/prepare! (:variable-plan runtime) (get-in model [:settings :variable-blocks]))
+                           variables (variable-blocks/sample variable-plan model time-ms)
+                           variable-inputs (when variables (:variables (variable-blocks/resolved model variables)))
+                           result (engine/advance model (cond-> {:time-ms time-ms :epoch (:epoch model)
                                                          :show-id (:show-id model) :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                                          variables (assoc :resolved-variables variable-inputs))
                                                   (let [middleware (response-middleware! runtime (:responses model []))]
                                                     (fn [definition] (comp ((:compile runtime) definition) middleware modulation-middleware)))
                                                   (executor/mapper (:executor runtime)))
@@ -1108,7 +1117,7 @@
                                                 setpoint (fog-control/publish previous-control (:status setpoint)))
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
-                        :output frame :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
+                        :output frame :variable-observation variables :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
                         :modulation-view (select-keys modulation-result [:overrides :diagnostics])
                         :status {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}}))
@@ -1147,7 +1156,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              (let [observers (vals @(:observers runtime))
-                   publication (try (connections/publish! (:connections runtime) (:model next-state)
+                   publication (try (connections/publish! (:connections runtime) (block-trace/source next-state)
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
                                     (catch Exception error (vreset! reactive-error (error-data error)) nil))
                    trace (:delivery-trace publication)]
@@ -1344,9 +1353,11 @@
   [runtime options]
   (let [cache (waveforms/create-cache)]
     (display/browser-display
-     (assoc options :project! #(waveforms/project-display
-                                cache @(:state runtime) %
-                                (audio/waveform (connections/audio (:connections runtime))))))))
+     (assoc options :project! (fn [view]
+                                (let [snapshot @(:state runtime)
+                                      audio (audio/waveform (connections/audio (:connections runtime)))]
+                                  (->> (waveforms/project-display cache snapshot view audio)
+                                       (block-trace/project-display (:id runtime) (:model snapshot)))))))))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
