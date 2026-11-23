@@ -42,10 +42,11 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func receiveInvitation(_ fingerprint: String?) {
-        if !recovery.keepsSession(for: fingerprint, currentInvitation: room) { leave() }
+        if !recovery.keepsSession(for: fingerprint, currentInvitation: room) {
+            end(fingerprint == nil ? "Invalid stage invitation" : "Find the invited stage")
+        }
         room = fingerprint
         invalidInvitation = fingerprint == nil
-        if invalidInvitation { status = "Invalid stage invitation" }
     }
 
     func browseWithoutInvitation() {
@@ -148,10 +149,10 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peer === peripheral else { return }
+        guard peer === peripheral, characteristic === hello || characteristic === samples else { return }
         guard check(error, "Stage declined the connection or sample") else { return }
         timeout?.cancel()
-        if characteristic.uuid == AudienceRadio.hello {
+        if characteristic === hello {
             guard connecting else { return }
             if let ticket = recovery.attempt, now >= ticket.end { interrupted("Stage timed out"); return }
             let id = peripheral.identifier
@@ -163,7 +164,10 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
             }
             reconnecting = false
             connecting = false; joined = true; status = "Sharing with this stage"
+            // Starting input may synchronously write its first sample. Only a
+            // sample acknowledgement can release that write's in-flight slot.
             onJoin?()
+            return
         }
         pending = false
         flush()
