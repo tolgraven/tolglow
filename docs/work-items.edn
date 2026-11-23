@@ -9,6 +9,12 @@
    :depends-on [:foundation/tests]
    :acceptance ["Reject a revision that invalidates a current cue before publication. Keep pinned and archived cues independent, and keep the resulting show restorable."]
    :evidence ["Afterglow PR 57 and Tolglow registry_test and persistence_test reproduce narrowed bounds against authored and saved overrides, reject before commit, then save, reopen and relaunch. The paired focused runs passed 54 tests / 364 assertions and 84 tests / 576 assertions."]}
+  {:id :native/venue-receivers :title "Trace and review room receiving planes on iPhone"
+   :kind :implementation :status :in-progress :owner "iphone-venue-surface-scan"
+   :paths ["tolglow/native/iOS/RigCalibration" "tolglow/native/Core/Sources/TolglowSensorCore/ReceiverPlane.swift" "tolglow/src/tolglow/rig/venue_scan.clj"]
+   :depends-on [:native/lidar-rig-calibration-v1 :rig/point-and-follow]
+   :acceptance ["Tap a tracked room surface, review its metric extent and add or remeasure the named receiver without arming fixture output."]
+   :evidence ["#98. A real Ring POST adds and remeasures the named receiver in a preview runtime, rejects stale writes and restores geometry through a Transit show file. Physical wall survey comparison is pending."]}
   {:id :render/spatial-fields :title "Advance venue geometry, throwable bodies and measured HDR contacts" :kind :implementation :status :done
    :owner nil :paths ["afterglow/src/afterglow/spatial.clj"] :depends-on [:foundation/tests]
    :acceptance ["Capture entries, exits, bounces and incoming energy for independent actions."]
@@ -468,6 +474,7 @@
    :kind :implementation :status :in-progress
    :owner "tolglow_dense_mixed_venue_profiling_and_show_host_optimization"
    :paths ["tolglow/dev/tolglow/bench_show.clj" "tolglow/bin/profile-master"
+           "tolglow/dev/tolglow/perf/venue_rig.clj" "tolglow/docs/performance/dense-venue.md"
            "tolglow/src/tolglow/compiler/batch.clj"
            "tolglow/dev/tolglow/bench_subscribers.clj" "tolglow/bin/profile-subscribers"
            "tolglow/docs/performance-profiling.md" "tolglow/docs/benchmarks/master-performance"
@@ -479,7 +486,8 @@
                 "Record complete host and engine/render/packet timings, allocations, GC and machine/revision metadata"
                 "Measure actual acknowledged WebSocket subscribers and withheld-ACK backpressure alongside identical host ticks"
                 "Optimize an evidenced hot path while preserving output, ownership and deterministic state"]
-   :evidence ["docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
+   :evidence ["docs/performance/dense-venue.md records scalar-checked twisted 3D rigs with 64 differently mounted moving heads, synchronous ArtDMX and deterministic independent publication."
+              "docs/benchmarks/master-performance/README.md and complete raw before/after/repeat matrices"
               "Tolglow #78 delivers 17 ArtDMX universes for four foggers and 2,048 pixels in direct and independent-output modes. The profile identified the #80 batching fix, reducing direct CPU with fog from 24.33 to 5.78 ms/frame. See docs/performance/venue-fog.md for wall-time overruns and allocation."
               "Afterglow PR #8: 10k pixels + 8 movers host median73.56→18.22ms, allocation77.16→13.05MB; tails remain noisy"
               "Afterglow pure256/2966, parity293/3303; every measured scalar model/intent/packet/preview oracle passed"
@@ -576,7 +584,7 @@
    :acceptance ["Verify ArtTod and ArtRdm formats against the published Art-Net specification"
                 "Reuse explicit sessions, bounded jobs and separate physical readback without sharing the DMX deadline transport"
                 "Qualify discovery and controls against protocol peers, then separately selected real nodes"]
-   :evidence ["Afterglow rdm/transport_test and Tolglow studio/rdm_host_test exercise OLA discovery and acknowledged controls; master at 9b7e456 has no ArtTod/ArtRdm transport."] :notes "Implement and test direct Art-Net discovery, fragmentation and transaction matching, then qualify real gateways and responders."}
+   :evidence ["Afterglow #58 added direct ArtTod and ArtRdm transport. afterglow.rdm.artnet-test exercises the datagrams and protocol peers. Tolglow studio/rdm_host_test also exercises OLA discovery and acknowledged controls."] :notes "Complete the Tolglow host integration in #102, then qualify discovery, control and physical readback with actual gateways and responders."}
  ;; Follow-up owns only passive Push presentation; device commands stay shared.
   {:id :runtime/effect-fault-isolation
    :title "Isolate live-coded effect faults, recover revisions, and publish bounded diagnostics"

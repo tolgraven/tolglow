@@ -5,6 +5,7 @@ struct RigCalibrationView: View {
     @ObservedObject var scanner: RigScanner
     @AppStorage("studio-origin") private var origin = "http://tolglow.local:8500"
     @State private var selected: Set<String> = []
+    @State private var surfaceName = ""
     @State private var verifiedAxes = false
     var body: some View {
         NavigationStack {
@@ -35,11 +36,13 @@ struct RigCalibrationView: View {
                         Picker("Tap identifies", selection: $scanner.selectedKind) {
                             Text("Floor origin").tag("origin"); Text("Floor +Z").tag("heading")
                             Text("Lens").tag("lens"); Text("Beam spot").tag("beam")
-                        }.pickerStyle(.segmented)
+                            Text("Room surface").tag("surface")
+                        }.pickerStyle(.menu)
                         Text(scanner.worldToRig == nil ? "First tap the rig floor origin, then a floor point in its +Z direction (at least 0.5 m apart)." : "Gravity sets +Y. Floor origin and +Z align the scan to Studio coordinates.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Text(scanner.status).font(.callout)
+                        if scanner.selectedKind == "surface" { surfaceControls }
                     }
+                    Text(scanner.status).font(.callout)
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Fixtures to identify").font(.headline)
                         ForEach(client.fixtures.compactMap { $0["id"] as? String }, id: \.self) { id in
@@ -79,6 +82,31 @@ struct RigCalibrationView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding()
             }.navigationTitle("Rig scan").navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    @ViewBuilder private var surfaceControls: some View {
+        Text("Walk along a wall, floor or platform, then tap it. The outline encloses the detected patch and can extend across gaps.")
+            .font(.caption)
+        if let surface = scanner.surface {
+            Text(String(format: "Receiver %.2f × %.2f m · center (%.2f, %.2f, %.2f) m",
+                        surface.size.x, surface.size.y, surface.point.x, surface.point.y, surface.point.z))
+                .monospacedDigit()
+            TextField("Surface name (e.g. booth-wall)", text: $surfaceName)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
+            if !client.surfaceRevisions.isEmpty {
+                Menu("Remeasure a saved surface") {
+                    ForEach(client.surfaceRevisions.keys.sorted(), id: \.self) { name in
+                        Button(name) { surfaceName = name }
+                    }
+                }
+            }
+            let replacing = client.surfaceRevisions[surfaceName] != nil
+            Button(replacing ? "Replace saved measurement" : "Add receiver to rig") {
+                client.saveSurface(named: surfaceName)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!client.connected || client.busy || client.armed ||
+                      surfaceName.range(of: #"\A[a-z0-9][a-z0-9-]{0,47}\z"#, options: .regularExpression) == nil)
         }
     }
     @ViewBuilder private func candidate(_ value: [String: Any]) -> some View {

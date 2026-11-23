@@ -266,3 +266,18 @@
     ;; Values outside double's integer precision still use the scalar path.
     (is (= [:exact-position]
            (:fallback-reasons (meta (batch/compile-effect d (assoc-in rig [0 :position 0] 9007199254740993))))))))
+
+
+(deftest targeted-tween-fallback-observes-the-current-rig-in-rig-order
+  (let [definition {:id :tween-selection :version 1 :targets [:b :a :absent]
+                    :outputs [{:attribute :dimmer :targets [:b :a]
+                               :value {:op :tween :spec {:keyframes [{:at-ms 0 :value 0.25}
+                                                                    {:at-ms 1000 :value 0.75}]}}}]}
+        step (batch/compile-effect definition fixtures)
+        input (context definition)
+        result #(mapv (juxt :target-id :value) (:assignments (step (assoc-in input [:frame :fixtures] %))))]
+    (is (= :ordinary (:backend (meta step))))
+    (is (= [[:a 0.5] [:b 0.5]] (result fixtures)))
+    (is (= [[:b 0.5] [:a 0.5]] (result (vec (reverse fixtures)))))
+    (is (= [] (result [(last fixtures)])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"stable IDs" (result [{}])))))

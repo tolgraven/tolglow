@@ -23,6 +23,7 @@ on:
     branches: [master]
     paths:
       - 'dev/tolglow/bench_*.clj'
+      - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-*'
@@ -38,6 +39,7 @@ on:
       - 'dev/tolglow/bench_subscribers.clj'
       - 'dev/tolglow/bench_movers.clj'
       - 'dev/tolglow/bench_movers_reference.clj'
+      - 'dev/tolglow/perf/venue_rig.clj'
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'bin/profile-master'
@@ -123,6 +125,14 @@ jobs:
           ./bin/profile-master --heads 100,1000,10000 --movers 0,8 --workers 1,2 \
             --warmup 40 --samples 120 --output ../performance-artifact/report.edn \
             2>&1 | tee ../performance-artifact/run.log
+      - name: Profile dense 3D rigs with independent ArtDMX capture
+        if: hashFiles('tolglow/dev/tolglow/perf/venue_rig.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: |
+          ./bin/profile-master --layout sculpture --heads 10000,20000 --movers 64 --workers 2 \
+            --warmup 12 --samples 32 --output ../performance-artifact/dense-venue.edn
       - name: Profile actual acknowledged Studio subscribers
         working-directory: tolglow
         env:

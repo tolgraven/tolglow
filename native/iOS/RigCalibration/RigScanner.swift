@@ -14,6 +14,7 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var worldID = UUID().uuidString
     @Published var selectedKind = "origin"
     @Published private(set) var worldToRig: [Float]?
+    @Published private(set) var surface: VenueSurface?
     private var alignmentOrigin: SIMD3<Float>?
     private var alignmentHeading: SIMD3<Float>?
     private var tracks: [String: (id: String, point: SIMD3<Float>)] = [:]
@@ -50,15 +51,17 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.frameSemantics.insert(.sceneDepth)
+        configuration.planeDetection = [.horizontal, .vertical]
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { configuration.sceneReconstruction = .mesh }
         worldID = UUID().uuidString; tracks.removeAll(); pending.removeAll(); captured = 0
         latestTimestamp = 0; goodFrameInterval = false; captureEnabled = false
-        alignmentOrigin = nil; alignmentHeading = nil; worldToRig = nil
+        alignmentOrigin = nil; alignmentHeading = nil; worldToRig = nil; surface = nil
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         running = true; status = "Move slowly to map the room. Tap a visible lens; depth must reach the fixture, not foreground haze."
     }
     func stop() {
         permissionGeneration = UUID()
+        worldToRig = nil; surface = nil
         captureEnabled = false; session.pause(); running = false; tracks.removeAll(); pending.removeAll()
         status = "Camera stopped. A new scan needs a new world alignment."
     }
@@ -74,6 +77,23 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
         let batch = Array(pending.prefix(64)); pending.removeFirst(batch.count); return batch
     }
     func clearBeamTrack() { tracks.removeValue(forKey: "beam") }
+    func clearSurface() { surface = nil }
+    func selectSurface(at point: CGPoint, in view: ARSCNView) {
+        surface = nil
+        guard running, !captureEnabled, let worldToRig, let frame = session.currentFrame,
+              case .normal = frame.camera.trackingState else {
+            status = "Set the floor origin and heading with stable tracking before measuring a surface."
+            return
+        }
+        guard let query = view.raycastQuery(from: point, allowing: .existingPlaneGeometry, alignment: .any),
+              let plane = session.raycast(query).first?.anchor as? ARPlaneAnchor,
+              let result = VenueSurface(anchor: plane, worldID: worldID, alignment: worldToRig) else {
+            status = "Walk along the surface, then tap inside its tracked area."
+            return
+        }
+        surface = result
+        status = "Review the outlined rectangle and its dimensions before saving."
+    }
     func tap(_ point: CGPoint, viewport: CGSize, orientation: UIInterfaceOrientation) {
         guard let frame = session.currentFrame, case .normal = frame.camera.trackingState else { return }
         let normalized = CGPoint(x: point.x / viewport.width, y: point.y / viewport.height)
@@ -86,6 +106,7 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
         let world = SIMD3(coordinates[0], coordinates[1], coordinates[2])
         if selectedKind == "origin" || selectedKind == "heading" {
             guard !captureEnabled else { status = "Finish the current scan before changing alignment"; return }
+            worldToRig = nil; surface = nil
             if selectedKind == "origin" { alignmentOrigin = world } else { alignmentHeading = world }
             if let origin = alignmentOrigin, let heading = alignmentHeading {
                 var z = heading - origin
@@ -153,11 +174,16 @@ final class RigScanner: NSObject, ObservableObject, ARSessionDelegate {
                 "camera-to-world": (0..<4).flatMap { row in (0..<4).map { column in frame.camera.transform[column][row] } },
                 "confidence": Int(quality), "rgb": rgb, "world-point": [world.x, world.y, world.z]]
     }
+    private func invalidateWorld() {
+        captureEnabled = false; surface = nil; worldToRig = nil
+        alignmentOrigin = nil; alignmentHeading = nil
+        session.pause(); running = false
+    }
     func sessionWasInterrupted(_ session: ARSession) {
-        captureEnabled = false; status = "Tracking interrupted; finish and start a new scan/world."; onInterrupted?()
+        invalidateWorld(); status = "Tracking interrupted; finish and start a new scan/world."; onInterrupted?()
     }
     func session(_ session: ARSession, didFailWithError error: Error) {
-        captureEnabled = false; status = "AR tracking failed: \(error.localizedDescription)"; onInterrupted?()
+        invalidateWorld(); status = "AR tracking failed: \(error.localizedDescription)"; onInterrupted?()
     }
 }
 
@@ -169,12 +195,28 @@ struct RigCameraView: UIViewRepresentable {
         view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:))))
         return view
     }
-    func updateUIView(_ view: ARSCNView, context: Context) {}
+    func updateUIView(_ view: ARSCNView, context: Context) {
+        context.coordinator.updateOutline(scanner.surface, in: view)
+    }
     final class Coordinator: NSObject {
         let scanner: RigScanner
         init(scanner: RigScanner) { self.scanner = scanner }
+        private var drawnCorners: [SIMD3<Float>] = []
+        private var outline: SCNNode?
+        func updateOutline(_ surface: VenueSurface?, in view: ARSCNView) {
+            let corners = surface?.worldCorners.map { SIMD3($0.x, $0.y, $0.z) } ?? []
+            guard corners != drawnCorners else { return }
+            drawnCorners = corners
+            outline?.removeFromParentNode()
+            outline = surface?.outline()
+            if let outline { view.scene.rootNode.addChildNode(outline) }
+        }
         @objc func tap(_ gesture: UITapGestureRecognizer) {
-            guard let view = gesture.view else { return }
+            guard let view = gesture.view as? ARSCNView else { return }
+            if scanner.selectedKind == "surface" {
+                scanner.selectSurface(at: gesture.location(in: view), in: view)
+                return
+            }
             scanner.tap(gesture.location(in: view), viewport: view.bounds.size,
                         orientation: view.window?.windowScene?.interfaceOrientation ?? .portrait)
         }
