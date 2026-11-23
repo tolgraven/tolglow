@@ -7,6 +7,8 @@ component lifecycle boundaries. Do not reintroduce a parallel imperative DOM
 application in JavaScript. JavaScript WebGL and Neovim are specialized interop
 engines only; they do not own lighting commands or application UI state.
 
+For a changed Studio show control, identify its REPL equivalent, send the shared command and display the committed state or rejection. Verify that a REPL edit reaches the open view. See [REPL and Studio parity](../../docs/repl-studio-parity.md).
+
 Studio owns one same-origin Transit WebSocket for show state. Apply a patch to
 the exact acknowledged token of the same runtime, show and epoch. Keep the
 decoded data in `:server-projection`. Adapt values for widgets above that

@@ -34,12 +34,14 @@ def walk(value):
     elif isinstance(value, dict):
         if "exportedFileName" in value: yield value
         for v in value.values(): yield from walk(v)
+labels = ("01-paired-phone", "02-stage-picker", "03-paired-again", "04-pulse-consent",
+          "04-interrupted-stage", "05-reconnection-cancelled")
 for item in walk(manifest):
     name = item.get("suggestedHumanReadableName", "")
-    for label in ("01-paired-phone", "02-stage-picker", "03-paired-again", "04-interrupted-stage", "05-reconnection-cancelled"):
+    for label in labels:
         if label in name:
             shutil.copyfile(attachments/item["exportedFileName"], out/(label+".png"))
-for label in ("01-paired-phone", "02-stage-picker", "03-paired-again", "04-interrupted-stage", "05-reconnection-cancelled"):
+for label in labels:
     assert (out/(label+".png")).is_file(), f"Missing screenshot {label}"
 PY
 test -s "$output_dir/watch-audience.mp4"

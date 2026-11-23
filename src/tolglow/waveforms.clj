@@ -28,15 +28,20 @@
                         (max 0 (- (:beat clock) (:started-at-beat instance))))
        :meter (time/normalize-meter (:timing-meter instance))})))
 
-(defn effective-params
-  "Sample the same modulation then response transforms as the committed frame.
-  Uses its captured private clock, including pause; no controller is advanced."
-  [{:keys [model resolved-param-overrides modulation-view]} instance]
+(defn resolved-inputs
+  "Resolve one committed snapshot's modulation and response inputs. Compile the
+  response chain once for all projected instances, respecting private clocks."
+  ([snapshot] (resolved-inputs snapshot response/compile-middleware))
+  ([{:keys [model resolved-param-overrides modulation-view]} compile-responses]
   (let [overrides (or resolved-param-overrides (:overrides modulation-view))
-        values (merge (:params instance) (get overrides (:id instance)))
-        clock (instance-clock model instance)
-        middleware (response/compile-middleware (filterv #(not= false (:enabled? %)) (:responses model [])))]
-    (get-in (middleware {:instance (assoc instance :params values) :frame clock}) [:instance :params])))
+        responses (filterv #(not= false (:enabled? %)) (:responses model []))
+        middleware (if (seq responses) (compile-responses responses) identity)]
+    (fn [instance]
+      (middleware {:instance (update instance :params merge (get overrides (:id instance)))
+                   :frame (instance-clock model instance)})))))
+
+(defn effective-params [snapshot instance]
+  (get-in ((resolved-inputs snapshot) instance) [:instance :params]))
 
 (defn- normalized-selection [waveforms selection]
   (if (map? selection)

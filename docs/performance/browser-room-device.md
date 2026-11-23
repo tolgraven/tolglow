@@ -47,3 +47,28 @@ The local operator measured Chrome 158, ANGLE Metal, with a 16 GB M4 Air (10 CPU
 | Mobile | 1828 × 821 | 23.45 | 23.90 | 67.7 / 64.8 ms |
 
 Desktop presented 248 and 229 frames. Mobile presented 469 and 478. The worker's completed-frame time, including scheduling, was about 40–52 ms on desktop and 21–30 ms on mobile. Direct GPU timer data was unavailable. These aggregates came from the local operator using sampler revision c5447c9b. The device owner retains the raw recordings.
+
+On the same M4 Air, the revised Auto policy at `3df8c9c` presented 28.7481 frames/s with fixed heads and 34.5978 with the moving sweep. Previous Auto measured 9.55 and 10.35. The backing stayed at 2806 × 1260 and the foreground callback clock measured 59.996 Hz. Both scenes remained below 40 fresh Room presentations/s. A separate desktop comparison with fog off and on measured 21.399 and 14.399 frames/s for fixed heads, and 20.699 and 13.999 frames/s for moving heads. The local operator supplied the aggregates. [Measurement and source](https://github.com/tolgraven/tolglow/pull/176)
+
+## Attribute presentation and shader costs on one GPU
+
+Use the same release build, browser window, fixed camera, display scale and power supply for every sample. This command opens a dedicated localhost show with eight lit moving heads in dense fog. The first and last full-render samples help detect thermal or clock drift.
+
+```sh
+ROOM_QUALITY=mobile ROOM_SCENE=dense \
+ROOM_PASSES=full,cached-shadows,skip-fog-raymarch,present-cached-frame,full \
+node dev/preview/measure-room.mjs http://127.0.0.1:9223 target/room-pass-mobile
+```
+
+Repeat with `ROOM_QUALITY=desktop` and a separate output directory to test a larger internal render target. Each sample runs for 20 seconds, after at least eight seconds and four ordinarily rendered frames, followed by a 2.5-second pass change warmup. The private Ring process serves a diagnostic worker from a temporary classpath resource. Before opening the new tab, the harness verifies the HTTP response against its locally built SHA-256. Browser errors and the fallback reason are written to `room-error.json` if startup fails. The worker uses the checked-out release scene, shader and display code. Its SHA-256 and the ordinary worker SHA-256 are recorded separately.
+
+| Sample | Work performed |
+| --- | --- |
+| `full` | Normal moving heads, shadow map updates, room fog, bloom and final presentation |
+| `cached-shadows` | Uses the last fully rendered shadow maps. Surface lighting, fog sampling of those maps and the final composition continue. |
+| `skip-fog-raymarch` | Executes the existing zero-amount branch only for the fog rendering pass. Room simulation, geometry, shadow maps and the scene copy and postprocessing continue. |
+| `present-cached-frame` | Copies one fully rendered scene into a texture, then displays that same image with a full-canvas blit, the production GPU fence, bitmap transfer and page presentation. The show continues running. |
+
+Each entry in `room.json` includes accepted Room presentations and window animation callbacks, internal and display pixel dimensions and observed pan values. `passTimingsMs` reports sample counts, medians, p95 and maxima. Opaque geometry (including shadow rendering), fog and postprocessing submission times measure JavaScript command submission. Their GPU timings appear only when the browser supports valid disjoint timer queries. The GPU fence also includes worker scheduling and poll delay. Bitmap export, DOM bitmap submission, and worker-post-through-DOM time have separate counters. A DOM bitmap submission establishes a new frame at the visible canvas; physical monitor scanout requires external instrumentation.
+
+Compare `full` with the sample that removes one cost, at identical `sceneSizes`, scales and backing dimensions. The cached-frame case measures the presentation path at real resolution. Concurrent GPU workloads, clock changes and overlap between passes can affect differences between samples.

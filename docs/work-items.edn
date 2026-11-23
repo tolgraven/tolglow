@@ -1,7 +1,20 @@
 {:schema-version 1,
  :updated "2026-11-23",
  :items
- [{:id :runtime/publication-clock
+ [{:id :documentation/repl-studio-parity :title "Review operator workflows from both the running REPL and Studio"
+   :kind :documentation :status :in-progress :owner "Show domain owners and Studio reviewers"
+   :paths ["tolglow/docs/repl-studio-parity.md"]
+   :depends-on [:foundation/tests]
+   :acceptance ["For each changed show workflow, name its public REPL entry point, Studio path and shared command or model."
+                "Check that operators can discover the operation and observe the same accepted state and rejection from each surface."
+                "Explain any surface-specific interaction. Give each missing operator path an owner, work item and observable acceptance check."]
+   :evidence ["docs/repl-studio-parity.md follows the Ember cue across both surfaces and records a scoped scheduling gap. R94 applies to future changes."]}
+  {:id :web/studio-type-alignment :title "Align Studio navigation, transport, cue pads and instrument labels"
+   :kind :implementation :status :in-progress :owner "Studio shell and live card design owners"
+   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/dev/studio/shell-alignment-qa.mjs"]
+   :depends-on [:foundation/tests]
+   :acceptance ["Inspect rendered labels, controls and baselines on phone, iPad and desktop. Measure their bounds, exercise the controls and retain comparable before/after releases."] :evidence []}
+  {:id :runtime/publication-clock
    :title "Evaluate live effects for the intended output deadline"
    :kind :implementation :status :in-progress :owner "Afterglow render scheduler"
    :paths ["afterglow/src/afterglow/output/scheduler.clj" "tolglow/src/tolglow/show.clj" "tolglow/docs/frame-input-timing.md" "tolglow/docs/browser-observations.md"]
@@ -26,7 +39,7 @@
   {:id :web/responsive-performance-layouts :title "Redesign compact, playable Studio layouts across screen sizes"
    :kind :implementation :status :in-progress :owner "Studio responsive performance console and visual design"
    :paths ["tolglow/src/studio/tolglow/studio/performance.cljs"]
-   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first connection (#156), Definitions (#161), Debug (#163) and Develop (#168) have release-browser coverage. Develop also receives workspace checks, coding-agent progress and terminal bytes by subscription (#173 and #177). The eight-workspace scope, before/after measurements and captures are indexed in docs/studio-ui.md. Perform passed Linux WebKit iPhone/iPad profiles, including keyboard input, held pointer menus and live controls. Physical iPad Safari and direct finger-hold verification are open."]}
+   :depends-on [:foundation/tests] :acceptance ["Compare usable visualization area and concurrent controls in real phone, tablet and desktop flows. Exercise semi-minimized horizontal controls, curated layouts and future-cue fallback without hiding parameters."] :evidence ["Tolglow #129 shows four concurrent playable cues on phone, iPad and desktop. #140 expands the rig viewport and compacts sequencer steps. #142 exercises multi-zone controls with live readings and stale-session handling on the same screens. Assistant first connection (#156), Definitions (#161), Debug (#163) and Develop (#168) have release-browser coverage. Develop also receives workspace checks, coding-agent progress and terminal bytes by subscription (#173 and #177). The eight-workspace scope, before/after measurements and captures are indexed in docs/studio-ui.md. Perform passed Linux WebKit iPhone/iPad profiles, including keyboard input, held pointer menus and live controls. Touch input through Chromium now exercises the cue hold menu, two contacts cancelled together and immediate retriggering with a pending launch reply. Physical iPad Safari and VoiceOver remain open."]}
   {:id :sensors/linux-audience-gateway :title "Host the nearby dance floor on Linux with BlueZ"
    :kind :implementation :status :in-progress :owner "Linux Bluetooth sensor gateway"
    :paths ["tolglow/linux/audience"]
@@ -2167,7 +2180,8 @@
    :depends-on [:web/reframe-state-v1 :web/reframe-views-v1],
    :owner nil}
   {:evidence
-   ["16 tests / 122 assertions passed including real published modulator cue and root category selection"
+   ["tolglow.parameter-sources-test follows a typed Ring waveform through two independent cue launches, captured DMX, manual holds and restored Transit state."
+    "16 tests / 122 assertions passed including real published modulator cue and root category selection"
     "docs/modulation.md"],
    :paths
    ["tolglow/src/tolglow/modulation.clj"
