@@ -1,0 +1,11 @@
+{
+  "externalCheck": [
+    "running",
+    "passed"
+  ],
+  "frameNumber": 0,
+  "resumedStatus": "passed",
+  "idleObservationMs": 3500,
+  "statusHTTPReads": [],
+  "pageErrors": []
+}
