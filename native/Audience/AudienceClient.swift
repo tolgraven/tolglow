@@ -266,7 +266,7 @@ final class AudienceClient: NSObject, ObservableObject, CBCentralManagerDelegate
     }
 }
 
-#if DEBUG && targetEnvironment(simulator) && os(watchOS)
+#if (DEBUG && targetEnvironment(simulator) && os(watchOS)) || AUDIENCE_RECOVERY_FIXTURE
 extension AudienceClient {
     /// Seeds the Watch UI test with a simulated transport interruption. The
     /// real recovery policy, status view and user cancellation remain in use.
