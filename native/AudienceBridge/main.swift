@@ -14,7 +14,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var grants = [UUID: (Data, Double)]()
     private var floor = AudienceFloor()
     private var challenges: [UUID: (value: Data, time: Double)] = [:]
-    private var peers: [UUID: (key: SymmetricKey, lastSeen: Double)] = [:]
+    private var peers: [UUID: (key: SymmetricKey, lastSeen: Double, serial: UInt32?)] = [:]
     private let session = UUID().uuidString
     private let connection: NWConnection?
     private let token: String?
@@ -23,7 +23,7 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
     private var lastCount = 0
     private var timer: Timer?
     private var sending = false
-    private var queuedSteps = 0
+    private var queue = AudienceSteps()
     private var lastLevels: AudienceLevels?
 
     init(name: String, port: NWEndpoint.Port?, token: String?, source: String) {
@@ -152,17 +152,21 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
                 }
                 let key = try AudienceRadio.key(secret, packet, challenge: challenge.value)
                 guests?.revoke(participant: id); grants.removeValue(forKey: id)
-                peers[id] = (key, time)
+                peers[id] = (key, time, nil)
                 floor.leave(id)
             case AudienceRadio.samples:
                 guard packet.count == 39, let peer = peers[id] else {
                     peripheral.respond(to: first, withResult: .insufficientAuthentication); return
                 }
                 let data = try AES.GCM.open(AES.GCM.SealedBox(combined: packet), using: peer.key)
-                guard let sample = AudienceSample(bytes: data), floor.receive(sample, from: id, at: time) else {
+                guard let sample = AudienceSample(bytes: data),
+                      peer.serial.map({ previous in
+                          let delta = sample.serial &- previous
+                          return delta > 0 && delta < (1 << 31)
+                      }) ?? true, floor.receive(sample, from: id, at: time) else {
                     peripheral.respond(to: first, withResult: .unlikelyError); return
                 }
-                peers[id] = (peer.key, time)
+                peers[id] = (peer.key, time, sample.serial)
             default: peripheral.respond(to: first, withResult: .writeNotPermitted); return
             }
             peripheral.respond(to: first, withResult: .success)
@@ -177,18 +181,24 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         grants = grants.filter { time - $0.value.1 < 5 }
         let levels = floor.drain(at: time)
         lastLevels = levels
-        queuedSteps = min(2048, queuedSteps + levels.steps)
+        if connection != nil {
+            do { try queue.append(levels.steps) }
+            catch {
+                stop("Gesture queue overflow (\(queue.pending) pending, \(levels.steps) incoming).")
+                return
+            }
+        }
         if lastCount != levels.count { print("Participants \(levels.count)") }
         let wasActive = lastCount > 0
         guard !sending else { return }
         lastCount = levels.count
-        guard levels.count > 0 || wasActive || queuedSteps > 0 else { return }
+        guard levels.count > 0 || wasActive || queue.pending > 0 else { return }
         send(levels, at: time)
     }
 
     private func send(_ levels: AudienceLevels, at time: Double) {
-        guard let connection, let token else { queuedSteps = 0; return }
-        let delivered = min(8, queuedSteps)
+        guard let connection, let token else { return }
+        let delivered = queue.takeBatch()
         var values = ["audience-count": Double(levels.count), "dance-effort": levels.effort,
                       "dance-steps": Double(delivered), "pulse-present": levels.pulse == nil ? 0.0 : 1.0]
         if let pulse = levels.pulse { values["pulse-bpm"] = pulse }
@@ -197,16 +207,25 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
             let observation = try Observation(deviceID: source, sessionID: session, sampleID: sampleID,
                 timeMS: time * 1000, values: values, gestures: gestures, pairingToken: token)
             let packet = try SensorOSC.encode(observation)
-            queuedSteps -= delivered; sampleID += 1; sending = true
+            sampleID += 1; sending = true
             connection.send(content: packet, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
                 self.sending = false
-                if error != nil { print("Local OSC delivery failed"); return }
-                if self.queuedSteps > 0, let latest = self.lastLevels {
+                if error != nil { self.stop("OSC send failed with \(delivered) gestures in flight."); return }
+                if self.queue.pending > 0, let latest = self.lastLevels {
                     self.send(latest, at: ProcessInfo.processInfo.systemUptime)
                 }
             })
-        } catch { print("Could not encode audience observation") }
+        } catch { stop("Could not encode audience observation.") }
+    }
+
+    private func stop(_ reason: String) {
+        timer?.invalidate()
+        radio.stopAdvertising()
+        radio.removeAllServices()
+        connection?.cancel()
+        FileHandle.standardError.write(Data("Stage stopped. \(reason) Check the OSC receiver before restarting.\n".utf8))
+        exit(75)
     }
 }
 

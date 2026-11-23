@@ -33,6 +33,7 @@ struct AudienceView: View {
                         if !session.message.isEmpty { Text(session.message).foregroundStyle(.secondary) }
                         #if !APPCLIP
                         if let room, client.offersCompute { GuestComputeControl(client: client, room: room) }
+                        Toggle("Keep sharing Watch input when iPhone locks", isOn: $session.allowLockedWatch)
                         #endif
                         Button("Leave stage", role: .destructive) { client.leave() }
                     } else {
@@ -56,7 +57,10 @@ struct AudienceView: View {
         .onChange(of: client.joined) { _, joined in if joined { session.startInputs() } }
         .onChange(of: session.input) { _, _ in session.resetInput() }
         .onChange(of: room) { _, _ in client.leave() }
-        .onChange(of: phase) { _, value in if value == .background { client.leave() } }
-        .onDisappear { client.leave() }
+        .onChange(of: phase) { _, value in
+            if value == .background { session.enterBackground() }
+            if value == .active { session.foreground() }
+        }
+        .onDisappear { if phase == .active { client.leave() } }
     }
 }

@@ -33,6 +33,7 @@ targets:
       path: iOS/Info.plist
       properties:
         CFBundleDisplayName: Tolglow
+        UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
         NSBonjourServices: ["_tolglow-cmp._tcp"]
         NSBluetoothAlwaysUsageDescription: Find a nearby stage and share your chosen dance input.

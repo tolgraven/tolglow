@@ -1,5 +1,7 @@
 # Tolglow / Afterglow architecture program
 
+[Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
+
 Use the [repository map](../README.md#repository-map) to find the Clojure show
 runtime, re-frame Studio, JavaScript renderer, packaged device scripts, tests
 and native companions.
@@ -58,6 +60,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |
 | [Controls and web](architecture/control-and-web.md) | Shared semantics, devices, touch UI and editors |
 | [Preview navigation](preview-navigation.md) | WASD, drag look, touch movement and active-fixture camera tours |
+| [Push venue display](push-display-packaging.md#venue-and-rig-views) | Full-rig framing, cylindrical panorama and fixture aim on the 960 × 160 display |
 | [Output deadlines](output-presentation.md) | Immutable completed frames, fixture-aware fade/interpolation and measured policy costs |
 | [Phone and Watch sensors](sensors.md) | Maintained browser library, supported Apple APIs, pure middleware and owned OSC service |
 | [Web REPL](web-repl.md) | Actual JVM sessions, streaming completion and captured locals |

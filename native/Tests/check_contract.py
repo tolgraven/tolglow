@@ -50,7 +50,9 @@ class Contract(unittest.TestCase):
         self.assertIn("platform: watchOS", manifest)
         self.assertIn("NSMotionUsageDescription:", manifest)
         self.assertIn("NSLocalNetworkUsageDescription:", manifest)
-        self.assertNotIn("UIBackgroundModes", manifest)
+        phone, other_targets = manifest.split("  TolglowAudienceClip:", 1)
+        self.assertIn("UIBackgroundModes: [bluetooth-central]", phone)
+        self.assertNotIn("UIBackgroundModes", other_targets)
         self.assertIn("WKCompanionAppBundleIdentifier: org.tolglow.ios", manifest)
         self.assertTrue((ROOT / "Core/Package.swift").exists())
 

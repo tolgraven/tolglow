@@ -62,6 +62,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
             [tolglow.show.preview :as preview]
+            [tolglow.show.push-scene :as push-scene]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
@@ -1404,7 +1405,8 @@
   Supply the browser executable and optional injected sink in options."
   [runtime options]
   (let [cache (waveforms/create-cache)
-        pages (volatile! nil)]
+        pages (volatile! nil)
+        scene-cache (push-scene/create-cache)]
     (display/browser-display
      (assoc options :project!
             (fn [view]
@@ -1420,6 +1422,8 @@
                              :audio (waveforms/project-display cache snapshot view
                                           (audio/waveform (connections/audio (:connections runtime))))
                              :block-trace (block-trace/project-display (:id runtime) model view)
+                             (:simulator :rig) (push-scene/project-display scene-cache snapshot
+                                                     (assoc view :runtime-id (:id runtime)))
                              view)]
                 (page-overview/project-display pages model visual)))))))
 

@@ -18,7 +18,9 @@ Ordinary constructors do not start motion, networking, or a show.
   iPhone Keychain and transient outgoing packets, never logs/UserDefaults/show files.
 - Bound every queue. Coalesce motion, preserve gesture identities/order, fail
   visibly on gesture overflow. Do not retry ambiguous gestures or cue commands.
-- Background/connection failure disarms. This initial foreground implementation
-  does not manufacture audio/workout sessions to bypass operating-system limits.
+- Backgrounding disarms operator controls and stops phone capture. The audience
+  relay may forward an explicitly opted-in Watch session while the iPhone locks.
+  Use HealthKit workout processing on Watch and Bluetooth central delivery on
+  iPhone. The App Clip supports foreground inputs.
 - Physical iPhone/Watch motion, WCSession relay, local-network permission, Double
   Tap, signing, battery/latency and host acceptance all need device evidence.
