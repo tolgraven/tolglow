@@ -65,26 +65,37 @@
             :when (and (contains? (:scoped-queries hub) (first query)) (not (contains? after query)))]
       (release! producer))))
 
+(defn- wanted-queries [hub]
+  (locking (:clients hub)
+    (into #{} (mapcat #(vals (:queries @%))) (vals @(:clients hub)))))
+
+(defn- query-demand-changed! [hub]
+  (try
+    (queries/release-unused-graph-leases! (:query-store hub) #(wanted-queries hub))
+    (finally (wake! hub))))
+
 (defn- set-queries! [hub socket desired]
   (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
-  (locking (:clients hub)
-    (when-let [client (get @(:clients hub) socket)]
-      (let [prior (:queries @client {})]
-        (when-not (= desired (set (keys prior)))
-          (let [next (into {} (for [q desired]
-                                [q (or (get prior q) ((get (:scoped-queries hub) (first q) identity) q))]))]
-            (swap! client #(-> % (assoc :queries next) (dissoc :pending :base)))
-            (release-queries! hub prior next)
-            (wake! hub)))))))
+  (when-some [removed? (locking (:clients hub)
+                         (when-let [client (get @(:clients hub) socket)]
+                           (let [prior (:queries @client {})]
+                             (when-not (= desired (set (keys prior)))
+                               (let [next (into {} (for [q desired]
+                                                     [q (or (get prior q) ((get (:scoped-queries hub) (first q) identity) q))]))]
+                                 (swap! client #(-> % (assoc :queries next) (dissoc :pending :base)))
+                                 (release-queries! hub prior next)
+                                 (boolean (some #(not (contains? next %)) (keys prior))))))))]
+    (if removed? (query-demand-changed! hub) (wake! hub))))
 
 (defn- forget! [hub socket]
-  (locking (:clients hub)
-    (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)]
-      (release-unused-interest! hub)
-      (when-let [prior (seq (:queries (some-> removed deref)))]
-        (release-queries! hub prior {})
-        (wake! hub))
-      removed)))
+  (let [[removed prior] (locking (:clients hub)
+                          (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)
+                                prior (seq (:queries (some-> removed deref)))]
+                            (release-unused-interest! hub)
+                            (when prior (release-queries! hub prior {}))
+                            [removed prior]))]
+    (when prior (query-demand-changed! hub))
+    removed))
 
 (defn- retire! [hub socket code reason]
   (when (forget! hub socket)
@@ -165,8 +176,7 @@
   (when-let [source (.get ^AtomicReference (:latest hub))]
     (let [common (delay (common-target hub source))
           clients (mapv (fn [[socket client]] [socket client @client]) @(:clients hub))
-          desired (into #{} (mapcat (comp vals :queries peek)) clients)
-          leases (when-let [store (:query-store hub)] (queries/reconcile! store source desired))
+          leases (when-let [store (:query-store hub)] (queries/reconcile-current! store source #(wanted-queries hub)))
           cache (volatile! {})]
       (doseq [[socket client before] clients :when (ready? before)]
         (try

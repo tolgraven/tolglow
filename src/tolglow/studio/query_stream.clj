@@ -36,9 +36,29 @@
   (when-let [close! (:close! lease)] (close!)))
 
 (defn close! [store]
-  (locking store
-    (let [[before _] (reset-vals! (:state store) {:closed? true})]
-      (doseq [lease (vals (:leases before))] (close-lease! lease)))))
+  (let [[before _] (locking store (reset-vals! (:state store) {:closed? true}))]
+    (doseq [lease (vals (:leases before))] (close-lease! lease))))
+
+(defn- surface-query? [store query]
+  (contains? (:surfaces store) (first query)))
+
+(defn release-unused-graph-leases!
+  "Retire unobserved Afterglow queries independently of projection delivery."
+  [store wanted-queries]
+  (let [retired (locking store
+                  (let [state (:state store) before @state
+                        wanted (wanted-queries)
+                        unused (filterv #(not (or (contains? wanted %) (surface-query? store %)))
+                                        (keys (:leases before)))]
+                    (when (seq unused)
+                      (reset! state (-> before
+                                        (update :leases #(apply dissoc % unused))
+                                        (update :wanted #(apply disj % unused))
+                                        (update :missing #(apply disj % unused))))
+                      (mapv (:leases before) unused))))]
+    ;; A replacement has its own graph watcher token. Closing these retired
+    ;; leases cannot release it, and the store stays available to acquisitions.
+    (doseq [lease retired] (close-lease! lease))))
 
 (defn- open-graph-lease [system query allowed? wake!]
   (if-not allowed?
@@ -61,34 +81,40 @@
         observe! (assoc :detach! (observe! (:wake! store)))))
     (open-graph-lease system query (contains? public (first query)) (:wake! store))))
 
-(defn reconcile!
+(defn reconcile-current!
   "Share leases across sockets. Changing show identity, graph or public-query
   policy invalidates previous acquisitions, including unavailable queries."
-  [store source wanted]
-  (locking store
-    (let [state (:state store) before @state]
-      (when-not (or (:closed? before) (and (empty? wanted) (empty? (:leases before))))
-        (let [model (:model source)
-              configured (get-in model [:settings :studio :public-queries])
-              public (if (registry/valid-public-query-ids? configured) (into defaults configured) defaults)
-              identity (select-keys model [:show-id :epoch])
-              system (when (seq wanted)
-                       ;; A runtime can close its graph during a concurrent shutdown.
-                       ;; Return unavailable until the next committed graph is present.
-                       (try ((:get-graph store)) (catch Exception _ nil)))
-              compatible? (and (identical? system (:system before)) (= identity (:identity before))
-                               (= public (:public before)))
-              prior (:leases before)
-              newly-registered (when (and compatible? system)
-                                 (into #{} (filter #(reactive/registered-sub? system (first %))) (:missing before)))
-              keep? #(and compatible? (contains? wanted %) (not (contains? newly-registered %)))]
-          (if (and compatible? (empty? newly-registered) (= wanted (:wanted before)))
-            prior
-            (do
-              (doseq [[query lease] prior :when (not (keep? query))] (close-lease! lease))
-              (let [leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
-                                                       (open-lease store system q public))])
-                                         wanted))]
-                (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
-                               :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
-                leases))))))))
+  [store source wanted-queries]
+  (let [[leases retired]
+        (locking store
+          (let [state (:state store) before @state wanted (wanted-queries)]
+            (when-not (or (:closed? before) (and (empty? wanted) (empty? (:leases before))))
+              (let [model (:model source)
+                    configured (get-in model [:settings :studio :public-queries])
+                    public (if (registry/valid-public-query-ids? configured) (into defaults configured) defaults)
+                    identity (select-keys model [:show-id :epoch])
+                    system (when (seq wanted)
+                             ;; The runtime can close its graph during a concurrent shutdown.
+                             (try ((:get-graph store)) (catch Exception _ nil)))
+                    compatible? (and (identical? system (:system before)) (= identity (:identity before))
+                                     (= public (:public before)))
+                    prior (:leases before)
+                    newly-registered (when (and compatible? system)
+                                       (into #{} (filter #(reactive/registered-sub? system (first %))) (:missing before)))
+                    keep? #(and compatible? (contains? wanted %) (not (contains? newly-registered %)))]
+                (if (and compatible? (empty? newly-registered) (= wanted (:wanted before)))
+                  [prior nil]
+                  (let [{surfaces true graph false}
+                        (group-by #(surface-query? store (key %)) (remove #(keep? (key %)) prior))]
+                    (doseq [[_ lease] surfaces] (close-lease! lease))
+                    (let [leases (into {} (map (fn [q] [q (or (when (keep? q) (get prior q))
+                                                             (open-lease store system q public))])
+                                               wanted))]
+                      (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
+                                     :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
+                      [leases graph])))))))]
+    (doseq [[_ lease] retired] (close-lease! lease))
+    leases))
+
+(defn reconcile! [store source wanted]
+  (reconcile-current! store source (constantly wanted)))
