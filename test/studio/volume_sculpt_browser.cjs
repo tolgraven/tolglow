@@ -74,7 +74,9 @@ async function drag(page, session, axis, dx, dy, cancel) {
     const cueId = 'sculpt-touch-' + Date.now();
     await panel.getByLabel('Cue ID', {exact:true}).fill(cueId);
     await panel.getByLabel('Field color').fill('#40a0e0');
-    await panel.getByLabel('Beam intersects').check();
+    const beams = panel.getByLabel('Beam intersects');
+    await beams.tap();
+    await page.waitForFunction(input => input.checked, await beams.elementHandle());
     await panel.getByLabel('Outside falloff · m', {exact:true}).fill('0.4');
     await panel.getByLabel('Outside falloff · m', {exact:true}).press('Enter');
     assert.equal(writes.length,0);
