@@ -165,6 +165,14 @@
         :when (and error (not= error (get-in model [:variables :spatial :signals key :error])))]
     {:type :spatial/invalid-volume :volume-id key :instance-id instance-id :time-ms now :message error}))
 
+(defn- optical-volume? [volume]
+  (some #{:beam :aimable} (:selection volume)))
+
+(defn- optical-sampler [rig frame active]
+  (if (next (filter (comp optical-volume? :volume) (vals active)))
+    (field/sampler rig frame)
+    #(field/sample % rig frame)))
+
 (defn advance [model before now graph command]
   (let [original (get-in model [:settings :spatial])
         old-cache (:spatial-cache before)
@@ -202,9 +210,10 @@
             prior (if (and prior (:suspended? old-cache)) (physics/rebase prior clock) prior)
             result (physics/advance prior scene clock rig contacts)
             observations (delay (optical-observations before model))
+            optical-sample (delay (optical-sampler rig (:frame @observations) active))
             sample (fn [volume]
-                     (if (some #{:aimable :beam} (:selection volume))
-                       (field/sample volume rig (:frame @observations))
+                     (if (optical-volume? volume)
+                       (@optical-sample volume)
                        (field/positions volume rig)))
             fields (when (seq active) (cues/frame-fields (assoc model :time-ms now) active result sample))
             events (into (:events result) (volume-errors model fields now))
