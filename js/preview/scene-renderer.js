@@ -8,7 +8,7 @@ import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
-import {displayTransform, FilmPass} from './film.js';
+import {displayTransform, EdgePass, FilmPass} from './film.js';
 import {TIERS, rasterSizes, supportedSamples, sceneSamples, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
@@ -108,6 +108,7 @@ export class SceneRenderer {
     this.glass = new GlassPass(this); this.composer.addPass(this.glass);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .28, .4, 1.1); this.composer.addPass(this.bloom);
     this.outputPass = displayTransform(); this.composer.addPass(this.outputPass);
+    this.edges = new EdgePass(); this.composer.addPass(this.edges);
     this.film = new FilmPass(); this.composer.addPass(this.film); this.setFilm(this.filmSettings);
     this.rebuild({room: {width: 12, height: 5, depth: 10}, fixtures: [], trusses: []});
     this.resize();
@@ -354,6 +355,8 @@ export class SceneRenderer {
       this.displayRange = configureDisplayRange(this.renderer.getContext(), displayWidth, displayHeight, this.hdrRequested);
       this.outputPass.uniforms.extendedDisplay.value = this.displayRange === 'extended';
     }
+    this.edges.enabled = displayWidth > width * 1.4;
+    this.film.uniforms.resolveAtDisplay.value = !this.edges.enabled;
     const samples = sceneSamples(this.quality, width, height, this.samples);
     if (width === this.width && height === this.height && this.sceneTarget.samples === samples) return;
     if (samples !== this.sceneTarget.samples) {
@@ -498,7 +501,7 @@ export class SceneRenderer {
     for (const light of this.spots || []) light.dispose();
     this.reflections?.dispose();
     if (this.content) disposeGeometry(this.content);
-    this.glass?.dispose(); this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.film?.dispose(); this.gpuTimer?.dispose(); this.composer?.dispose();
+    this.glass?.dispose(); this.inputPass?.dispose(); this.bloom?.dispose(); this.outputPass?.dispose(); this.edges?.dispose(); this.film?.dispose(); this.gpuTimer?.dispose(); this.composer?.dispose();
     this.sceneTarget?.dispose(); this.compositeTarget?.dispose(); this.environmentTarget?.dispose();
     if (this.materials) disposeMaterials(this.materials);
     this.renderer?.dispose(); this.resolveReady?.(false);

@@ -46,8 +46,10 @@ export function configureDisplayRange(gl, width, height, requestHDR) {
     if (gl.drawingBufferFormat === gl.RGBA16F && gl.drawingBufferToneMapping({mode: 'extended'})?.mode === 'extended')
       return 'extended';
   } catch { /* Restore the ordinary framebuffer when the surface rejects HDR. */ }
-  try { gl.drawingBufferToneMapping({mode: 'standard'}); }
-  finally { if (gl.drawingBufferFormat === gl.RGBA16F) gl.drawingBufferStorage(gl.RGBA8, width, height); }
+  if (gl.drawingBufferFormat === gl.RGBA16F) {
+    gl.drawingBufferStorage(gl.RGBA8, width, height);
+    try { gl.drawingBufferToneMapping({mode: 'standard'}); } catch { /* SDR storage is active. */ }
+  }
   return 'sdr';
 }
 

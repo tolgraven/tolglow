@@ -19,17 +19,26 @@ export function displayTransform() {
   return pass;
 }
 
+// For a heavily downscaled room, evaluate the expensive edge search once per
+// source pixel. The native-size film pass can then do one filtered lookup.
+export class EdgePass extends ShaderPass {
+  constructor() { super(FXAAShader); this.enabled = false; }
+  setSize(width, height) { this.uniforms.resolution.value.set(1 / width, 1 / height); }
+}
+
 // FXAA uses the source texel size after display encoding. Dither and grain use
 // physical presentation pixels, so scaling the fog or room cannot enlarge them.
 export class FilmPass extends ShaderPass {
   constructor() {
     super({...FXAAShader,
-      uniforms: {...FXAAShader.uniforms, grain: {value: 0.0015}, phase: {value: 0}},
+      uniforms: {...FXAAShader.uniforms, grain: {value: 0.0015}, phase: {value: 0}, resolveAtDisplay: {value: true}},
       fragmentShader: FXAAShader.fragmentShader.replace('void main()', 'void resolveEdges()') + `
         uniform float grain;
         uniform float phase;
+        uniform bool resolveAtDisplay;
         void main() {
-          resolveEdges();
+          if (resolveAtDisplay) resolveEdges();
+          else gl_FragColor = texture2D(tDiffuse, vUv);
           vec2 pixel = gl_FragCoord.xy;
           float dither = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715)))) - 0.5;
           float noise = fract(52.9829189 * fract(dot(pixel + phase, vec2(0.06711056, 0.00583715)))) - 0.5;
