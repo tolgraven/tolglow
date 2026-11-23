@@ -190,7 +190,7 @@
   (let [{:keys [model variable-observation]} @(:state runtime)]
     (:variables (variable-blocks/resolved model variable-observation))))
 
-(declare send-output! heartbeat! submit!)
+(declare prepare-output present-output! heartbeat! submit!)
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
@@ -275,8 +275,11 @@
                               (connections/close! owned)
                               (throw error)))
            publisher (output-scheduler/create
-                      (cond-> {:send! (fn [universes frame-id] (send-output! @runtime-ref universes frame-id))}
-                        (:send! sink) (assoc :receipt-capacity 256)
+                      (cond-> {}
+                        (:send! sink)
+                        (assoc :receipt-capacity 256
+                               :prepare-output (fn [buffers id] (prepare-output @runtime-ref buffers id))
+                               :send! (fn [buffers id] (present-output! @runtime-ref buffers id)))
                         (:physical-now-ms options) (assoc :now-ms (:physical-now-ms options))))
            runtime-id (str (UUID/randomUUID))
            runtime {:id runtime-id
@@ -757,14 +760,20 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
+(defn- prepare-output [runtime universes frame-number]
+  (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)]
+    (if-let [memory @(:fog-deadlines runtime)]
+      (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms])))
+      packet)))
+
+(defn- present-output! [runtime packet frame-number]
+  ((get-in runtime [:sink :send!]) packet frame-number)
+  (when (:plan @(:venue-fog runtime))
+    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+
 (defn- send-output! [runtime universes frame-number]
-  (when-let [send! (get-in runtime [:sink :send!])]
-    (let [packet (retirement/include-retired (:retirement @(:patch runtime)) universes)
-          memory @(:fog-deadlines runtime)
-          packet (if memory (fog-deadline/guard memory packet frame-number ((get-in runtime [:publisher :now-ms]))) packet)]
-      (send! packet frame-number)
-      (when (:plan @(:venue-fog runtime))
-        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))))
+  (when (get-in runtime [:sink :send!])
+    (present-output! runtime (prepare-output runtime universes frame-number) frame-number)))
 
 (defn audio-callbacks
   "Capture epoch-bound callbacks for explicitly started audio. Features use a

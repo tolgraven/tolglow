@@ -81,8 +81,7 @@ The next dedicated Ubuntu run completed **238 of 240** dense frames within
 25 ms with production lead and sent 229 current sources. The extra reserve
 completed 239 and sent 237. Render p95 was 6.06 ms and 5.90 ms, respectively.
 Median input age at the target rose from 6.31 to 7.67 ms, and p95 age of the
-lower source at the sink rose from 8.78 to 10.19 ms. No sends crossed into
-an expired slot in any of the six cases. [Six-policy Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45199722459/job/137779636192)
+lower source at the sink rose from 8.78 to 10.19 ms. Admission preceded the next deadline in every one of those six cases. [Six-policy Ubuntu job](https://github.com/tolgraven/tolglow/actions/runs/45199722459/job/137779636192)
 
 ### Recorded local result
 
@@ -110,18 +109,37 @@ send calls remained at least half a nominal frame apart, allowing 0.01 ms
 for floating-point rounding. The earlier shared capture also recorded two
 previously unseen sources handed to the sink a whole slot late, 35.8 ms
 after the dense rig's deadline and 88.4 ms after the eight-mover deadline.
-The sender now checks expiry again after packing. Every future release
-replay rejects a sink call for an elapsed slot and counts those dropped
-attempts separately. The raw trace retains cold startup.
+The sender now checks expiry again after packing. The release replay verifies admission time, records the callback timestamp
+inside the capture sink, and reports expired or closely spaced entries separately. The raw trace retains cold startup.
 [Measured timeline and replay files](https://github.com/tolgraven/afterglow/pull/89)
 
 A separate capture of the atomic mailbox and source retention revision
 `84b3821` completed **141 of 240** dense frames within 25 ms, with 112
 current-source sends and 39.45 ms render p95 under shared-host load. The
 publisher dropped three dense production-lead attempts after packing. Across
-all six cases, 33 attempts expired before transport handoff. The capture sink
-received zero expired-slot packets. Every new raw capture records the Git
-revision of each project.
+all six cases, 33 attempts expired before admission. At eight-mover slot 346,
+the sender admitted its packet 23.50 ms after the target. The test sink
+entered 5.23 ms later, 28.73 ms after the target. Another eight-mover pair
+entered the sink 12.38 ms apart. The dense rig had neither condition. Each
+raw capture records both Git revisions.
+
+Of the 240 nominal slots in the dense case, 169 had a render. Of these,
+141 took at most 25 ms, and 151 finished before their own deadline. A frame
+can start more than one period early. The sender visited 177 slots, sent
+112 current and 62 held frames, and dropped three attempts after packing.
+The p95 render time uses completed renders as its denominator. Slot 142
+finished rendering 20.56 ms early. The publisher woke 17.83 ms late and
+spent another 53.54 ms before rejecting that packet. Slot 143 woke 21.73 ms
+late and its 62.15 ms render missed its target. Slot 145 held slot 141’s
+source. Slot 148 supplied the first new source.
+
+Future captures pair admitted and delivered packets by order and frame ID.
+They report `:late-sink-entries`, `:short-sink-gaps`, and
+`:meets-sink-timing?` using the timestamp inside the sink. A missing sink
+cannot count as a fresh send. The sender now prepares retired-fixture and
+fog-channel output before its final admission check and spaces the next
+attempt from transport return. An OS pause after the check can still delay
+the downstream sink. [Full slot chart and raw captures](https://github.com/tolgraven/afterglow/pull/89)
 
 ## Measuring the scheduler
 
