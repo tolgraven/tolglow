@@ -32,7 +32,8 @@
 
 (defn finish [session model elapsed-ms]
   (let [{:keys [options epoch period-ms previous samples config]} session
-        timings {:epoch epoch :versions (versions model) :samples @samples
+        timings {:defer-live-slowdown? (:defer-live-slowdown? session)
+                 :epoch epoch :versions (versions model) :samples @samples
                  :period-ms period-ms :elapsed-ms elapsed-ms}]
     {:options options :config config :state (cadence/advance previous timings options)}))
 

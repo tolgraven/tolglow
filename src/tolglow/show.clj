@@ -9,6 +9,7 @@
             [afterglow.runtime.keyframes :as keyframes]
             [tolglow.effects.keyframes :as effect-keyframes]
             [tolglow.effects.cadence :as cadence]
+            [tolglow.visualization.cue-pads :as cue-pads]
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
@@ -122,6 +123,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :frame-number :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
             :autopilot (get-in model [:variables :lighting/autopilot] {:enabled? false})
@@ -282,7 +284,7 @@
       :queue (LinkedBlockingQueue. 256) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
-      :adaptive-keyframes (:adaptive-keyframes options)
+      :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
@@ -1211,9 +1213,11 @@
                (swap! (:state runtime) assoc-in [:status :reactive-error] @reactive-error))
              (doseq [observer (vals @(:observers runtime))]
                ((:frame! observer) @(:state runtime)))
-             (when sampling
-               (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)]
-                 (swap! (:state runtime) assoc :cadence (cadence/finish sampling (:model next-state) elapsed)))))))
+             (let [elapsed (/ (- (System/nanoTime) frame-start-ns) 1.0e6)
+                   defer? (cue-pads/govern! (:cue-pad-previews runtime) elapsed (/ 1000.0 (:frame-rate runtime)))]
+               (when sampling
+                 (swap! (:state runtime) assoc :cadence
+                        (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
@@ -1400,8 +1404,10 @@
      (assoc options :project! (fn [view]
                                 (let [snapshot @(:state runtime)
                                       audio (audio/waveform (connections/audio (:connections runtime)))]
-                                  (->> (waveforms/project-display cache snapshot view audio)
-                                       (block-trace/project-display (:id runtime) (:model snapshot)))))))))
+                                  (-> (block-trace/project-display (:id runtime) (:model snapshot)
+                                        (waveforms/project-display cache snapshot view audio))
+                                      (assoc-in [:visualization-clock :sample-period-ms]
+                                                (cue-pads/sample-period-ms (:cue-pad-previews runtime))))))))))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
@@ -1417,7 +1423,10 @@
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
-            options (cond-> options (#{:push-2 :push-3} kind) (assoc :target-search targets/search))
+            options (cond-> options
+                      (#{:push-2 :push-3} kind) (assoc :target-search targets/search)
+                      (and (= kind :push-2) (not (contains? options :feedback-source)))
+                      (assoc :feedback-source (cue-pads/push-feedback (:cue-pad-previews runtime) #(deref (:state runtime)))))
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
                                                       (when-not (= epoch (:epoch model))
                                                         (throw (ex-info "Device belongs to a previous show epoch" {})))
