@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app="${1:?Path to the compiled Mac app}"
+out="${2:?Media output folder}"
+mkdir -p "$out"
+show="$(mktemp -d)/Compiled performance"
+mkdir -p "$show"
+cat > "$show/show.clj" <<'SHOW'
+(ns show)
+(def config {:hz 40 :init {:components [:show] :modules [:web-server]}})
+SHOW
+xcrun swiftc native/Tests/window-id.swift -o "$out/window-id"
+"$app/Contents/MacOS/TolglowStudio" --compiled-show "$show" > "$out/window.log" 2>&1 &
+app_pid=$!
+trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+for ((i=0; i<120; i++)); do
+  if grep -q '^Local compiled Studio listening on ' "$out/window.log"; then break; fi
+  kill -0 "$app_pid"
+  sleep 1
+done
+origin="$(sed -n 's/^Local compiled Studio listening on //p' "$out/window.log")"
+curl -fsS "$origin/studio/js/main.js" -o /dev/null
+window="$("$out/window-id" "$app_pid")"
+sleep 5
+for cue in ember breathe orchid; do
+  python3 native/Tests/capture_cue.py "$origin" "$cue"
+  sleep 1
+  screencapture -x -o -l "$window" "$out/$cue.png"
+done
+cp "$out/orchid.png" "$out/compiled-studio.png"
+python3 -m venv "$out/tools"
+"$out/tools/bin/pip" -q install pillow==12.0.0
+"$out/tools/bin/python" - "$out" <<'PY'
+from pathlib import Path
+from PIL import Image, ImageStat
+import sys
+folder = Path(sys.argv[1])
+frames = []
+for cue in ["ember", "breathe", "orchid"]:
+    image = Image.open(folder / (cue + ".png")).convert("RGB")
+    assert max(ImageStat.Stat(image).stddev) > 15
+    image.thumbnail((1080, 720))
+    frames.append(image)
+assert len({frame.tobytes() for frame in frames}) == 3
+frames[0].save(folder / "compiled-studio.gif", save_all=True, append_images=frames[1:], duration=1000, loop=0)
+PY

@@ -5,6 +5,20 @@ import Foundation
 /// launch, so an unrelated listener cannot be mistaken for a running show.
 @MainActor
 final class LocalShow: ObservableObject {
+    enum Engine: String, CaseIterable {
+        case native = "Compiled Clojure"
+        case jvm = "Full JVM Clojure"
+    }
+
+    @Published var engine = Engine(rawValue: UserDefaults.standard.string(forKey: "show-engine") ?? "") ?? .jvm {
+        didSet { UserDefaults.standard.set(engine.rawValue, forKey: "show-engine") }
+    }
+    var nativeHost: URL? {
+        guard let executable = Bundle.main.resourceURL?.deletingLastPathComponent()
+            .appendingPathComponent("Helpers/TolglowNativeHost"),
+              FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
+        return executable
+    }
     @Published private(set) var origin: URL?
     @Published private(set) var message = "Open a folder containing tolglow.edn or show.clj."
     @Published private(set) var running = false
@@ -41,7 +55,7 @@ final class LocalShow: ObservableObject {
         start(url)
     }
 
-    func start(_ folder: URL) {
+    func start(_ folder: URL, use requestedEngine: Engine? = nil) {
         guard !running, let resources = Bundle.main.resourceURL else { return }
         let files = FileManager.default
         let directory = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -51,15 +65,20 @@ final class LocalShow: ObservableObject {
         do {
             try files.createDirectory(at: directory, withIntermediateDirectories: false,
                                       attributes: [.posixPermissions: 0o700])
-            child.executableURL = resources.appendingPathComponent("runtime/bin/java")
             child.currentDirectoryURL = folder
             if let sources = ApplicationSources(), sources.installed {
                 var environment = ProcessInfo.processInfo.environment
                 environment["TOLGLOW_APPLICATION_SOURCES"] = sources.directory.path
                 child.environment = environment
             }
-            child.arguments = ["-Djava.awt.headless=true", "-cp", resources.appendingPathComponent("studio.jar").path,
-                               "clojure.main", "-m", "tolglow.desktop", folder.path, ready.path]
+            if (requestedEngine ?? engine) == .native, let nativeHost {
+                child.executableURL = nativeHost
+                child.arguments = [folder.path, ready.path]
+            } else {
+                child.executableURL = resources.appendingPathComponent("runtime/bin/java")
+                child.arguments = ["-Djava.awt.headless=true", "-cp", resources.appendingPathComponent("studio.jar").path,
+                                   "clojure.main", "-m", "tolglow.desktop", folder.path, ready.path]
+            }
             child.standardInput = pipe
             child.terminationHandler = { [weak self] finished in
                 try? FileManager.default.removeItem(at: directory)

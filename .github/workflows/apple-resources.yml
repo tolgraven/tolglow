@@ -58,8 +58,6 @@ jobs:
           if [[ "$EMBEDDED_STUDIO" == true ]]; then
             unzip -t ../studio-assets/studio.jar tolglow/native/show_source.clj sci/core.cljc
           fi
-          if [[ "$EMBEDDED_STUDIO" == false ]]; then
-            native/Packaging/archive-sources ../studio-assets "$PWD" "$PWD/../afterglow"
-          fi
+          native/Packaging/archive-sources ../studio-assets "$PWD" "$PWD/../afterglow"
       - uses: actions/upload-artifact@v7.0.2
         with: {name: studio-runtime, path: studio-assets, retention-days: 2}

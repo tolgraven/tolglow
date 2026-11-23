@@ -29,63 +29,11 @@ export GRAALVM_HOME="$(dirname "$(dirname "$(find "$RUNNER_TEMP/gluon" -type f -
 export JAVA_HOME="$GRAALVM_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version
-curl -fLsS https://repo.clojars.org/com/github/clj-easy/graal-build-time/1.0.6/graal-build-time-1.0.6.jar -o graal-build-time.jar
-echo '2104dddf7d103f5cc1e34b08d82b1b6217168ee75e9e01d261ddb607866e78bc  graal-build-time.jar' | shasum -a 256 -c -
+"$root/native/EmbeddedHost/prepare-jar" "$target"
 curl -fLsS https://repo.maven.apache.org/maven2/org/graalvm/sdk/graal-sdk/22.1.0/graal-sdk-22.1.0.jar -o graal-sdk.jar
 echo '6d3994e14cadba8ffb4b431899266dd19e84c7543eaf9190a0e530bc79dfaed1  graal-sdk.jar' | shasum -a 256 -c -
-mkdir -p override/tolglow override/thi/ng/math
-unzip -p studio.jar thi/ng/math/core.cljc | sed 's/:clj (java.util.Random\.)/:clj (when-not (Boolean\/getBoolean "tolglow.native.build") (java.util.Random.))/' > override/thi/ng/math/core.cljc
-java -cp "$root/dev:studio.jar" clojure.main -m tolglow.native-assets studio.jar override/tolglow/native-assets.edn
-cp "$root/src/tolglow/native_resources.clj" override/tolglow/native_resources.clj
-cat > override/tolglow/fixed_image.clj <<'CLOJURE'
-(ns tolglow.fixed-image (:gen-class)
-  (:require [thi.ng.math.core :as math] [tolglow.native-resources] [tolglow.studio] [tolglow.application :as app]))
-(defn -main [& args]
-  (alter-var-root #'math/*rnd* (fn [current] (or current (java.util.Random.))))
-  (try (Class/forName "org.eclipse.jetty.ee9.nested.HttpOutput")
-       (catch Throwable failure (.printStackTrace failure) (throw failure)))
-  (apply app/-main args))
-CLOJURE
-cp "$root/src/tolglow/fixed_host.clj" override/tolglow/fixed_host.clj
-java -Dclojure.compile.path=override -cp override:studio.jar clojure.main -e "(doseq [ns '[thi.ng.math.core slf4j-timbre.service-provider slf4j-timbre.factory tolglow.native-resources tolglow.fixed-image tolglow.fixed-host]] (compile ns))"
 javac --release 17 -d override -cp override:studio.jar:graal-sdk.jar "$root/native/EmbeddedHost/StudioRuntime.java"
-jar uf studio.jar -C override .
-if find "$JAVA_HOME" -name 'libnative-image-agent.dylib' | grep -q .; then
-  mkdir -p tracing/META-INF/native-image/tolglow/studio
-  java -agentlib:native-image-agent=config-output-dir="$PWD/tracing/META-INF/native-image/tolglow/studio" -cp studio.jar tolglow.fixed_image --port 0 >training.log 2>&1 &
-  trainer=$!
-  trap 'kill "$trainer" 2>/dev/null || true' EXIT
-  for ((i=0; i<120; i++)); do
-    if grep -q 'Tolglow Studio listening on' training.log; then break; fi
-    if ! kill -0 "$trainer"; then tail -30 training.log; exit 1; fi
-    sleep 1
-  done
-  origin="$(sed -n 's/Tolglow Studio listening on //p' training.log)"
-  curl -fsS "$origin/studio/js/main.js" -o /dev/null
-  curl -fsS "$origin/api/state" -o /dev/null
-  kill -TERM "$trainer"
-  wait "$trainer" || test "$?" = 143
-  trap - EXIT
-  python3 - <<'METADATA'
-import json
-from pathlib import Path
-directory=Path('tracing/META-INF/native-image/tolglow/studio')
-prefixes=('org.eclipse.jetty.', 'org.slf4j.', 'com.github.fzakaria.slf4j.', 'com.fasterxml.jackson.')
-def retained(entry):
-    name=entry.get('type',entry.get('name',''))
-    return isinstance(name,str) and name.startswith(prefixes) and 'condition' not in entry
-for path in directory.iterdir():
-    if path.name=='reflect-config.json':
-        entries=json.loads(path.read_text())
-        path.write_text(json.dumps([e for e in entries if retained(e)]))
-    elif path.name=='reachability-metadata.json':
-        tables=json.loads(path.read_text())
-        path.write_text(json.dumps({'reflection':[e for e in tables.get('reflection',[]) if retained(e)]}))
-    elif path.is_file():
-        path.unlink()
-METADATA
-  jar uf studio.jar -C tracing META-INF
-fi
+jar uf studio.jar -C override org/tolglow/embedded/StudioRuntime.class
 mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=studio.jar -DgroupId=org.tolglow -DartifactId=studio-host -Dversion=1 -Dpackaging=jar
 mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file -Dfile=graal-build-time.jar -DgroupId=com.github.clj-easy -DartifactId=graal-build-time -Dversion=1.0.6 -Dpackaging=jar
 cp "$root/native/EmbeddedHost/pom.xml" pom.xml

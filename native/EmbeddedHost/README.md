@@ -43,3 +43,7 @@ native/Tests/check-embedded-studio
 ```
 
 GluonFX 1.0.29 uses Intel macOS for the x86_64 iPad simulator and Apple Silicon macOS for an arm64 device build. Use `ios` for the latter, then run `native/EmbeddedHost/generate-project`. Select your signing team in the generated Xcode project for hardware installation. The simulator test requires the actual local control page to load on two consecutive launches. App Clips and watchOS run their own clients. Backgrounding an iOS app relinquishes its active host. Processes that must keep running throughout a performance belong on the venue host.
+
+## Mac app
+
+The **Compiled macOS Studio** build packages the fixed Native Image executable alongside the full JVM. The launch window offers a **Show runtime** selector. **Compiled Clojure** runs operator-authored source in SCI and **Full JVM Clojure** supports arbitrary JVM classes, dependencies and live compilation. Each window owns the show's child process and closes it when the window exits. The app remembers the choice. Local HTTP checks require the compiled process to open a source show, return the production page and JavaScript, stream its actual state, stop on EOF and open again.

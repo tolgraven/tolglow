@@ -5,6 +5,7 @@
   (:require [clojure.java.io :as io]
             [thi.ng.math.core :as math]
             [tolglow.application :as application]
+            [tolglow.desktop.launch :as launch]
             [tolglow.modules :as modules]
             [tolglow.native-resources]
             [tolglow.native.show-source :as source]
@@ -19,6 +20,7 @@
     (let [{cfg :config registry :registry} (if (seq folder)
                                              (source/read-show folder application/registry)
                                              {:config (application/default-config) :registry application/registry})
+          cfg (launch/with-application-sources cfg)
           local-show (assoc (modules/settings cfg :show) :credential-path (str (io/file home "credentials.edn")))
           local-web {:enabled true :host "127.0.0.1" :port 0}
           show (application/start! (assoc cfg :show local-show :web-server local-web) registry)
