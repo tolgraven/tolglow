@@ -6,6 +6,7 @@
             [reagent.core :as r]
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
+            [tolglow.studio.audience :as audience]
             [tolglow.studio.lighting-capacity :as capacity]
             [tolglow.studio.fog-control :as fog-control]
             [tolglow.studio.audio-scope :as audio-scope]
@@ -648,6 +649,7 @@
                          [:p "Pair clocks, instruments and audio inputs with the show."]]
       [:button.button {:type "button" :on-click #(rf/dispatch [:connections/refresh-devices])} "Refresh device lists"]]
      [error-list s]
+     [audience/panel]
      [clock-panel s (get-in db [:show :transport])]
      (when-let [error (get-in s [:sync :last-error])]
        [:p.connection-error {:role "status"} (or (:message error) (str error))])

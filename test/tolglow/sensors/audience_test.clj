@@ -1,6 +1,9 @@
 (ns tolglow.sensors.audience-test
   (:require [clojure.test :refer [deftest is]]
             [tolglow.sensors :as sensors]
+            [tolglow.persistence :as persistence]
+            [tolglow.demo :as demo]
+            [tolglow.sensors.audience.zones :as zones]
             [tolglow.sensors.audience :as audience]
             [tolglow.sensors.osc :as osc]
             [tolglow.sensors-test :as fixture]))
@@ -90,3 +93,28 @@
     (is (zero? (:queued admission)))
     (is (zero? (get-in admission [:metrics :overflow])))
     (is (zero? (get-in admission [:metrics :rejected])))))
+
+(deftest operators-edit-enrolled-zones-and-persist-the-selection
+  (let [model (demo/model)
+        mgr (sensors/create-manager {:credential-store (fixture/vault)})
+        add (fn [m id name mapping]
+              (let [{:keys [pairing]} (sensors/pair! mgr id name)]
+                (:model (sensors/configure m id mapping pairing))))]
+    (try
+      (let [enrolled (-> model (add "front" "Dance floor" audience/gateway-mapping)
+                         (add "balcony" "Balcony" audience/gateway-mapping)
+                         (add "phone" "Personal motion source" {:version 1}))
+            selected (-> enrolled (zones/select-zone "front" true) (zones/select-zone "balcony" true))
+            loaded (persistence/thaw model (persistence/read-string (persistence/write-string selected)))
+            view (sensors/audience-status mgr loaded)]
+        (is (= ["front" "balcony"] (:gateways view)))
+        (is (= [{:id "balcony" :label "Balcony" :status :waiting}
+                {:id "front" :label "Dance floor" :status :waiting}]
+               (:zones view)))
+        (is (= {:audience-count 0 :dance-effort 0.0 :pulse-count 0} (:levels view)))
+        (is (= ["balcony"] (get-in (zones/select-zone loaded "front" false) [:variables :audience :gateways])))
+        (is (identical? selected (zones/select-zone selected "front" true)))
+        (is (thrown? clojure.lang.ExceptionInfo (zones/select-zone loaded "phone" true)))
+        (is (thrown? clojure.lang.ExceptionInfo (zones/select-zone loaded "absent" true)))
+        (is (thrown? clojure.lang.ExceptionInfo (zones/select-zone loaded "front" nil))))
+      (finally (sensors/close! mgr)))))

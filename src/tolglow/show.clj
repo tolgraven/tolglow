@@ -70,6 +70,7 @@
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
             [tolglow.sensors :as sensors]
+            [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
@@ -448,6 +449,9 @@
                        (throw (ex-info "Finish photometry calibration first" {})))
                      (calibration/apply-operation model payload time-ms ((:now-ms (:publisher runtime)))
                                               (and (:independent-output? runtime) (some? (get-in runtime [:sink :send!])))))
+    :sensor-audience-zone
+    {:model (audience-zones/select-zone model (:device-id payload) (:included? payload))
+     :ack {:status :accepted}}
     :sensor-configure
     {:model (apply-sensor-result
              (sensors/configure model (:device-id payload)
