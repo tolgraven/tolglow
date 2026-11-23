@@ -161,3 +161,14 @@
   (is (= {:added 1 :removed 1}
          (select-keys (workspace/change-summary {:diff "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n--- old content\n+++ new content\n"}) [:added :removed])))
   (is (= "unit" (:id (first (workspace/profiles {:unit {:repo :tolglow}}))))))
+
+(deftest leaving-an-unmounted-neovim-pane-does-not-read-a-disposed-buffer
+  (let [nvim (-> editing
+                 (assoc-in [:ui :workspace :editor] :neovim)
+                 (assoc-in [:ui :workspace :files active-key :editor-ready?] true))
+        action [:workspace/pane :agent]]
+    (is (:workspace/read-editor (transition nvim [:workspace/navigate action])))
+    (doseq [previous [:agent :diff :checks :terminal]]
+      (let [hidden (assoc-in nvim [:ui :workspace :pane] previous)]
+        (is (= {:dispatch [:workspace/pane :files]}
+               (transition hidden [:workspace/navigate [:workspace/pane :files]])))))))

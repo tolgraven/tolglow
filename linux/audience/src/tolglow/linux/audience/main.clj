@@ -50,12 +50,12 @@
 
 (defn publication!
   "Advance continuous levels at 5 Hz. Between those updates, only pending
-  events are consumed and carry the last published levels for the host mailbox."
+  events are consumed and carry the last published levels for the host mailbox.
+  An empty level tick keeps the enrolled gateway session observable between guests."
   [host {:keys [due levels] :or {due 0}} now]
   (if (>= now due)
     (let [[updated steps] (stage/drain! host now)]
-      {:due (+ now 0.2) :levels updated :steps steps
-       :send? (or (pos? (:audience-count updated)) (pos? (:audience-count levels 0)) (pos? steps))})
+      {:due (+ now 0.2) :levels updated :steps steps :send? true})
     (let [steps (stage/take-steps! host)]
       {:due due :levels levels :steps steps :send? (pos? steps)})))
 
