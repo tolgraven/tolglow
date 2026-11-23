@@ -1,0 +1,61 @@
+name: Replay #182 packaged Stage capture
+on:
+  push:
+    branches: [qa/studio-182-stage-replay]
+permissions:
+  contents: read
+  actions: read
+env:
+  SOURCE_HEAD: 94a2f7f3cfcc73a4a94c92272c5bedf21275a9ff
+  SOURCE_TREE: b50795207ec16e02c5fe5dd2e295bdf7e848516d
+  BUILT_MERGE: 9e7fe54c09f1a1b5db0db34d7f50c498084c8955
+  AFTERGLOW_HEAD: 8aaf1747901050aaf891676a85d6590d65e6c193
+  ARTIFACT_RUN: '45251057043'
+  ARTIFACT_ID: '14861275234'
+  ARTIFACT_DIGEST: 66aca35827dd8d862f9311b0d302af65df2ae2fbc0d9dc37ecccd2340644a477
+jobs:
+  stage:
+    if: github.repository == 'tolgraven/tolglow'
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Verify and unpack the previously built Apple Silicon app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse "$SOURCE_HEAD^{tree}")" = "$SOURCE_TREE"
+          git diff --exit-code "$SOURCE_HEAD" HEAD -- . \
+            ':!native/Tests/capture-stage.swift' ':!.github/workflows/studio-182-stage-replay.yml'
+          endpoint="repos/tolgraven/tolglow/actions/artifacts/$ARTIFACT_ID"
+          gh api "$endpoint" | jq -e \
+            --argjson id "$ARTIFACT_ID" --argjson run "$ARTIFACT_RUN" \
+            --arg head "$SOURCE_HEAD" --arg digest "sha256:$ARTIFACT_DIGEST" \
+            '.id == $id and .name == "Tolglow-compiled-Studio-arm64" and .digest == $digest and
+             .workflow_run.id == $run and .workflow_run.head_sha == $head and
+             .workflow_run.repository_id == 212231681 and .workflow_run.head_repository_id == 212231681'
+          mkdir -p build/download build/packaged
+          gh api "$endpoint/zip" > build/archived-run.zip
+          echo "$ARTIFACT_DIGEST  build/archived-run.zip" | shasum -a 256 -c -
+          ditto -x -k build/archived-run.zip build/download
+          ditto -x -k build/download/Tolglow-compiled-Studio-arm64.zip build/packaged
+          app="build/packaged/Tolglow Studio.app"
+          test -x "$app/Contents/MacOS/TolglowStudio"
+          test "$(cat "$app/Contents/Resources/source-version.txt")" = "$BUILT_MERGE-$AFTERGLOW_HEAD"
+      - name: Exercise the revised capture with the archived packaged app
+        run: native/Tests/capture-compiled-mac "build/packaged/Tolglow Studio.app" build/media
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: packaged-stage-replay
+          if-no-files-found: ignore
+          path: |
+            build/media/window.log
+            build/media/compiled-studio.png
+            build/media/compiled-studio.gif
+            build/media/stage-ready.png
+            build/media/stage-invitation.png
+            build/media/stage-closed.png
