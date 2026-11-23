@@ -106,7 +106,7 @@
 (defn rotary
   "Shared numeric geometry. Base/effective markers require supplied values;
   the component never generates modulation or samples an effect."
-  [schema value {:keys [base-value effective-value]}]
+  [schema value {:keys [base-value effective-value strip?]}]
   (let [shown (if (finite? effective-value) effective-value value)
         model (dial-model schema shown) base (proportion schema base-value)
         unit (unit-label schema)]
@@ -132,8 +132,9 @@
           [:circle.dial-position {:cx x :cy y :r 3}])
         [:text.dial-bound {:x 5 :y 90 :text-anchor "start"} (number-label (first (:bounds model)))]
         [:text.dial-bound {:x 95 :y 90 :text-anchor "end"} (number-label (second (:bounds model)))]])
-     [:text.dial-number {:x 50 :y 48 :text-anchor "middle"} (number-label shown)]
-     [:text.dial-unit {:x 50 :y 63 :text-anchor "middle"} (or unit (if (= :integer (parameter-kind schema)) "steps" "value"))]]))
+     [:text.dial-number {:x 50 :y (if (and strip? (nil? unit)) 54 48) :text-anchor "middle"} (number-label shown)]
+     (when (or unit (not strip?))
+       [:text.dial-unit {:x 50 :y 63 :text-anchor "middle"} (or unit (if (= :integer (parameter-kind schema)) "steps" "value"))])]))
 
 (defn rotary-control [schema value change! options]
   (let [[low high] (numeric-range schema)

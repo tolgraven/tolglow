@@ -264,10 +264,12 @@ React's value/selection restoration consistent. Network operations stay in
 effects. Authoring views receive bounded projections so renderer clock updates
 do not redraw unrelated editors. Standard command/gesture events remain queued.
 
-Responsive layout keeps the full 8×8 grid on phones, uses a bottom navigation bar
-and moves import/export into the footer when the desktop sidebar disappears.
-iPad-sized layouts retain larger cue cells and place preview/inspector alongside
-one another when space permits. There are no remote fonts or UI/CDN assets.
+Studio navigation takes its order, titles and named Lucide icons from the shared
+Reitit page routes. The sidebar and phone navigation use the same links. The
+number keys 1–8 follow their displayed order. Short labels fit the phone bar,
+while each link keeps its full accessible name. Icons ship with the application
+and work offline. On phones all eight cue columns fit across the page, and the
+transport includes the file controls.
 
 ## Assistant and provider connection
 
@@ -443,6 +445,14 @@ The development workspace manager catalog is currently **ephemeral** across
 process restart. Existing worktree files remain on disk, but a fresh process does
 not recover the catalog; saving/restoring a show does not currently repair this.
 This is a known lifecycle gap, not a completed persistent development environment.
+
+## Running cue controls
+
+Each card in **Perform → In the mix** places the cue title above its state and category labels. **Detail** opens exact parameter editing, envelope controls and effect inspection. **Compact** returns to the instrument bank. Both modes edit the running cue instance.
+
+Use **Source** beside a control to attach or edit a driver. A parameter that has a working driver can share the card’s result display. Select its name above the graph to switch between driven parameters. **Use base value** hands the parameter back to the manual control. **Resume LFO** restores the driver. The waveform picker has its own shape preview.
+
+Compact banks fill the card width. Wider screens can place eight controls in a row. A narrower card wraps the same controls into rows. Pause, zero, release and opacity stay below the bank.
 
 ## Responsive Studio qualification
 

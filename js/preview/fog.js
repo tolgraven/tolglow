@@ -6,12 +6,11 @@ import { FogField, FOG_QUALITY } from './fog-field.js';
 const vertex = `out vec2 vUv;
 void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}`;
 
-export const FOG_FRAGMENT = `precision highp float;
+const fogIntegrator = `precision highp float;
 precision highp sampler3D;
 #include <packing>
 ${fogTransmissionGLSL}
 in vec2 vUv;
-out vec4 volumeOutput;
 uniform sampler2D sceneDepth;
 uniform sampler3D densityTexture;
 uniform mat4 inverseProjection, cameraWorld;
@@ -55,7 +54,8 @@ float visibility(int slot,vec3 position){
  shadowCompare(slot,coordinate.xy+vec2(-texel.x,texel.y),depth)+
  shadowCompare(slot,coordinate.xy+texel,depth));
 }
-float phase(float cosine){const float g=.38;return (1.-g*g)/(12.5663706*pow(max(.001,1.+g*g-2.*g*cosine),1.5));}
+// A uniform bulk medium scatters the same share of incident light per steradian.
+const float bulkPhase = 1./12.5663706;
 vec2 coneHit(int i,float angleCos,vec3 ro,vec3 rd,float lo,float hi){
  vec3 q=ro-lightPosition[i];float axial=dot(q,lightDirection[i]),slope=dot(rd,lightDirection[i]);
  float plane=lightStart[i];
@@ -74,7 +74,7 @@ vec2 coneHit(int i,float angleCos,vec3 ro,vec3 rd,float lo,float hi){
    if(a<0.){lo=max(lo,first);hi=min(hi,last);}else if(slope>0.)lo=max(lo,last);else hi=min(hi,first);}}
  return vec2(lo,hi);
 }
-vec3 incident(int i,vec3 position,vec3 toEye,float density,bool halo){
+vec3 incident(int i,vec3 position,float density,bool halo){
   vec3 delta=position-lightPosition[i];float distance=length(delta);vec3 travel=delta/max(distance,.001);
   float cosine=dot(travel,lightDirection[i]);float outer=lightShape[i].x;
   float inner=lightProfile[i].x;
@@ -105,7 +105,7 @@ vec3 incident(int i,vec3 position,vec3 toEye,float density,bool halo){
   vec3 uvw=vec3(midpoint.x/room.x+.5,midpoint.y/room.y,midpoint.z/room.z+.5);
   float incidentDensity=amount*texture(densityTexture,clamp(uvw,vec3(0.),vec3(1.))).r;
   float transmission=fogTransmission(extinctionPerM,incidentDensity,length(shadowPoint-optical));
-  return lightColor[i]*lightShape[i].y*spot*attenuation*transmission*phase(dot(travel,toEye))*visibility(lightShadow[i],shadowPoint);
+  return lightColor[i]*lightShape[i].y*spot*attenuation*transmission*bulkPhase*visibility(lightShadow[i],shadowPoint);
 }
 float densityAt(vec3 position){
  vec3 coordinate=vec3(position.x/room.x+.5,position.y/room.y,position.z/room.z+.5);
@@ -124,7 +124,7 @@ float densityAt(vec3 position){
  }
  return (density+(structure-1.)*localDensity)*amount;
 }
-void main(){
+void integrateFog(out vec4 volumeOutput){
  if(amount<=0.){volumeOutput=vec4(0.,0.,0.,1.);return;}
  vec4 farView=inverseProjection*vec4(vUv*2.-1.,1.,1.);farView/=farView.w;
  vec3 farWorld=(cameraWorld*farView).xyz;vec3 ray=normalize(farWorld-eye);
@@ -179,7 +179,7 @@ void main(){
     if(localDensity<=0.)continue;
     float foreground=fogTransmission(extinctionPerM,density,lo-begin);
     radiance+=transmission*foreground*(1.-fogTransmission(extinctionPerM,localDensity,hi-lo))*.92*
-       incident(i,samplePosition,-ray,localDensity,halo);
+       incident(i,samplePosition,localDensity,halo);
    }
   }
   transmission*=segment;
@@ -187,11 +187,15 @@ void main(){
  volumeOutput=vec4(radiance,transmission);
 }`;
 
-export const FOG_COMPOSITE_FRAGMENT = `precision highp float;
-in vec2 vUv;out vec4 compositeOutput;
-uniform sampler2D sceneColor,sceneDepth,volume;
+export const FOG_FRAGMENT = `${fogIntegrator}
+out vec4 volumeOutput;
+void main(){integrateFog(volumeOutput);}`;
+
+export const FOG_COMPOSITE_FRAGMENT = `${fogIntegrator}
+out vec4 compositeOutput;
+uniform sampler2D sceneColor,volume;
 uniform vec2 volumeSize;
-uniform float nearPlane,farPlane,amount;
+uniform float nearPlane,farPlane;
 float viewDepth(float z){return (nearPlane*farPlane)/(farPlane-(farPlane-nearPlane)*z);}
 void main(){
  vec4 color=texture(sceneColor,vUv);
@@ -206,7 +210,9 @@ void main(){
   float weight=spatial*exp(-abs(neighbor-center)/max(.03,center*.012));
   fog+=texture(volume,uv)*weight;total+=weight;
  }
- fog=total>.00001?fog/total:vec4(0.,0.,0.,1.);
+ // All neighboring samples can lie behind a thin foreground surface. Integrate
+ // this pixel up to its actual depth instead of discarding the medium in front.
+ if(total>.00001)fog/=total;else integrateFog(fog);
  compositeOutput=vec4(color.rgb*fog.a+fog.rgb,color.a);
 }`;
 
@@ -245,8 +251,8 @@ export class VolumetricFog {
       shadowTexel: { value: Array.from({ length: 4 }, () => new THREE.Vector2(1, 1)) }, shadowBias: { value: new Float32Array(4) }
     };
     for (let i = 0; i < 4; i++) this.uniforms[`shadow${i}`] = { value: this.dummyShadow };
-    this.compositeUniforms = { sceneColor: { value: null }, sceneDepth: { value: null }, volume: { value: this.target.texture },
-      volumeSize: { value: new THREE.Vector2(1, 1) }, nearPlane: { value: 0.08 }, farPlane: { value: 80 }, amount: { value: this.amount } };
+    this.compositeUniforms = { ...this.uniforms, sceneColor: { value: null }, volume: { value: this.target.texture },
+      volumeSize: { value: new THREE.Vector2(1, 1) }, nearPlane: { value: 0.08 }, farPlane: { value: 80 } };
     const material = (fragmentShader, uniforms) => new THREE.ShaderMaterial({ vertexShader: vertex, fragmentShader, uniforms,
       glslVersion: THREE.GLSL3, depthTest: false, depthWrite: false, blending: THREE.NoBlending, toneMapped: false });
     this.volumeMaterial = material(FOG_FRAGMENT, this.uniforms);

@@ -15,6 +15,7 @@
                  nil "dev/studio/performance-layout-qa.mjs"
                  "gestures" "dev/studio/cue-gesture-qa.mjs"
                  "authoring" "dev/studio/compose-rig-layout-qa.mjs"
+                 "shell-alignment" "dev/studio/shell-alignment-qa.mjs"
                  (throw (ex-info "Unknown Studio browser scenario" {:scenario scenario})))
         waves (let [registry (signals/new-registry)
                     sine (get-in registry [:waveforms :sine])]
@@ -46,5 +47,7 @@
           (when-not (= :accepted (:status ack)) (throw (ex-info "Could not launch performance fixture" ack)))))
       (let [{:keys [exit out err]} (shell/sh "node" script origin directory)]
         (print out) (flush)
-        (when-not (zero? exit) (throw (ex-info "Studio layout browser check failed" {:scenario script :error err}))))
+        (when-not (zero? exit)
+          (binding [*out* *err*] (print err) (flush))
+          (throw (ex-info "Studio layout browser check failed" {:scenario script :error err}))))
       (finally (app/stop! host) (shutdown-agents)))))

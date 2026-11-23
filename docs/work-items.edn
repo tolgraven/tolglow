@@ -11,7 +11,7 @@
    :evidence ["docs/repl-studio-parity.md follows the Ember cue across both surfaces and records a scoped scheduling gap. R94 applies to future changes."]}
   {:id :web/studio-type-alignment :title "Align Studio navigation, transport, cue pads and instrument labels"
    :kind :implementation :status :in-progress :owner "Studio shell and live card design owners"
-   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/dev/studio/shell-alignment-qa.mjs"]
+   :paths ["tolglow/resources/studio/styles.css" "tolglow/resources/studio/console.css" "tolglow/src/shared/tolglow/studio/page_routes.cljc" "tolglow/src/studio/tolglow/studio/views.cljs" "tolglow/dev/studio/shell-alignment-qa.mjs"]
    :depends-on [:foundation/tests]
    :acceptance ["Inspect rendered labels, controls and baselines on phone, iPad and desktop. Measure their bounds, exercise the controls and retain comparable before/after releases."] :evidence []}
   {:id :runtime/publication-clock
@@ -45,7 +45,7 @@
    :paths ["tolglow/linux/audience"]
    :depends-on [:foundation/tests]
    :acceptance ["Interoperate with Apple's encrypted v1/v2 frames and paired OSC gesture admission. Exercise ATT/BlueZ hardware and physical capacity on a Pi."]
-   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
+   :evidence ["Real private D-Bus and paired loopback UDP coverage in linux/audience. The 5 Hz empty-floor heartbeat preserves explicit arming between groups. Paired regressions cover guest return and actual gateway loss. Normal QR finder/alignment detection round-tripped all 384 independently seeded stage PNGs after mask selection. The unadjusted encoder failed for two fingerprints. The 96-client encrypted rehearsal is linked in docs/nearby-audience-qualification.md. Physical Bluetooth controller and Apple device qualification pending."]}
   {:id :control/parameter-readouts :title "Format live values and fine-control steps at the destination resolution"
    :kind :implementation :status :in-progress :owner "Studio readouts and Push DMX resolution"
    :paths ["tolglow/src/studio/tolglow/studio/numeric_display.cljs" "afterglow/src/afterglow/control/resolution.cljc"]
@@ -63,7 +63,8 @@
    :paths ["tolglow/docs/performance/render-work-elimination.md" "tolglow/src/tolglow/spatial/cues.clj"]
    :depends-on [:foundation/tests]
    :acceptance ["Conduct repeatable experiments at 50+ moving heads and thousands of pixels. Include spatial rejection, per-channel liveness and reusable shader execution, independent from the quality controller. Verify observable bytes, events and failure/reload behavior against a full reference."]
-   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. #79 measures reuse of their validated tuples across submissions, with unchanged, changing and spatial controls. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."]}
+   :evidence ["Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. #79 measures reuse of their validated tuples across submissions, with unchanged, changing and spatial controls. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #73 retains fault validation while eliminating covered packed writes; #74 broadcasts uniform GPU results. The 20k-pixel/64-mover frame pairs, rejected optical bound, zero-overlap control, 8/16/32-program capacity comparison, native-precision checks and connected Studio replay are in docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-work-elimination.zip. Earlier kernel elimination and hardware GPU throughput remain open." "Afterglow #81, #82 and #83 have independent and combined full-show captures. A Tolglow spatial cue reduces allocation while collecting the weighted fixture IDs. See docs/performance/render-work-elimination.md and docs/benchmarks/master-performance/render-packet-and-membership.zip for source revisions, numerics and both rig sizes."
+              "Afterglow #91 characterizes covered native shader reads. A four-sphere origin experiment compares indexed CPU, squared-distance CPU and a shader with exact CPU repair. A complete CPU-only replay with 10k/20k pixels and 64 movers rejected the guarded distance shortcut after 443,232 exact boundary checks and 72 matching frame pairs. Four-sphere CPU attribution and 72 further matched pairs found that skipping position-dominated beams reduced allocation but increased median CPU. #92 traces matched physical slots with 1,024 pixels and 128 heads and reduces calibrated packing allocation, including 119 clock samples with exact 11-universe output. See docs/performance/render-work-elimination.md."]}
   {:id :performance/perceptual-scheduling :title "Measure visual loss and tune adaptive multi-rate presentation"
    :kind :research :status :in-progress :owner "Perceptual scheduling and interpolation"
    :paths ["tolglow/dev/tolglow/perf/independent_effects.clj" "tolglow/docs/performance/independent-effect-workers.md"
@@ -203,7 +204,7 @@
    :paths ["tolglow/src/studio/tolglow/studio/parameter_visualization.cljs"]
    :depends-on [:foundation/tests]
    :acceptance ["Default spatially meaningful values to a calibrated 3D view. Retain editing and waveform previews, zoom recorded parameter history and release hidden history."]
-   :evidence ["Real Ring preview show with 48 owned Push capture requests, three spatial widgets, all eight zoomable traces and preserved component editing at a 1024×768 touch viewport. See docs/push-parameter-visualizations.md for the repeatable browser check."
+   :evidence ["Real Ring preview show with 48 owned Push capture requests, three spatial widgets, three active traces interleaved with five manual inputs, held/resumed LFOs and preserved component editing at a 1024×768 touch viewport. See docs/push-parameter-visualizations.md for the repeatable browser check."
               "Studio tests cover scalar, RGB, XYZ, degree and radian schemas, adaptive keyframes, clock rewinds, bounded observations, zoom and plot gaps. The host tests cover namespace-preserving IPC and stale selections."]}
   {:id :runtime/predictive-musical-keyframes :title "Tween between future musical effect samples"
    :kind :implementation :status :done :owner nil
@@ -2617,7 +2618,8 @@
     "tolglow/resources/studio/preview.js"],
    :acceptance
    ["Match actual runtime aim/fixture/rig data"
-    "Actual rendered visual review, no AAA claim from source tests"],
+    "Actual rendered visual review, no AAA claim from source tests"
+    "Compare the preview privately against the operator’s iPhone Cinematic reference at source timestamps when available. Review a still and motion, separate lens, focus and exposure from scene optics, and retain actual presentation rates and raster dimensions for the rendered side. Use synthetic venue footage for public evidence."],
    :title
    "Replace rudimentary preview with shared-model Three scene and fixture optics",
    :status :planned,

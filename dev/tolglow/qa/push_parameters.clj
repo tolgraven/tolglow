@@ -21,9 +21,11 @@
             :dimmer (scalar "Intensity" 0.7) :focus (scalar "Focus" 0.6) :glow (scalar "Glow" 0.3)
             :iris (scalar "Iris" 0.4) :spread (scalar "Beam width" 0.45)}})
 
-(defn- command! [host command]
-  (let [ack (deref (show/submit! host :command command) 10000 nil)]
+(defn- send! [host op payload]
+  (let [ack (deref (show/submit! host op payload) 10000 nil)]
     (when-not (= :accepted (:status ack)) (throw (ex-info "QA command failed" {:ack ack}))) ack))
+
+(defn- command! [host command] (send! host :command command))
 
 (defn- orbit [phase]
   (let [c (Math/cos phase) s (Math/sin phase)]
@@ -37,7 +39,19 @@
         selection {:selected-instance id :selected-cue :orbital :ready? true :page-id :main :origin [0 0]}]
     (with-open [out (io/writer file)]
       (doseq [i (range 48)]
-        (doseq [[k v] (orbit (* 0.18 i))] (command! host {:op :param/set :instance-id id :param k :value v}))
+        (cond
+          (< i 17) (doseq [[k v] (orbit (* 0.18 i))]
+                     (command! host {:op :param/set :instance-id id :param k :value v}))
+          (= i 17) (doseq [[param from to] [[:aim [-1 0 -1] [1 1 1]] [:dimmer 0.1 0.9] [:focus 0.6 0.6]]]
+                     (send! host :modulation-bind {:instance-id id :param param
+                                                   :binding {:type :lfo :waveform :sine :from from :to to
+                                                             :period {:beats 2}}}))
+          (= i 34) (send! host :modulation-hold {:instance-id id :params [:aim :dimmer :focus]})
+          (= i 37) (send! host :modulation-resume {:instance-id id :params [:aim :dimmer :focus]})
+          (= i 44) (doseq [param [:aim :dimmer :focus]]
+                     (send! host :modulation-unbind {:instance-id id :param param})))
+        ;; The running clock publishes the values read by the passive worker.
+        (when (>= i 16) (Thread/sleep 110))
         (let [snapshot @(:state host) view (push/display-view selection (:model snapshot))]
           (.write out (display/frame-request i (waveforms/project-display cache snapshot view nil)))
           (.write out "\n"))))))

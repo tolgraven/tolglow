@@ -16,6 +16,18 @@
   (is (= :push-display (get-in (nav/match-path (nav/href :push-display)) [:data :surface])))
   (is (nil? (nav/match-path "/api/command"))))
 
+(deftest sidebar-pages-and-keyboard-shortcuts-follow-the-router
+  (is (= pages/views (set (map :route pages/navigation))))
+  (is (= (count pages/views) (count pages/navigation) (count pages/shortcut-routes)))
+  (doseq [{:keys [route label icon shortcut]} pages/navigation]
+    (let [data (:data (nav/match-path (nav/href route)))]
+      (is (= label (get-in data [:nav :label])))
+      (is (keyword? icon))
+      (is (= (:view data) (pages/shortcut-routes shortcut)))))
+  (is (= :perform (pages/shortcut-routes "1")))
+  (is (= :debug (pages/shortcut-routes "8")))
+  (is (nil? (pages/shortcut-routes "0"))))
+
 (deftest explicit-route-wins-over-delayed-show-preferences
   (let [rig (:db (transition base [:studio/route-matched :rig]))
         settings [:studio/settings-received {:ui {:view "assistant" :launch-mode "held"}}]
