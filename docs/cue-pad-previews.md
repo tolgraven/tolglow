@@ -38,7 +38,9 @@ to 60–250 ms at the baseline rate, then interpolates RGB on each presentation
 update. Tempo, transport jumps, instance lifecycle and definition replacement
 invalidate predictions. Sampled external inputs refresh with the next
 keyframe. A page can stagger while its MIDI palette acknowledgements arrive;
-the next batch begins after the last updated pad. The tested transport uses a
+the next batch begins after the last updated pad. While that batch drains,
+the physical session reuses its grid projection for the same committed
+snapshot, page and origin. A new snapshot or viewport immediately replaces it. The tested transport uses a
 captured Push 2 protocol stream. Physical Push 3 User Mode does not define
 palette writes in the current adapter.
 
@@ -71,3 +73,13 @@ STOP_FILE`, then run `node dev/studio/cue-pad-preview-qa.mjs
 http://127.0.0.1:PORT OUTPUT_DIRECTORY`. Create the stop file to release the QA
 server. The browser check records an inactive moving page, switches pages and
 verifies the outgoing unsubscribe when navigating away.
+
+To replay the Push 2 session, run
+`lein run -m tolglow.qa.push-pad-feedback /tmp/push-pad-feedback.edn`.
+The report records each outgoing palette write and counts the acknowledgements
+and grid projections. A four-pass comparison with 64 independently phased
+idle cues produced 3,598 identical palette writes in each measured 80-frame
+window. Reusing the projection reduced calls from 566 to 80 and average
+device-session CPU from 7.43–8.75 ms to 4.65–4.74 ms per committed frame.
+The emulator acknowledges each batch immediately. Hardware latency and USB
+scheduling need measurements on a connected Push 2.
