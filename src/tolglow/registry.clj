@@ -6,6 +6,7 @@
             [afterglow.render.layers :as layers]
             [afterglow.render.photometry :as photometry]
             [afterglow.control.categories :as categories]
+            [afterglow.control.params :as params]
             [afterglow.control.system :as system]
             [afterglow.control.targets :as selection]))
 
@@ -289,7 +290,9 @@
                  (and (= kind :cues) (nil? effect))
                  (conj (error [:effect-id] "Referenced effect version is not registered"))
                  (and (= kind :cues) effect)
-                 (into (validate-cue-params effect definition)))]
+                 (into (validate-cue-params effect definition))
+                 (and (= kind :effects) (empty? errors) (not= (:params old) (:params definition)))
+                 (into (params/dependent-cue-errors (:cues registry) definition)))]
     (when (seq errors) (throw (ex-info "Invalid definition" {:kind kind :errors errors})))
     (cond
       (= old definition) registry

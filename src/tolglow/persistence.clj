@@ -30,6 +30,7 @@
             [tolglow.spatial.cues :as spatial-cues]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.rig :as rig]
+            [tolglow.rig.pixel-storage :as pixel-storage]
             [tolglow.event-subscribers :as event-subscribers]
             [tolglow.integrations.live-sync :as live-sync]
             [tolglow.repl.sessions :as repl-manager]
@@ -362,13 +363,16 @@
 (defn- encode-document
   "Encode a validated show and check the actual file size."
   [document]
-  (let [source (wire/encode (cond-> document (:frame-output document)
+  (let [source (wire/encode (cond-> (update-in document [:model :rig] pixel-storage/compact)
+                              (:frame-output document)
                               (update-in [:frame-output :universes] pack-universes)))]
     (check! (fits-file? source) [] "Show document exceeds the 16 MiB UTF-8 limit")
     source))
 
 (defn- decode-document [source]
-  (let [document (wire/decode source)]
+  (let [document (wire/decode source)
+        document (cond-> document (get-in document [:model :rig])
+                   (update-in [:model :rig] pixel-storage/expand))]
     (cond-> document (get-in document [:frame-output :universes])
       (update-in [:frame-output :universes] unpack-universes))))
 

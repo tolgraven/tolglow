@@ -67,6 +67,13 @@
             (recur))))
       (str text))))
 
+(defn- normalize-form [uri data]
+  ;; Layout IDs, authored metadata and wire-index keys are typed author input.
+  ;; Geometry interprets textual enums itself, at the same boundary as the REPL.
+  (if (and (= uri "/api/rig") (contains? data :pixel-layouts))
+    (assoc (data/normalize-json (dissoc data :pixel-layouts)) :pixel-layouts (:pixel-layouts data))
+    (data/normalize-json data)))
+
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -81,7 +88,7 @@
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
                      (not (str/starts-with? (:uri request) "/api/fixtures/")))]
-      (handler (assoc request :json-params (if form? (data/normalize-json data) data))))))
+      (handler (assoc request :json-params (if form? (normalize-form (:uri request) data) data))))))
 
 (defn wrap-errors [handler]
   (fn [request]

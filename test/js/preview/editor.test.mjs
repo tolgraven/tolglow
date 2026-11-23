@@ -126,3 +126,24 @@ test('throw uses drag distance and elapsed time in the chosen plane and cancels 
   assert.ok(Math.abs(toss.velocity[0]-4) < .00001); assert.ok(Math.abs(toss.velocity[1]) < .00001);
   assert.equal(toss.point[1],1); input.dispose();
 });
+
+test('pixel picks keep wire indices and a layout switch cancels a captured drag', () => {
+  const messages = [], canvas = new EventTarget();
+  Object.assign(canvas, {style: {}, focus(){}, getBoundingClientRect: () => bounds, setPointerCapture(){}, hasPointerCapture: () => false});
+  canvas.addEventListener('tolglow-editor', event => messages.push(event.detail));
+  const input = new RigEditorInput({canvas, camera, setInteractionActive(){}});
+  const editor = {tool: 'pixels', 'layout-id': 'strip', plane: 'xz', 'plane-value': 0,
+    'pixel-mode': 'pixel', 'pixel-indices': [0, 1919], 'pixel-positions': [[-1, 2, 0], [2, 2, 0]]};
+  input.update({rig, editor});
+  const p = projectPoint(camera, bounds, [2, 2, 0]);
+  const touch = {pointerId: 4, clientX: p.x, clientY: p.y, button: 0, preventDefault(){}, stopImmediatePropagation(){}};
+  input.down(touch);
+  assert.equal(messages.at(-1).selection.index, 1919);
+  input.move({...touch, clientX: p.x + 40});
+  assert.equal(messages.at(-1).point[1], 2);
+  input.update({rig, editor: {...editor, 'layout-id': 'another-strip'}});
+  assert.equal(messages.at(-1).type, 'cancel');
+  input.down({...touch, clientX: 1, clientY: 1});
+  assert.equal(messages.at(-1).type, 'cancel');
+  input.dispose();
+});
