@@ -99,6 +99,26 @@ async function verifySourceFocus(page,touch,profile) {
   await close(panel);
   await panel.waitFor({state:'detached'});
   await trigger.and(focused).waitFor({timeout:5000});
+
+  await card.getByRole('slider',{name:'Intensity rotary',exact:true}).focus();
+  await trigger.evaluate(button => {button.click(); button.click();});
+  await trigger.and(focused).waitFor({timeout:5000});
+  assert.equal(await trigger.getAttribute('aria-expanded'),'false');
+  await panel.waitFor({state:'detached'});
+
+  await activate(trigger);
+  await heading.and(focused).waitFor({timeout:5000});
+  const nextTrigger=card.getByRole('button',{name:'Attach source for Orbit aim',exact:true});
+  const nextPanel=card.getByRole('region',{name:'Orbit aim source',exact:true});
+  await card.evaluate(article => {
+    article.querySelector('button[aria-label="Attach source for Orbit aim"]').click();
+    article.querySelector('button[aria-label="Close source editor"]').click();
+  });
+  await nextPanel.getByRole('heading').and(focused).waitFor({timeout:5000});
+  await panel.waitFor({state:'detached'});
+  assert.equal(await nextTrigger.getAttribute('aria-controls'),await nextPanel.getAttribute('id'));
+  await close(nextPanel);
+  await nextTrigger.and(focused).waitFor({timeout:5000});
 }
 
 async function verifyControls(page,touch,profile) {
