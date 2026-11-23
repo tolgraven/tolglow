@@ -1,6 +1,7 @@
 // Test a release build served by tolglow.qa.performance-layout.
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {checkCardAlignment} from './live-card-alignment.mjs';
 import {join} from 'node:path';
 import {chromium, devices, webkit} from 'playwright-core';
 
@@ -76,6 +77,8 @@ async function verifyControls(page,touch,profile) {
   assert.equal(await fader.isVisible(),true);
   assert.deepEqual(await sweep.locator('.strip-fader-bounds>span').allTextContents(),['0','0.45']);
   const {card,activate,open,close,attach,detach}=sourceChecks(page,touch);
+  const opacity=card.getByRole('slider',{name:'Effect opacity'});
+  const initialOpacity=await opacity.inputValue();
   const strip=card.getByRole('group',{name:'Parameter strip'});
   assert.equal(await strip.locator('.param-row').count(),8);
   assert.equal(await strip.locator('.param-source-trigger').count(),8);
@@ -154,6 +157,7 @@ async function verifyControls(page,touch,profile) {
   await detach('Orbit aim');
   await detach('Intensity');
   assert.equal(await card.locator('.strip-monitor').count(),0);
+  assert.equal(await opacity.inputValue(),initialOpacity,'Editing a source leaves the cue opacity untouched');
   assert.equal(await strip.getByRole('slider',{name:'Intensity rotary'}).getAttribute('aria-valuenow'), original);
   const base=strip.getByRole('slider',{name:'Intensity rotary'});
   await base.focus();
@@ -235,6 +239,11 @@ try {
     await page.screenshot({path:join(directory,name+'.png')});
     measurements[name]=await measureCards(page);
     assert.equal(measurements[name].horizontalOverflow,0,'Document overflow at '+name);
+    await checkCardAlignment(page, name, directory, measurements[name]);
+    if(process.env.STUDIO_CARD_LAYOUT_ONLY==='1') {
+      await page.close();
+      continue;
+    }
     if(process.env.STUDIO_SHELL_ONLY==='1') {
       await verifyShellActions(page,name,touch);
       assert.deepEqual(errors,[]);
