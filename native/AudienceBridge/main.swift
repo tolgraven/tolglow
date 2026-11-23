@@ -100,47 +100,77 @@ final class Stage: NSObject, CBPeripheralManagerDelegate {
         request.value = Data(data.dropFirst(request.offset))
         peripheral.respond(to: request, withResult: .success)
     }
+    private func fragment(_ request: CBATTRequest) -> AudienceGATTWrite.Fragment {
+        let field: AudienceGATTWrite.Field?
+        switch request.characteristic.uuid {
+        case AudienceRadio.hello: field = .hello
+        case AudienceRadio.samples: field = .samples
+        default: field = nil
+        }
+        return .init(central: request.central.identifier, field: field, offset: request.offset, value: request.value)
+    }
+
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         guard let first = requests.first else { return }
-        guard requests.count == 1, first.offset == 0, let packet = first.value
-        else { peripheral.respond(to: first, withResult: .invalidOffset); return }
-        let id = first.central.identifier
-        let time = ProcessInfo.processInfo.systemUptime
+        let result: CBATTError.Code
         do {
-            switch first.characteristic.uuid {
-            case AudienceRadio.hello:
-                guard packet.count == 65, peers[id] != nil || peers.count < floor.capacity else {
-                    peripheral.respond(to: first, withResult: .insufficientResources); return
-                }
-                guard let challenge = challenges.removeValue(forKey: id), time - challenge.time < 8 else {
-                    peripheral.respond(to: first, withResult: .insufficientAuthentication); return
-                }
-                let key = try AudienceRadio.key(secret, packet, challenge: challenge.value)
-                peers[id] = (key, time, nil)
-                floor.leave(id)
-            case AudienceRadio.samples:
-                guard (packet.count == 39 || packet.count == 63), let peer = peers[id] else {
-                    peripheral.respond(to: first, withResult: .insufficientAuthentication); return
-                }
-                let data = try AES.GCM.open(AES.GCM.SealedBox(combined: packet), using: peer.key)
-                guard let sample = AudienceSample(bytes: data),
-                      peer.serial.map({ previous in
-                          let delta = sample.serial &- previous
-                          return delta > 0 && delta < (1 << 31)
-                      }) ?? true, floor.receive(sample, from: id, at: time) else {
-                    peripheral.respond(to: first, withResult: .unlikelyError); return
-                }
-                peers[id] = (peer.key, time, sample.serial)
-                if connection != nil {
-                    let delta = floor.takeSteps()
-                    do { try onsets.append(delta) }
-                    catch { stop("Gesture queue overflow (\(onsets.pending) pending, \(delta) incoming)."); return }
-                    scheduleFrame(at: time)
-                }
-            default: peripheral.respond(to: first, withResult: .writeNotPermitted); return
+            let write = try AudienceGATTWrite.assemble(requests, inspect: fragment)
+            let now = ProcessInfo.processInfo.systemUptime
+            switch write.field {
+            case .hello: result = try acceptHello(write, at: now)
+            case .samples: result = try acceptSample(write, at: now)
             }
-            peripheral.respond(to: first, withResult: .success)
-        } catch { peripheral.respond(to: first, withResult: .insufficientAuthentication) }
+        } catch AudienceGATTWrite.Failure.unsupported { result = .writeNotPermitted }
+        catch AudienceGATTWrite.Failure.offset { result = .invalidOffset }
+        catch AudienceGATTWrite.Failure.length { result = .invalidAttributeValueLength }
+        catch AudienceGATTWrite.Failure.mixed { result = .unlikelyError }
+        catch { result = .insufficientAuthentication }
+        peripheral.respond(to: first, withResult: result)
+    }
+
+    private func acceptHello(_ write: AudienceGATTWrite, at time: Double) throws -> CBATTError.Code {
+        let id = write.central
+        guard peers[id] != nil || peers.count < floor.capacity else { return .insufficientResources }
+        guard let challenge = challenges[id], time - challenge.time < 8 else { return .insufficientAuthentication }
+        let key = try AudienceRadio.key(secret, write.value, challenge: challenge.value)
+        challenges.removeValue(forKey: id)
+        peers[id] = (key, time, nil)
+        floor.leave(id)
+        return .success
+    }
+
+    private func acceptSample(_ write: AudienceGATTWrite, at time: Double) throws -> CBATTError.Code {
+        let id = write.central
+        guard let peer = peers[id] else { return .insufficientAuthentication }
+        let data = try AES.GCM.open(AES.GCM.SealedBox(combined: write.value), using: peer.key)
+        guard let sample = AudienceSample(bytes: data) else { return .unlikelyError }
+        if let previous = peer.serial {
+            let delta = sample.serial &- previous
+            guard delta > 0, delta < (1 << 31) else { return .unlikelyError }
+        }
+        var overflow: String?
+        let admitted = floor.receive(sample, from: id, at: time) { delta in
+            guard connection != nil, delta > 0 else { return true }
+            do { try onsets.append(delta); return true }
+            catch {
+                overflow = "Gesture queue overflow (\(onsets.pending) pending, \(delta) incoming)."
+                return false
+            }
+        }
+        guard admitted else {
+            if let overflow {
+                // Reply to the transaction before closing the failed bridge on the main queue.
+                DispatchQueue.main.async { self.stop(overflow) }
+                return .insufficientResources
+            }
+            return .unlikelyError
+        }
+        peers[id] = (peer.key, time, sample.serial)
+        if connection != nil {
+            _ = floor.takeSteps()
+            scheduleFrame(at: time)
+        }
+        return .success
     }
 
     private func publish() {

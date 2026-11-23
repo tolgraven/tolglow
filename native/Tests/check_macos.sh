@@ -17,5 +17,5 @@ xcodebuild -project Tolglow.xcodeproj -scheme TolglowAudienceBridge \
 xcodebuild -project Tolglow.xcodeproj -scheme TolglowAudienceClip \
   -destination 'generic/platform=iOS Simulator' -derivedDataPath "$native_root/DerivedData" CODE_SIGNING_ALLOWED=NO build
 test -d "$native_root/DerivedData/Build/Products/Debug-iphonesimulator/TolglowPhone.app/AppClips/TolglowAudienceClip.app"
-xcrun --sdk macosx swiftc Audience/AudienceRadio.swift Tests/AudienceRadio/main.swift -o DerivedData/audience-radio-check
+xcrun --sdk macosx swiftc Core/Sources/TolglowSensorCore/AudienceGATTWrite.swift Audience/AudienceRadio.swift Tests/AudienceRadio/main.swift -o DerivedData/audience-radio-check
 DerivedData/audience-radio-check

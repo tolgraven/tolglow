@@ -212,6 +212,17 @@ jobs:
           name: audience-onset-timing
           path: ${{ runner.temp }}/onset-timing/*.json
           if-no-files-found: error
+      - name: Verify atomic segmented Bluetooth writes
+        env:
+          TOLGLOW_AUDIENCE_GATT_DIR: ${{ runner.temp }}/gatt
+        run: |
+          mkdir -p "$TOLGLOW_AUDIENCE_GATT_DIR"
+          swift test --package-path native/Core --filter AudienceGATTTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audience-gatt-qualification
+          path: ${{ runner.temp }}/gatt/gatt-traces.json
+          if-no-files-found: error
 
   native:
     needs: native-changes
