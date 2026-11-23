@@ -1,5 +1,7 @@
 # Working on tolglow
 
+Preserve active scopes when new ideas arrive. Record each new request in the [request register](docs/request-coverage.md) with its work item and acceptance check.
+
 Read [docs/README.md](docs/README.md), the [v1 contract](docs/implementation-contract-v1.md)
 and [roadmap](docs/roadmap.md) before architectural work. The complete requested
 product scope is documented; proposed behavior is not automatically shipped.

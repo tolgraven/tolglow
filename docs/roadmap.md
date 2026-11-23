@@ -1,5 +1,7 @@
 # Delivery roadmap and parallel work
 
+[Conversation request register](request-coverage.md) · [Active work and handoff](request-handoff.md)
+
 `work-items.edn` is authoritative. `:done` means the named milestone's acceptance
 criteria have evidence, not that every related product requirement is finished.
 Broad roadmap items stay open when a smaller v1 module is delivered. Active
