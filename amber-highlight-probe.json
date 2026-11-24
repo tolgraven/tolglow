@@ -1,0 +1,1432 @@
+{
+  "browser": "158.0.8127.37",
+  "revision": "614c5942d5d9611c63d7cf01388b514d943813f0",
+  "mode": "manually sampled OffscreenCanvas scene",
+  "bundleSha256": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+  "inputSha256": "2c30fe8d27fc14f54f67c8bfa5c7bc073f28742c619d8ae6bcbe4c0c11496d6c",
+  "viewport": {
+    "width": 960,
+    "height": 540
+  },
+  "samples": [
+    {
+      "frame": 0,
+      "camera": [
+        -0.6329438615408904,
+        1.76,
+        4.2583264078626835
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.29833984375,
+          "total": 19.881072998046875,
+          "lit": 157,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.27978515625,
+          "total": 18.508010864257812,
+          "lit": 158,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.27978515625,
+          "total": 18.508010864257812,
+          "lit": 158,
+          "largestAt": [
+            499,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 1,
+      "camera": [
+        -0.3338822548024582,
+        1.7581928697262705,
+        4.281202306033825
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.388671875,
+          "total": 26.013206481933594,
+          "lit": 183,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.681640625,
+          "total": 29.914833068847656,
+          "lit": 182,
+          "largestAt": [
+            491,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.681640625,
+          "total": 29.914833068847656,
+          "lit": 182,
+          "largestAt": [
+            491,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 2,
+      "camera": [
+        -0.044914632076316276,
+        1.7528367933016071,
+        4.2898409030373506
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.48779296875,
+          "total": 33.061973571777344,
+          "lit": 161,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 9.6875,
+          "total": 126.50021362304688,
+          "lit": 158,
+          "largestAt": [
+            489,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 9.6875,
+          "total": 126.50021362304688,
+          "lit": 158,
+          "largestAt": [
+            489,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 3,
+      "camera": [
+        0.22286976895718122,
+        1.744125353283118,
+        4.286081522998656
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.55322265625,
+          "total": 39.36707305908203,
+          "lit": 164,
+          "largestAt": [
+            500,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 40.3125,
+          "total": 329.4201202392578,
+          "lit": 165,
+          "largestAt": [
+            492,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 40.3125,
+          "total": 329.4201202392578,
+          "lit": 165,
+          "largestAt": [
+            492,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 4,
+      "camera": [
+        0.4593723373872375,
+        1.732373403810507,
+        4.273335911972682
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6064453125,
+          "total": 42.26631164550781,
+          "lit": 153,
+          "largestAt": [
+            499,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 53.71875,
+          "total": 470.88377380371094,
+          "lit": 154,
+          "largestAt": [
+            494,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 53.71875,
+          "total": 470.88377380371094,
+          "lit": 154,
+          "largestAt": [
+            494,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 5,
+      "camera": [
+        0.6559270741619738,
+        1.7180056909571197,
+        4.255978090144408
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6259765625,
+          "total": 42.79521179199219,
+          "lit": 165,
+          "largestAt": [
+            500,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 76.6875,
+          "total": 540.1169586181641,
+          "lit": 167,
+          "largestAt": [
+            500,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 76.6875,
+          "total": 540.1169586181641,
+          "lit": 167,
+          "largestAt": [
+            500,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 6,
+      "camera": [
+        0.805583100028893,
+        1.7015415013001887,
+        4.238611601056933
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6298828125,
+          "total": 41.48658752441406,
+          "lit": 167,
+          "largestAt": [
+            501,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 52.15625,
+          "total": 504.5861282348633,
+          "lit": 168,
+          "largestAt": [
+            503,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 52.15625,
+          "total": 504.5861282348633,
+          "lit": 168,
+          "largestAt": [
+            503,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 7,
+      "camera": [
+        0.9032376289618674,
+        1.6835758935509426,
+        4.225329615695685
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.62646484375,
+          "total": 40.013832092285156,
+          "lit": 161,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 34.25,
+          "total": 450.64327239990234,
+          "lit": 161,
+          "largestAt": [
+            503,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 34.25,
+          "total": 450.64327239990234,
+          "lit": 161,
+          "largestAt": [
+            503,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 8,
+      "camera": [
+        0.945662613445091,
+        1.6647581915823741,
+        4.219076664193237
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.62841796875,
+          "total": 39.261940002441406,
+          "lit": 158,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 26.421875,
+          "total": 429.904052734375,
+          "lit": 157,
+          "largestAt": [
+            509,
+            386
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 26.421875,
+          "total": 429.904052734375,
+          "lit": 157,
+          "largestAt": [
+            509,
+            386
+          ]
+        }
+      }
+    },
+    {
+      "frame": 9,
+      "camera": [
+        0.9314828514246636,
+        1.6457685161726714,
+        4.221199223234882
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.640625,
+          "total": 39.07728576660156,
+          "lit": 159,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 28.25,
+          "total": 431.90808868408203,
+          "lit": 158,
+          "largestAt": [
+            503,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 28.25,
+          "total": 431.90808868408203,
+          "lit": 158,
+          "largestAt": [
+            503,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 10,
+      "camera": [
+        0.8611560817852201,
+        1.6272932036682577,
+        4.231242727582204
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6611328125,
+          "total": 39.68794250488281,
+          "lit": 156,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 56.125,
+          "total": 480.2234420776367,
+          "lit": 158,
+          "largestAt": [
+            505,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 56.125,
+          "total": 480.2234420776367,
+          "lit": 158,
+          "largestAt": [
+            505,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 11,
+      "camera": [
+        0.7369803588904268,
+        1.6099999999999999,
+        4.2470199261722
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6806640625,
+          "total": 40.549034118652344,
+          "lit": 146,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 86.5,
+          "total": 515.1072845458984,
+          "lit": 147,
+          "largestAt": [
+            502,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 86.5,
+          "total": 515.1072845458984,
+          "lit": 147,
+          "largestAt": [
+            502,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 12,
+      "camera": [
+        0.5631200229555775,
+        1.5945139266054715,
+        4.264942267332815
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.67578125,
+          "total": 40.08392333984375,
+          "lit": 136,
+          "largestAt": [
+            500,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 86,
+          "total": 532.7170486450195,
+          "lit": 136,
+          "largestAt": [
+            498,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 86,
+          "total": 532.7170486450195,
+          "lit": 136,
+          "largestAt": [
+            498,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 13,
+      "camera": [
+        0.3456105923925213,
+        1.5813946905257212,
+        4.2805729060193345
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.6513671875,
+          "total": 37.29686737060547,
+          "lit": 140,
+          "largestAt": [
+            500,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 56.875,
+          "total": 429.78890228271484,
+          "lit": 141,
+          "largestAt": [
+            494,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 56.875,
+          "total": 429.78890228271484,
+          "lit": 141,
+          "largestAt": [
+            494,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 14,
+      "camera": [
+        0.09228577770070001,
+        1.5711164551345076,
+        4.289328303159111
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.59912109375,
+          "total": 31.887481689453125,
+          "lit": 171,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 15.203125,
+          "total": 218.28524017333984,
+          "lit": 169,
+          "largestAt": [
+            490,
+            385
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 15.203125,
+          "total": 218.28524017333984,
+          "lit": 169,
+          "largestAt": [
+            490,
+            385
+          ]
+        }
+      }
+    },
+    {
+      "frame": 15,
+      "camera": [
+        -0.18742658659047784,
+        1.5640507026385502,
+        4.28722899023217
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.490234375,
+          "total": 26.24457550048828,
+          "lit": 159,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 1.2421875,
+          "total": 40.930580139160156,
+          "lit": 159,
+          "largestAt": [
+            489,
+            384
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 1.2421875,
+          "total": 40.930580139160156,
+          "lit": 159,
+          "largestAt": [
+            489,
+            384
+          ]
+        }
+      }
+    },
+    {
+      "frame": 16,
+      "camera": [
+        -0.48286812171657323,
+        1.5604528077426916,
+        4.271585115857407
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.380126953125,
+          "total": 19.38404083251953,
+          "lit": 123,
+          "largestAt": [
+            497,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.375244140625,
+          "total": 18.78192138671875,
+          "lit": 126,
+          "largestAt": [
+            494,
+            384
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.375244140625,
+          "total": 18.78192138671875,
+          "lit": 126,
+          "largestAt": [
+            494,
+            384
+          ]
+        }
+      }
+    },
+    {
+      "frame": 17,
+      "camera": [
+        -0.7826621769320201,
+        1.5604528077426916,
+        4.241505377634198
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.280029296875,
+          "total": 14.738433837890625,
+          "lit": 121,
+          "largestAt": [
+            498,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.254638671875,
+          "total": 13.330772399902344,
+          "lit": 118,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.254638671875,
+          "total": 13.330772399902344,
+          "lit": 118,
+          "largestAt": [
+            499,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 18,
+      "camera": [
+        -1.075322509268291,
+        1.5640507026385502,
+        4.198142243984283
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.19482421875,
+          "total": 11.331314086914062,
+          "lit": 135,
+          "largestAt": [
+            499,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.1927490234375,
+          "total": 9.9022216796875,
+          "lit": 121,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.1927490234375,
+          "total": 9.9022216796875,
+          "lit": 121,
+          "largestAt": [
+            499,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 19,
+      "camera": [
+        -1.3498763180133546,
+        1.5711164551345076,
+        4.144629442191575
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.1495361328125,
+          "total": 8.893646240234375,
+          "lit": 129,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.1495361328125,
+          "total": 7.756996154785156,
+          "lit": 123,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.1495361328125,
+          "total": 7.756996154785156,
+          "lit": 123,
+          "largestAt": [
+            499,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 20,
+      "camera": [
+        -1.5964120733400295,
+        1.5813946905257212,
+        4.085720698670547
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.12127685546875,
+          "total": 7.3326873779296875,
+          "lit": 122,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.12127685546875,
+          "total": 6.5140380859375,
+          "lit": 114,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.12127685546875,
+          "total": 6.5140380859375,
+          "lit": 114,
+          "largestAt": [
+            500,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 21,
+      "camera": [
+        -1.806480468072411,
+        1.5945139266054713,
+        4.027189179091999
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.1011962890625,
+          "total": 6.212211608886719,
+          "lit": 127,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.10076904296875,
+          "total": 5.421714782714844,
+          "lit": 110,
+          "largestAt": [
+            514,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.10076904296875,
+          "total": 5.421714782714844,
+          "lit": 110,
+          "largestAt": [
+            514,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 22,
+      "camera": [
+        -1.9733145530097467,
+        1.6099999999999999,
+        3.975083374931831
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.09136962890625,
+          "total": 5.6740570068359375,
+          "lit": 131,
+          "largestAt": [
+            508,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.09332275390625,
+          "total": 4.9608306884765625,
+          "lit": 111,
+          "largestAt": [
+            512,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.09332275390625,
+          "total": 4.9608306884765625,
+          "lit": 111,
+          "largestAt": [
+            512,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 23,
+      "camera": [
+        -2.0918805833125145,
+        1.6272932036682577,
+        3.934950762133311
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.088134765625,
+          "total": 5.2854461669921875,
+          "lit": 130,
+          "largestAt": [
+            507,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.1025390625,
+          "total": 4.734443664550781,
+          "lit": 114,
+          "largestAt": [
+            510,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.1025390625,
+          "total": 4.734443664550781,
+          "lit": 114,
+          "largestAt": [
+            510,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 24,
+      "camera": [
+        -2.158810163476153,
+        1.6457685161726714,
+        3.9111356869368494
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.08477783203125,
+          "total": 5.056205749511719,
+          "lit": 126,
+          "largestAt": [
+            507,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.08837890625,
+          "total": 4.5138397216796875,
+          "lit": 112,
+          "largestAt": [
+            510,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.08837890625,
+          "total": 4.5138397216796875,
+          "lit": 112,
+          "largestAt": [
+            510,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 25,
+      "camera": [
+        -2.1722855869297404,
+        1.6647581915823741,
+        3.906238353929208
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.083740234375,
+          "total": 5.03521728515625,
+          "lit": 127,
+          "largestAt": [
+            507,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.1011962890625,
+          "total": 4.5417022705078125,
+          "lit": 115,
+          "largestAt": [
+            509,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.1011962890625,
+          "total": 4.5417022705078125,
+          "lit": 115,
+          "largestAt": [
+            509,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 26,
+      "camera": [
+        -2.1319485472627853,
+        1.6835758935509426,
+        3.9207952059858915
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.0850830078125,
+          "total": 5.306488037109375,
+          "lit": 132,
+          "largestAt": [
+            507,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.0897216796875,
+          "total": 4.78997802734375,
+          "lit": 119,
+          "largestAt": [
+            510,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.0897216796875,
+          "total": 4.78997802734375,
+          "lit": 119,
+          "largestAt": [
+            510,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 27,
+      "camera": [
+        -2.0388793304240953,
+        1.7015415013001887,
+        3.9532133958380484
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.08636474609375,
+          "total": 5.792335510253906,
+          "lit": 138,
+          "largestAt": [
+            508,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.09002685546875,
+          "total": 5.114723205566406,
+          "lit": 122,
+          "largestAt": [
+            511,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.09002685546875,
+          "total": 5.114723205566406,
+          "lit": 122,
+          "largestAt": [
+            511,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 28,
+      "camera": [
+        -1.895656650064652,
+        1.7180056909571197,
+        3.999965773875557
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.09222412109375,
+          "total": 6.54962158203125,
+          "lit": 144,
+          "largestAt": [
+            501,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.10540771484375,
+          "total": 5.81903076171875,
+          "lit": 126,
+          "largestAt": [
+            512,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.10540771484375,
+          "total": 5.81903076171875,
+          "lit": 126,
+          "largestAt": [
+            512,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 29,
+      "camera": [
+        -1.706468388682033,
+        1.732373403810507,
+        4.056026992933208
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.10772705078125,
+          "total": 7.6867218017578125,
+          "lit": 143,
+          "largestAt": [
+            501,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.107177734375,
+          "total": 6.9225921630859375,
+          "lit": 132,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.107177734375,
+          "total": 6.9225921630859375,
+          "lit": 132,
+          "largestAt": [
+            500,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 30,
+      "camera": [
+        -1.4772122878032292,
+        1.744125353283118,
+        4.115504347315243
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.1300048828125,
+          "total": 9.375404357910156,
+          "lit": 145,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.1300048828125,
+          "total": 8.382278442382812,
+          "lit": 140,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.1300048828125,
+          "total": 8.382278442382812,
+          "lit": 140,
+          "largestAt": [
+            500,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 31,
+      "camera": [
+        -1.215512619799553,
+        1.7528367933016071,
+        4.172389337795251
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.1640625,
+          "total": 11.658798217773438,
+          "lit": 149,
+          "largestAt": [
+            500,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.163330078125,
+          "total": 10.292076110839844,
+          "lit": 140,
+          "largestAt": [
+            500,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.163330078125,
+          "total": 10.292076110839844,
+          "lit": 140,
+          "largestAt": [
+            500,
+            383
+          ]
+        }
+      }
+    },
+    {
+      "frame": 32,
+      "camera": [
+        -0.9305888864017265,
+        1.7581928697262705,
+        4.221331941821099
+      ],
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "trimPosition": [
+        0,
+        0.435,
+        -1.7459999999999993
+      ],
+      "readings": {
+        "installed": {
+          "maximum": 0.221923828125,
+          "total": 15.153404235839844,
+          "lit": 156,
+          "largestAt": [
+            499,
+            384
+          ]
+        },
+        "original-polished-metal": {
+          "maximum": 0.21240234375,
+          "total": 13.603507995605469,
+          "lit": 147,
+          "largestAt": [
+            499,
+            383
+          ]
+        },
+        "original-with-zero-fog": {
+          "maximum": 0.21240234375,
+          "total": 13.603507995605469,
+          "lit": 147,
+          "largestAt": [
+            499,
+            383
+          ]
+        }
+      }
+    }
+  ]
+}

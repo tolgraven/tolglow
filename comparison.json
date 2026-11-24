@@ -1,0 +1,35 @@
+{
+  "imageSettingsMatchedAcrossOrbit": [
+    "camera",
+    "target",
+    "gpu",
+    "workLight",
+    "film",
+    "scene",
+    "display",
+    "volume",
+    "raySteps",
+    "shadows",
+    "sceneSamples",
+    "emitted",
+    "frameNumber",
+    "atmosphere"
+  ],
+  "sourcePngFrames": 33,
+  "decodedGifFrames": 33,
+  "framesPerSecond": 12,
+  "maximumAmberLinearRBeforeFog": {
+    "originalAcrossOrbit": 86.5,
+    "installedAcrossOrbit": 0.6806640625,
+    "originalPeakFrame": 11,
+    "installedAtOriginalPeak": 0.6806640625,
+    "originalAndZeroFogExactlyEqual": true
+  },
+  "gifColorErrorRgb8": {
+    "meanAbsoluteChannelError": 0.496672999282953,
+    "litPixelsAtLeast24InOneChannel": 4162863,
+    "litMeanAbsoluteChannelError": 1.1111280065346054,
+    "litP95MaximumChannelError": 6,
+    "worstChannelError": 150
+  }
+}

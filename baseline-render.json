@@ -1,0 +1,1795 @@
+{
+  "browser": "158.0.8127.37",
+  "revision": "0ae18468297739f0778b9b8646a0d87bbbf45520",
+  "mode": "manually sampled OffscreenCanvas scene",
+  "bundleSha256": "2b8c58ca6587d587dfc37e6a11b67959c63a3aa94483dfa74e30ebc801c0d41c",
+  "inputSha256": "2c30fe8d27fc14f54f67c8bfa5c7bc073f28742c619d8ae6bcbe4c0c11496d6c",
+  "viewport": {
+    "width": 960,
+    "height": 540
+  },
+  "samples": [
+    {
+      "frame": 0,
+      "camera": [
+        -0.6329438615408904,
+        1.76,
+        4.2583264078626835
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 778.6999999880791,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "30e0e9db4df882cdcd9a267b44b01828bb7777c34efcc9d4599bc573b57d7831"
+    },
+    {
+      "frame": 1,
+      "camera": [
+        -0.3338822548024582,
+        1.7581928697262705,
+        4.281202306033825
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 5.800000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "a5807ca76bf9f33cf91aee8d7d4a2a7db672a3c5e3090dec6e376ac17b4a1d6f"
+    },
+    {
+      "frame": 2,
+      "camera": [
+        -0.044914632076316276,
+        1.7528367933016071,
+        4.2898409030373506
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 2.0999999940395355,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "a71eb8121658988b7fc6d4823dc1732fed34f51e23306ae95833b51f34fc1590"
+    },
+    {
+      "frame": 3,
+      "camera": [
+        0.22286976895718122,
+        1.744125353283118,
+        4.286081522998656
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.699999988079071,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "dc7c63d7a0c76c7e9e4051fa8ad560d4da93a4d1a52f57ba151fe8a66838cef3"
+    },
+    {
+      "frame": 4,
+      "camera": [
+        0.4593723373872375,
+        1.732373403810507,
+        4.273335911972682
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.800000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "cda99d1ced4429ea9e31bb346a0c2e484834d9dc6cde1c621e358ef46eee8a14"
+    },
+    {
+      "frame": 5,
+      "camera": [
+        0.6559270741619738,
+        1.7180056909571197,
+        4.255978090144408
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "0b27db21f18ac7efd98159c878422d403dd009f3c45d20617b987f056fa6b703"
+    },
+    {
+      "frame": 6,
+      "camera": [
+        0.805583100028893,
+        1.7015415013001887,
+        4.238611601056933
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "3eb633e00d7413ac4d72ef2c6cb5dd8d95be40ce2c8f5947f7af059cb92f9085"
+    },
+    {
+      "frame": 7,
+      "camera": [
+        0.9032376289618674,
+        1.6835758935509426,
+        4.225329615695685
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.600000023841858,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "9602c00b03fe70adc27c428749107040ff1320db89952ca79d410a469453c103"
+    },
+    {
+      "frame": 8,
+      "camera": [
+        0.945662613445091,
+        1.6647581915823741,
+        4.219076664193237
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 2.300000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "bfead6a1293f1f38478100135c17abc1f9dd90daded874bf46c2ce45790e4ad0"
+    },
+    {
+      "frame": 9,
+      "camera": [
+        0.9314828514246636,
+        1.6457685161726714,
+        4.221199223234882
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.399999976158142,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "40a5fa4359b7804b74be7864bcf5d67bf87ce1d7ea70e80a9bab48446058c1ee"
+    },
+    {
+      "frame": 10,
+      "camera": [
+        0.8611560817852201,
+        1.6272932036682577,
+        4.231242727582204
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.4000000059604645,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "ba0e43f8d003f585f3ae98e156b7742d4f9fa1af5ff2eb0329083c8d94cc2935"
+    },
+    {
+      "frame": 11,
+      "camera": [
+        0.7369803588904268,
+        1.6099999999999999,
+        4.2470199261722
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.699999988079071,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "e6fecf13fbcb0d7b97d0226be0732d709fe8ffae3f784d7a1581db1883e91fe2"
+    },
+    {
+      "frame": 12,
+      "camera": [
+        0.5631200229555775,
+        1.5945139266054715,
+        4.264942267332815
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.300000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "b3104dc3f651b4af2b574162798fc4722bb83818a8db266e4c1822fe846ce0a3"
+    },
+    {
+      "frame": 13,
+      "camera": [
+        0.3456105923925213,
+        1.5813946905257212,
+        4.2805729060193345
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "27e1eab43d1688493b9d0f224c218214111405b3e6535deaec6a422aec69af91"
+    },
+    {
+      "frame": 14,
+      "camera": [
+        0.09228577770070001,
+        1.5711164551345076,
+        4.289328303159111
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.2999999821186066,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "c5555ec974e4eb22cc0ec9763dbf808c9bb38cce0688618ecb8f3eb37419fa74"
+    },
+    {
+      "frame": 15,
+      "camera": [
+        -0.18742658659047784,
+        1.5640507026385502,
+        4.28722899023217
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.2000000178813934,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "52758b89d85682ad73945bf4b52939a654a66ef65ab0368e98eb3ae321893ae3"
+    },
+    {
+      "frame": 16,
+      "camera": [
+        -0.48286812171657323,
+        1.5604528077426916,
+        4.271585115857407
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 3,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "610474330f771ec31e981465c5bb296d42743a61763f982552674bbbaa4317ce"
+    },
+    {
+      "frame": 17,
+      "camera": [
+        -0.7826621769320201,
+        1.5604528077426916,
+        4.241505377634198
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.199999988079071,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "df6597c960e5609b9ed1da42e7b5eade2cc9bc2973ecdb8bc1facd62bd289830"
+    },
+    {
+      "frame": 18,
+      "camera": [
+        -1.075322509268291,
+        1.5640507026385502,
+        4.198142243984283
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.199999988079071,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "a52b7ff2c202b42738a66661aeab69acfaaf432c367471cc4e23d1dd18a888f1"
+    },
+    {
+      "frame": 19,
+      "camera": [
+        -1.3498763180133546,
+        1.5711164551345076,
+        4.144629442191575
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5999999940395355,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "c277f1b73b3c9a99f835543a722dd07190d66408da1d4ac86a6f89e81bf503ee"
+    },
+    {
+      "frame": 20,
+      "camera": [
+        -1.5964120733400295,
+        1.5813946905257212,
+        4.085720698670547
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.7000000178813934,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "ec179269f45342c6b54e1435cdce442990557e17a67c467d0b6e93502f314913"
+    },
+    {
+      "frame": 21,
+      "camera": [
+        -1.806480468072411,
+        1.5945139266054713,
+        4.027189179091999
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 3.0999999940395355,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "8f86141d90865a89a691ba442a41afdda8d0c46e34c2d36747f6e77ffb92c34f"
+    },
+    {
+      "frame": 22,
+      "camera": [
+        -1.9733145530097467,
+        1.6099999999999999,
+        3.975083374931831
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.800000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "9f7b0ca3f98c3f83fe01cf405b484303fe399697281574f4c5893ef751a59240"
+    },
+    {
+      "frame": 23,
+      "camera": [
+        -2.0918805833125145,
+        1.6272932036682577,
+        3.934950762133311
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.800000011920929,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "55e8ab8afc4dd19cb33782675b1cb7c5c030e9d3fa16cee48264eb30e37ace36"
+    },
+    {
+      "frame": 24,
+      "camera": [
+        -2.158810163476153,
+        1.6457685161726714,
+        3.9111356869368494
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "9c5e8a8d4f94c09658744080bf0cd4b8609cac90c6594b13482e921584eb8d24"
+    },
+    {
+      "frame": 25,
+      "camera": [
+        -2.1722855869297404,
+        1.6647581915823741,
+        3.906238353929208
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.7000000178813934,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "609dcfb3a2aef03cd4fc5879c0614c76372ea0d2a2b1b6efbb25e7909ee2dc4e"
+    },
+    {
+      "frame": 26,
+      "camera": [
+        -2.1319485472627853,
+        1.6835758935509426,
+        3.9207952059858915
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5999999940395355,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "8b128fb9306bf3236fd51a1208955d45ad59b4fc6e28c1c306fef46e5a962aa8"
+    },
+    {
+      "frame": 27,
+      "camera": [
+        -2.0388793304240953,
+        1.7015415013001887,
+        3.9532133958380484
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.4000000059604645,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "39f7ec851955bcbb17cef0f521e172bff10cb8ff884971f57e4b40a75a698d9d"
+    },
+    {
+      "frame": 28,
+      "camera": [
+        -1.895656650064652,
+        1.7180056909571197,
+        3.999965773875557
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.7000000178813934,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "209cab1f320aea77d60d220c424949268a51b59fef41967102fbefa766ca75a8"
+    },
+    {
+      "frame": 29,
+      "camera": [
+        -1.706468388682033,
+        1.732373403810507,
+        4.056026992933208
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.699999988079071,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "c12d812e588f33f2e4fb36d235aa69b49ace74e59e670062c8834788e4882395"
+    },
+    {
+      "frame": 30,
+      "camera": [
+        -1.4772122878032292,
+        1.744125353283118,
+        4.115504347315243
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.4000000059604645,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "afe5db6528666909814124933932fdd38840d6b5cd2e931ef3d6b543d67f96a0"
+    },
+    {
+      "frame": 31,
+      "camera": [
+        -1.215512619799553,
+        1.7528367933016071,
+        4.172389337795251
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.5999999940395355,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "25075f317119cb78d9fe5df532ff4b77cb7a96eccdbe5e230ce688b5e749141d"
+    },
+    {
+      "frame": 32,
+      "camera": [
+        -0.9305888864017265,
+        1.7581928697262705,
+        4.221331941821099
+      ],
+      "target": [
+        0,
+        1.62,
+        -2.05
+      ],
+      "renderer": "Three.js r187",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "workLight": 0,
+      "completedDrawMs": 1.7000000178813934,
+      "edgeFilter": "FXAA",
+      "shadows": 4,
+      "scene": [
+        960,
+        540
+      ],
+      "display": [
+        960,
+        540
+      ],
+      "volume": [
+        480,
+        270
+      ],
+      "raySteps": 48,
+      "tier": "desktop",
+      "sceneSamples": 4,
+      "displayRange": "sdr",
+      "film": {
+        "bloom": 0.28,
+        "exposure": 0.85,
+        "grain": 0.0015
+      },
+      "emitted": 7,
+      "frameNumber": 161,
+      "atmosphere": {
+        "sampleTimeMs": 40000,
+        "mixedDensity": 0.10223103551999162,
+        "extinctionPerM": 1.25,
+        "referencePathM": 1,
+        "fogLevel": 0.11996077126894684,
+        "mixedVolumeM3": 29.155882406159527,
+        "roomVolumeM3": 285.19599999999997,
+        "localVolumeM3": 0.012795481923527457,
+        "foggerCount": 1
+      },
+      "pngSha256": "9be4d810e8af2695c98b6563b6a60264e49f3223dadb562288f25fa62565daa2"
+    }
+  ]
+}
