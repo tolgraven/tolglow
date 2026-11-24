@@ -14,11 +14,12 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.query-stream :as query-stream]
             [tolglow.studio.state-stream :as stream]
             [tolglow.transit :as transit])
   (:import [java.net URI]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
-           [java.util.concurrent LinkedBlockingQueue TimeUnit]))
+           [java.util.concurrent CountDownLatch LinkedBlockingQueue TimeUnit]))
 
 (defrecord TestColour [red green blue])
 
@@ -353,6 +354,197 @@
           (finally (.abort ^WebSocket (:socket a)) (.abort ^WebSocket (:socket b)))))
       (finally (stream/close! hub) (.stop server) (rx/close! graph)
                (when-not (identical? @owner graph) (rx/close! @owner))))))
+
+(deftest last-query-release-does-not-wait-for-another-clients-projection
+  (let [query [::sampled-query]
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0
+               :settings {:studio {:public-queries [(first query)]}}}
+        graph (rx/create-system model)
+        graph-state (:state graph)
+        lease-count #(count (get-in % [:options [:node [:subscription query]] :watches]))
+        sample-starts (LinkedBlockingQueue.)
+        sample-interrupted (CountDownLatch. 1)
+        finish-sample (CountDownLatch. 1)
+        projection-started (CountDownLatch. 1)
+        finish-projection (CountDownLatch. 1)
+        unsubscribe-received (CountDownLatch. 1)
+        resubscribe-received (CountDownLatch. 1)
+        lease-released (CountDownLatch. 1)
+        hub (stream/create (fn [{:keys [model block-projection?]}]
+                             (when block-projection?
+                               (.countDown projection-started)
+                               (.await finish-projection))
+                             (assoc model :runtime-id "server"))
+                           (constantly nil) {:runtime-id "server" :get-graph (constantly graph)})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})]
+    (try
+      (rx/reg-cofx! graph ::sample {:mode :background :interval {:ms 20} :initial :waiting
+                                    :sample (fn [_]
+                                              (.offer sample-starts :started)
+                                              (try (.await finish-sample)
+                                                   (catch InterruptedException e
+                                                     (.countDown sample-interrupted)
+                                                     (throw e)))
+                                              :complete)})
+      (rx/reg-sub! graph (first query) (fn [{:keys [cofx]} _] (cofx ::sample)))
+      (stream/publish! hub {:model model})
+      (let [reader (connect server "reader&view=queries") spectator (connect server "spectator")]
+        (try
+          (acknowledge reader (receive reader))
+          (acknowledge spectator (receive spectator))
+          (send-control reader {:op :queries :queries [query]})
+          (let [initial (receive reader)]
+            (is (= :waiting (get-in initial [:view :subscriptions query :value])))
+            (acknowledge reader initial))
+          (is (= :started (.poll sample-starts 3 TimeUnit/SECONDS)))
+          (is (= 1 (lease-count @graph-state)))
+          (add-watch graph-state ::lease-release
+                     (fn [_ _ before after]
+                       (when (and (= 1 (lease-count before)) (zero? (lease-count after)))
+                         (.countDown lease-released))))
+          (let [reader-state (first (filter #(:query-only? @%) (vals @(:clients hub))))]
+            (add-watch reader-state ::unsubscribe
+                       (fn [_ _ before after]
+                         (cond
+                           (and (seq (:queries before)) (empty? (:queries after)))
+                           (.countDown unsubscribe-received)
+
+                           (and (empty? (:queries before)) (seq (:queries after)))
+                           (.countDown resubscribe-received))))
+            (try
+              (stream/publish! hub {:model (assoc model :frame-number 1) :block-projection? true})
+              (is (.await projection-started 3 TimeUnit/SECONDS))
+              (send-control reader {:op :queries :queries []})
+              (is (.await unsubscribe-received 3 TimeUnit/SECONDS))
+              (is (.await lease-released 3 TimeUnit/SECONDS)
+                  "Removing the last query releases its graph lease while projection is blocked")
+              (is (zero? (lease-count @graph-state)))
+              (is (.await sample-interrupted 3 TimeUnit/SECONDS)
+                  "The final release interrupts the active background sample")
+              (send-control reader {:op :queries :queries [query]})
+              (is (.await resubscribe-received 3 TimeUnit/SECONDS))
+              (.countDown finish-projection)
+              (let [remounted (receive reader)]
+                (is (= :full (:kind remounted)))
+                (is (= :waiting (get-in remounted [:view :subscriptions query :value]))))
+              (is (= :started (.poll sample-starts 3 TimeUnit/SECONDS)))
+              (is (= 1 (lease-count @graph-state)))
+              (finally (remove-watch reader-state ::unsubscribe))))
+          (finally
+            (.countDown finish-projection)
+            (.abort ^WebSocket (:socket reader))
+            (.abort ^WebSocket (:socket spectator)))))
+      (finally
+        (remove-watch graph-state ::lease-release)
+        (.countDown finish-projection)
+        (.countDown finish-sample)
+        (stream/close! hub)
+        (.stop server)
+        (rx/close! graph)))))
+
+(deftest subscription-baselines-wait-for-a-retiring-query
+  (let [query [::mount]
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0
+               :settings {:studio {:public-queries [(first query)]}}}
+        graph (rx/create-system model)
+        mounts (atom 0)
+        acquire! rx/acquire!
+        release! query-stream/release-unused-graph-leases!
+        first-lease? (atom true)
+        removals (atom 0)
+        first-removal (CountDownLatch. 1)
+        second-removal (CountDownLatch. 1)
+        second-returned (CountDownLatch. 1)
+        closing (CountDownLatch. 1)
+        finish-close (CountDownLatch. 1)
+        projecting (CountDownLatch. 1)
+        finish-projection (CountDownLatch. 1)
+        replacement-demand (CountDownLatch. 1)
+        hub (stream/create (fn [{:keys [model block-projection?]}]
+                             (when block-projection?
+                               (.countDown projecting)
+                               (.await finish-projection 10 TimeUnit/SECONDS))
+                             (assoc model :runtime-id "server"))
+                           (constantly nil) {:runtime-id "server" :get-graph (constantly graph)})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %))
+                               {:host "127.0.0.1" :port 0 :join? false})
+        open-query! (fn [name]
+                      (let [client (connect server (str name "&view=queries"))]
+                        (acknowledge client (receive client))
+                        client))]
+    (try
+      (rx/reg-sub! graph (first query)
+                   (fn [_ _] (let [generation (swap! mounts inc)] (constantly generation))))
+      (stream/publish! hub {:model model})
+      (with-redefs [rx/acquire! (fn [system acquired-query on-change]
+                                 (let [{:keys [close!] :as lease} (acquire! system acquired-query on-change)]
+                                   (if (compare-and-set! first-lease? true false)
+                                     (assoc lease :close! (fn []
+                                                           (.countDown closing)
+                                                           (.await finish-close 10 TimeUnit/SECONDS)
+                                                           (close!)))
+                                     lease)))
+                    query-stream/release-unused-graph-leases!
+                    (fn [& args]
+                      (case (swap! removals inc)
+                        1 (do (.countDown first-removal)
+                              (.await second-removal 10 TimeUnit/SECONDS)
+                              (apply release! args))
+                        2 (do (.countDown second-removal)
+                              (.await closing 10 TimeUnit/SECONDS)
+                              (try (apply release! args)
+                                   (finally (.countDown second-returned))))
+                        (apply release! args)))]
+        (let [original (open-query! "original")
+              other-holder (open-query! "other-holder")
+              spectator (connect server "spectator")
+              spectator-base (receive spectator)
+              existing (set (vals @(:clients hub)))
+              replacement (open-query! "replacement")
+              replacement-state (first (remove existing (vals @(:clients hub))))]
+          (try
+            (acknowledge spectator spectator-base)
+            (doseq [holder [original other-holder]]
+              (send-control holder {:op :queries :queries [query]})
+              (let [mounted (receive holder)]
+                (is (= 1 (get-in mounted [:view :subscriptions query :value])))
+                (acknowledge holder mounted)))
+            ;; Make the removing sockets, rather than the delivery worker,
+            ;; race to retire the last shared watcher.
+            (stream/publish! hub {:model (assoc model :frame-number 1) :block-projection? true})
+            (is (.await projecting 3 TimeUnit/SECONDS))
+            (send-control original {:op :queries :queries []})
+            (is (.await first-removal 3 TimeUnit/SECONDS))
+            (send-control other-holder {:op :queries :queries []})
+            (is (.await closing 3 TimeUnit/SECONDS))
+            (is (.await second-returned 3 TimeUnit/SECONDS))
+            (add-watch replacement-state ::mount
+                       (fn [_ _ _ next] (when (seq (:queries next)) (.countDown replacement-demand))))
+            (send-control replacement {:op :queries :queries [query]})
+            (is (.await replacement-demand 3 TimeUnit/SECONDS))
+            (.countDown finish-projection)
+            (is (= 1 (:frame-number (apply-patch (:view spectator-base) (receive spectator))))
+                "A separate socket still receives updates during cleanup")
+            (let [early-unsubscribe (.poll ^LinkedBlockingQueue (:messages original) 150 TimeUnit/MILLISECONDS)
+                  early-shared-unsubscribe (.poll ^LinkedBlockingQueue (:messages other-holder) 150 TimeUnit/MILLISECONDS)
+                  early-remount (.poll ^LinkedBlockingQueue (:messages replacement) 150 TimeUnit/MILLISECONDS)]
+              (is (nil? early-unsubscribe) "An empty baseline acknowledges completed retirement")
+              (is (nil? early-shared-unsubscribe) "Both removers await their shared query's retirement")
+              (is (nil? early-remount) "A remount waits for a fresh graph lease")
+              (.countDown finish-close)
+              (is (= {} (get-in (or early-unsubscribe (receive original)) [:view :subscriptions])))
+              (is (= {} (get-in (or early-shared-unsubscribe (receive other-holder)) [:view :subscriptions])))
+              (let [remounted (or early-remount (receive replacement))]
+                (is (= :full (:kind remounted)))
+                (is (= 2 (get-in remounted [:view :subscriptions query :value])))))
+            (finally
+              (remove-watch replacement-state ::mount)
+              (.countDown finish-projection)
+              (.countDown second-removal)
+              (.countDown finish-close)
+              (doseq [client [original other-holder spectator replacement]] (.abort ^WebSocket (:socket client)))))))
+      (finally (stream/close! hub) (.stop server) (rx/close! graph)))))
 
 (deftest live-registration-repairs-a-missing-query-without-reconnecting
   (let [query [:custom/late]
