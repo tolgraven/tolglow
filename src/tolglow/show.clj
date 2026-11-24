@@ -1511,13 +1511,19 @@
       :inspect-lighting (venue-tools/inspect state payload #(measure-sources runtime state %))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
+(defn- push-parameter-projector []
+  (let [cache (waveforms/create-cache)
+        precision-cache (atom nil)]
+    (fn [snapshot view capture]
+      (->> (waveforms/project-display cache snapshot view capture)
+           (precision/push-view precision-cache (:model snapshot))))))
+
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)
-        precision-cache (atom nil)
+  (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
     (display/browser-display
@@ -1534,18 +1540,25 @@
                              (:parameters :audio)
                              (let [capture (when (= mode :audio)
                                              (audio/waveform (connections/audio (:connections runtime))))]
-                               (->> (waveforms/project-display cache snapshot view capture)
-                                    (precision/push-view precision-cache model)))
+                               (project-parameters snapshot view capture))
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))
                              view)]
                 (page-overview/project-display pages model visual)))))))
 
+(defn- push-native-display [runtime]
+  (let [project-parameters (push-parameter-projector)]
+    (display/native-display
+      {:project! (fn [view]
+                   (project-parameters @(:state runtime) view nil))})))
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
-  expression modes and bindings; imported namespaces never acquire devices."
+  expression modes and bindings; imported namespaces never acquire devices.
+  Push 2 accepts :native-display? true for the Wayang parameter display. An
+  explicit :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -1558,6 +1571,8 @@
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             options (cond-> options
                       (#{:push-2 :push-3} kind) (assoc :target-search targets/search)
+                      (and (= kind :push-2) (:native-display? options) (not (:display options)))
+                      (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
                       (assoc :feedback-source (cue-pads/push-feedback (:cue-pad-previews runtime) #(deref (:state runtime)))))
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
