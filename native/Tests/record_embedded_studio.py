@@ -13,13 +13,14 @@ def write_media(output):
     for test in manifest:
         for capture in test["attachments"]:
             label = capture["suggestedHumanReadableName"]
-            for step in ("start-1", "running-1", "start-2", "running-2", "closed"):
+            for step in ("connections", "start-1", "running-1", "start-2", "running-2", "closed"):
                 if label.startswith(step):
                     images[step] = attachments / capture["exportedFileName"]
 
     shutil.copyfile(images["running-1"], output / "ipad.png")
+    shutil.copyfile(images["connections"], output / "studio-chooser.png")
     frames = []
-    for step in ("start-1", "running-1", "start-2", "running-2", "closed"):
+    for step in ("connections", "start-1", "running-1", "start-2", "running-2", "closed"):
         with Image.open(images[step]) as capture:
             frame = capture.convert("RGB")
         frame.thumbnail((1024, 1024))

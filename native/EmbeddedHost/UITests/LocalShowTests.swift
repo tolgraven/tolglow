@@ -14,6 +14,8 @@ final class LocalShowTests: XCTestCase {
         let studio = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Studio")).firstMatch
         XCTAssertTrue(studio.waitForExistence(timeout: 20))
         studio.tap()
+        XCTAssertTrue(app.buttons["On this device"].waitForExistence(timeout: 15))
+        record("connections")
         app.buttons["On this device"].tap()
         for cycle in 1...2 {
             let open = app.buttons["Open included show"]
@@ -22,6 +24,9 @@ final class LocalShowTests: XCTestCase {
             open.tap()
             let page = app.webViews.firstMatch
             XCTAssertTrue(page.waitForExistence(timeout: 80))
+            let window = app.windows.firstMatch.frame
+            XCTAssertGreaterThan(page.frame.width, window.width * 0.9)
+            XCTAssertGreaterThan(page.frame.height, window.height * 0.75)
             XCTAssertTrue(page.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Ember"))
                 .firstMatch.waitForExistence(timeout: 60))
             record("running-\(cycle)")
@@ -30,5 +35,7 @@ final class LocalShowTests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["Open included show"].waitForExistence(timeout: 20))
         record("closed")
+        app.buttons["Switch Studio"].tap()
+        XCTAssertTrue(app.buttons["On this device"].waitForExistence(timeout: 15))
     }
 }

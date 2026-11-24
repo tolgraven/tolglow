@@ -10,34 +10,78 @@ struct WebStudioView: View {
     #endif
     @State private var loadedURL: URL?
     @State private var loadID = UUID()
-    @State private var status = "Open the configured studio to use its complete web interface"
+    @State private var status = ""
+
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                TextField("Studio origin", text: $origin)
-                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                Button("Open") {
-                    guard let url = URL(string: origin), ["http", "https"].contains(url.scheme ?? ""),
-                          url.host != nil, url.user == nil, url.password == nil,
-                          url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else { status = "Enter an HTTP(S) studio origin"; return }
-                    loadID = UUID()
-                    loadedURL = url; status = "Loading studio"
+        NavigationStack {
+            Group {
+                if let loadedURL {
+                    OwnedStudioWebView(url: loadedURL, status: $status)
+                        .id(loadID)
+                        .safeAreaInset(edge: .top, spacing: 0) { StudioWebNotice(text: status) }
+                } else {
+                    Form {
+                        Section("Studio host") {
+                            TextField("Studio origin", text: $origin)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .submitLabel(.go)
+                                .onSubmit { openRemote() }
+                            Button(action: openRemote) { Label("Open Studio", systemImage: "globe") }
+                            if !status.isEmpty { Text(status).foregroundStyle(.secondary) }
+                        }
+                        #if TOLGLOW_EMBEDDED_HOST
+                        Section("Local show") {
+                            Button { localStudio = true } label: {
+                                Label("On this device", systemImage: "ipad.and.iphone")
+                            }
+                        }
+                        #endif
+                    }
                 }
-                #if TOLGLOW_EMBEDDED_HOST
-                Button("On this device") { localStudio = true }
-                #endif
-                if loadedURL != nil { Button("Close") { loadedURL = nil; status = "Studio closed" } }
-            }.padding(.horizontal)
-            Text(status).font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
-            if let loadedURL {
-                OwnedStudioWebView(url: loadedURL, status: $status).id(loadID)
-            } else {
-                ContentUnavailableView("Web studio", systemImage: "globe", description: Text("Use the same re-frame cues, parameters, editors and tools served by your Tolglow host."))
             }
-        }.padding(.top, 8)
+            .navigationTitle(loadedURL?.host ?? "Studio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if loadedURL != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Switch Studio") { loadedURL = nil; status = "" }
+                    }
+                }
+            }
+        }
         #if TOLGLOW_EMBEDDED_HOST
-        .sheet(isPresented: $localStudio) { OnDeviceStudio() }
+        .fullScreenCover(isPresented: $localStudio) { OnDeviceStudio() }
         #endif
+    }
+
+    private func openRemote() {
+        guard let url = URL(string: origin), ["http", "https"].contains(url.scheme ?? ""),
+              url.host != nil, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
+            status = "Enter an HTTP or HTTPS Studio origin"
+            return
+        }
+        loadID = UUID()
+        status = "Loading Studio…"
+        loadedURL = url
+    }
+}
+
+struct StudioWebNotice: View {
+    let text: String
+
+    var body: some View {
+        if !text.isEmpty {
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(.bar)
+        }
     }
 }
 
@@ -94,7 +138,7 @@ struct OwnedStudioWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if active { status.wrappedValue = "Connected to web studio" }
+            if active { status.wrappedValue = "" }
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             if active { status.wrappedValue = error.localizedDescription }

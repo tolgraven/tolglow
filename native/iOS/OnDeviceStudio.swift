@@ -48,7 +48,7 @@ private final class ShowThread {
 @MainActor
 private final class OnDeviceShow: ObservableObject {
     @Published var origin: URL?
-    @Published var status = "Choose a show folder or open the included show."
+    @Published var status = ""
     @Published private(set) var busy = false
     private var owner: ShowThread?
     private var stopping = false
@@ -102,38 +102,57 @@ struct OnDeviceStudio: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
+            Group {
                 if let origin = show.origin {
                     OwnedStudioWebView(url: origin, status: $webStatus)
-                    Text(webStatus).font(.caption).padding(.horizontal)
+                        .safeAreaInset(edge: .top, spacing: 0) { StudioWebNotice(text: webStatus) }
+                } else if show.busy {
+                    ProgressView(show.status)
                 } else {
-                    Text(show.status).padding(.horizontal)
-                    if !show.busy {
-                        Button("Open included show") { show.start(folder: nil) }
-                        Button("Choose show folder") { choosing = true }
-                        Text("Choose a folder containing tolglow.edn or show.clj. This device hosts the show while Studio is open.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                    Form {
+                        Section {
+                            Button { start(nil) } label: {
+                                Label("Open included show", systemImage: "play.circle")
+                            }
+                            Button { choosing = true } label: {
+                                Label("Choose show folder", systemImage: "folder")
+                            }
+                        } footer: {
+                            Text("A show folder contains tolglow.edn or show.clj. This device hosts the show while Studio is open.")
+                        }
+                        if !show.status.isEmpty {
+                            Section { Text(show.status).foregroundStyle(.secondary) }
+                        }
                     }
-                    Spacer()
                 }
             }
-            .padding(.horizontal, show.origin == nil ? 16 : 0)
-            .buttonStyle(.bordered)
             .navigationTitle("On-device Studio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { show.stop(); dismiss() } }
-                if show.busy { ToolbarItem(placement: .primaryAction) { Button("Stop show") { show.stop() } } }
+                if show.busy {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Stop show", role: .destructive) { show.stop() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Switch Studio") { dismiss() }
+                    }
+                }
             }
         }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
             switch result {
-            case .success(let folder): show.start(folder: folder)
+            case .success(let folder): start(folder)
             case .failure(let error): show.status = error.localizedDescription
             }
         }
         .onChange(of: phase) { _, value in if value == .background { show.stop() } }
         .onDisappear { show.stop() }
+    }
+
+    private func start(_ folder: URL?) {
+        webStatus = "Loading Studio…"
+        show.start(folder: folder)
     }
 }
 #endif
