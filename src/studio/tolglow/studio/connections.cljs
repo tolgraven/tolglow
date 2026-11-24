@@ -645,12 +645,15 @@
                                (for [n (range 3 (inc pcm/max-channels))]
                                  ^{:key n} [:option {:value (str n)} n])]]
        (when (and (> width 1) (pcm/valid-layout? width 1))
-         [:label "Analyze" [:select#audio-input-channel {:value (str (get-in s [:audio-form :input-channel]))
-                                                        :disabled (or running? pending?)
-                                                        :on-change #(edit! [:audio-form :input-channel] (text %))}
-                            [:option {:value ""} (if (= 2 width) "Stereo average" "Choose an input channel…")]
-                            (for [n (range 1 (inc width))]
-                              ^{:key n} [:option {:value (str n)} (str "Channel " n)])]])]
+         [:label "Input channel"
+          [:select#audio-input-channel {:value (str (get-in s [:audio-form :input-channel]))
+                                        :disabled (or running? pending?)
+                                        :on-change #(edit! [:audio-form :input-channel] (text %))}
+           (if (= 2 width)
+             [:option {:value "" :aria-label "Mix both stereo channels"} "Mix"]
+             [:option {:value "" :aria-label "Select an input channel"} "Select…"])
+           (for [n (range 1 (inc width))]
+             ^{:key n} [:option {:value (str n) :aria-label (str "Channel " n)} n])]])]
       [:details [:summary "Capture buffering"] [:div.form-row
                                                [field s [:audio-form :block-frames] "Frames per block" {:input-mode "numeric" :disabled (or running? pending?)}]
                                                [field s [:audio-form :buffer-blocks] "Buffer blocks" {:input-mode "numeric" :disabled (or running? pending?)}]]]

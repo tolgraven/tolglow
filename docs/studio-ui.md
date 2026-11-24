@@ -314,8 +314,8 @@ and controller-to-parameter bounds. The selected clock reports waiting, stale,
 paused or locked state without selecting a nearby player automatically. Audio
 shows measured energy, timing and the host's consumed-event count. Under
 **Audio input**, match **PCM channels** to the device's interleaved stream width.
-Choose **Stereo average** to mix a two-channel input, or select a numbered input
-under **Analyze**. Widths above two require a channel selection, up to 64 PCM
+Choose **Mix** to average a two-channel input, or select a number under
+**Input channel**. Widths above two require a channel selection, up to 64 PCM
 channels. The waveform identifies the selected channel. [Capture configuration and REPL](../src/tolglow/integrations/README.md#explicit-studio-audio-capture)
 
 Connections subscribes to sync and capture status on the acknowledged show
