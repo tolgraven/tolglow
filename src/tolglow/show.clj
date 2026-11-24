@@ -48,6 +48,7 @@
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
             [tolglow.cue-timing :as cue-timing]
+            [tolglow.expressive :as expressive]
             [tolglow.signals :as signals]
             [afterglow.reactive :as graph]
             [tolglow.observations :as observations]
@@ -1691,6 +1692,25 @@
   (locking (:devices runtime)
     (when-let [device (get @(:devices runtime) id)]
       (try (devices/close! device) (finally (swap! (:devices runtime) dissoc id))))))
+
+(defn expressive-preview
+  "Preview the selected cue's expressive mapping using the connected device's
+  axes and defaults when :device-id matches its mapping ID (or session ID when
+  no mapping ID is configured). Otherwise use the requested device kind."
+  [runtime request]
+  (let [[model connected] (locking (:lock runtime)
+                            [(:model @(:state runtime)) @(:devices runtime)])
+        wire-id #(if (keyword? %) (subs (str %) 1) %)
+        requested-id (wire-id (:device-id request))
+        options (some (fn [[id {:keys [options]}]]
+                        (when (= requested-id (wire-id (or (:mapping-id options) id)))
+                          options))
+                      connected)
+        profile (when options
+                  {:id (get-in options [:profile :id])
+                   :axes (keys (get-in options [:profile :capabilities :available-axes]))
+                   :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
+    (expressive/preview model request profile)))
 
 (defn- capture-show [runtime format-show]
   ;; Model/output come from one commit. Serialize after releasing the frame

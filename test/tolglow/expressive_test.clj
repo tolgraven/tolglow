@@ -9,7 +9,8 @@
             [tolglow.demo :as demo]
             [tolglow.expressive :as expressive]
             [tolglow.persistence :as files]
-            [tolglow.studio.web :as web])
+            [tolglow.studio.web :as web]
+            [tolglow.transit :as transit])
   (:import [java.io ByteArrayInputStream]))
 
 (defn request [uri data]
@@ -134,7 +135,7 @@
                     (let [receipt (show/submit! runtime type payload)]
                       (show/tick! runtime 0) @receipt))
         device (seaboard/connect!
-                {:session-id "roli-session" :mapping-id "roli-policy"
+                {:session-id "roli-session" :mapping-id "roli/policy"
                  :zone {:manager-channel 0 :member-channels [1 2]} :cue-id :ember
                  :param-mappings {:level :lift}
                  :model! #(get @(:state runtime) :model) :now-ms! (constantly 0)
@@ -144,23 +145,33 @@
     (try
       (swap! (:devices runtime) assoc "roli-session" device)
       (let [app (studio/handler runtime)
-            preview #(result (app (request "/api/expressive/preview"
-                                           {:device-id "roli-policy" :cue-id :ember})))
-            configured (preview)]
-        (is (= "connected" (:profile-source configured)))
-        (is (= "lift" (get-in configured [:mappings 0 :axis])))
+            payload {:device-id :roli/policy :cue-id :ember :device-kind :push-3}
+            preview (fn [payload]
+                      (let [response (app (assoc-in (request "/api/expressive/preview" payload)
+                                                    [:headers "accept"] "application/transit+json"))
+                            headless (show/expressive-preview runtime payload)]
+                        (is (= 200 (:status response)))
+                        (is (= headless (transit/decode (:body response))))
+                        headless))
+            configured (preview payload)]
+        (is (= :connected (:profile-source configured)))
+        (is (= :seaboard-m (:device-kind configured)))
+        (is (= #{:strike :pressure :glide :slide :lift} (set (keys (:axes configured)))))
+        (is (= :lift (get-in configured [:mappings 0 :axis])))
+        (is (empty? (:mappings (preview (assoc payload :policy {:params {:level nil}})))))
+        (is (= configured (show/expressive-preview runtime payload)))
         (is (= :accepted (:status (dispatch! :settings {:scope :expressive
-                                                       :values {:devices {"roli-policy" {:params {:level :slide}}}}}))))
+                                                       :values {:devices {"roli/policy" {:params {:level :slide}}}}}))))
         (@receive [0x91 60 127])
         (let [id (get-in (session/snapshot device) [:local :selected-instance])]
           (@receive [0xb1 74 127])
-          (is (= (get-in (preview) [:samples 4 :values :level])
+          (is (= (get-in (preview payload) [:samples 4 :values :level])
                  (get-in @(:state runtime) [:model :instances id :params :level])))
           (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
-          (dispatch! :settings {:scope :expressive :values {:devices {"roli-policy" {:enabled? false}}}})
+          (dispatch! :settings {:scope :expressive :values {:devices {"roli/policy" {:enabled? false}}}})
           (@receive [0xb1 74 0])
           (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
-          (is (empty? (:mappings (preview))))
+          (is (empty? (:mappings (preview payload))))
           (@receive [0x81 60 0])
           (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))))
       (finally (session/close! device) (reset! (:devices runtime) {}) (show/stop! runtime)))))
