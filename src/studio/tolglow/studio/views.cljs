@@ -148,20 +148,22 @@
 
 (defn- cue-cell [db page x y colors]
   (let [show (:show db) ui (:ui db)
+        recent? (events/recent-page? db (:id page))
         cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))
         cue (find-id (:cues show) cue-id)
         preview (or (get colors cue-id) (when (string? cue-id) (get colors (keyword cue-id))))
         active (filter #(= cue-id (:cue-id %)) (:instances show))
         cell {:cue-id cue-id :x x :y y :page-id (:id page)}
         down (fn [event]
-               (when (or (= 0 (.-button event)) (= "touch" (.-pointerType event)))
+               (when (and (or cue (not recent?))
+                          (or (= 0 (.-button event)) (= "touch" (.-pointerType event))))
                  (.setPointerCapture (.-currentTarget event) (.-pointerId event))
                  (send! [:studio/gesture-down (merge cell {:pointer-id (.-pointerId event)
                                                           :client-x (.-clientX event) :client-y (.-clientY event)})])))]
     [:button.cue-cell
      {:class (str (when-not cue "empty ") (when (seq active) "active ")
                   (when (some #(= "releasing" (:phase %)) active) "releasing ")
-                  (when (:edit? ui) "editing"))
+                  (when (and (:edit? ui) (not recent?)) "editing"))
       :style (when cue (if preview {"--cue-color" (widgets/color-css preview)} (color-style cue)))
       :data-preview (when preview "live") :data-x x :data-y y :data-cue-id (or cue-id "")
       :disabled (not (get-in db [:connection :connected?]))
@@ -173,7 +175,7 @@
       :on-lost-pointer-capture #(send! [:studio/gesture-cancel (.-pointerId %)])
       :on-context-menu (fn [event] (.preventDefault event)
                          (send! [:studio/gesture-cancel (.-pointerId event)])
-                         (send! [:studio/open-actions cell]))
+                         (when-not recent? (send! [:studio/open-actions cell])))
       :on-key-down (fn [event]
                      (cond
                        (contains? #{"ArrowLeft" "ArrowRight" "ArrowUp" "ArrowDown"} (.-key event))
@@ -185,7 +187,7 @@
                          (when-let [target (.querySelector (.closest (.-currentTarget event) "#cue-grid") selector)]
                            (.focus target)))
                        (or (= "ContextMenu" (.-key event)) (and (= "F10" (.-key event)) (.-shiftKey event)))
-                       (do (.preventDefault event) (send! [:studio/open-actions cell]))
+                       (do (.preventDefault event) (when-not recent? (send! [:studio/open-actions cell])))
                        (and (#{" " "Enter"} (.-key event)) (not (.-repeat event)))
                        (do (.preventDefault event)
                            (send! [:studio/gesture-down (merge cell {:pointer-id "keyboard" :client-x 0 :client-y 0})]))))
@@ -194,17 +196,22 @@
       :on-blur #(send! [:studio/gesture-cancel "keyboard"])}
      (if cue
        [:<> [:span.cue-index (str (inc y) "." (inc x))] [:span.cue-dot]
-        [:span.cue-name (display-name cue)] [:span.cue-category (or (:category cue) "CUE")]] "+")]))
+        [:span.cue-name (display-name cue)] [:span.cue-category (or (:category cue) "CUE")]]
+       (when-not recent? "+"))]))
 
 (defn- cue-grid [db]
-  (let [show (:show db) ui (:ui db) pages (:pages show)
-        page (or (find-id pages (:page-id ui)) (first pages))
-        rows (performance/visible-cue-rows page (or (:edit? ui) (:full-grid? ui)))]
+  (let [show (:show db) ui (:ui db)
+        authored-pages (:pages show)
+        recent-page (:recent-page show)
+        pages (cond-> (vec authored-pages) recent-page (conj recent-page))
+        selected-recent (events/selected-recent-page db)
+        page (or selected-recent (find-id authored-pages (:page-id ui)) (first authored-pages))
+        rows (performance/visible-cue-rows page (or selected-recent (:edit? ui) (:full-grid? ui)))]
     [:section.cue-panel.panel {:aria-label "Cue performance grid"}
      [:div.panel-top
       [:div#page-tabs.page-tabs {:aria-label "Cue pages"}
        (for [item pages]
-         ^{:key (:id item)} [:button.page-tab {:class (when (= (:id item) (:id page)) "selected")
+         ^{:key (pr-str (:id item))} [:button.page-tab {:class (when (= (:id item) (:id page)) "selected")
                                              :on-click #(send! [:studio/set-page (:id item)])} (display-name item)])]
       [:button#add-page.icon-button {:title "Create cue page" :aria-label "Create cue page" :on-click #(send! [:studio/add-page])} "+"]]
      [:div.grid-toolbar [:span#cue-count.muted.small (str (count (:cells page)) " cues / 64 slots")]
@@ -213,15 +220,20 @@
          ^{:key mode} [:button {:data-mode mode :class (when (= mode (:launch-mode ui)) "selected")
                                 :aria-pressed (= mode (:launch-mode ui))
                                 :on-click #(send! [:studio/set-launch mode])} title])]
-      [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"]]
+      (when-not selected-recent
+        [:button#edit-grid.edit-button {:aria-pressed (boolean (:edit? ui)) :on-click #(send! [:studio/toggle-edit])} "Edit grid"])]
      [:div.cue-grid-scroll
-      [pad-preview/grid (:id page) rows (and (= :perform (:view ui)) (get-in db [:connection :connected?])) cue-cell db page]]
-     [:div.grid-footer [:span#gesture-hint (cond (:edit? ui) "Choose a cell to edit its actions."
+      [pad-preview/grid (:id page) rows (and (not selected-recent) (= :perform (:view ui))
+                                             (get-in db [:connection :connected?]))
+       cue-cell db page]]
+     [:div.grid-footer [:span#gesture-hint (cond (and (:edit? ui) (not selected-recent)) "Choose a cell to edit its actions."
                                                (= "held" (:launch-mode ui)) "Hold a cue to play it. Release to fade it out."
+                                               selected-recent "Tap to play."
                                                :else "Tap to play. Long-press for cue actions.")]
-      [:button.text-button {:type "button" :aria-pressed (boolean (or (:edit? ui) (:full-grid? ui))) :disabled (boolean (:edit? ui))
-                           :on-click #(set-ui! [:full-grid?] (not (:full-grid? ui)))}
-       (cond (:edit? ui) "64 slots while editing" (= rows 8) "Compact grid" :else "All 64 slots")]
+      (when-not selected-recent
+        [:button.text-button {:type "button" :aria-pressed (boolean (or (:edit? ui) (:full-grid? ui))) :disabled (boolean (:edit? ui))
+                             :on-click #(set-ui! [:full-grid?] (not (:full-grid? ui)))}
+         (cond (:edit? ui) "64 slots while editing" (= rows 8) "Compact grid" :else "All 64 slots")])
       [button "end-all" "Release all" [:studio/end-all] "text-button"]]]))
 
 (defn- parameter-control [instance parameter schema & [handlers options]]

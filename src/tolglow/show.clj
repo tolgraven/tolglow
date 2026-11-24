@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
             [afterglow.control.devices.expressive :as expressive-mapping]
@@ -121,6 +122,16 @@
       (let [ids (lighting-scenes/eligible-ids fixtures)]
         (reset! cache {:fixtures fixtures :ids ids}) ids))))
 
+(defn- recent-page-snapshot [model]
+  (let [{:keys [rows] :as page} (cue-pages/page model cue-pages/recent-page-id)]
+    ;; The native pads count from the bottom. Studio counts from the top.
+    (update page :cells
+            (fn [cells]
+              (->> cells
+                   (map (fn [[[x y] cue-id]] {:x x :y (- (dec rows) y) :cue-id cue-id}))
+                   (sort-by (juxt :y :x))
+                   vec)))))
+
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
         responses? (some #(not= false (:enabled? %)) (:responses model))
@@ -162,6 +173,7 @@
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
+            :recent-page (recent-page-snapshot model)
             :auto (select-keys (:auto model) [:enabled? :config :reasons])
             :responses (vec (:responses model))
             :effect-events (get-in model [:variables :runtime] {:event-sequence 0 :events []})
@@ -356,6 +368,11 @@
 
 (declare ^:private command)
 
+(defn- authored-page-id [id]
+  (when (= cue-pages/recent-page-id id)
+    (throw (ex-info "Recent cues is a read-only page" {:page-id id})))
+  id)
+
 (defn- restart-model [model time-ms]
   (let [configs (mapv :config (remove :owner-instance-id (get-in model [:modulation :controllers])))
         clock (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})]
@@ -525,6 +542,7 @@
         result))
     :agent-cue
     (let [cue (:cue payload)
+          page-id (authored-page-id (:page-id payload :agent))
           errors (registry/validate-definition :cues cue)
           _ (when (seq errors) (throw (ex-info "Invalid cue" {:errors errors})))
           result (command model (merge (select-keys payload [:command-id :source :epoch])
@@ -532,8 +550,7 @@
       (if (or (= :rejected (get-in result [:ack :status]))
               (some (fn [page] (some #{(:id cue)} (vals (:cells page)))) (vals (:pages (:model result)))))
         result
-        (let [page-id (:page-id payload :agent)
-              page (get-in result [:model :pages page-id] {:id page-id :name "Created cues" :cells {}})
+        (let [page (get-in result [:model :pages page-id] {:id page-id :name "Created cues" :cells {}})
               position (first (for [y (range 8) x (range 8) :when (not (contains? (:cells page) [x y]))] [x y]))]
           (if position
             (update result :model assoc-in [:pages page-id] (assoc-in page [:cells position] (:id cue)))
@@ -585,7 +602,7 @@
     {:model (-> model (update :responses #(vec (remove (fn [r] (= (:id payload) (:id r))) %)))
                 (update :revision inc)) :ack {:status :accepted}}
     :page-generate
-    (let [id (:page-id payload :generated)
+    (let [id (authored-page-id (:page-id payload :generated))
           page (get-in model [:pages id] {:id id :name "Effect registry" :cells {}})
           result (registry/reconcile-page (:registry model) page (:options payload {}))]
       {:model (-> model (assoc :registry (:registry result)) (assoc-in [:pages id] (:page result))

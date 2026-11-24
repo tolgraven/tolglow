@@ -26,7 +26,7 @@
      (if (empty? pages) [:p.push-pages-empty "No cue pages"]
        [:div.push-pages-grid
         (for [[slot {:keys [id name count cells]}] (map-indexed vector pages)]
-          ^{:key id}
+          ^{:key (pr-str id)}
           [:div.push-page-tile {:class (when (= id (:page display)) "current") :aria-label (str name ", " count " cues")}
            [:div.push-page-map (for [cell cells] ^{:key (str (:xy cell))} [chip scheme cell])]
            [:div.push-page-label [:b name] [:small (str "↑ " (inc slot) " · " count " cues")]]])])]))

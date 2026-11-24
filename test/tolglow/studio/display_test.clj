@@ -3,6 +3,8 @@
             [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [thi.ng.color.core :as colors]
+            [afterglow.control.model :as control]
+            [afterglow.control.pages :as cue-pages]
             [tolglow.controllers.page-overview :as pages]
             [tolglow.studio.display :as display]
             [afterglow.control.devices.transports :as transports])
@@ -287,6 +289,33 @@
     (is (= 8 (count (:pages (sample show (assoc view :page-bank 0 :page-colors :type))))))
     (is (nil? (sample show (assoc view :display-mode :audio))))
     (is (nil? @cache))))
+
+(deftest overview-updates-the-recent-tile-without-invalidating-authored-only-banks
+  (let [ids (mapv #(keyword (str "page" %)) (range 8))
+        show (control/new-show
+              {:pages (into {} (map (fn [id] [id {:id id :cells {}}])) ids)
+               :registry {:effects {:wash {:id :wash :version 1}}
+                          :cues {:red {:id :red :effect-id :wash :swatch "#ff0000"}
+                                 :blue {:id :blue :effect-id :wash :swatch "#0000ff"}}}})
+        launch (fn [model cue-id]
+                 (:model (control/apply-command
+                          model {:command-id cue-id :source :test :show-id :main :epoch 0
+                                 :time-ms 0 :op :cue/launch :cue-id cue-id})))
+        red (launch show :red)
+        blue (launch red :blue)
+        cache (volatile! nil)
+        view {:display-mode :pages :page :page0}
+        sample (fn [show view] (:page-overview (pages/project-display cache show view)))
+        authored (sample show view)
+        recent-view (assoc view :page cue-pages/recent-page-id)
+        tile (fn [atlas] (first (:pages atlas)))]
+    (is (identical? authored (sample red view)))
+    (let [before (sample red recent-view)
+          after (sample blue recent-view)]
+      (is (= [cue-pages/recent-page-id "Recent cues" 1] ((juxt :id :name :count) (tile before))))
+      (is (= [[[0 7] "#0000ff"] [[1 7] "#ff0000"]]
+             (mapv (juxt :xy :cue-color) (:cells (tile after)))))
+      (is (identical? after (sample (assoc blue :frame-number 2) recent-view))))))
 
 (deftest frame-requests-retain-qualified-parameter-schema-keys
   (let [view {:parameters [{:schema {:type :vector :semantic/type :orientation :control/axis :tilt}}]}
