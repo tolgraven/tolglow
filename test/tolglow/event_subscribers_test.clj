@@ -11,6 +11,7 @@
             [tolglow.integrations.analysis-test :as audio-test]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as sub]
+            [tolglow.events.callbacks :as callbacks]
             [tolglow.persistence :as files]
             [tolglow.transit :as wire]))
 
@@ -207,6 +208,34 @@
       (if (and (< n 150) (seq (get-in (model) [:event-subscribers :runs])))
         (do (show/tick! runtime (+ start n)) (Thread/sleep 5) (recur (inc n)))
         (model)))))
+
+(deftest a-service-opened-before-the-repl-reload-keeps-ticking-and-closes
+  (let [named (fn [context _] (assoc-in context [:variables :callback-owner] :named))
+        runtime (-> (show/create-runtime {:workspace-options nil
+                                          :event-callback-options {:callbacks {:kicks named}}})
+                    (update :event-callbacks dissoc :inline-handlers :inline-inputs))
+        service (:event-callbacks runtime)
+        registration (listener [{:op :callback :implementation {:type :registered :id :kicks}}])]
+    (try
+      (callbacks/publish! service (:model @(:state runtime)))
+      (let [saved (show/register-event-subscriber! runtime registration)]
+        (show/tick! runtime 0)
+        (is (= :accepted (:status (deref saved 1000 {})))))
+      (let [raw (show/register-event-subscriber! runtime (assoc (listener []) :middleware (fn [context _] context)))]
+        (show/tick! runtime 1)
+        (let [receipt (deref raw 1000 {})]
+          (is (= :rejected (:status receipt)))
+          (is (re-find #"Restart the runtime.*process-local" (:message receipt ""))))
+        (is (= [registration] (get-in (show/snapshot runtime) [:event-subscribers :subscribers]))))
+      (is (= :named (get-in (play-kick! runtime) [:variables :callback-owner])))
+      (let [reference (listener [{:op :callback :implementation {:type :inline :callback-id (str (random-uuid))}}])
+            saved (show/register-event-subscriber! runtime reference)]
+        (show/tick! runtime 10)
+        (is (= :accepted (:status (deref saved 1000 {}))))
+        (is (re-find #"Process-local callback unavailable" (get-in (play-kick! runtime)
+                                                                  [:event-subscribers :last-error :message] ""))))
+      (finally (show/stop! runtime)))
+    (is (.isShutdown ^java.util.concurrent.ThreadPoolExecutor (:pool service)))))
 
 (deftest transit-restores-only-the-exact-runtime-owned-event-callback
   (let [calls (atom [])

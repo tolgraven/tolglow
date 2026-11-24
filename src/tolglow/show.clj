@@ -460,9 +460,12 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :event-subscriber {:model (subscribers/configure model payload)
-                       :ack {:status :accepted}
-                       :inline-registration (::inline-registration payload)}
+    :event-subscriber (let [inline-registration (::inline-registration payload)]
+                        (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
+                          (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
+                        {:model (subscribers/configure model payload)
+                         :ack {:status :accepted}
+                         :inline-registration inline-registration})
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))

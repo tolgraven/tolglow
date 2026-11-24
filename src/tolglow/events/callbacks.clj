@@ -25,24 +25,23 @@
 (defn- inline-key [subscriber-id {:keys [type callback-id]}]
   (when (= :inline type) [subscriber-id callback-id]))
 
-(defn- retain-inline! [service {:keys [subscribers runs]} registrations]
-  (let [handlers (:inline-handlers service)
-        inputs (:inline-inputs service)
-        active @handlers
-        [checked-subscribers checked-runs] @inputs]
-    (when (or (seq registrations)
-              (and (seq active)
-                   (not (and (identical? subscribers checked-subscribers)
-                             (identical? runs checked-runs)))))
-      (let [available (into active registrations)
-            steps (concat (map (juxt :id :actions) subscribers) (map (juxt :subscriber :steps) runs))
-            referenced (fn [[id actions]]
-                         (keep #(when-let [key (inline-key id (:implementation %))]
-                                  (find available key))
-                               actions))
-            retained (into {} (mapcat referenced) steps)]
-        (reset! handlers retained)
-        (vreset! inputs (when (seq retained) [subscribers runs]))))))
+(defn- retain-inline! [{:keys [inline-handlers inline-inputs]} {:keys [subscribers runs]} registrations]
+  (when inline-handlers
+    (let [active @inline-handlers
+          [checked-subscribers checked-runs] @inline-inputs]
+      (when (or (seq registrations)
+                (and (seq active)
+                     (not (and (identical? subscribers checked-subscribers)
+                               (identical? runs checked-runs)))))
+        (let [available (into active registrations)
+              steps (concat (map (juxt :id :actions) subscribers) (map (juxt :subscriber :steps) runs))
+              referenced (fn [[id actions]]
+                           (keep #(when-let [key (inline-key id (:implementation %))]
+                                    (find available key))
+                                 actions))
+              retained (into {} (mapcat referenced) steps)]
+          (reset! inline-handlers retained)
+          (vreset! inline-inputs (when (seq retained) [subscribers runs])))))))
 
 (defn- resolve-handler [service implementation inline-handler]
   (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
@@ -97,25 +96,28 @@
         ;; A queued job holds the exact closure it was started with even if a
         ;; later commit retires its registration and cancels the job.
         inline-handler (when-let [key (inline-key (:subscriber run) implementation)]
-                         (get @(:inline-handlers service) key))
+                         (some-> (:inline-handlers service) deref (get key)))
         task (FutureTask. ^Callable (reify Callable (call [_] (invoke service model run implementation inline-handler))))]
     (try
       (.execute ^ThreadPoolExecutor (:pool service) task)
       {:task task :started (System/nanoTime)}
       (catch RejectedExecutionException _ {:result {:error "Event callback worker queue is full"}}))))
 
-(defn publish! [service model registrations]
-  ;; Only called after the committing owner has installed this exact model.
-  (retain-inline! service (:event-subscribers model) registrations)
-  (let [jobs @(:jobs service)
-        waiting (into {} (keep #(when (:waiting? %) [(subscribers/callback-token model %) %]))
-                      (get-in model [:event-subscribers :runs]))]
-    (when (or (seq jobs) (seq waiting))
-      (doseq [[token {:keys [task]}] jobs :when (and task (not (contains? waiting token)))]
-        (.cancel ^FutureTask task true))
-      (reset! (:jobs service)
-              (reduce-kv (fn [next token run] (assoc next token (or (get jobs token) (start! service model run))))
-                         {} waiting)))))
+(defn publish!
+  ;; An existing show owner can keep calling the two-argument form after a REPL reload.
+  ([service model] (publish! service model nil))
+  ([service model registrations]
+   ;; Only called after the committing owner has installed this exact model.
+   (retain-inline! service (:event-subscribers model) registrations)
+   (let [jobs @(:jobs service)
+         waiting (into {} (keep #(when (:waiting? %) [(subscribers/callback-token model %) %]))
+                       (get-in model [:event-subscribers :runs]))]
+     (when (or (seq jobs) (seq waiting))
+       (doseq [[token {:keys [task]}] jobs :when (and task (not (contains? waiting token)))]
+         (.cancel ^FutureTask task true))
+       (reset! (:jobs service)
+               (reduce-kv (fn [next token run] (assoc next token (or (get jobs token) (start! service model run))))
+                          {} waiting))))))
 
 (defn results [service]
   (reduce-kv
@@ -130,9 +132,9 @@
        :else out))
    {} @(:jobs service)))
 
-(defn close! [service]
+(defn close! [{:keys [inline-handlers inline-inputs] :as service}]
   (doseq [{:keys [task]} (vals @(:jobs service)) :when task] (.cancel ^FutureTask task true))
   (reset! (:jobs service) {})
-  (reset! (:inline-handlers service) {})
-  (vreset! (:inline-inputs service) nil)
+  (when inline-handlers (reset! inline-handlers {}))
+  (when inline-inputs (vreset! inline-inputs nil))
   (.shutdownNow ^ThreadPoolExecutor (:pool service)))
