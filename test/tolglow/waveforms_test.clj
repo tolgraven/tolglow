@@ -149,9 +149,22 @@
       (let [run (audio/start! manager (assoc pcm/config :channels 2) {:events! identity})]
         (is (= :completed (:status (deref (:result run) 3000 :timeout))))
         (is (= 2 (:channels (audio/waveform manager))))
+        (is (= :mono-average (:mix (audio/waveform manager))))
+        (is (not (contains? (audio/waveform manager) :input-channel)))
         (is (every? #(zero? (:rms %)) (:bins (audio/waveform manager)))))
       (finally (audio/close! manager)))
     (is (= 2 @closed))))
+
+(deftest a-different-selected-channel-resets-waveform-history
+  (let [initial (waveforms/capture-block (waveforms/new-capture)
+                                        (block (double-array 480 0.75) 0 {:channels 4 :input-channel 2}))
+        changed (waveforms/capture-block initial
+                                        (block (double-array 480 -0.25) 10 {:channels 4 :input-channel 3}))
+        view (waveforms/capture-view changed)]
+    (is (= {:channels 4 :input-channel 3 :mix :selected-channel :generation 2}
+           (select-keys view [:channels :input-channel :mix :generation])))
+    (is (= 10.0 (:start-time-ms view)))
+    (is (= [0.25] (mapv :rms (:bins view))))))
 
 (deftest actual-push-view-is-enriched-on-capture-worker-and-stale-selection-clears
   (let [snapshot (fixture) cache (waveforms/create-cache) captured (promise) done (CountDownLatch. 1)

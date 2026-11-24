@@ -328,8 +328,26 @@ guarantee, nor a comparison with another engine.
 `tolglow.audio.capture` owns the optional JavaSound input boundary. Requiring it,
 creating a manager and calling `list-inputs` do not open a device. `start!` requires
 an explicit `:mixer-index` from the current enumeration or `:default? true`, then
-opens signed 16-bit mono/stereo PCM on one daemon capture worker. An optional
+opens signed 16-bit PCM on one daemon capture worker. An optional
 `:mixer-name` rejects a stale index after device enumeration changes.
+
+Without `:input-channel`, mono passes through and stereo averages both channels.
+To analyze a single channel, specify the stream's physical `:channels` width
+and a one-based `:input-channel` within that width. Widths from 3 to 64 always
+require a channel selection. The mixer must support the requested PCM format.
+For an active show in the REPL, the same operation as Studio's **Start capture**
+selects channel 3 of a four-channel stream:
+
+```clojure
+(require '[tolglow.show :as show])
+(show/audio-action! runtime :start {:default? true :channels 4 :input-channel 3})
+(show/audio-action! runtime :status {})
+(show/audio-action! runtime :stop {})
+```
+
+The same capture config can be used under the application's `:audio` module.
+Show files retain the settings and whether capture was requested. Stopped
+capture stays idle on load and its settings are available for the next start.
 
 ```clojure
 (require '[tolglow.audio.capture :as capture])
@@ -346,8 +364,8 @@ opens signed 16-bit mono/stereo PCM on one daemon capture worker. An optional
   (capture/close! manager))
 ```
 
-The host persists configuration separately and must not auto-start capture on
-restore. `:clock!` supplies `:time-ms`, `:beat`, `:bpm`, `:source`, optional `:epoch`
+The host resumes requested capture after rebasing the restored show clock.
+`:clock!` supplies `:time-ms`, `:beat`, `:bpm`, `:source`, optional `:epoch`
 and `:confidence`, and canonical `:playing?`; paused clocks do not emit beats.
 The event callback receives a vector and should enqueue quickly. Returning false
 or `{:accepted? false}` reports queue rejection; the capture status counts dropped

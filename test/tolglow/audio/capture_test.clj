@@ -32,14 +32,38 @@
   (is (thrown? clojure.lang.ExceptionInfo (audio/decode-pcm16 (byte-array 3) 0 3 1 false)))
   (is (thrown? clojure.lang.ExceptionInfo (audio/decode-pcm16 (byte-array 4) 0 4 nil false))))
 
+(deftest pcm-decoding-selects-one-based-channels-at-the-physical-frame-stride
+  (doseq [big? [false true]]
+    (let [bytes (pcm [100 200 300 400
+                      32767 1234 -32768 16384
+                      -32768 3000 8192 -16384
+                      500 600 700 800] big?)
+          original (vec bytes)]
+      (is (= [-1.0 0.25] (vec (audio/decode-pcm16 bytes 8 16 4 big? 3))))
+      (is (= [0.5 -0.5] (vec (audio/decode-pcm16 bytes 8 16 4 big? 4))))
+      (is (= original (vec bytes)))))
+  (is (= [0.5] (vec (audio/decode-pcm16 (pcm (concat (repeat 63 -32768) [16384]) false)
+                                       0 128 64 false 64))))
+  (is (= [-0.5] (vec (audio/decode-pcm16 (pcm [16384 -16384] false) 0 4 2 false 2))))
+  (doseq [[offset byte-count channels input-channel] [[0 8 4 nil] [0 8 4 0] [0 8 4 5] [0 8 4 2.5]
+                                                       [0 8 65 64] [0 6 4 3] [Long/MAX_VALUE 8 4 3]]]
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (audio/decode-pcm16 (byte-array 8) offset byte-count channels false input-channel)))))
+
 (deftest creating-and-invalid-starting-never-open-a-device
   (let [opened (atom 0) manager (audio/create-manager {:open-source! (fn [_] (swap! opened inc))})]
     (is (= :idle (:state (audio/status manager))))
     (is (zero? @opened))
     (is (= {:default? true :sample-rate 48000.0 :channels 1 :block-frames 480 :buffer-blocks 8
             :big-endian? false :analyzer-options {}} (audio/validate-config {:default? true})))
+    (is (= {:channels 64 :input-channel 64}
+           (select-keys (audio/validate-config (assoc config :channels 64 :input-channel 64))
+                        [:channels :input-channel])))
     (doseq [bad [{} (assoc config :channels 3) (assoc config :block-frames 0)
-                 (assoc config :mixer-index 0) (assoc config :sample-rate 0)]]
+                 (assoc config :mixer-index 0) (assoc config :sample-rate 0)
+                 {:mixer-index Long/MAX_VALUE} {:default? true :input-channel 1}
+                 (assoc config :channels 4 :input-channel 0) (assoc config :channels 4 :input-channel 5)
+                 (assoc config :channels 4 :input-channel "3") (assoc config :channels 65 :input-channel 3)]]
       (is (thrown? clojure.lang.ExceptionInfo (audio/start! manager bad {:events! identity}))))
     (is (zero? @opened))
     (is (:closed? (audio/close! manager)))
