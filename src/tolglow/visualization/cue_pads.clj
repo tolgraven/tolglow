@@ -1,7 +1,8 @@
 (ns tolglow.visualization.cue-pads
   "Sample the visible cue grid on presentation workers. All previews are
   private scalar evaluations over a single representative head."
-  (:require [afterglow.control.views :as views]
+  (:require [afterglow.control.pages :as pages]
+            [afterglow.control.views :as views]
             [afterglow.time :as time]
             [afterglow.control.system :as system]
             [afterglow.render.frame :as frame]
@@ -240,7 +241,9 @@
         (vreset! lease {:source snapshot :page page :origin origin :model model})
         model))))
 
-(defn push-feedback [service snapshot!]
+(defn push-feedback
+  "Sample authored pages. Recent cues uses the regular pad swatches, as in Studio."
+  [service snapshot!]
   (let [close! (fn [lease] (vreset! lease nil) (release! service lease))]
     {:open! #(volatile! nil)
      :project!
@@ -249,6 +252,7 @@
              touch (get (:touches local) (peek (:touch-order local)))
              type (get-in latest [:instances (:instance-id touch) :definition :params (:param touch) :type])]
          (if (and (:ready? local) (not (:target-picker local)) (not (#{:color :enum} type))
+                  (not= pages/recent-page-id (:page-id local))
                   (= [(:show-id model) (:epoch model)] [(:show-id latest) (:epoch latest)]))
            (push-grid service lease snapshot (:page-id local) (:origin local))
            (do (close! lease) model))))
