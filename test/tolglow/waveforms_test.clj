@@ -118,15 +118,20 @@
     (is (= 480 (:sample-end gap)))))
 
 (deftest beat-markers-follow-authoritative-clock-and-fractional-bars
-  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :epoch 2 :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
-        view (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                             (block (double-array 96000) 0 {:clock clock})))
-        invalid (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock clock :timing-valid? false})))
-        stopped (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock (assoc clock :running? false)})))]
+  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :source-epoch 7 :epoch 2
+               :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
+        project (fn [options]
+                  (waveforms/capture-view
+                   (waveforms/capture-block (waveforms/new-capture)
+                                           (block (double-array 96000) 0 options))))
+        view (project {:clock clock})
+        fallback (project {:clock (dissoc clock :source-epoch)})
+        invalid (project {:clock clock :timing-valid? false})
+        stopped (project {:clock (assoc clock :running? false)})]
     (is (= [0.0 1.0 2.0 3.0 3.5] (mapv :beat (:beat-markers view))))
     (is (= [0.0 1750.0] (mapv :offset-ms (filter :bar? (:beat-markers view)))))
+    (is (= #{[:link 7]} (into #{} (map (juxt :source :epoch)) (:beat-markers view))))
+    (is (= #{[:link 2]} (into #{} (map (juxt :source :epoch)) (:beat-markers fallback))))
     (is (empty? (:beat-markers invalid)))
     (is (empty? (:beat-markers stopped)))
     (is (false? (:timing-valid? invalid)))))
@@ -149,9 +154,22 @@
       (let [run (audio/start! manager (assoc pcm/config :channels 2) {:events! identity})]
         (is (= :completed (:status (deref (:result run) 3000 :timeout))))
         (is (= 2 (:channels (audio/waveform manager))))
+        (is (= :mono-average (:mix (audio/waveform manager))))
+        (is (not (contains? (audio/waveform manager) :input-channel)))
         (is (every? #(zero? (:rms %)) (:bins (audio/waveform manager)))))
       (finally (audio/close! manager)))
     (is (= 2 @closed))))
+
+(deftest a-different-selected-channel-resets-waveform-history
+  (let [initial (waveforms/capture-block (waveforms/new-capture)
+                                        (block (double-array 480 0.75) 0 {:channels 4 :input-channel 2}))
+        changed (waveforms/capture-block initial
+                                        (block (double-array 480 -0.25) 10 {:channels 4 :input-channel 3}))
+        view (waveforms/capture-view changed)]
+    (is (= {:channels 4 :input-channel 3 :mix :selected-channel :generation 2}
+           (select-keys view [:channels :input-channel :mix :generation])))
+    (is (= 10.0 (:start-time-ms view)))
+    (is (= [0.25] (mapv :rms (:bins view))))))
 
 (deftest actual-push-view-is-enriched-on-capture-worker-and-stale-selection-clears
   (let [snapshot (fixture) cache (waveforms/create-cache) captured (promise) done (CountDownLatch. 1)

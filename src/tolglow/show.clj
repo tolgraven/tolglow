@@ -821,7 +821,13 @@
   [runtime]
   (let [epoch (get-in @(:state runtime) [:model :epoch])
         current? #(and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))]
-    {:clock! (fn [] (when (current?) (get-in @(:state runtime) [:model :transport])))
+    {:clock! (fn []
+               (let [{:keys [model audio-clock-confidence]} @(:state runtime)
+                     {:keys [source time-ms] :as transport} (:transport model)
+                     confidence (if (= :manual source) 1.0 audio-clock-confidence)]
+                 (when (and @(:running runtime) (= epoch (:epoch model))
+                            (some? time-ms) (some? source) (some? confidence))
+                   (assoc transport :confidence confidence))))
      :events! (fn [events]
                 (if-not (current?) false
                   (let [accepted? (volatile! false)]
@@ -923,12 +929,14 @@
   (let [{:keys [selected-source clock follow-transport?]} (session/clock-at (connections/sync (:connections runtime)) time-ms)]
     (if-let [captured (cond
                         (= :manual selected-source)
-                        (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
+                        (assoc (:transport (advance-transport model time-ms))
+                               :source :manual :source-epoch 0 :confidence 1.0)
 
                         (and (false? follow-transport?) (or (nil? clock) (:stale? clock)))
                         ;; Tempo-only Link must never change local playback just
                         ;; because a peer has not arrived or has disconnected.
-                        (assoc (:transport (advance-transport model time-ms)) :source selected-source :source-epoch nil)
+                        (assoc (:transport (advance-transport model time-ms))
+                               :source selected-source :source-epoch nil :confidence nil)
 
                         clock
                         (cond-> (assoc clock :source selected-source)
@@ -941,18 +949,21 @@
                                (< (:beat captured) (:beat before))
                                (and (some? follow-transport?) (:playing? captured)
                                     (or (false? (:playing? before)) (:link-phase-held? before))))
-            captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])]
-        ;; Rebase from the original model once; never merge the new beat first.
-        (let [model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
-          (when discontinuity? (vswap! (:presentation-clock runtime) inc))
-          ;; A local Play command may already have flipped :playing? before the
-          ;; subsequent Link sample arrives. Remember that musical anchors were
-          ;; frozen until we have the resumed peer phase to rebase them against.
-          (if (and (false? follow-transport?) (false? (:playing? captured)))
-            (assoc-in model [:transport :link-phase-held?] true)
-            (update model :transport dissoc :link-phase-held?))))
-      (update model :transport assoc :time-ms time-ms :playing? false
-              :source selected-source :source-epoch nil))))
+            confidence (:confidence captured)
+            captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])
+            ;; Rebase from the original model once, before applying the captured beat.
+            model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
+        (when discontinuity? (vswap! (:presentation-clock runtime) inc))
+        ;; A local Play command may already have flipped :playing? before the
+        ;; subsequent Link sample arrives. Remember that musical anchors were
+        ;; frozen until we have the resumed peer phase to rebase them against.
+        [(if (and (false? follow-transport?) (false? (:playing? captured)))
+           (assoc-in model [:transport :link-phase-held?] true)
+           (update model :transport dissoc :link-phase-held?))
+         confidence])
+      [(update model :transport assoc :time-ms time-ms :playing? false
+               :source selected-source :source-epoch nil)
+       nil])))
 
 (defn- consume-sync! [runtime model]
   (let [captured (locking (:sync-input runtime)
@@ -1054,6 +1065,7 @@
                                                      :source {:adapter :reactive :session-id (:id runtime)})}))
                  physical-receipts (output-scheduler/drain-receipts! (:publisher runtime))
                  physical-now ((:now-ms (:publisher runtime)))
+                 [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  [model receipts restored? restored-output]
                  (reduce
                   (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
@@ -1073,7 +1085,7 @@
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin (source-clock-model runtime (:model before) time-ms))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
@@ -1271,6 +1283,9 @@
                                    {:operation (:type message) :command (get-in message [:payload :op])
                                     :ack ack :emitter-id (get-in message [:payload :source :adapter])})
                                  messages receipts)
+                 ;; Confidence belongs to this live clock sample and its resource generation.
+                 next-state (assoc next-state :audio-clock-confidence
+                                   (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]

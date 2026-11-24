@@ -1,6 +1,9 @@
 (ns tolglow.event-subscribers-test
   (:require [clojure.data.json :as json]
             [clojure.test :refer [deftest is testing]]
+            [afterglow.sync.session :as sync-session]
+            [tolglow.audio.capture-test :as pcm-test]
+            [tolglow.connections :as connections]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
@@ -88,6 +91,85 @@
         (is (nil? (:cue-id inst)))
         (is (= :event-subscriber (get-in inst [:source :adapter])))
         (is (= 1 (count (:instances (:model (show/export-show runtime)))))))
+      (finally (show/stop! runtime)))))
+
+(deftest captured-pcm-subscribers-follow-committed-audio-clock-confidence-and-epoch
+  (let [kick-times [500 1000 1500 1700 2100 2600 3100]
+        sample-rate 8000 block-ms 50 block-frames (quot (* block-ms sample-rate) 1000) duration-ms 3250
+        values (for [index (range (quot (* duration-ms sample-rate) 1000))
+                     :let [ms (/ (* index 1000.0) sample-rate)
+                           onset (last (take-while #(<= % ms) kick-times))
+                           age (when onset (- ms onset))]]
+                 (if (and age (< age 160))
+                   (long (* 32767 (audio-test/sine 65 (* 0.8 (Math/exp (/ (- age) 45.0))) age)))
+                   0))
+        closed (atom 0) midi-input (promise) clock-steps (atom {}) committed-audio (atom [])
+        model (sub/configure (demo/model)
+                             {:op :save :subscriber {:id :beats :match {:type :audio/beat}
+                               :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}})
+        runtime (show/create-runtime
+                 {:model model :workspace-options nil
+                  :audio-options {:open-source!
+                                  (fn [_]
+                                    (let [block (atom -1)]
+                                      (update (pcm-test/memory-source values (* 2 block-frames) closed) :read!
+                                              (fn [read!]
+                                                (fn [out offset length]
+                                                  (when-let [step! (get @clock-steps (* block-ms (swap! block inc)))]
+                                                    (step!))
+                                                  (read! out offset length))))))}
+                  :sync-options {:midi-factory (fn [_ _] {:open! #(deliver midi-input %) :close! (fn [_])})}})
+        conn (:connections runtime) sync (connections/sync conn)]
+    (try
+      (show/attach-observer! runtime :audio-regression
+        (fn [] {:events! (fn [_ events _ _] (swap! committed-audio into (filter #(= :audio (:category %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (show/sync-action! runtime :configure {:clock {:timeout-ms 300 :on-stale :freewheel}
+                                            :midi {:enabled? true :input-index 0}})
+      (show/sync-action! runtime :start {})
+      (let [receive! (deref midi-input 2000 nil)
+            midi! (fn [at-ms byte] (receive! {:type :midi/message :source-id :midi-clock :time-ms at-ms :bytes [byte]}))
+            start-clock! (fn [start ticks]
+                           (midi! start 0xfa)
+                           (doseq [i (range ticks)] (midi! (+ start (* i (/ 500.0 24))) 0xf8))
+                           (when-not (sync-session/flush! sync) (throw (ex-info "MIDI clock did not settle" {}))))]
+        (reset! clock-steps
+                {1000 #(show/tick! runtime 1000)
+                 1500 #(do (show/sync-action! runtime :source {:source-id :midi-clock})
+                           (start-clock! 1100 20)
+                           (show/tick! runtime 1500))
+                 1700 #(show/tick! runtime 1700)
+                 2100 #(show/tick! runtime 2100)
+                 2600 #(do (midi! 2600 0xfc)
+                           (when-not (sync-session/flush! sync) (throw (ex-info "MIDI stop did not settle" {})))
+                           (show/tick! runtime 2600))
+                 3100 #(do (start-clock! 2600 25) (show/tick! runtime 3100))})
+        ;; The injected stream reads faster than real time, so keep receipt time past its sample clock.
+        (swap! (:clock runtime) assoc :time-ms duration-ms)
+        (let [handle (connections/start-audio! conn {:default? true :sample-rate sample-rate :block-frames block-frames
+                                                    :analyzer-options {:beat-tolerance-ms 115.0}}
+                                               (show/audio-callbacks runtime))
+              result (deref (:result handle) 5000 ::timeout)]
+          (is (= :completed (:status result)) (pr-str (:error result))))
+        (show/tick! runtime 3250)
+        (show/tick! runtime 3300)
+        (let [kicks (mapv :data (filter #(= :audio/kick (:type %)) @committed-audio))
+              beats (mapv :data (filter #(= :audio/beat (:type %)) @committed-audio))]
+          (is (= (mapv #(+ % 5.0) kick-times) (mapv :time-ms kicks)))
+          (is (= [nil :manual :midi-clock :midi-clock :midi-clock nil :midi-clock]
+                 (mapv #(get-in % [:alignment :clock-source]) kicks)))
+          (is (= [1005.0 1505.0 3105.0] (mapv :time-ms beats)))
+          (is (= [[:manual 0 2] [:midi-clock 1 1] [:midi-clock 2 1]]
+                 (mapv (juxt :clock-source :clock-epoch :beat) beats)))
+          (is (= 1.0 (:clock-confidence (first beats))))
+          (is (< 0.5 (:clock-confidence (second beats) 0.0) 1.0))
+          (is (= [true :midi-clock 1 1]
+                 ((juxt :aligned? :clock-source :clock-epoch :beat) (:alignment (nth kicks 3 nil)))))
+          (is (= {:aligned? true :clock-confidence 0.0 :clock-epoch 1 :beat 2}
+                 (select-keys (:alignment (nth kicks 4 nil)) [:aligned? :clock-confidence :clock-epoch :beat])))
+          (is (= 3 (count (filter #(= :ember (:effect-id %)) (:instances (show/snapshot runtime))))))
+          (is (not (contains? (get-in (show/export-show runtime) [:model :transport]) :confidence)))
+          (is (= 1 @closed))))
       (finally (show/stop! runtime)))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner

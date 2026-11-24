@@ -213,24 +213,26 @@
         (is (= latest-features (get-in @(:state r) [:model :variables :audio :features])))))))
 
 (deftest wanted-audio-resumes-only-after-restored-clock-is-published
-  (let [owner (atom nil) opened (atom []) closed (atom 0) first-open (CountDownLatch. 1) second-open (CountDownLatch. 1)]
+  (let [config {:default? true :channels 4 :input-channel 3}
+        owner (atom nil) opened (atom []) closed (atom 0) first-open (CountDownLatch. 1) second-open (CountDownLatch. 1)]
     (with-runtime [r {:audio-options
-                      {:open-source! (fn [_]
+                      {:open-source! (fn [settings]
                                        (let [gate (CountDownLatch. 1) runtime @owner]
                                          (swap! opened conj {:epoch (:epoch (show/snapshot runtime))
-                                                             :origin (:time-ms @(:clock runtime))})
+                                                             :origin (:time-ms @(:clock runtime))
+                                                             :config (select-keys settings (keys config))})
                                          (.countDown (if (= 1 (count @opened)) first-open second-open))
                                          {:read! (fn [& _] (.await gate 5 TimeUnit/SECONDS) -1)
                                           :close! #(do (swap! closed inc) (.countDown gate))}))}}]
       (reset! owner r)
       (show/tick! r 500)
-      (connections/start-audio! (:connections r) {:default? true} (show/audio-callbacks r))
+      (connections/start-audio! (:connections r) config (show/audio-callbacks r))
       (is (.await first-open 2 TimeUnit/SECONDS))
       (let [reply (show/submit! r :import {:source (pr-str (show/export-show r))})]
         (show/tick! r 5000)
         (is (= :accepted (:status @reply)))
         (is (.await second-open 2 TimeUnit/SECONDS))
-        (is (= {:epoch 1 :origin 500} (second @opened)))
+        (is (= {:epoch 1 :origin 500 :config config} (second @opened)))
         (is (= 1 @closed))
         (is (= 500 (:time-ms (show/snapshot r))))))))
 

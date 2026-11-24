@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.compute-client :as compute-client]
             [reagent.core :as r]
+            [tolglow.audio.pcm :as pcm]
             [tolglow.studio.audience-invitation :as invitation]
             [tolglow.studio.patchbay :as patchbay]
             [tolglow.studio.sensors :as sensors]
@@ -23,7 +24,8 @@
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
           :mode "lighting" :channel 1 :automap? true :observed-parameters {} :poll-ms 500 :timeout-ms 2000 :pairing nil
           :mappings {} :parameters {}}})
-(def audio-defaults {:input "" :sample-rate "48000" :channels "1" :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
+(def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
+                     :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
 (def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil
                :ports [] :inputs [] :sync-form sync-defaults :audio-form audio-defaults
                :sync-dirty? false :audio-dirty? false :notes [] :parameters []})
@@ -122,14 +124,20 @@
     (when-not (or (= "system" selection) mixer) (throw (js/Error. "Choose an audio input explicitly before starting capture.")))
     (when (and mixer (:expected-name form) (not= (:expected-name form) (:name mixer)))
       (throw (js/Error. "The audio input name changed. Select the device again.")))
-    (merge {:sample-rate (integer! (:sample-rate form) "Sample rate" 8000 192000)
-            :channels (integer! (:channels form) "Channels" 1 2)
-            :block-frames (integer! (:block-frames form) "Block size" 1 16384)
-            :buffer-blocks (integer! (:buffer-blocks form) "Buffer blocks" 2 64)
-            :big-endian? (:big-endian? form false) :analyzer-options (:analyzer-options form {})}
-           (if mixer {:mixer-index (:mixer-index mixer) :mixer-name (:name mixer)} {:default? true}))))
+    (let [channels (integer! (:channels form) "PCM channel count" 1 pcm/max-channels)
+          input-channel (when-not (str/blank? (str (:input-channel form)))
+                          (integer! (:input-channel form) "Input channel" 1 channels))]
+      (when-not (pcm/valid-layout? channels input-channel)
+        (throw (js/Error. "Choose an input channel for this PCM channel count.")))
+      (cond-> (merge {:sample-rate (integer! (:sample-rate form) "Sample rate" 8000 192000)
+                       :channels channels
+                       :block-frames (integer! (:block-frames form) "Block size" 1 16384)
+                       :buffer-blocks (integer! (:buffer-blocks form) "Buffer blocks" 2 64)
+                       :big-endian? (:big-endian? form false) :analyzer-options (:analyzer-options form {})}
+                      (if mixer {:mixer-index (:mixer-index mixer) :mixer-name (:name mixer)} {:default? true}))
+        input-channel (assoc :input-channel input-channel)))))
 (defn- audio-form [config]
-  (merge audio-defaults (select-keys config [:sample-rate :channels :block-frames :buffer-blocks :big-endian? :analyzer-options])
+  (merge audio-defaults (select-keys config [:sample-rate :channels :input-channel :block-frames :buffer-blocks :big-endian? :analyzer-options])
          {:expected-name (:mixer-name config) :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
 
 (rf/reg-sub :connections/state (fn [db _] (state db)))
@@ -233,7 +241,8 @@
                    (false? (:accepted? result)) (assoc-in [:connections :errors operation] "The connection could not accept that action. Check its current status.")))})))
 (rf/reg-event-fx :connections/audio-start
   (fn [{:keys [db]} _]
-    (try {:db (update-in db [:connections :pending] (fnil conj #{}) :audio-start)
+    (try {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :audio-start)
+                  (update-in [:connections :errors] dissoc :audio-start))
           :fx [(req db :audio-start "/api/audio/start" (audio-payload db) :connections/action-complete)]}
          (catch :default error {:db (assoc-in db [:connections :errors :audio-start] (events/error-message error))}))))
 (rf/reg-event-db :connections/select-port
@@ -247,6 +256,16 @@
     (let [mixer (some #(when (= value (str (:mixer-index %))) %) (:inputs (state db)))]
       (-> db (assoc-in [:connections :audio-form :input] value)
           (assoc-in [:connections :audio-form :expected-name] (:name mixer))
+          (assoc-in [:connections :audio-dirty?] true)))))
+(rf/reg-event-db :connections/select-audio-width
+  (fn [db [_ value]]
+    (let [form (:audio-form (state db))
+          width (js/Number value)
+          channel (js/Number (:input-channel form))]
+      (-> db
+          (assoc-in [:connections :audio-form]
+                    (cond-> (assoc form :channels value)
+                      (or (= 1 width) (not (pcm/valid-layout? width channel))) (assoc :input-channel "")))
           (assoc-in [:connections :audio-dirty?] true)))))
 (rf/reg-event-db :connections/pairing
   (fn [db [_ enabled?]]
@@ -604,6 +623,7 @@
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))
         pending? (boolean (some (:pending s) [:audio-start :audio-stop])) features (:features audio) metrics (:metrics audio)
+        width (js/Number (get-in s [:audio-form :channels]))
         selected (get-in s [:audio-form :input]) mixer (some #(when (= selected (str (:mixer-index %))) %) (:inputs s))
         missing? (and (seq selected) (not= selected "system")
                       (or (nil? mixer) (and (get-in s [:audio-form :expected-name])
@@ -619,9 +639,21 @@
                                   [:option {:value (str (:mixer-index mixer))} (:name mixer)])]]
       [:div.form-row
        [field s [:audio-form :sample-rate] "Sample rate · Hz" {:id "audio-rate" :input-mode "numeric" :disabled (or running? pending?)}]
-       [:label "Channels" [:select#audio-channels {:value (str (get-in s [:audio-form :channels])) :disabled (or running? pending?)
-                                                   :on-change #(edit! [:audio-form :channels] (text %))}
-                            [:option {:value "1"} "Mono"] [:option {:value "2"} "Stereo · analyzed as mono"]]]]
+       [:label "PCM channels" [:select#audio-channels {:value (str width) :disabled (or running? pending?)
+                                                      :on-change #(rf/dispatch-sync [:connections/select-audio-width (text %)])}
+                               [:option {:value "1"} "1 · Mono"] [:option {:value "2"} "2 · Stereo"]
+                               (for [n (range 3 (inc pcm/max-channels))]
+                                 ^{:key n} [:option {:value (str n)} n])]]
+       (when (and (> width 1) (pcm/valid-layout? width 1))
+         [:label "Input channel"
+          [:select#audio-input-channel {:value (str (get-in s [:audio-form :input-channel]))
+                                        :disabled (or running? pending?)
+                                        :on-change #(edit! [:audio-form :input-channel] (text %))}
+           (if (= 2 width)
+             [:option {:value "" :aria-label "Mix both stereo channels"} "Mix"]
+             [:option {:value "" :aria-label "Select an input channel"} "Select"])
+           (for [n (range 1 (inc width))]
+             ^{:key n} [:option {:value (str n) :aria-label (str "Channel " n)} n])]])]
       [:details [:summary "Capture buffering"] [:div.form-row
                                                [field s [:audio-form :block-frames] "Frames per block" {:input-mode "numeric" :disabled (or running? pending?)}]
                                                [field s [:audio-form :buffer-blocks] "Buffer blocks" {:input-mode "numeric" :disabled (or running? pending?)}]]]

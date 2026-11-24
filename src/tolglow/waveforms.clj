@@ -4,6 +4,7 @@
   (:require [afterglow.control.system :as system]
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
+            [tolglow.audio.pcm :as pcm]
             [tolglow.composition.response :as response]
             [tolglow.controllers.parameter-display :as parameter-display]
             [tolglow.registry :as registry]
@@ -208,7 +209,7 @@
           bar-set (set bars)]
       (mapv (fn [beat] {:time-ms (+ (:time-ms clock) (/ (- beat anchor) rate))
                         :beat beat :bar? (boolean (some #(< (Math/abs (double (- beat %))) 1.0e-8) bar-set))
-                        :source (:source clock) :epoch (:epoch clock)})
+                        :source (:source clock) :epoch (get clock :source-epoch (:epoch clock))})
             (sort (distinct (map double (concat quarter bars)))))) []))
 
 (defn- column [partial]
@@ -221,14 +222,16 @@
   "Summarize actual mono PCM with continuous 200Hz/2kHz crossover filters.
   Min/max/RMS are measured, band channels are low/mid/high RMS, not mood labels.
   Gaps reset filters/history; no samples or beat markers are fabricated."
-  [state {:keys [samples sample-rate channels source-id started-at-ms clock timing-valid? discontinuity?]
+  [state {:keys [samples sample-rate channels input-channel source-id started-at-ms clock timing-valid? discontinuity?]
           :or {timing-valid? true channels 1}}]
   (let [^doubles samples samples n (alength samples)
         _ (when-not (and (registry/finite-number? sample-rate) (<= 8000 sample-rate 192000)
-                         (registry/finite-number? started-at-ms) (<= 0 started-at-ms) (#{1 2} channels))
+                         (registry/finite-number? started-at-ms) (<= 0 started-at-ms)
+                         (pcm/valid-layout? channels input-channel))
             (fail! "Invalid captured waveform format or timestamp" {}))
+        format [source-id sample-rate channels input-channel]
         end (+ started-at-ms (* 1000.0 (/ n sample-rate)))
-        changed? (or discontinuity? (not= [source-id sample-rate channels] (:format state))
+        changed? (or discontinuity? (not= format (:format state))
                      (and (:end-time-ms state) (> (Math/abs (double (- started-at-ms (:end-time-ms state)))) 1.0e-5)))
         state (if changed? (assoc state :bins [] :markers [] :filters [0.0 0.0] :partial nil
                                   :generation (inc (:generation state)) :sample-end 0) state)
@@ -263,7 +266,8 @@
                      (if full? (vec (take-last (:max-bins state) (conj bins (column partial)))) bins)))))
         first-time (or (:start-time-ms (first (:bins result))) (get-in result [:partial :start]) started-at-ms)
         markers (if timing-valid? (beat-markers clock started-at-ms end) [])]
-    (assoc result :format [source-id sample-rate channels] :source-id source-id :sample-rate sample-rate :channels channels
+    (assoc result :format format :source-id source-id :sample-rate sample-rate :channels channels
+           :input-channel input-channel
            :end-time-ms end :timing-valid? timing-valid? :sample-end (+ (:sample-end state) n)
            :markers (if timing-valid?
                       (vec (take-last 256 (filter #(<= first-time (:time-ms %) end) (concat (:markers state) markers)))) []))))
@@ -271,10 +275,12 @@
 (defn capture-view [state]
   (let [bins (cond-> (:bins state) (:partial state) (conj (assoc (column (:partial state)) :partial? true)))
         bins (vec (take-last (:max-bins state) bins))
-        start (:start-time-ms (first bins)) end (:end-time-ms (last bins))]
-    {:bins bins :duration-ms (if start (- end start) 0.0) :sample-rate (:sample-rate state)
-     :channels (:channels state) :mix :mono-average :source-id (:source-id state)
-     :start-time-ms start :end-time-ms end :generation (:generation state) :sample-end (:sample-end state)
-     :timing-valid? (:timing-valid? state) :available? (boolean (seq bins))
-     :beat-markers (if start (mapv #(assoc % :offset-ms (- (:time-ms %) start))
-                                   (filter #(<= start (:time-ms %) end) (:markers state))) [])}))
+        start (:start-time-ms (first bins)) end (:end-time-ms (last bins))
+        input-channel (:input-channel state)]
+    (cond-> {:bins bins :duration-ms (if start (- end start) 0.0) :sample-rate (:sample-rate state)
+             :channels (:channels state) :mix (if input-channel :selected-channel :mono-average) :source-id (:source-id state)
+             :start-time-ms start :end-time-ms end :generation (:generation state) :sample-end (:sample-end state)
+             :timing-valid? (:timing-valid? state) :available? (boolean (seq bins))
+             :beat-markers (if start (mapv #(assoc % :offset-ms (- (:time-ms %) start))
+                                           (filter #(<= start (:time-ms %) end) (:markers state))) [])}
+      input-channel (assoc :input-channel input-channel))))
