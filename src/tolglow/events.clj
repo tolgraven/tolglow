@@ -21,7 +21,29 @@
         {:category :clock :emitter {:kind :transport :id (get-in after [:transport :source] :manual)}
          :event {:type type :index b :crossed (- b a)}}))))
 
-(defn emitted [{:keys [before after inputs intents operations]}]
+(defn- effect-event [before after {:keys [intent source]}]
+  (let [intent (cond
+                 (map? intent) (assoc intent :type (or (:type intent) (:op intent) :effect/intent))
+                 (keyword? intent) {:type intent}
+                 :else {:type :effect/intent :value intent})
+        id (:instance-id intent)
+        instance (when-not source
+                   (or (get-in after [:instances id]) (get-in before [:instances id])))
+        emitter-id (if source
+                     (or (:effect-id source) (:instance-id source) :engine)
+                     (or (:effect-id intent) (:effect-id instance) id :engine))
+        data (if source
+               ;; Keep launch detail while reading identity from the intent or its origin.
+               (let [nested (:instance intent)
+                     intent (if (map? nested)
+                              (merge (select-keys nested [:launch-mode]) (dissoc intent :instance))
+                              intent)]
+                 (merge (select-keys source [:instance-id :effect-id :effect-version :cue-id]) intent))
+               intent)]
+    {:category :effect :emitter {:kind :effect :id emitter-id}
+     :event (assoc data :cause-adapter (if source (:adapter source) (get-in instance [:source :adapter])))}))
+
+(defn emitted [{:keys [before after inputs intents intent-emissions operations]}]
   (let [time (clock-context after)]
     (into []
       (keep (fn [{:keys [event category emitter]}]
@@ -40,24 +62,17 @@
                       :event (assoc (select-keys ack [:status :command-id :instance-id :code])
                                     :type (if (= :rejected (:status ack)) :command/rejected :command/accepted)
                                     :operation (or command operation))})) operations)
-              (map (fn [value]
-                     (let [intent (cond
-                                    (map? value) (assoc value :type (or (:type value) (:op value) :effect/intent))
-                                    (keyword? value) {:type value}
-                                    :else {:type :effect/intent :value value})
-                           id (:instance-id intent)
-                           instance (or (get-in after [:instances id]) (get-in before [:instances id]))]
-                       {:category :effect
-                        :emitter {:kind :effect :id (or (:effect-id intent) (:effect-id instance) id :engine)}
-                        :event (assoc intent :cause-adapter (get-in instance [:source :adapter]))})) intents)
+              (map (partial effect-event before after)
+                   (or intent-emissions (map (fn [intent] {:intent intent}) intents)))
               (clock-events before after)))))
 
 (defn commit [admit before next-state operations]
   (let [candidate (:model next-state)
         model (staging/finish candidate)
         events (emitted {:before before :after model :inputs (staging/pending candidate)
-                         :operations operations :intents (get-in next-state [:status :last-intents])})
-        state (assoc next-state :model model)]
+                         :operations operations :intents (get-in next-state [:status :last-intents])
+                         :intent-emissions (::intent-emissions next-state)})
+        state (assoc (dissoc next-state ::intent-emissions) :model model)]
     (if (and admit (seq events))
       (try
         (let [admitted (admit model events)]

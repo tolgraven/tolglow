@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [ring.adapter.jetty :as jetty]
             [afterglow.reactive :as reactive]
+            [tolglow.demo :as demo]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.effects.faults-test :as fault-fixtures]
@@ -72,6 +73,76 @@
           (finally (.abort ^WebSocket (:socket client)))))
       (finally (show/stop! runtime) (.stop server)))))
 
+(deftest identical-custom-intents-keep-their-origin-in-scheduled-actions-and-debug
+  (let [intents [:test/pulse {:type :test/accent}]
+        model (-> (demo/model)
+                  (update-in [:registry :effects] #(assoc % :event-subscriber (assoc (:ember %) :id :event-subscriber)))
+                  (assoc-in [:registry :cues :ember :effect-id] :event-subscriber))
+        runtime (update (show/create-runtime {:model model :workspace-options nil}) :compile
+                        (fn [compile-effect]
+                          (fn [{:keys [id] :as definition}]
+                            (if (#{:event-subscriber :ice} id)
+                              (fn [context]
+                                (assoc context :intents intents :done? (= :event-subscriber id)))
+                              (compile-effect definition)))))
+        server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})
+        types [:test/pulse :test/accent]
+        subscriber-id (fn [effect type] (keyword (name effect) (name type)))
+        row (juxt :type :emitter #(select-keys (:data %) [:effect-id :instance-id :effect-version :cue-id]))
+        debug-rows (fn [batch] (filterv #(some #{(:type %)} types) (:events batch)))
+        runs #(get-in @(:state runtime) [:model :event-subscribers :runs])]
+    (try
+      (let [client (connect server "") _ (receive client)]
+        (try
+          (send! client {:op :ack :cursor 0})
+          (let [registrations (vec (for [effect [:event-subscriber :ice] type types
+                                         :let [follow-up? (= [:event-subscriber :test/pulse] [effect type])]]
+                                     (show/register-event-subscriber! runtime
+                                       {:id (subscriber-id effect type)
+                                        :match {:category :effect :emitter-id effect :type type}
+                                        :actions [(cond-> {:op :cue/launch :select {:ids [:ember] :pick :first}
+                                                           :launch {:mode :one-shot}}
+                                                    (not follow-up?) (assoc :delay {:beats 8}))]})))
+                ember (show/submit! runtime {:op :cue/launch :cue-id :ember :launch {:mode :one-shot}
+                                             :source {:adapter :repl :session-id "intent-test"}})
+                ice (show/submit! runtime {:op :cue/launch :cue-id :ice})]
+            (is (empty? (get-in @(:state runtime) [:model :instances])))
+            (show/tick! runtime 50)
+            (let [ember-id (:instance-id @ember) ice-id (:instance-id @ice)
+                  expected (vec (for [[effect cue id] [[:event-subscriber :ember ember-id] [:ice :ice ice-id]] type types]
+                                  [type {:kind :effect :id effect}
+                                   {:effect-id effect :instance-id id :effect-version 1 :cue-id cue}]))
+                  subscribers [:event-subscriber/pulse :event-subscriber/accent :ice/pulse :ice/accent]
+                  batch (receive client) rows (debug-rows batch)]
+              (is (every? #(= :accepted (:status @%)) (into [ember ice] registrations)))
+              (is (= #{ice-id} (set (keys (get-in @(:state runtime) [:model :instances])))))
+              (is (= (into (conj intents {:type :instance/finished :instance-id ember-id :reason :effect-complete}) intents)
+                     (get-in @(:state runtime) [:status :last-intents])))
+              (is (not (contains? @(:state runtime) ::show-events/intent-emissions)))
+              (is (= expected (mapv (comp row :event) (runs))))
+              (is (= [:repl :repl :studio :studio] (mapv #(get-in % [:event :data :cause-adapter]) (runs))))
+              (is (= subscribers (mapv :subscriber (runs))))
+              (is (= expected (mapv row rows)))
+              (is (= (mapv vector subscribers) (mapv :subscribers rows)))
+              (is (every? #(= :matched (:delivery %)) rows))
+              (send! client {:op :ack :cursor (:cursor batch)})
+              (let [pause (show/submit! runtime {:op :instance/pause :instance-id ice-id})]
+                (show/tick! runtime 75)
+                (is (= :accepted (:status @pause)))
+                (let [batch (receive client) rows (debug-rows batch)
+                      launch (first (filter #(= :instance/launched (:type %)) (:events batch)))
+                      follow-up-id (get-in launch [:data :instance-id])]
+                  (is (and follow-up-id (not= ember-id follow-up-id)))
+                  (is (= (mapv #(assoc-in % [2 :instance-id] follow-up-id) (take 2 expected)) (mapv row rows)))
+                  (is (every? #(and (= :unknown (:delivery %)) (nil? (:subscribers %))) rows))
+                  (is (= (subvec subscribers 1) (mapv :subscriber (runs))))
+                  (send! client {:op :ack :cursor (:cursor batch)})))
+              (show/tick! runtime 100)
+              (is (empty? (get-in @(:state runtime) [:status :last-intents])))
+              (is (= (subvec subscribers 1) (mapv :subscriber (runs))))))
+          (finally (.abort ^WebSocket (:socket client)))))
+      (finally (show/stop! runtime) (.stop server)))))
+
 (deftest stale-receiver-sees-bounded-history-with-an-exact-gap
   (let [runtime (show/create-runtime {:workspace-options nil})
         server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port 0 :join? false})]
@@ -128,11 +199,32 @@
 
 (deftest opaque-effect-intents-and-failed-handler-admission-preserve-committed-state
   (let [model {:show-id :main :epoch 1 :frame-number 2 :time-ms 18 :transport {:beat 0}}
-        state {:model model :output {:universes {}} :status {:last-intents [:spark 1 {:op :echo}]}}
-        result (show-events/commit (fn [_ _] (throw (ex-info "Bad handler" {}))) model state [])]
+        before (assoc-in model [:instances "1:1"] {:effect-id :old-effect :source {:adapter :midi}})
+        state {:model model :output {:universes {}} :status {:last-intents [:spark 1 {:op :echo :instance-id "1:1"}]}}
+        result (show-events/commit (fn [_ _] (throw (ex-info "Bad handler" {}))) before state [])]
     (is (= [:spark :effect/intent :echo] (mapv :type (:events result))))
+    (is (= [:engine :engine :old-effect] (mapv #(get-in % [:emitter :id]) (:events result))))
+    (is (= :midi (get-in result [:events 2 :data :cause-adapter])))
     (is (= model (get-in result [:state :model])))
     (is (= "Bad handler" (get-in result [:state :status :event-dispatch-error :message])))))
+
+(deftest intent-payload-ids-and-originating-effect-attribution
+  (let [source {:instance-id "origin" :effect-id :actual :effect-version 2
+                :cue-id :actual-cue :adapter :event-subscriber}
+        nested {:id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue :launch-mode :held}
+        explicit {:instance-id "other" :effect-id :target :effect-version 7 :cue-id :target-cue}
+        intents [{:type :test/inspect :instance nested}
+                 (merge explicit {:type :test/inspect :instance nested :cause-adapter :studio})
+                 {:type :test/inspect :instance {}}]
+        model {:show-id :main :epoch 1 :frame-number 2 :time-ms 18 :transport {:beat 0}}
+        state {:model model :status {:last-intents intents}
+               ::show-events/intent-emissions (mapv #(hash-map :intent % :source source) intents)}
+        result (show-events/commit nil model state [])
+        origin (-> source (dissoc :adapter) (assoc :cause-adapter :event-subscriber))]
+    (is (= (repeat 3 {:kind :effect :id :actual}) (map :emitter (:events result))))
+    (is (= [(assoc origin :launch-mode :held) (merge origin explicit {:launch-mode :held}) origin]
+           (mapv :data (:events result))))
+    (is (= (dissoc state ::show-events/intent-emissions) (:state result)))))
 
 (deftest a-blocked-encoder-cannot-stall-the-frame-owner
   (let [runtime (show/create-runtime {:workspace-options nil})

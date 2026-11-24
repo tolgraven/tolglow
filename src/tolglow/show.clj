@@ -1336,6 +1336,7 @@
                                      updated (advance-light-scenes runtime (lighting/publish with-fog frame) patch frame time-ms bypass?)]
                                  (lighting-levels/publish updated (lighting-scenes/groups updated) (:lighting-capacity frame)))
                         :output frame :variable-observation variables
+                        ::show-events/intent-emissions (:intent-emissions result)
                         :preview-hdr (when (:hdr? frame-input) (or hdr-opts {}))
                         :keyframes (:keyframes result) :spatial-cache (:cache space) :hdr-scope hdr-scope :autopilot-cache (:cache observation) :autopilot-author-request (:author-request prepared)
                         :lighting-history (:state finished) :fault-events (:fault-events result)
