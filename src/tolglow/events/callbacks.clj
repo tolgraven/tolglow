@@ -12,6 +12,7 @@
                     (doto (Thread. runnable "tolglow-event-callback") (.setDaemon true))))]
     {:pool (ThreadPoolExecutor. 2 2 0 TimeUnit/MILLISECONDS (ArrayBlockingQueue. 32) factory)
      :jobs (atom {}) :sources (atom {}) :handlers (atom (or callbacks {})) :inline-handlers (atom {})
+     :inline-inputs (volatile! nil)
      :trusted-source? trusted-source? :timeout-ms timeout-ms}))
 
 (defn register!
@@ -26,14 +27,22 @@
 
 (defn- retain-inline! [service {:keys [subscribers runs]} registrations]
   (let [handlers (:inline-handlers service)
-        available (into @handlers registrations)]
-    (when (seq available)
-      (let [steps (concat (map (juxt :id :actions) subscribers) (map (juxt :subscriber :steps) runs))
+        inputs (:inline-inputs service)
+        active @handlers
+        [checked-subscribers checked-runs] @inputs]
+    (when (or (seq registrations)
+              (and (seq active)
+                   (not (and (identical? subscribers checked-subscribers)
+                             (identical? runs checked-runs)))))
+      (let [available (into active registrations)
+            steps (concat (map (juxt :id :actions) subscribers) (map (juxt :subscriber :steps) runs))
             referenced (fn [[id actions]]
                          (keep #(when-let [key (inline-key id (:implementation %))]
                                   (find available key))
-                               actions))]
-        (reset! handlers (into {} (mapcat referenced) steps))))))
+                               actions))
+            retained (into {} (mapcat referenced) steps)]
+        (reset! handlers retained)
+        (vreset! inputs (when (seq retained) [subscribers runs]))))))
 
 (defn- resolve-handler [service implementation inline-handler]
   (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
@@ -125,4 +134,5 @@
   (doseq [{:keys [task]} (vals @(:jobs service)) :when task] (.cancel ^FutureTask task true))
   (reset! (:jobs service) {})
   (reset! (:inline-handlers service) {})
+  (vreset! (:inline-inputs service) nil)
   (.shutdownNow ^ThreadPoolExecutor (:pool service)))

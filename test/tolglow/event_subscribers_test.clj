@@ -225,6 +225,10 @@
         (let [reply (show/register-event-subscriber! current (assoc (listener []) :middleware (middleware owner)))]
           (show/tick! current 0)
           (is (= :accepted (:status (deref reply 1000 {}))))))
+      (let [handlers (get-in a [:event-callbacks :inline-handlers])
+            registered @handlers]
+        (show/tick! a 1)
+        (is (identical? registered @handlers) "An idle tick reuses the registered callback map"))
       (let [source-a (show/export-show-source a)
             source-b (show/export-show-source b)
             definition (fn [source] (get-in (files/read-string source) [:model :event-subscribers :subscribers 0]))
