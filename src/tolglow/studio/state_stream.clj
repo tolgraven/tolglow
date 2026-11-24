@@ -69,39 +69,46 @@
   (locking (:clients hub)
     (into #{} (mapcat #(vals (:queries @%))) (vals @(:clients hub)))))
 
-(defn- query-demand-changed! [hub]
+(defn- query-demand-changed! [hub client removed]
   (try
-    (queries/release-unused-graph-leases! (:query-store hub) #(wanted-queries hub))
-    (finally (wake! hub))))
+    (queries/release-unused-graph-leases! (:query-store hub) #(wanted-queries hub) removed)
+    (finally
+      (when client (swap! client update :query-releases dec))
+      (wake! hub))))
 
 (defn- set-queries! [hub socket desired]
   (when-not (:query-store hub) (throw (ex-info "Signal streaming unavailable" {})))
-  (when-some [removed? (locking (:clients hub)
-                         (when-let [client (get @(:clients hub) socket)]
-                           (let [prior (:queries @client {})]
-                             (when-not (= desired (set (keys prior)))
-                               (let [next (into {} (for [q desired]
-                                                     [q (or (get prior q) ((get (:scoped-queries hub) (first q) identity) q))]))]
-                                 (swap! client #(-> % (assoc :queries next) (dissoc :pending :base)))
-                                 (release-queries! hub prior next)
-                                 (boolean (some #(not (contains? next %)) (keys prior))))))))]
-    (if removed? (query-demand-changed! hub) (wake! hub))))
+  (when-let [[client removed] (locking (:clients hub)
+                               (when-let [client (get @(:clients hub) socket)]
+                                 (let [prior (:queries @client {})]
+                                   (when-not (= desired (set (keys prior)))
+                                     (let [next (into {} (for [q desired]
+                                                           [q (or (get prior q) ((get (:scoped-queries hub) (first q) identity) q))]))
+                                           removed (into #{} (keep (fn [[q scoped]]
+                                                                    (when-not (contains? next q) scoped))) prior)]
+                                       (swap! client #(cond-> (-> % (assoc :queries next) (dissoc :pending :base))
+                                                        (seq removed) (-> (update :query-releases (fnil inc 0))
+                                                                          (update :removed-queries (fnil into #{}) removed))))
+                                       (release-queries! hub prior next)
+                                       [client removed])))))]
+    (if (seq removed) (query-demand-changed! hub client removed) (wake! hub))))
 
 (defn- forget! [hub socket]
   (let [[removed prior] (locking (:clients hub)
                           (let [removed (get (first (swap-vals! (:clients hub) dissoc socket)) socket)
-                                prior (seq (:queries (some-> removed deref)))]
+                                prior (:queries (some-> removed deref))]
                             (release-unused-interest! hub)
-                            (when prior (release-queries! hub prior {}))
+                            (when (seq prior) (release-queries! hub prior {}))
                             [removed prior]))]
-    (when prior (query-demand-changed! hub))
+    (when (seq prior) (query-demand-changed! hub nil (vals prior)))
     removed))
 
 (defn- retire! [hub socket code reason]
   (when (forget! hub socket)
     (try (ws/close socket code reason) (catch Exception _))))
 
-(defn- ready? [state] (not (or (:sending state) (:pending state))))
+(defn- ready? [state]
+  (not (or (:sending state) (:pending state) (pos? (:query-releases state 0)))))
 
 (defn- offer! [hub socket client before target cache]
   (let [base (:base before)
@@ -114,7 +121,9 @@
                         (let [wire (transit/encode (message base target))]
                           (vswap! cache assoc key wire)
                           wire))]
-        (when (compare-and-set! client before (assoc before :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0)))
+        (when (compare-and-set! client before (-> before
+                                                (dissoc :removed-queries)
+                                                (assoc :pending target :sending token :deltas (if base (inc (:deltas before 0)) 0))))
           (ws/send socket encoded
                    (fn []
                      (swap! client #(if (= token (:sending %)) (dissoc % :sending) %))
@@ -176,9 +185,14 @@
   (when-let [source (.get ^AtomicReference (:latest hub))]
     (let [common (delay (common-target hub source))
           clients (mapv (fn [[socket client]] [socket client @client]) @(:clients hub))
-          leases (when-let [store (:query-store hub)] (queries/reconcile-current! store source #(wanted-queries hub)))
+          store (:query-store hub)
+          leases (when store (queries/reconcile-current! store source #(wanted-queries hub)))
+          retiring (when store (queries/retiring-queries store))
           cache (volatile! {})]
-      (doseq [[socket client before] clients :when (ready? before)]
+      (doseq [[socket client before] clients
+              :when (and (ready? before)
+                         (not-any? #(contains? retiring %) (:removed-queries before))
+                         (every? #(contains? leases %) (vals (:queries before))))]
         (try
           (let [target (if-let [interest (:interest before)]
                          (delay (connections-target hub interest source @common))

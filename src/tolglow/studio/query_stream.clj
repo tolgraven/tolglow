@@ -42,23 +42,38 @@
 (defn- surface-query? [store query]
   (contains? (:surfaces store) (first query)))
 
+(defn retiring-queries [store]
+  (:retiring @(:state store)))
+
 (defn release-unused-graph-leases!
   "Retire unobserved Afterglow queries independently of projection delivery."
-  [store wanted-queries]
-  (let [retired (locking store
-                  (let [state (:state store) before @state
-                        wanted (wanted-queries)
-                        unused (filterv #(not (or (contains? wanted %) (surface-query? store %)))
-                                        (keys (:leases before)))]
+  [store wanted-queries candidates]
+  (let [state (:state store)
+        retired (locking store
+                  (let [before @state wanted (wanted-queries)
+                        unused (filterv #(and (contains? (:leases before) %)
+                                              (not (contains? wanted %))
+                                              (not (surface-query? store %)))
+                                        candidates)]
                     (when (seq unused)
                       (reset! state (-> before
                                         (update :leases #(apply dissoc % unused))
                                         (update :wanted #(apply disj % unused))
-                                        (update :missing #(apply disj % unused))))
-                      (mapv (:leases before) unused))))]
-    ;; A replacement has its own graph watcher token. Closing these retired
-    ;; leases cannot release it, and the store stays available to acquisitions.
-    (doseq [lease retired] (close-lease! lease))))
+                                        (update :missing #(apply disj % unused))
+                                        (update :retiring (fnil into #{}) unused)))
+                      (select-keys (:leases before) unused))))
+        failure (reduce (fn [first-error [query lease]]
+                          (try
+                            (close-lease! lease)
+                            first-error
+                            (catch Exception error (or first-error error))
+                            (finally
+                              (locking store
+                                (when-not (:closed? @state)
+                                  (swap! state update :retiring disj query)))
+                              ((:wake! store)))))
+                        nil retired)]
+    (when failure (throw failure))))
 
 (defn- open-graph-lease [system query allowed? wake!]
   (if-not allowed?
@@ -87,7 +102,10 @@
   [store source wanted-queries]
   (let [[leases retired]
         (locking store
-          (let [state (:state store) before @state wanted (wanted-queries)]
+          (let [state (:state store) before @state
+                ;; Opening while its old watcher is still alive would reuse
+                ;; the retired query's cached value and in-flight producer.
+                wanted (reduce disj (wanted-queries) (:retiring before))]
             (when-not (or (:closed? before) (and (empty? wanted) (empty? (:leases before))))
               (let [model (:model source)
                     configured (get-in model [:settings :studio :public-queries])
@@ -111,6 +129,7 @@
                                                              (open-lease store system q public))])
                                                wanted))]
                       (reset! state {:system system :identity identity :leases leases :wanted wanted :public public
+                                     :retiring (:retiring before)
                                      :missing (into #{} (keep (fn [[q lease]] (when (:await-registration? lease) q))) leases)})
                       [leases graph])))))))]
     (doseq [[_ lease] retired] (close-lease! lease))
