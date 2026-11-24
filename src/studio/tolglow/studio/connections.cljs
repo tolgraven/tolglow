@@ -651,7 +651,7 @@
                                         :on-change #(edit! [:audio-form :input-channel] (text %))}
            (if (= 2 width)
              [:option {:value "" :aria-label "Mix both stereo channels"} "Mix"]
-             [:option {:value "" :aria-label "Select an input channel"} "Select…"])
+             [:option {:value "" :aria-label "Select an input channel"} "Select"])
            (for [n (range 1 (inc width))]
              ^{:key n} [:option {:value (str n) :aria-label (str "Channel " n)} n])]])]
       [:details [:summary "Capture buffering"] [:div.form-row

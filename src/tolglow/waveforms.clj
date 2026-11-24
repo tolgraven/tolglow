@@ -209,7 +209,7 @@
           bar-set (set bars)]
       (mapv (fn [beat] {:time-ms (+ (:time-ms clock) (/ (- beat anchor) rate))
                         :beat beat :bar? (boolean (some #(< (Math/abs (double (- beat %))) 1.0e-8) bar-set))
-                        :source (:source clock) :epoch (:epoch clock)})
+                        :source (:source clock) :epoch (get clock :source-epoch (:epoch clock))})
             (sort (distinct (map double (concat quarter bars)))))) []))
 
 (defn- column [partial]

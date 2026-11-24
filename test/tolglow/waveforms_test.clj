@@ -118,15 +118,20 @@
     (is (= 480 (:sample-end gap)))))
 
 (deftest beat-markers-follow-authoritative-clock-and-fractional-bars
-  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :epoch 2 :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
-        view (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                             (block (double-array 96000) 0 {:clock clock})))
-        invalid (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock clock :timing-valid? false})))
-        stopped (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock (assoc clock :running? false)})))]
+  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :source-epoch 7 :epoch 2
+               :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
+        project (fn [options]
+                  (waveforms/capture-view
+                   (waveforms/capture-block (waveforms/new-capture)
+                                           (block (double-array 96000) 0 options))))
+        view (project {:clock clock})
+        fallback (project {:clock (dissoc clock :source-epoch)})
+        invalid (project {:clock clock :timing-valid? false})
+        stopped (project {:clock (assoc clock :running? false)})]
     (is (= [0.0 1.0 2.0 3.0 3.5] (mapv :beat (:beat-markers view))))
     (is (= [0.0 1750.0] (mapv :offset-ms (filter :bar? (:beat-markers view)))))
+    (is (= #{[:link 7]} (into #{} (map (juxt :source :epoch)) (:beat-markers view))))
+    (is (= #{[:link 2]} (into #{} (map (juxt :source :epoch)) (:beat-markers fallback))))
     (is (empty? (:beat-markers invalid)))
     (is (empty? (:beat-markers stopped)))
     (is (false? (:timing-valid? invalid)))))

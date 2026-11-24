@@ -365,8 +365,9 @@ capture stays idle on load and its settings are available for the next start.
 ```
 
 The host resumes requested capture after rebasing the restored show clock.
-`:clock!` supplies `:time-ms`, `:beat`, `:bpm`, `:source`, optional `:epoch`
-and `:confidence`, and canonical `:playing?`; paused clocks do not emit beats.
+`:clock!` supplies `:time-ms`, `:beat`, `:bpm`, `:source`, optional `:source-epoch`
+and `:confidence`, and canonical `:playing?`. `:epoch` can supply the source epoch
+when `:source-epoch` is absent. Pausing suspends aligned beat events.
 The event callback receives a vector and should enqueue quickly. Returning false
 or `{:accepted? false}` reports queue rejection; the capture status counts dropped
 events. Optional feature/completion callbacks and a fixed `:subscriptions` map
