@@ -171,12 +171,7 @@
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))
             :chat! (fn [payload emit! done!]
-                     (let [identity (select-keys (:model @(:state runtime)) [:epoch :show-id])]
-                       (agents/start-chat! (show/agent-manager runtime) payload
-                                           {:snapshot! #(show/snapshot runtime)
-                                            :dispatch! #(show/dispatch-tool! runtime %1 %2
-                                                                        (merge %3 identity {:expected-epoch (:epoch identity)}))
-                                            :emit! emit! :done! done!})))})))
+                     (show/start-chat! runtime payload {:emit! emit! :done! done!}))})))
 
 (defn listen!
   "Bind Studio to the selected show, returning the actual port (including port

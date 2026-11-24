@@ -3,10 +3,15 @@
             [clojure.test :refer :all]
             [clojure.data.json :as json]
             [clojure.string :as str]
+            [ring.core.protocols :as protocols]
             [tolglow.agents :as agents]
             [tolglow.agents.credentials :as credentials]
-            [tolglow.show :as show])
-  (:import [java.util.concurrent CountDownLatch TimeUnit]
+            [tolglow.connections :as connections]
+            [tolglow.show :as show]
+            [tolglow.studio :as studio]
+            [tolglow.studio.web :as web])
+  (:import [java.io ByteArrayInputStream ByteArrayOutputStream Closeable]
+           [java.util.concurrent CountDownLatch TimeUnit]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -391,10 +396,8 @@
         events (atom [])]
     (try
       (configure-local! manager)
-      (let [handle (agents/start-chat! manager {:message "Conduct the front with the music."}
-                                       {:snapshot! #(show/snapshot rt)
-                                        :dispatch! #(show/dispatch-tool! rt %1 %2 %3)
-                                        :emit! #(swap! events conj %) :done! (fn [_])})
+      (let [handle (show/start-chat! rt {:message "Conduct the front with the music."}
+                                     {:emit! #(swap! events conj %) :done! (fn [_])})
             result (await-result handle)
             replies (->> @events (filter #(= :tool/result (:type %))) (mapv :result))
             view (:autopilot (second replies))]
@@ -422,3 +425,65 @@
         (is (= :accepted (:status (call {:page-id "music/front"}))))
         (is (= {:page-id "music/front"} (:scope (settings)))))
       (finally (show/stop! rt)))))
+
+(deftest show-chat-and-studio-share-tool-admission-through-restore
+  (let [waiting (CountDownLatch. 2)
+        allow-tool (promise)
+        transport (fn [request consume! _]
+                    (let [messages (:messages (json/read-str (:body request) :key-fn keyword))]
+                      (case (count (filter #(= "tool" (:role %)) messages))
+                        0 (consume! (tool-stream "current" "inspect_lighting" {}))
+                        1 (do (.countDown waiting)
+                              (when (deref allow-tool 10000 false)
+                                (consume! (tool-stream "stale" "launch_cue" {:cue-id "ember"}))))
+                        2 (consume! (stream-text "Done"))))
+                    {:status 200})
+        runtime (show/create-runtime {:workspace-options nil :agent-options {:transport transport}})
+        headless-events (atom [])]
+    (try
+      (configure-local! (show/agent-manager runtime))
+      (let [source (show/export-show-source runtime)
+            initial-epoch (:epoch (show/snapshot runtime))
+            headless (show/start-chat! runtime {:message "Inspect lighting" :run-id "repl"}
+                                       {:emit! #(swap! headless-events conj %) :done! identity})
+            app (studio/handler runtime)
+            response (app {:request-method :post :uri "/api/chat" :headers {"host" "localhost"}
+                           :body (ByteArrayInputStream.
+                                  (.getBytes "{\"message\":\"Inspect lighting\",\"run-id\":\"studio\"}" "UTF-8"))})]
+        (is (= 200 (:status response)))
+        (is (= "text/event-stream; charset=utf-8" (get-in response [:headers "Content-Type"])))
+        (with-open [body ^Closeable (:body response)]
+          (let [ring-events (future
+                              (let [output (ByteArrayOutputStream.)]
+                                (protocols/write-body-to-stream body response output)
+                                (into [] (comp (filter #(str/starts-with? % "data: "))
+                                               (map #(json/read-str (subs % 6))))
+                                      (str/split-lines (.toString output "UTF-8")))))
+                retire! connections/retire!]
+            (is (.await waiting 5000 TimeUnit/MILLISECONDS))
+            (let [receipt (show/submit! runtime :import {:source source})]
+              ;; Let the provider answer after publication, before retirement
+              ;; cancels the old manager and prevents it from calling any tool.
+              (with-redefs [connections/retire! (fn [retired]
+                                                 (try
+                                                   (deliver allow-tool true)
+                                                   (await-result headless)
+                                                   (deref ring-events 5000 ::timeout)
+                                                   (finally (retire! retired))))]
+                (show/tick! runtime 1))
+              (is (= :accepted (:status (deref receipt 5000 ::timeout)))))
+            (let [events (deref ring-events 5000 ::timeout)
+                  results (mapv :result (filter #(= :tool/result (:type %)) @headless-events))
+                  ring-results (mapv #(get % "result") (filter #(= "tool/result" (get % "type")) events))]
+              (is (= :completed (:status (await-result headless))))
+              (is (= "completed" (get-in (last events) ["result" "status"])))
+              (is (= (mapv web/json-data results) ring-results))
+              (is (= initial-epoch (:epoch (first results))))
+              (is (= {:ok? false :error :tool-failed :message "Agent run belongs to a previous show session"}
+                     (second results))))
+            (show/tick! runtime 2)
+            (is (= (inc initial-epoch) (:epoch (show/snapshot runtime))))
+            (is (empty? (:instances (show/snapshot runtime)))))))
+      (finally
+        (deliver allow-tool true)
+        (show/stop! runtime)))))
