@@ -3,6 +3,7 @@
   mailbox; browser capture, PNG decoding and native output run on one worker."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
@@ -306,7 +307,8 @@
                            :capture {:open! (constantly nil) :close! (constantly nil)
                                      :capture! (fn [_ view] view)}
                            :sink (transports/wayang-display)))
-         :device :push-2 :input :view))
+         :device :push-2 :input :view
+         :display-capabilities presentation/parameter-only-capabilities))
 
 (defn browser-display
   "Create an offscreen re-frame display for a tethered Push. Push 2 uses Wayang.

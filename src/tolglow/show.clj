@@ -1551,7 +1551,7 @@
   (let [project-parameters (push-parameter-projector)]
     (display/native-display
       {:project! (fn [view]
-                   (project-parameters @(:state runtime) (assoc view :display-mode :parameters) nil))})))
+                   (project-parameters @(:state runtime) view nil))})))
 
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is

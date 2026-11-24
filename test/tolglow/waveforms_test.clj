@@ -221,7 +221,7 @@
                  (let [view @rendered
                        rows (into {} (map (juxt :param identity)) (:parameters view))
                        trace (:waveform rows)
-                       frame {:rows rows :thread (Thread/currentThread)
+                       frame {:rows rows :thread (Thread/currentThread) :mode (:display-mode view)
                               :trace (mapv #(= trace-pixel %) (.getRGB image 0 115 960 18 nil 0 960))}]
                    (cond
                      (= :stale (:preview-status trace)) (deliver stale-frame frame)
@@ -239,13 +239,17 @@
                  :midi {:open! (constantly :midi) :send! (fn [_ _]) :close! (fn [_])}
                  :schedule! (fn [_] (fn []))}]
     (try
+      (is (= :accepted (:status (apply! :settings {:scope :controllers
+                                                  :values {:push-display {:mode :pages :parameter-view :history}}} 0))))
       (is (= :accepted (:status (apply! :definition {:kind :effects :definition definition} 0))))
       (is (= :accepted (:status (apply! :command {:op :cue/put :cue {:id :shape :effect-id :shape}} 0))))
       (let [id (:instance-id (apply! :command {:op :cue/launch :cue-id :shape} 0))
             project-browser (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))
             browser-view (push/display-view {:selected-instance id :selected-cue :shape :page-id :main :origin [0 0]}
                                             (:model @(:state runtime)))
-            browser-rows #(into {} (map (juxt :param identity)) (:parameters (project-browser browser-view)))]
+            browser-rows #(into {} (map (juxt :param identity))
+                                (:parameters (project-browser (assoc browser-view :display-mode :parameters))))]
+        (is (= :pages (:display-mode (project-browser browser-view))))
         (with-redefs-fn {#'transports/native-wayang (constantly backend)
                          #'transports/render-view! (fn [image view]
                                                      (reset! rendered view)
@@ -253,6 +257,7 @@
           #(show/connect-device! runtime :push-2 options))
         (let [before (deref first-frame 2000 {})
               studio-instance (some #(when (= id (:id %)) %) (:instances (show/snapshot runtime)))]
+          (is (= :parameters (:mode before)))
           (is (= (browser-rows) (:rows before)))
           (is (= [8 16 8] (mapv #(get-in before [:rows % :schema :dmx-bits]) [:level :pan :width])))
           (is (= [8 16 8] (mapv #(get-in studio-instance [:definition :params % :dmx-bits]) [:level :pan :width])))
@@ -277,7 +282,7 @@
       (let [supplied (promise)
             display {:open! (constantly :display) :render! (fn [_ view] (deliver supplied view)) :close! (fn [_])}]
         (show/connect-device! runtime :push-2 (assoc options :display display))
-        (is (map? (deref supplied 2000 nil))))
+        (is (= :pages (:display-mode (deref supplied 2000 nil)))))
       (finally (show/stop! runtime)))))
 
 (deftest compact-push-audio-retains-extrema-energy-and-clock-identity
