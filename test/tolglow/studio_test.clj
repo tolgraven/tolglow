@@ -335,7 +335,8 @@
       (show/tick! r 10)
       (is (= :accepted (:status @accepted)))
       (let [queue (java.util.concurrent.LinkedBlockingQueue. 1)
-            full (assoc r :queue queue)]
+            full (assoc r :queue queue)
+            callback-id (get-in (show/snapshot r) [:event-subscribers :subscribers 0 :actions 0 :implementation :callback-id])]
         (.add queue :occupied)
         (is (= :rejected (:status @(show/register-event-subscriber! full (assoc descriptor :middleware replacement)))))
-        (is (identical? original (get @(get-in r [:event-callbacks :handlers]) :test/inline)))))))
+        (is (= {[:test/inline callback-id] original} @(get-in r [:event-callbacks :inline-handlers])))))))

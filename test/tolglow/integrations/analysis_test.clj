@@ -51,6 +51,7 @@
       (is (= :adaptive-band-onset (:inference kick)))
       (is (= :kick-confirmed-clock (:inference beat)))
       (is (= :midi-clock (:clock-source beat)))
+      (is (= 1 (:clock-epoch beat)))
       (is (<= 0 (:confidence beat) (:confidence kick) 1)))
     (is (= initial-clock clock))
     (is (every? #(= 120.0 (:bpm %)) beats))

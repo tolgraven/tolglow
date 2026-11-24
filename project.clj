@@ -23,6 +23,9 @@
   :target-path "target/%s"
   :jvm-opts ["-Djava.awt.headless=true"]
   :profiles {:dev {:source-paths ["dev"]}
+             :embedded-host ^:leaky {:source-paths ["native/EmbeddedHost/src"]
+                             :test-paths ["native/EmbeddedHost/test"]
+                             :dependencies [[org.babashka/sci "0.15.60"]]}
              :native-gpu {:dependencies ~(get-in (tolglow.build-manifest/paired-project ".")
                                                  [:profiles :native-gpu :dependencies])
                           :test-paths ["test-native"]}

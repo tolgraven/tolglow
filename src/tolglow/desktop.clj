@@ -3,10 +3,10 @@
   (:require [clojure.java.io :as io]
             [tolglow.application :as app]
             [tolglow.data :as data]
-            [tolglow.modules :as modules])
+            [tolglow.desktop.launch :as launch])
   (:import [clojure.lang Compiler DynamicClassLoader RT]
            [java.io File]
-           [java.nio.file Files Path StandardCopyOption]))
+           [java.nio.file Path]))
 
 (defn folder-config [folder]
   (let [config (io/file folder "tolglow.edn")
@@ -18,31 +18,12 @@
                              (throw (ex-info "show.clj must define show/config" {}))))
       :else (throw (ex-info "Choose a folder containing tolglow.edn or show.clj" {})))))
 
-(defn- publish-port! [^Path ready port]
-  (let [temporary (Files/createTempFile (.getParent ready) "listener" ".tmp"
-                                        (make-array java.nio.file.attribute.FileAttribute 0))]
-    (try
-      (spit (.toFile temporary) (str port))
-      (Files/move temporary ready (into-array StandardCopyOption [StandardCopyOption/ATOMIC_MOVE]))
-      (finally (Files/deleteIfExists temporary)))))
-
-(defn- with-application-sources [cfg]
-  (if-let [sources (not-empty (System/getenv "TOLGLOW_APPLICATION_SOURCES"))]
-    (let [settings (modules/settings cfg :show)]
-      (if (contains? settings :workspace-options)
-        cfg
-        (let [options {:repositories {:tolglow (str (io/file sources "tolglow"))
-                                      :afterglow (str (io/file sources "afterglow"))}
-                       :workspace-parent (str (io/file sources "workspaces"))}]
-          (assoc cfg :show (assoc settings :workspace-options options)))))
-    cfg))
-
 (defn run-show! [^File folder ^Path ready input]
   ;; The user's namespace root is scoped to this show process. A URL keeps paths
   ;; containing a colon or spaces intact and leaves bundled resources first.
   (with-open [loader (doto (DynamicClassLoader. (RT/baseLoader)) (.addURL (.toURL (.toURI folder))))]
     (with-bindings {Compiler/LOADER loader}
-      (let [cfg (with-application-sources (folder-config folder))
+      (let [cfg (launch/with-application-sources (folder-config folder))
             ;; The window owns a private ephemeral listener even if this folder
             ;; normally starts Studio through TLS or a LAN reverse proxy.
             local-web {:enabled true :host "127.0.0.1" :port 0}
@@ -51,7 +32,7 @@
           (let [port (get-in runtime [:application :modules :web-server :port])]
             (when-not (pos-int? port)
               (throw (ex-info "Include :web-server in the config's :init modules" {})))
-            (publish-port! ready port)
+            (launch/publish-port! ready port)
             ;; Parent exit, including a crash, closes the only writer.
             (.read ^java.io.InputStream input))
           (finally (app/stop! runtime)))))))

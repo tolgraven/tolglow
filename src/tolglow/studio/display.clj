@@ -3,6 +3,7 @@
   mailbox; browser capture, PNG decoding and native output run on one worker."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [afterglow.control.display :as presentation]
             [afterglow.control.devices.push-3.display :as push-3]
             [afterglow.control.devices.transports :as transports])
   (:import [java.awt.image BufferedImage]
@@ -17,7 +18,7 @@
 (def width 960)
 (def height 160)
 
-(defn- thread-factory [name thread-ref]
+(defn- thread-factory ^ThreadFactory [^String name thread-ref]
   (reify ThreadFactory
     (newThread [_ runnable]
       (let [thread (doto (Thread. runnable name) (.setDaemon true))]
@@ -217,8 +218,8 @@
   "Build the asynchronous display session transport from explicit :capture and
   :sink maps. One capture is in flight and one latest pending view is retained.
   With :project!, the last immutable view is re-projected at the bounded cadence
-  even when model/base controls are unchanged, so captured audio remains live.
-  :render! never runs screenshot/native IO. Failures are visible through status!;
+  even when model/base controls are unchanged, so live readings stay current.
+  Session :render! only submits a view. Failures are visible through status!;
   resources close on the worker. close! waits at most :shutdown-timeout-ms."
   [{:keys [capture sink max-fps shutdown-timeout-ms project!]
     :or {max-fps 20 shutdown-timeout-ms 1000}}]
@@ -256,9 +257,9 @@
                                   (when-not (or (identical? stop-token entry) (not= :active (:status @(:state handle))))
                                     (let [started (System/nanoTime)
                                           view (if project! (validate-view! (project! (:view entry))) (:view entry))
-                                          image ((:capture! capture) capture-handle view)]
+                                          frame ((:capture! capture) capture-handle view)]
                                       (when (= :active (:status @(:state handle)))
-                                        ((:render! sink) sink-handle image)
+                                        ((:render! sink) sink-handle frame)
                                         (change! handle #(-> % (update :captured inc)
                                                             (assoc :last-sequence (:sequence entry)
                                                                    :last-render-ms (/ (- (System/nanoTime) started) 1.0e6)))))
@@ -297,6 +298,17 @@
        (when (.isAlive ^Thread (:worker handle))
          (change! handle assoc :shutdown-timeout? true))
        nil)}))
+
+(defn native-display
+  "Build the asynchronous Push 2 display. Wayang renders the projected view
+  directly into its owned image on the display worker."
+  [options]
+  (assoc (transport (assoc options
+                           :capture {:open! (constantly nil) :close! (constantly nil)
+                                     :capture! (fn [_ view] view)}
+                           :sink (transports/wayang-display)))
+         :device :push-2 :input :view
+         :display-capabilities presentation/parameter-only-capabilities))
 
 (defn browser-display
   "Create an offscreen re-frame display for a tethered Push. Push 2 uses Wayang.

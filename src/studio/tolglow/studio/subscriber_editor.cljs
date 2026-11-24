@@ -188,12 +188,16 @@
          ^{:key caption} [:button.button {:disabled disabled? :type "button" :aria-label (str (case caption "↑" "Move up" "↓" "Move down" "Remove") " step " (inc i))
                                          :on-click #(dispatch [:subscribers/step i dest])} caption])]]
      (if (= op :callback)
-       (let [{:keys [type symbol namespace form id]} (:implementation action)]
+       (let [{:keys [type symbol namespace form id]} (:implementation action)
+             types [[:registered "Registered function"] [:var "Named Clojure var"] [:source "Clojure source"]]
+             types (cond-> types (= :inline type) (conj [:inline "Process-local REPL function"]))]
          [:div.debug-fields
-          [select-box "Callback" type [[:registered "Registered function"] [:var "Named Clojure var"] [:source "Clojure source"]]
-           #(set-at [:implementation] (case % :registered {:type :registered :id nil} :var {:type :var :symbol ""}
-                                       {:type :source :namespace "user" :form "" :bindings {}}))]
+          [select-box "Callback" type types
+           #(when (and % (not= :inline %))
+              (set-at [:implementation] (case % :registered {:type :registered :id nil} :var {:type :var :symbol ""}
+                                           {:type :source :namespace "user" :form "" :bindings {}})))]
           (case type
+            :inline nil
             :registered [:label "Registered function ID" [:input {:value (title id) :placeholder "show/hit"
                                                                   :on-change #(set-at [:implementation :id] (some-> (raw %) not-empty keyword))}]]
             :var [:label "Function" [:input {:placeholder "show.effects/on-event" :value symbol :on-change #(set-at [:implementation :symbol] (raw %))}]]

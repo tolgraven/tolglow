@@ -309,6 +309,7 @@
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
+      :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0)
@@ -459,10 +460,12 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :event-subscriber (let [updated (subscribers/configure model payload)]
-                        (when-let [handler (::inline-handler payload)]
-                          (event-callbacks/register! (:event-callbacks runtime) (get-in payload [:subscriber :id]) handler))
-                        {:model updated :ack {:status :accepted}})
+    :event-subscriber (let [inline-registration (::inline-registration payload)]
+                        (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
+                          (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
+                        {:model (subscribers/configure model payload)
+                         :ack {:status :accepted}
+                         :inline-registration inline-registration})
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
@@ -820,7 +823,13 @@
   [runtime]
   (let [epoch (get-in @(:state runtime) [:model :epoch])
         current? #(and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))]
-    {:clock! (fn [] (when (current?) (get-in @(:state runtime) [:model :transport])))
+    {:clock! (fn []
+               (let [{:keys [model audio-clock-confidence]} @(:state runtime)
+                     {:keys [source time-ms] :as transport} (:transport model)
+                     confidence (if (= :manual source) 1.0 audio-clock-confidence)]
+                 (when (and @(:running runtime) (= epoch (:epoch model))
+                            (some? time-ms) (some? source) (some? confidence))
+                   (assoc transport :confidence confidence))))
      :events! (fn [events]
                 (if-not (current?) false
                   (let [accepted? (volatile! false)]
@@ -922,12 +931,14 @@
   (let [{:keys [selected-source clock follow-transport?]} (session/clock-at (connections/sync (:connections runtime)) time-ms)]
     (if-let [captured (cond
                         (= :manual selected-source)
-                        (assoc (:transport (advance-transport model time-ms)) :source :manual :source-epoch 0)
+                        (assoc (:transport (advance-transport model time-ms))
+                               :source :manual :source-epoch 0 :confidence 1.0)
 
                         (and (false? follow-transport?) (or (nil? clock) (:stale? clock)))
                         ;; Tempo-only Link must never change local playback just
                         ;; because a peer has not arrived or has disconnected.
-                        (assoc (:transport (advance-transport model time-ms)) :source selected-source :source-epoch nil)
+                        (assoc (:transport (advance-transport model time-ms))
+                               :source selected-source :source-epoch nil :confidence nil)
 
                         clock
                         (cond-> (assoc clock :source selected-source)
@@ -940,18 +951,21 @@
                                (< (:beat captured) (:beat before))
                                (and (some? follow-transport?) (:playing? captured)
                                     (or (false? (:playing? before)) (:link-phase-held? before))))
-            captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])]
-        ;; Rebase from the original model once; never merge the new beat first.
-        (let [model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
-          (when discontinuity? (vswap! (:presentation-clock runtime) inc))
-          ;; A local Play command may already have flipped :playing? before the
-          ;; subsequent Link sample arrives. Remember that musical anchors were
-          ;; frozen until we have the resumed peer phase to rebase them against.
-          (if (and (false? follow-transport?) (false? (:playing? captured)))
-            (assoc-in model [:transport :link-phase-held?] true)
-            (update model :transport dissoc :link-phase-held?))))
-      (update model :transport assoc :time-ms time-ms :playing? false
-              :source selected-source :source-epoch nil))))
+            confidence (:confidence captured)
+            captured (select-keys captured [:time-ms :beat :bpm :playing? :meter :source :source-epoch])
+            ;; Rebase from the original model once, before applying the captured beat.
+            model (if discontinuity? (show-clock/rebase model captured) (update model :transport merge captured))]
+        (when discontinuity? (vswap! (:presentation-clock runtime) inc))
+        ;; A local Play command may already have flipped :playing? before the
+        ;; subsequent Link sample arrives. Remember that musical anchors were
+        ;; frozen until we have the resumed peer phase to rebase them against.
+        [(if (and (false? follow-transport?) (false? (:playing? captured)))
+           (assoc-in model [:transport :link-phase-held?] true)
+           (update model :transport dissoc :link-phase-held?))
+         confidence])
+      [(update model :transport assoc :time-ms time-ms :playing? false
+               :source selected-source :source-epoch nil)
+       nil])))
 
 (defn- consume-sync! [runtime model]
   (let [captured (locking (:sync-input runtime)
@@ -1042,6 +1056,7 @@
            (let [before @(:state runtime)
                  time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
+                 inline-registrations (volatile! {})
                  _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
@@ -1053,6 +1068,7 @@
                                                      :source {:adapter :reactive :session-id (:id runtime)})}))
                  physical-receipts (output-scheduler/drain-receipts! (:publisher runtime))
                  physical-now ((:now-ms (:publisher runtime)))
+                 [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  [model receipts restored? restored-output]
                  (reduce
                   (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
@@ -1066,13 +1082,15 @@
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                        (when-let [[key handler] (:inline-registration result)]
+                          (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
                       (catch Exception error
                         [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
-                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin (source-clock-model runtime (:model before) time-ms))
+                  [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
                        (calibration/advance physical-receipts physical-now)
                        (photometry/advance physical-receipts physical-now)
@@ -1177,7 +1195,9 @@
                            inputs (comp response modulation-middleware)
                            compile-step (fn [definition]
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
-                                            (keyframes/with-inputs step inputs)))
+                                            ;; Certified literals have no parameter schemas, and
+                                            ;; these transforms touch only declared parameters.
+                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
                            result (engine/advance model frame-input compile-step
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)
@@ -1268,6 +1288,9 @@
                                    {:operation (:type message) :command (get-in message [:payload :op])
                                     :ack ack :emitter-id (get-in message [:payload :source :adapter])})
                                  messages receipts)
+                 ;; Confidence belongs to this live clock sample and its resource generation.
+                 next-state (assoc next-state :audio-clock-confidence
+                                   (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
@@ -1277,7 +1300,7 @@
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
              (reset! (:state runtime) (dissoc next-state :autopilot-author-request :pending-reactive-faults))
              (vreset! author-request (:autopilot-author-request next-state))
-             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
+             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
              (vreset! committed-fault-events
                       (into (vec (:fault-events next-state)) (keep (fn [event]
                               (when (= :event/handler-failed (:type event))
@@ -1383,22 +1406,23 @@
      reply)))
 
 (defn register-event-subscriber!
-  "Register show data from the REPL. An inline :middleware function is bound in
-  this process; a qualified Var or portable :implementation can be restored."
+  "Register show data from the REPL. A raw :middleware function is bound to its
+  callback identity in this runtime. Use a Var or source for portable code."
   [runtime {:keys [id middleware] :as registration}]
-  (let [registration (if middleware
+  (let [inline-id (when (fn? middleware) (str (random-uuid)))
+        registration (if middleware
                        (let [_ (when-not (or (fn? middleware) (var? middleware))
                                  (throw (ex-info "Expected middleware function or Var" {:id id})))
                              implementation (if (var? middleware)
                                               {:type :var :symbol (str (symbol middleware))}
-                                              {:type :registered :id id})
+                                              {:type :inline :callback-id inline-id})
                              definition (-> registration (dissoc :middleware)
                                             (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
                          (subscribers/validate-definition definition)
                          definition)
                        registration)]
     (submit! runtime :event-subscriber (cond-> {:op :save :subscriber registration}
-                                         (fn? middleware) (assoc ::inline-handler middleware)))))
+                                         inline-id (assoc ::inline-registration [[id inline-id] middleware])))))
 
 (defmacro reg-event-subscriber!
   "Register a literal middleware fn as restorable REPL source. Supply lexical
@@ -1493,13 +1517,19 @@
       :inspect-lighting (venue-tools/inspect state payload #(measure-sources runtime state %))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
 
+(defn- push-parameter-projector []
+  (let [cache (waveforms/create-cache)
+        precision-cache (atom nil)]
+    (fn [snapshot view capture]
+      (->> (waveforms/project-display cache snapshot view capture)
+           (precision/push-view precision-cache (:model snapshot))))))
+
 (defn push-browser-display
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options."
   [runtime options]
-  (let [cache (waveforms/create-cache)
-        precision-cache (atom nil)
+  (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
         scene-cache (push-scene/create-cache)]
     (display/browser-display
@@ -1516,18 +1546,25 @@
                              (:parameters :audio)
                              (let [capture (when (= mode :audio)
                                              (audio/waveform (connections/audio (:connections runtime))))]
-                               (->> (waveforms/project-display cache snapshot view capture)
-                                    (precision/push-view precision-cache model)))
+                               (project-parameters snapshot view capture))
                              :block-trace (block-trace/project-display (:id runtime) model view)
                              (:simulator :rig) (push-scene/project-display scene-cache snapshot
                                                      (assoc view :runtime-id (:id runtime)))
                              view)]
                 (page-overview/project-display pages model visual)))))))
 
+(defn- push-native-display [runtime]
+  (let [project-parameters (push-parameter-projector)]
+    (display/native-display
+      {:project! (fn [view]
+                   (project-parameters @(:state runtime) view nil))})))
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
-  expression modes and bindings; imported namespaces never acquire devices."
+  expression modes and bindings; imported namespaces never acquire devices.
+  Push 2 accepts :native-display? true for the Wayang parameter display. An
+  explicit :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
@@ -1540,6 +1577,8 @@
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             options (cond-> options
                       (#{:push-2 :push-3} kind) (assoc :target-search targets/search)
+                      (and (= kind :push-2) (:native-display? options) (not (:display options)))
+                      (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
                       (assoc :feedback-source (cue-pads/push-feedback (:cue-pad-previews runtime) #(deref (:state runtime)))))
             device (open! (merge options {:model! #(let [model (:model @(:state runtime))]
@@ -1850,11 +1889,13 @@
   (tick! runtime nil slot))
 
 (defn start!
-  "Start the scheduled show in preview, or explicitly select :ola or :artnet output."
+  "Start the scheduled show in preview or with :ola or :artnet. An embedded
+  host may supply its own sink opener. The show takes ownership of that sink."
   ([] (start! {}))
-  ([{:keys [frame-rate] :or {frame-rate 40} :as options}]
+  ([options] (start! options output/open-sink!))
+  ([{:keys [frame-rate] :or {frame-rate 40} :as options} open-sink!]
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
-   (let [sink (output/open-sink! options)
+   (let [sink (open-sink! options)
          runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true}} options
                                               {:sink sink :independent-output? true}))
                       (catch Throwable error

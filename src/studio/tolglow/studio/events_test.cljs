@@ -6,6 +6,8 @@
             [re-frame.db :as rf-db]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
+            [reagent.core :as r]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
@@ -510,6 +512,30 @@
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
 
+(deftest device-refresh-failure-leaves-a-running-stage-operable
+  (let [running (-> base
+                    (assoc-in [:show :runtime-id] "stage-host")
+                    (assoc-in [:show :connection-status :stage-invitation]
+                              {:available? true :phase "discoverable" :id "current-stage"
+                               :stage-name "Dance floor" :device-id "audience"}))
+        opened (:db (transition running [:connections/open]))
+        refresh (transition opened [:connections/refresh-devices])
+        ports-request (some (fn [[_ request]] (when (= "/api/sync/ports" (:path request)) request)) (:fx refresh))
+        message "MIDI enumeration timed out"
+        failed (:db (transition opened (conj (:on-failure ports-request) message)))
+        recovered (:db (transition failed (conj (:on-success ports-request) [])))
+        render (fn [db]
+                 (reset! rf-db/app-db db)
+                 (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))
+        before (render opened)
+        during (render failed)
+        after (render recovered)]
+    (is (.includes before ">Stop stage</button>"))
+    (is (.includes during (str ">" message "</p>")))
+    (is (.includes during ">Stop stage</button>"))
+    (is (not (.includes after message)))
+    (is (.includes after ">Stop stage</button>"))))
+
 (deftest midi-selection-keeps-name-guards-until-explicit-reselection
   (let [form (-> connections/sync-defaults (assoc-in [:midi :enabled?] true)
                  (assoc-in [:midi :input-index] "2") (assoc-in [:midi :expected-input-name] "Original"))
@@ -546,6 +572,29 @@
     (is (thrown? js/Error (connections/audio-payload stale)))
     (is (= "Replacement" (:mixer-name (connections/audio-payload (:db selected)))))
     (is (= "/api/audio/start" (get-in (transition default [:connections/audio-start]) [:fx 0 1 :path])))))
+
+(deftest selected-pcm-channel-is-explicit-and-restored-in-studio
+  (let [db (assoc base :connections {:visible? true :audio-form (assoc connections/audio-defaults :input "system")})
+        width (:db (transition db [:connections/select-audio-width "4"]))
+        invalid (transition width [:connections/audio-start])
+        selected (:db (transition (:db invalid) [:connections/edit [:audio-form :input-channel] "3"]))
+        start (transition selected [:connections/audio-start])
+        config (dissoc (get-in start [:fx 0 1 :body]) :expected-epoch :runtime-id)
+        restored (:db (transition (assoc-in db [:show :connection-status :audio] {:state "idle" :config config})
+                                  [:connections/pushed]))
+        stereo (:db (transition restored [:connections/select-audio-width "2"]))]
+    (is (nil? (:fx invalid)))
+    (is (= "Choose an input channel for this PCM channel count." (get-in invalid [:db :connections :errors :audio-start])))
+    (is (= {:default? true :channels 4 :input-channel 3}
+           (select-keys config [:default? :channels :input-channel])))
+    (is (nil? (get-in start [:db :connections :errors :audio-start])))
+    (is (= config (connections/audio-payload restored)))
+    (is (= "" (get-in stereo [:connections :audio-form :input-channel])))
+    (is (= 2 (:channels (connections/audio-payload stereo))))
+    (is (not (contains? (connections/audio-payload stereo) :input-channel)))
+    (doseq [[channels input-channel] [["65" "3"] ["4" "5"] ["4" "0"] ["4" "2.5"]]]
+      (is (thrown? js/Error (connections/audio-payload
+                            (update-in db [:connections :audio-form] assoc :channels channels :input-channel input-channel)))))))
 
 (deftest closed-connections-release-interest-and-drafts-survive-status-updates
   (let [db (assoc base :connections (assoc connections/defaults :visible? true))

@@ -79,10 +79,15 @@
 (defn- history! [session entry]
   (change! session update :history #(vec (take-last (get-in session [:options :history-limit]) (conj % entry)))))
 
+(defn- namespace-name [session]
+  (if-let [current (get-in session [:evaluator :namespace-name])]
+    (current)
+    (str (ns-name (:namespace @(:state session))))))
+
 (defn- finish! [session job result]
   (let [result (assoc result :request-id (:id job))]
     (history! session (merge {:request-id (:id job) :source (:source job)
-                             :namespace (str (ns-name (:namespace @(:state session))))}
+                             :namespace (namespace-name session)}
                             (select-keys result [:status :result :error :interrupt-requested?])))
     (emit! session job (assoc result :type :done))
     (locking (:lock session)
@@ -90,6 +95,29 @@
         (reset! (:state session) (assoc @(:state session) :active nil))))
     (deliver (:completion job) result)
     result))
+
+(defn- with-jvm-reader [source eof run-forms]
+  (with-open [reader (PushbackReader. (StringReader. source))]
+    (run-forms #(read {:eof eof} reader) eval)))
+
+(defn- report-value! [session job index value]
+  (let [printed (bounded-print value (get-in session [:options :max-result-chars]))
+        allocation (reserve-output! session job (:value printed))
+        result (assoc printed :value (:text allocation "")
+                              :truncated? (or (:truncated? printed) (:truncated? allocation)))]
+    (set! *3 *2) (set! *2 *1) (set! *1 value)
+    (emit! session job (merge {:type :result :form-index index} result))
+    (:value result)))
+
+(defn- evaluate-forms! [session job eof read-next eval-form]
+  (loop [index 0 previous nil]
+    (let [form (read-next)]
+      (if (identical? eof form)
+        {:status :completed :result previous}
+        (do
+          (when (>= index (get-in session [:options :max-forms]))
+            (throw (ex-info "REPL request exceeds its form count limit" {:type ::form-limit})))
+          (recur (inc index) (report-value! session job index (eval-form form))))))))
 
 (defn- evaluate! [session job initial]
   (let [values (:values initial)
@@ -101,22 +129,9 @@
               *1 (:one values) *2 (:two values) *3 (:three values) *e (:error values)
               *read-eval* false *data-readers* {} *default-data-reader-fn* nil]
       (try
-        (with-open [reader (PushbackReader. (StringReader. (:source job)))]
-          (let [eof (Object.)]
-            (loop [index 0 last-result nil]
-              (let [form (read {:eof eof} reader)]
-                (if (identical? eof form)
-                  (reset! final-result {:status :completed :result last-result})
-                  (let [_ (when (>= index (get-in session [:options :max-forms]))
-                            (throw (ex-info "REPL request exceeds its form count limit" {:type ::form-limit})))
-                        value (eval form)
-                        printed (bounded-print value (get-in session [:options :max-result-chars]))
-                        allocation (reserve-output! session job (:value printed))
-                        printed (assoc printed :value (:text allocation "")
-                                               :truncated? (or (:truncated? printed) (:truncated? allocation)))]
-                    (set! *3 *2) (set! *2 *1) (set! *1 value)
-                    (emit! session job (merge {:type :result :form-index index} printed))
-                    (recur (inc index) (:value printed))))))))
+        (let [eof (Object.)
+              with-reader (get-in session [:evaluator :with-reader] with-jvm-reader)]
+          (reset! final-result (with-reader (:source job) eof (partial evaluate-forms! session job eof))))
         (catch Throwable error
           (set! *e error)
           (let [status (if (interrupted-error? error) :interrupted :error)
@@ -162,12 +177,17 @@
       (when-not (and (integer? (get options key)) (<= 1 (get options key) 1000000))
         (throw (ex-info "REPL limits must be positive bounded integers" {:field key}))))
     (let [suffix (str/replace (str (UUID/randomUUID)) "-" "_")
-          namespace (create-ns (symbol (str "tolglow.repl.session_" suffix)))
-          debug (create-ns (symbol (str "tolglow.repl.debug_" suffix)))
+          namespace-id (symbol (str "tolglow.repl.session_" suffix))
+          debug-id (symbol (str "tolglow.repl.debug_" suffix))
+          evaluator (when-let [create (:evaluator-factory options)]
+                      (create {:namespace namespace-id :debug-namespace debug-id
+                               :bindings (assoc bindings 'runtime (:runtime options) 'debug-ns debug-id)}))
+          namespace (create-ns namespace-id)
+          debug (create-ns debug-id)
           state (atom {:status :open :namespace namespace :debug-namespace debug
                        :event-sequence 0 :request-sequence 0 :active nil :pending [] :cancelled-requests #{}
                        :history [] :scratch {} :values {} :observer-errors []})
-          session {:id session-id :token suffix :options options :state state :lock (Object.) :host-out *out* :host-err *err*
+          session {:evaluator evaluator :id session-id :token suffix :options options :state state :lock (Object.) :host-out *out* :host-err *err*
                    :queue (ArrayBlockingQueue. (:queue-size options)) :worker (atom nil)
                    :owned-namespaces [namespace debug] :stopped (CountDownLatch. 1)}
           worker (Thread.
@@ -283,7 +303,7 @@
 
 (defn snapshot [session]
   (let [state @(:state session)]
-    {:session-id (:id session) :status (:status state) :namespace (str (ns-name (:namespace state)))
+    {:session-id (:id session) :status (:status state) :namespace (namespace-name session)
      :debug-namespace (str (ns-name (:debug-namespace state))) :pending (:pending state)
      :active (some-> (:active state) (select-keys [:id :output-chars :truncated? :interrupt-requested?]))
      :history (:history state) :scratch (:scratch state) :observer-errors (:observer-errors state)}))
@@ -344,12 +364,21 @@
   (let [current (:namespace @(:state session))]
     (if (seq prefix) (or (get (ns-aliases current) (symbol prefix)) (find-ns (symbol prefix))) current)))
 
-(defn- var-info [candidate value]
-  (let [metadata (when (var? value) (meta value))]
-    {:candidate candidate :namespace (some-> metadata :ns ns-name str)
-     :name (or (some-> metadata :name str) candidate) :kind (cond (:macro metadata) :macro (var? value) :var :else :class)
-     :doc (some-> (:doc metadata) (text-limit 8192)) :arglists (some-> (:arglists metadata) (bounded-print 2048) :value)
-     :file (:file metadata) :line (:line metadata)}))
+(defn- var-info [candidate {:keys [metadata kind]}]
+  {:candidate candidate :namespace (some-> metadata :ns str)
+   :name (or (some-> metadata :name str) candidate) :kind (if (:macro metadata) :macro kind)
+   :doc (some-> (:doc metadata) (text-limit 8192)) :arglists (some-> (:arglists metadata) (bounded-print 2048) :value)
+   :file (:file metadata) :line (:line metadata)})
+
+(defn- jvm-description [value]
+  {:kind (if (var? value) :var :class) :metadata (when (var? value) (meta value))})
+
+(defn- symbols [session qualifier]
+  (if-let [lookup (get-in session [:evaluator :symbols])]
+    (lookup qualifier)
+    {:vars (some-> (target-ns session qualifier) ns-map)
+     :describe jvm-description
+     :namespaces (when-not qualifier (map ns-name (all-ns)))}))
 
 (defn complete
   "Complete loaded vars/classes/namespaces without evaluating source or loading
@@ -360,21 +389,24 @@
    (when-not (and (string? prefix) (<= (count prefix) 256) (integer? limit) (<= 1 limit 200))
      (throw (ex-info "Invalid completion query" {})))
    (let [[qualifier part] (if (str/includes? prefix "/") (str/split prefix #"/" 2) [nil prefix])
-         namespace (target-ns session qualifier)
-         variables (when namespace
-                     (for [[name value] (ns-map namespace) :when (str/starts-with? (str name) part)]
-                       (var-info (str (when qualifier (str qualifier "/")) name) value)))
-         namespaces (when-not qualifier
-                      (for [namespace (all-ns) :let [name (str (ns-name namespace))] :when (str/starts-with? name prefix)]
-                        {:candidate (str name "/") :namespace name :name name :kind :namespace}))]
+         {:keys [vars namespaces describe]} (symbols session qualifier)
+         variables (for [[name value] vars :when (str/starts-with? (str name) part)]
+                     (var-info (str (when qualifier (str qualifier "/")) name) (describe value)))
+         namespaces (for [namespace namespaces :let [name (str namespace)] :when (str/starts-with? name prefix)]
+                      {:candidate (str name "/") :namespace name :name name :kind :namespace})]
      (vec (take limit (sort-by :candidate (concat variables namespaces)))))))
 
 (defn lookup [session name]
   (open-session! session)
   (when-not (and (string? name) (<= 1 (count name) 256)) (throw (ex-info "Invalid documentation query" {})))
   (let [[qualifier part] (if (str/includes? name "/") (str/split name #"/" 2) [nil name])]
-    (when-let [namespace (target-ns session qualifier)]
-      (when-let [value (ns-resolve namespace (symbol part))] (var-info name value)))))
+    (if-let [find-symbols (get-in session [:evaluator :symbols])]
+      (let [{:keys [vars describe]} (find-symbols qualifier)]
+        (when-let [entry (find vars (symbol part))]
+          (var-info name (describe (val entry)))))
+      (when-let [namespace (target-ns session qualifier)]
+        (when-let [value (ns-resolve namespace (symbol part))]
+          (var-info name (jvm-description value)))))))
 
 (defn expose-locals!
   "Runtime half of capture-locals!. Live values stay only in the owned debug

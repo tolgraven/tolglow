@@ -2,7 +2,8 @@
   "Explicit JavaSound capture boundary for the functional audio analyzer. One
   bounded worker owns each manager's stream and analyzer state. Requiring this
   namespace, creating a manager and listing inputs never open a device."
-  (:require [tolglow.integrations.analysis :as analysis]
+  (:require [tolglow.audio.pcm :as pcm]
+            [tolglow.integrations.analysis :as analysis]
             [tolglow.waveforms :as waveforms])
   (:import [javax.sound.sampled AudioSystem AudioFormat DataLine$Info TargetDataLine]
            [java.util UUID]))
@@ -31,18 +32,22 @@
   (when-not (map? config) (throw (failure :invalid-config "Audio configuration must be an object")))
   (let [opts (merge {:sample-rate 48000.0 :channels 1 :block-frames 480 :buffer-blocks 8
                     :big-endian? false :analyzer-options {}} config)
-        index (:mixer-index opts)]
+        {:keys [channels input-channel mixer-index]} opts]
+    (when-not (and (pcm/valid-layout? channels input-channel)
+                   (or (nil? input-channel) (contains? config :channels)))
+      (throw (failure :invalid-config "Use mono or stereo, or specify 1–64 PCM channels and an input channel within that range")))
     (when-not (and (finite? (:sample-rate opts)) (<= 8000 (:sample-rate opts) 192000)
-                   (#{1 2} (:channels opts)) (integer? (:block-frames opts)) (<= 1 (:block-frames opts) 16384)
+                   (integer? (:block-frames opts)) (<= 1 (:block-frames opts) 16384)
                    (integer? (:buffer-blocks opts)) (<= 2 (:buffer-blocks opts) 64)
                    (boolean? (:big-endian? opts))
-                   (or (and (integer? index) (<= 0 index) (not (:default? opts)))
-                       (and (nil? index) (true? (:default? opts))))
+                   (or (and (integer? mixer-index) (<= 0 mixer-index Integer/MAX_VALUE) (not (:default? opts)))
+                       (and (nil? mixer-index) (true? (:default? opts))))
                    (or (nil? (:mixer-name opts)) (string? (:mixer-name opts))))
-      (throw (failure :invalid-config "Choose an input and valid mono/stereo signed-16 PCM settings")))
+      (throw (failure :invalid-config "Choose an input and valid signed-16 PCM settings")))
     (analysis/new-analyzer (:analyzer-options opts))
-    (select-keys opts [:sample-rate :channels :block-frames :buffer-blocks :big-endian?
-                       :analyzer-options :mixer-index :mixer-name :default?])))
+    (cond-> (select-keys opts [:sample-rate :channels :block-frames :buffer-blocks :big-endian?
+                               :analyzer-options :mixer-index :mixer-name :default?])
+      (some? input-channel) (assoc :input-channel input-channel))))
 
 (defn validate-config
   "Pure capture configuration validation/normalization. Does not enumerate or
@@ -85,40 +90,55 @@
           :close! (fn [] (try (.stop line) (finally (.close line))))})
        (catch Throwable error (.close line) (throw error))))))
 
+(defn- pcm16-sample ^double [^bytes bytes ^long at big-endian?]
+  (let [a (aget bytes at) b (aget bytes (inc at))
+        signed (if big-endian?
+                 (+ (bit-shift-left a 8) (bit-and 255 b))
+                 (+ (bit-and 255 a) (bit-shift-left b 8)))]
+    (/ signed 32768.0)))
+
 (defn decode-pcm16
-  "Copy signed-16 PCM bytes into a new mono double array. Mono uses /32768;
-  stereo averages normalized left/right. Never modifies input bytes."
-  [^bytes bytes offset byte-count channels big-endian?]
-  (when-not (#{1 2} channels) (throw (failure :invalid-pcm "PCM input must be mono or stereo")))
-  (let [frame-size (* channels 2)]
-    (when-not (and (#{1 2} channels) (boolean? big-endian?)
-                   (integer? offset) (integer? byte-count) (<= 0 offset) (<= 0 byte-count)
-                   (<= (+ offset byte-count) (alength bytes)) (zero? (mod byte-count frame-size)))
-      (throw (failure :invalid-pcm "PCM data must contain complete mono/stereo frames")))
-    (let [frames (quot byte-count frame-size) out (double-array frames)]
-      (dotimes [frame frames]
-        (let [base (+ offset (* frame frame-size))
-              total (loop [channel 0 total 0.0]
-                      (if (= channel channels) total
-                          (let [at (+ base (* channel 2)) a (bit-and 255 (aget bytes at)) b (bit-and 255 (aget bytes (inc at)))
-                                unsigned (if big-endian? (+ (bit-shift-left a 8) b) (+ a (bit-shift-left b 8)))
-                                signed (if (>= unsigned 32768) (- unsigned 65536) unsigned)]
-                            (recur (inc channel) (+ total (/ signed 32768.0))))))]
-          (aset-double out frame (/ total channels))))
-      out)))
+  "Decode complete interleaved signed-16 PCM frames into a new mono double
+  array. An explicit one-based input channel selects that channel. Without a
+  selection, mono passes through and stereo averages left and right."
+  ([bytes offset byte-count channels big-endian?]
+   (decode-pcm16 bytes offset byte-count channels big-endian? nil))
+  ([^bytes bytes offset byte-count channels big-endian? input-channel]
+   (when-not (pcm/valid-layout? channels input-channel)
+     (throw (failure :invalid-pcm "Invalid PCM width or input channel")))
+   (let [frame-size (* channels 2)
+         limit (alength bytes)]
+     (when-not (and (boolean? big-endian?) (integer? offset) (integer? byte-count)
+                    (<= 0 offset limit) (<= 0 byte-count (- limit offset))
+                    (zero? (mod byte-count frame-size)))
+       (throw (failure :invalid-pcm "PCM data must contain complete interleaved frames")))
+     (let [frames (quot byte-count frame-size)
+           out (double-array frames)
+           channel-offset (* 2 (dec (or input-channel 1)))
+           stereo-average? (and (nil? input-channel) (= 2 channels))]
+       (dotimes [frame frames]
+         (let [at (+ offset channel-offset (* frame frame-size))
+               sample (pcm16-sample bytes at big-endian?)]
+           (aset-double out frame (if stereo-average?
+                                    (* 0.5 (+ sample (pcm16-sample bytes (+ at 2) big-endian?)))
+                                    sample))))
+       out))))
 
 (defn create-manager
-  "Create an inactive manager. Test seams: :open-source! receives validated
+  "Create an inactive manager. Optional :config exposes saved settings while
+  idle. Test seams: :open-source! receives validated
   config and returns read!/close!; :now-ms supplies monotonic milliseconds.
   No device/thread starts here. Call close! when the studio host shuts down."
   ([] (create-manager {}))
   ([options]
-   (let [now-ms (get options :now-ms monotonic-ms)
+   (let [config (some-> (:config options) settings)
+         now-ms (get options :now-ms monotonic-ms)
          opener (get options :open-source! #(open-java-sound! % now-ms))]
      (when-not (and (ifn? now-ms) (ifn? opener))
        (throw (failure :invalid-options "Audio source and clock must be functions")))
      {:lock (Object.) :options {:open-source! opener :now-ms now-ms}
-      :state (atom {:closed? false :run nil :public {:state :idle :running? false}})})))
+      :state (atom {:closed? false :run nil :public (cond-> {:state :idle :running? false}
+                                                      config (assoc :config config))})})))
 
 (defn status [manager]
   (let [{:keys [closed? public]} @(:state manager)] (assoc public :closed? closed?)))
@@ -247,10 +267,12 @@
                                     (try ((:clock! callbacks))
                                          (catch Exception error
                                            (update-public! manager run assoc :last-clock-error (error-data error)) nil)))
-                            samples (decode-pcm16 buffer 0 byte-count (:channels config) (:big-endian? config))
+                            samples (decode-pcm16 buffer 0 byte-count (:channels config)
+                                                  (:big-endian? config) (:input-channel config))
                             captured (waveforms/capture-block @capture-state
                                                               {:samples samples :sample-rate (:sample-rate config)
-                                                               :channels (:channels config) :source-id (:run-id run)
+                                                               :channels (:channels config) :input-channel (:input-channel config)
+                                                               :source-id (:run-id run)
                                                                :started-at-ms started :clock clock :timing-valid? timing-valid?
                                                                :discontinuity? (or possible-overflow? (pos? lost) (pos? discarded))})
                             waveform (waveforms/capture-view captured)

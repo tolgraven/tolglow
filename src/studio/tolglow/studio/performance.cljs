@@ -301,15 +301,24 @@
 (defn- control-title [{:keys [attribute parameter schema]}]
   (or (:name schema) (widgets/label (or parameter attribute))))
 
-(defn- xyz-schema [{:keys [attribute components]}]
-  (let [bounds (mapv (comp :bounds second) components)]
-    (cond-> {:type :vector :size 3 :semantic/type attribute}
-      (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds)))))
+(defn xyz-schema [{:keys [attribute components]}]
+  (let [schemas (mapv second components)
+        bounds (mapv :bounds schemas)
+        widths (mapv :dmx-bits schemas)]
+    (cond-> {:type :vector :size 3 :semantic/type attribute :component-schemas schemas}
+      (and (first bounds) (apply = bounds)) (assoc :bounds (first bounds))
+      (and (#{8 16} (first widths)) (apply = widths)) (assoc :dmx-bits (first widths)))))
+
+(defn- xyz-axis-label [axis parameter schema]
+  (let [authored (some-> (:name schema) str str/trim not-empty)
+        description (some #(when (and % (not= axis (str/upper-case %))) %)
+                          [authored (wire parameter)])]
+    (if description (str axis " · " description) axis)))
 
 (defn- xyz-editor [show instance {:keys [components] :as control} compact?]
   (let [{:keys [base]} (xyz-readings show instance components)
         title (control-title control)
-        axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (str axis " · " (wire id))))
+        axes (mapv (fn [[id schema] axis] (assoc schema :axis-label (xyz-axis-label axis id schema)))
                    components ["X" "Y" "Z"])
         update! (fn [index value]
                   (rf/dispatch-sync [:studio/param-set (:id instance) (first (nth components index)) value]))]
@@ -408,7 +417,7 @@
         (when (and (not expanded?) (:selected scope)) [strip-monitor instance scope])])
      (when-let [schema (get-in definition [:params editing])]
        (let [group (some #(when (some (fn [[p _]] (= p editing)) (:components %)) (:components %)) controls)]
-         ^{:key [id editing]} [sources/editor instance editing schema group]))
+         ^{:key [id (or (ffirst group) editing)]} [sources/editor instance editing schema group]))
      [instance-controls instance {:compact? true}]
      (when expanded?
        [:div.live-effect-advanced

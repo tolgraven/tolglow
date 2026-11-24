@@ -43,6 +43,32 @@
   (dispatch! [:rdm/set :transport "ola"])
   (is (= "9010" (:port (rdm/state @db/app-db)))))
 
+(deftest discovery-status-distinguishes-pending-empty-and-unrecorded-inventories
+  (let [inventory #(-> (base %) rdm/state :inventory)
+        job {:operation :discover :device {:universe 1}}
+        offline {:connected? false :jobs [(assoc job :status :running)]}]
+    (is (nil? (inventory nil)))
+    (is (= "No RDM inventory recorded for universe 1."
+           (:status-text (inventory {:connected? true :jobs [(assoc job :status :failed)]}))))
+    (is (= "No RDM inventory recorded for universe 1."
+           (:status-text (inventory {:connected? true :jobs [(assoc job :status :running :device {:universe 2})]}))))
+    (doseq [status [:queued :running]]
+      (is (= "Discovery pending for universe 1."
+             (:status-text (inventory {:connected? true :jobs [(assoc job :status status)]})))))
+    (is (= "No RDM inventory recorded for universe 1." (:status-text (inventory offline))))
+    (is (= {:uids [] :status-text "Last inventory for universe 1 listed no RDM devices."}
+           (inventory (assoc offline :discovered {1 []}))))))
+
+(deftest completed-transport-jobs-do-not-replace-the-recorded-inventory
+  (let [inventory #(-> (base %) rdm/state :inventory)
+        complete {:operation :discover :device {:universe 1} :status :completed
+                  :result {:universe 1 :uids []}}
+        snapshot {:connected? true :jobs [complete]}]
+    (is (= "No RDM inventory recorded for universe 1."
+           (:status-text (inventory snapshot))))
+    (is (= {:uids ["1234:01020304"] :status-text "1 RDM device in the last inventory for universe 1."}
+           (inventory (assoc snapshot :discovered {1 ["1234:01020304"]}))))))
+
 (deftest selection-is-local-and-raw-bytes-validate-before-sending
   (reset! db/app-db (base {:bindings {:front/head {:uid "1234:01020304"}}}))
   (let [result (effects [:rdm/select-fixture {:id :front/head :universe 2}])]

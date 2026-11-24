@@ -1,0 +1,69 @@
+name: Compiled macOS Studio
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/apple-native-mac-runtime]
+  pull_request:
+    paths:
+      - 'native/EmbeddedHost/build-macos'
+      - 'native/EmbeddedHost/prepare-jar'
+      - 'native/EmbeddedHost/register-callbacks.clj'
+      - 'native/EmbeddedHost/src/**'
+      - 'src/tolglow/fixed_host.clj'
+      - 'src/tolglow/native_resources.clj'
+      - 'native/macOS/**'
+      - 'native/Packaging/bundle-macos'
+      - 'native/Tests/capture-compiled-mac'
+      - 'native/Tests/check_compiled_studio.py'
+      - 'native/Tests/check-state-stream.mjs'
+      - '.github/workflows/apple-resources.yml'
+      - '.github/workflows/compiled-mac-studio.yml'
+permissions: {contents: read}
+concurrency:
+  group: compiled-mac-studio-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  resources:
+    uses: ./.github/workflows/apple-resources.yml
+    with: {embedded-host: true}
+  package:
+    needs: resources
+    runs-on: macos-15
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v4
+        with: {name: studio-runtime, path: build/release}
+      - uses: graalvm/setup-graalvm@v1.6.10
+        with: {java-version: '25', distribution: 'graalvm-community'}
+      - name: Link the compiled Clojure show host
+        run: native/EmbeddedHost/build-macos build/release/studio.jar build/native-host
+      - name: Assemble the Mac app with both runtimes
+        run: |
+          command -v xcodegen || brew install xcodegen
+          app="build/deliverables/Tolglow Studio.app"
+          native/Packaging/bundle-macos build/release/studio.jar "$PWD/build/deliverables" build/release build/native-host/TolglowNativeHost
+          ditto -c -k --keepParent "$app" build/Tolglow-compiled-Studio-arm64.zip
+      - name: Verify the packaged fixed and full Clojure sessions
+        run: |
+          app="build/deliverables/Tolglow Studio.app"
+          python3 native/Tests/check_compiled_studio.py "$app"
+          python3 native/Tests/check_packaged_studio.py "$app"
+      - name: Capture three cue launches in the packaged compiled show
+        run: native/Tests/capture-compiled-mac "build/deliverables/Tolglow Studio.app" build/media
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: Tolglow-compiled-Studio-arm64
+          path: |
+            build/Tolglow-compiled-Studio-arm64.zip
+            build/native-host/*.log
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: compiled-studio-window
+          path: |
+            build/media/window.log
+            build/media/compiled-studio.png
+            build/media/compiled-studio.gif
+            build/media/stage-invitation.png

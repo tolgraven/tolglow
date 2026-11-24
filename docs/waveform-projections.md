@@ -42,8 +42,10 @@ invented trace. Show definitions and runtime state remain untouched.
 ## Captured PCM waveform
 
 The existing JavaSound capture worker decodes each signed-16 PCM block once.
-That same mono array feeds analysis and a bounded streaming summary. Stereo is
-averaged exactly as in the existing analyzer; opposite-phase channels can cancel.
+That same mono array feeds analysis and a bounded streaming summary. Capture
+passes mono through and averages the left and right channels of stereo by
+default. An explicit one-based `:input-channel` reads just that channel from
+each interleaved frame.
 No raw sample array is retained in a model, browser snapshot or saved show file.
 
 Default history is 256 columns of 20 ms, about 5.12 seconds. A column contains
@@ -71,6 +73,9 @@ source/epoch provenance; there is no free-running invented beat detector here.
  :start-time-ms 0 :end-time-ms 20 :timing-valid? true :available? true
  :beat-markers [{:offset-ms 0 :beat 0 :bar? true :source :link :epoch 2}]}
 ```
+
+With a selected channel, the projection reports `:mix :selected-channel`
+and `:input-channel`, while `:channels` gives the physical stream width.
 
 Stopping capture preserves the last measured history, while the audio status
 reports that capture has stopped. Starting a new capture clears it before

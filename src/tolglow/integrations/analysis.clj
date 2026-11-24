@@ -97,7 +97,8 @@
           error (* (- position beat) period)]
       {:beat beat :phase-error-beats (- position beat) :phase-error-ms error
        :aligned? (<= (Math/abs error) tolerance-ms)
-       :bpm (:bpm clock) :clock-source (:source clock) :clock-epoch (:epoch clock)
+       :bpm (:bpm clock) :clock-source (:source clock)
+       :clock-epoch (get clock :source-epoch (:epoch clock))
        :clock-confidence (get clock :confidence 1.0)})))
 
 (defn- emit [state events type time-ms observed-at-ms inference confidence data]
@@ -229,8 +230,9 @@
 
   Input: {:samples normalized mono PCM :sample-rate Hz :started-at-ms capture
   timestamp of first sample :received-at-ms timestamp at boundary :clock optional
-  {:time-ms :beat :bpm :source :epoch :confidence :playing?}}. Both timestamps use
-  the same monotonic domain. received-at must follow the complete capture block.
+  {:time-ms :beat :bpm :source :source-epoch :confidence :playing?}}. The clock
+  also accepts :epoch as a fallback for :source-epoch. Both timestamps use the
+  same monotonic domain. received-at must follow the complete capture block.
   Blocks may have arbitrary lengths; a fixed hop is carried across calls.
 
   Discontinuities/rate changes reset filters/calibration and set :discontinuity?

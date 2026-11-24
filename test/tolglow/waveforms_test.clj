@@ -12,8 +12,10 @@
             [tolglow.effects :as fx]
             [tolglow.compiler :as compiler]
             [tolglow.effects-test :as recipes]
-            [afterglow.control.devices.push-2 :as push])
-  (:import [java.awt.image BufferedImage]
+            [afterglow.control.devices.push-2 :as push]
+            [afterglow.control.devices.transports :as transports])
+  (:import [java.awt Color]
+           [java.awt.image BufferedImage]
            [java.io ByteArrayInputStream]
            [java.util.concurrent CountDownLatch TimeUnit]))
 
@@ -118,15 +120,20 @@
     (is (= 480 (:sample-end gap)))))
 
 (deftest beat-markers-follow-authoritative-clock-and-fractional-bars
-  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :epoch 2 :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
-        view (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                             (block (double-array 96000) 0 {:clock clock})))
-        invalid (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock clock :timing-valid? false})))
-        stopped (waveforms/capture-view (waveforms/capture-block (waveforms/new-capture)
-                                                                (block (double-array 96000) 0 {:clock (assoc clock :running? false)})))]
+  (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :source-epoch 7 :epoch 2
+               :meter {:beats-per-bar 7/2 :bars-per-phrase 4}}
+        project (fn [options]
+                  (waveforms/capture-view
+                   (waveforms/capture-block (waveforms/new-capture)
+                                           (block (double-array 96000) 0 options))))
+        view (project {:clock clock})
+        fallback (project {:clock (dissoc clock :source-epoch)})
+        invalid (project {:clock clock :timing-valid? false})
+        stopped (project {:clock (assoc clock :running? false)})]
     (is (= [0.0 1.0 2.0 3.0 3.5] (mapv :beat (:beat-markers view))))
     (is (= [0.0 1750.0] (mapv :offset-ms (filter :bar? (:beat-markers view)))))
+    (is (= #{[:link 7]} (into #{} (map (juxt :source :epoch)) (:beat-markers view))))
+    (is (= #{[:link 2]} (into #{} (map (juxt :source :epoch)) (:beat-markers fallback))))
     (is (empty? (:beat-markers invalid)))
     (is (empty? (:beat-markers stopped)))
     (is (false? (:timing-valid? invalid)))))
@@ -149,9 +156,22 @@
       (let [run (audio/start! manager (assoc pcm/config :channels 2) {:events! identity})]
         (is (= :completed (:status (deref (:result run) 3000 :timeout))))
         (is (= 2 (:channels (audio/waveform manager))))
+        (is (= :mono-average (:mix (audio/waveform manager))))
+        (is (not (contains? (audio/waveform manager) :input-channel)))
         (is (every? #(zero? (:rms %)) (:bins (audio/waveform manager)))))
       (finally (audio/close! manager)))
     (is (= 2 @closed))))
+
+(deftest a-different-selected-channel-resets-waveform-history
+  (let [initial (waveforms/capture-block (waveforms/new-capture)
+                                        (block (double-array 480 0.75) 0 {:channels 4 :input-channel 2}))
+        changed (waveforms/capture-block initial
+                                        (block (double-array 480 -0.25) 10 {:channels 4 :input-channel 3}))
+        view (waveforms/capture-view changed)]
+    (is (= {:channels 4 :input-channel 3 :mix :selected-channel :generation 2}
+           (select-keys view [:channels :input-channel :mix :generation])))
+    (is (= 10.0 (:start-time-ms view)))
+    (is (= [0.25] (mapv :rms (:bins view))))))
 
 (deftest actual-push-view-is-enriched-on-capture-worker-and-stale-selection-clears
   (let [snapshot (fixture) cache (waveforms/create-cache) captured (promise) done (CountDownLatch. 1)
@@ -182,6 +202,88 @@
         (is (every? #(not (contains? % :value)) (:parameters stale)))
         (is (= :stale (:preview-status (first (filter #(= :waveform (:param %)) (:parameters stale)))))))
       (finally ((:close! transport) handle)))))
+
+(deftest native-push-displays-the-same-live-parameter-projection
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        definition (-> (get-in (fixture) [:model :instances "0:1" :definition])
+                       (assoc :targets [:head-1])
+                       (assoc-in [:params :level] (fx/parameter (/ 127.0 255) {:bounds [0 1]}))
+                       (assoc-in [:params :pan] (fx/parameter (/ 32767.0 65535) {:bounds [0 1]}))
+                       (update-in [:outputs 0 :value] #(fx/multiply % (fx/param :level)))
+                       (update :outputs conj (fx/output :pan (fx/param :pan))))
+        caller (Thread/currentThread)
+        rendered (atom nil)
+        image (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB)
+        first-frame (promise) updated-frame (promise) stale-frame (promise)
+        hardware-calls (atom [])
+        trace-pixel (.getRGB (Color. 105 192 236))
+        frame! (fn []
+                 (let [view @rendered
+                       rows (into {} (map (juxt :param identity)) (:parameters view))
+                       trace (:waveform rows)
+                       frame {:rows rows :thread (Thread/currentThread) :mode (:display-mode view)
+                              :trace (mapv #(= trace-pixel %) (.getRGB image 0 115 960 18 nil 0 960))}]
+                   (cond
+                     (= :stale (:preview-status trace)) (deliver stale-frame frame)
+                     (= 0.25 (get-in rows [:width :value])) (deliver first-frame frame)
+                     (= 0.75 (get-in rows [:width :value])) (deliver updated-frame frame))))
+        backend {:open! #(do (swap! hardware-calls conj :open) image)
+                 :send! frame!
+                 :close! #(swap! hardware-calls conj :close)}
+        render! transports/render-view!
+        apply! (fn [type payload time]
+                 (let [receipt (show/submit! runtime type payload)]
+                   (show/tick! runtime time) @receipt))
+        options {:session-id "native-push"
+                 :native-display? true
+                 :midi {:open! (constantly :midi) :send! (fn [_ _]) :close! (fn [_])}
+                 :schedule! (fn [_] (fn []))}]
+    (try
+      (is (= :accepted (:status (apply! :settings {:scope :controllers
+                                                  :values {:push-display {:mode :pages :parameter-view :history}}} 0))))
+      (is (= :accepted (:status (apply! :definition {:kind :effects :definition definition} 0))))
+      (is (= :accepted (:status (apply! :command {:op :cue/put :cue {:id :shape :effect-id :shape}} 0))))
+      (let [id (:instance-id (apply! :command {:op :cue/launch :cue-id :shape} 0))
+            project-browser (with-redefs [display/browser-display :project!] (show/push-browser-display runtime {}))
+            browser-view (push/display-view {:selected-instance id :selected-cue :shape :page-id :main :origin [0 0]}
+                                            (:model @(:state runtime)))
+            browser-rows #(into {} (map (juxt :param identity))
+                                (:parameters (project-browser (assoc browser-view :display-mode :parameters))))]
+        (is (= :pages (:display-mode (project-browser browser-view))))
+        (with-redefs-fn {#'transports/native-wayang (constantly backend)
+                         #'transports/render-view! (fn [image view]
+                                                     (reset! rendered view)
+                                                     (render! image view))}
+          #(show/connect-device! runtime :push-2 options))
+        (let [before (deref first-frame 2000 {})
+              studio-instance (some #(when (= id (:id %)) %) (:instances (show/snapshot runtime)))]
+          (is (= :parameters (:mode before)))
+          (is (= (browser-rows) (:rows before)))
+          (is (= [8 16 8] (mapv #(get-in before [:rows % :schema :dmx-bits]) [:level :pan :width])))
+          (is (= [8 16 8] (mapv #(get-in studio-instance [:definition :params % :dmx-bits]) [:level :pan :width])))
+          (is (= 65 (count (get-in before [:rows :waveform :preview-samples]))))
+          (is (not (identical? caller (:thread before))))
+          (let [changes {:width 0.75 :level (/ 128.0 255) :pan (/ 32768.0 65535)}
+                receipts (mapv (fn [[parameter value]]
+                                 (show/submit! runtime {:op :param/set :instance-id id :param parameter :value value})) changes)]
+            (show/tick! runtime 50)
+            (is (every? #(= :accepted (:status @%)) receipts)))
+          (let [after (deref updated-frame 2000 {})]
+            (is (= (browser-rows) (:rows after)))
+            (is (not= (get-in before [:rows :waveform :preview-samples])
+                      (get-in after [:rows :waveform :preview-samples])))
+            (is (not= (:trace before) (:trace after)))))
+        (is (= :accepted (:status (apply! :command {:op :instance/end :instance-id id :force? true} 100))))
+        (let [stale (deref stale-frame 2000 {})]
+          (is (= [] (get-in stale [:rows :waveform :preview-samples])))
+          (is (not-any? true? (:trace stale)))))
+      (show/disconnect-device! runtime "native-push")
+      (is (= [:open :close] @hardware-calls))
+      (let [supplied (promise)
+            display {:open! (constantly :display) :render! (fn [_ view] (deliver supplied view)) :close! (fn [_])}]
+        (show/connect-device! runtime :push-2 (assoc options :display display))
+        (is (= :pages (:display-mode (deref supplied 2000 nil)))))
+      (finally (show/stop! runtime)))))
 
 (deftest compact-push-audio-retains-extrema-energy-and-clock-identity
   (let [source {:bins (vec (repeat 256 {:min -0.8 :max 0.7 :rms 0.5 :samples 960

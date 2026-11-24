@@ -1,0 +1,17 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion><groupId>org.tolglow</groupId><artifactId>ios-host</artifactId><version>1</version>
+  <dependencies>
+    <dependency><groupId>org.graalvm.sdk</groupId><artifactId>graal-sdk</artifactId><version>22.1.0</version></dependency>
+    <dependency><groupId>io.github.willena</groupId><artifactId>sqlite-jdbc</artifactId><version>3.49.0.0</version></dependency>
+    <dependency><groupId>org.tolglow</groupId><artifactId>studio-host</artifactId><version>1</version></dependency>
+    <dependency><groupId>com.github.clj-easy</groupId><artifactId>graal-build-time</artifactId><version>1.0.6</version></dependency>
+  </dependencies>
+  <build><plugins><plugin><groupId>com.gluonhq</groupId><artifactId>gluonfx-maven-plugin</artifactId><version>1.0.29</version>
+  <configuration><target>${gluon.target}</target><releaseConfiguration><skipSigning>true</skipSigning></releaseConfiguration><mainClass>org.tolglow.embedded.StudioRuntime</mainClass><nativeImageArgs>
+    <nativeImageArg>-H:IncludeResources=studio/.*|gpu/.*|js/compute/.*|tolglow/.*\.edn|tolglow\.edn</nativeImageArg>
+    <nativeImageArg>-H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings</nativeImageArg>
+    <nativeImageArg>--features=clj_easy.graal_build_time.InitClojureClasses</nativeImageArg>
+    <nativeImageArg>-J-Dtolglow.native.build=true</nativeImageArg>
+    <nativeImageArg>--initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken</nativeImageArg>
+  </nativeImageArgs></configuration></plugin></plugins></build>
+</project>

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${JAVA_HOME:?Use the GraalVM Community JDK with Native Image}"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+jar="${1:?Studio jar compiled with the embedded-host profile}"
+build="${2:?An empty build directory}"
+mkdir -p "$build"
+cp "$jar" "$build/studio.jar"
+cd "$build"
+export PATH="$JAVA_HOME/bin:$PATH"
+"$root/native/EmbeddedHost/prepare-jar" macos
+curl -fLsS --retry 3 https://repo.maven.apache.org/maven2/io/github/willena/sqlite-jdbc/3.49.0.0/sqlite-jdbc-3.49.0.0.jar -o sqlite.jar
+echo '8240639e54a1270fbc11cd56b5f5f0d0ea4aab839a9b80c791978aef4522e01e  sqlite.jar' | shasum -a 256 -c -
+native-image --no-fallback -J-Dtolglow.native.build=true \
+  --initialize-at-build-time=com.cognitect.transit.impl,com.fasterxml.jackson.core.JsonToken \
+  --features=clj_easy.graal_build_time.InitClojureClasses --enable-url-protocols=http,https,jar \
+  -H:IncludeResourceBundles=jakarta.servlet.LocalStrings,jakarta.servlet.http.LocalStrings \
+  -H:IncludeResources='studio/.*|gpu/.*|js/compute/.*|.*\.edn|.*\.clj[cs]?' \
+  -cp sqlite.jar:studio.jar:graal-build-time.jar -o TolglowNativeHost tolglow.native.desktop 2>&1 | tee native-build.log

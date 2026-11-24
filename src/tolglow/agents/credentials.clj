@@ -103,7 +103,8 @@
   [path]
   (when-not (or (string? path) (instance? Path path))
     (throw (failure :invalid-path "Credential store requires an explicit filesystem path")))
-  (let [path (.normalize (.toAbsolutePath (if (instance? Path path) path (Paths/get ^String path (make-array String 0)))))
+  (let [^Path source (if (instance? Path path) path (Paths/get ^String path (make-array String 0)))
+        path (.normalize (.toAbsolutePath source))
         lock (Object.)]
     (assoc (access path lock nil) :kind :local-file
            :scope (fn [audience]

@@ -1,6 +1,9 @@
 (ns tolglow.event-subscribers-test
   (:require [clojure.data.json :as json]
             [clojure.test :refer [deftest is testing]]
+            [afterglow.sync.session :as sync-session]
+            [tolglow.audio.capture-test :as pcm-test]
+            [tolglow.connections :as connections]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
@@ -8,8 +11,10 @@
             [tolglow.integrations.analysis-test :as audio-test]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as sub]
+            [tolglow.events.callbacks :as callbacks]
             [tolglow.persistence :as files]
-            [tolglow.transit :as wire]))
+            [tolglow.transit :as wire])
+  (:import [java.util.concurrent Callable CountDownLatch FutureTask ThreadPoolExecutor TimeUnit]))
 
 (def kick {:category :audio :type :audio/kick :emitter {:kind :audio :id :analysis}
            :data {:confidence 0.92} :time {:beat 0}})
@@ -90,6 +95,85 @@
         (is (= 1 (count (:instances (:model (show/export-show runtime)))))))
       (finally (show/stop! runtime)))))
 
+(deftest captured-pcm-subscribers-follow-committed-audio-clock-confidence-and-epoch
+  (let [kick-times [500 1000 1500 1700 2100 2600 3100]
+        sample-rate 8000 block-ms 50 block-frames (quot (* block-ms sample-rate) 1000) duration-ms 3250
+        values (for [index (range (quot (* duration-ms sample-rate) 1000))
+                     :let [ms (/ (* index 1000.0) sample-rate)
+                           onset (last (take-while #(<= % ms) kick-times))
+                           age (when onset (- ms onset))]]
+                 (if (and age (< age 160))
+                   (long (* 32767 (audio-test/sine 65 (* 0.8 (Math/exp (/ (- age) 45.0))) age)))
+                   0))
+        closed (atom 0) midi-input (promise) clock-steps (atom {}) committed-audio (atom [])
+        model (sub/configure (demo/model)
+                             {:op :save :subscriber {:id :beats :match {:type :audio/beat}
+                               :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}})
+        runtime (show/create-runtime
+                 {:model model :workspace-options nil
+                  :audio-options {:open-source!
+                                  (fn [_]
+                                    (let [block (atom -1)]
+                                      (update (pcm-test/memory-source values (* 2 block-frames) closed) :read!
+                                              (fn [read!]
+                                                (fn [out offset length]
+                                                  (when-let [step! (get @clock-steps (* block-ms (swap! block inc)))]
+                                                    (step!))
+                                                  (read! out offset length))))))}
+                  :sync-options {:midi-factory (fn [_ _] {:open! #(deliver midi-input %) :close! (fn [_])})}})
+        conn (:connections runtime) sync (connections/sync conn)]
+    (try
+      (show/attach-observer! runtime :audio-regression
+        (fn [] {:events! (fn [_ events _ _] (swap! committed-audio into (filter #(= :audio (:category %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (show/sync-action! runtime :configure {:clock {:timeout-ms 300 :on-stale :freewheel}
+                                            :midi {:enabled? true :input-index 0}})
+      (show/sync-action! runtime :start {})
+      (let [receive! (deref midi-input 2000 nil)
+            midi! (fn [at-ms byte] (receive! {:type :midi/message :source-id :midi-clock :time-ms at-ms :bytes [byte]}))
+            start-clock! (fn [start ticks]
+                           (midi! start 0xfa)
+                           (doseq [i (range ticks)] (midi! (+ start (* i (/ 500.0 24))) 0xf8))
+                           (when-not (sync-session/flush! sync) (throw (ex-info "MIDI clock did not settle" {}))))]
+        (reset! clock-steps
+                {1000 #(show/tick! runtime 1000)
+                 1500 #(do (show/sync-action! runtime :source {:source-id :midi-clock})
+                           (start-clock! 1100 20)
+                           (show/tick! runtime 1500))
+                 1700 #(show/tick! runtime 1700)
+                 2100 #(show/tick! runtime 2100)
+                 2600 #(do (midi! 2600 0xfc)
+                           (when-not (sync-session/flush! sync) (throw (ex-info "MIDI stop did not settle" {})))
+                           (show/tick! runtime 2600))
+                 3100 #(do (start-clock! 2600 25) (show/tick! runtime 3100))})
+        ;; The injected stream reads faster than real time, so keep receipt time past its sample clock.
+        (swap! (:clock runtime) assoc :time-ms duration-ms)
+        (let [handle (connections/start-audio! conn {:default? true :sample-rate sample-rate :block-frames block-frames
+                                                    :analyzer-options {:beat-tolerance-ms 115.0}}
+                                               (show/audio-callbacks runtime))
+              result (deref (:result handle) 5000 ::timeout)]
+          (is (= :completed (:status result)) (pr-str (:error result))))
+        (show/tick! runtime 3250)
+        (show/tick! runtime 3300)
+        (let [kicks (mapv :data (filter #(= :audio/kick (:type %)) @committed-audio))
+              beats (mapv :data (filter #(= :audio/beat (:type %)) @committed-audio))]
+          (is (= (mapv #(+ % 5.0) kick-times) (mapv :time-ms kicks)))
+          (is (= [nil :manual :midi-clock :midi-clock :midi-clock nil :midi-clock]
+                 (mapv #(get-in % [:alignment :clock-source]) kicks)))
+          (is (= [1005.0 1505.0 3105.0] (mapv :time-ms beats)))
+          (is (= [[:manual 0 2] [:midi-clock 1 1] [:midi-clock 2 1]]
+                 (mapv (juxt :clock-source :clock-epoch :beat) beats)))
+          (is (= 1.0 (:clock-confidence (first beats))))
+          (is (< 0.5 (:clock-confidence (second beats) 0.0) 1.0))
+          (is (= [true :midi-clock 1 1]
+                 ((juxt :aligned? :clock-source :clock-epoch :beat) (:alignment (nth kicks 3 nil)))))
+          (is (= {:aligned? true :clock-confidence 0.0 :clock-epoch 1 :beat 2}
+                 (select-keys (:alignment (nth kicks 4 nil)) [:aligned? :clock-confidence :clock-epoch :beat])))
+          (is (= 3 (count (filter #(= :ember (:effect-id %)) (:instances (show/snapshot runtime))))))
+          (is (not (contains? (get-in (show/export-show runtime) [:model :transport]) :confidence)))
+          (is (= 1 @closed))))
+      (finally (show/stop! runtime)))))
+
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)
         middleware (fn [context event]
@@ -115,6 +199,150 @@
       (is (= :audio/kick (get-in @(:state runtime) [:model :variables :melody])))
       (is (= 1 (count (:instances (show/snapshot runtime)))))
       (finally (deliver release true) (show/stop! runtime)))))
+
+(defn- play-kick! [runtime]
+  (let [model #(:model @(:state runtime))
+        start (:time-ms (model))]
+    (is (true? ((:events! (show/audio-callbacks runtime)) [kick])))
+    (show/tick! runtime (inc start))
+    (loop [n 2]
+      (if (and (< n 150) (seq (get-in (model) [:event-subscribers :runs])))
+        (do (show/tick! runtime (+ start n)) (Thread/sleep 5) (recur (inc n)))
+        (model)))))
+
+(deftest a-service-opened-before-the-repl-reload-keeps-ticking-and-closes
+  (let [named (fn [context _] (assoc-in context [:variables :callback-owner] :named))
+        runtime (-> (show/create-runtime {:workspace-options nil
+                                          :event-callback-options {:callbacks {:kicks named}}})
+                    (update :event-callbacks dissoc :inline-handlers :inline-inputs))
+        service (:event-callbacks runtime)
+        registration (listener [{:op :callback :implementation {:type :registered :id :kicks}}])]
+    (try
+      (callbacks/publish! service (:model @(:state runtime)))
+      (let [saved (show/register-event-subscriber! runtime registration)]
+        (show/tick! runtime 0)
+        (is (= :accepted (:status (deref saved 1000 {})))))
+      (let [raw (show/register-event-subscriber! runtime (assoc (listener []) :middleware (fn [context _] context)))]
+        (show/tick! runtime 1)
+        (let [receipt (deref raw 1000 {})]
+          (is (= :rejected (:status receipt)))
+          (is (re-find #"Restart the runtime.*process-local" (:message receipt ""))))
+        (is (= [registration] (get-in (show/snapshot runtime) [:event-subscribers :subscribers]))))
+      (is (= :named (get-in (play-kick! runtime) [:variables :callback-owner])))
+      (let [reference (listener [{:op :callback :implementation {:type :inline :callback-id (str (random-uuid))}}])
+            saved (show/register-event-subscriber! runtime reference)]
+        (show/tick! runtime 10)
+        (is (= :accepted (:status (deref saved 1000 {}))))
+        (is (re-find #"Process-local callback unavailable" (get-in (play-kick! runtime)
+                                                                  [:event-subscribers :last-error :message] ""))))
+      (finally (show/stop! runtime)))
+    (is (.isShutdown ^java.util.concurrent.ThreadPoolExecutor (:pool service)))))
+
+(deftest a-queued-worker-can-use-the-previous-callback-signature
+  (let [named (fn [context _] (assoc-in context [:variables :callback-owner] :named))
+        service (dissoc (callbacks/create {:callbacks {:kicks named}}) :inline-handlers :inline-inputs)
+        ^ThreadPoolExecutor pool (:pool service)
+        workers-started (CountDownLatch. 2)
+        release (promise)
+        implementation {:type :registered :id :kicks}
+        model (demo/model)
+        run {:event kick :index 0 :steps [{:op :callback :implementation implementation}]}
+        task (FutureTask. ^Callable (reify Callable
+                                     (call [_] (#'callbacks/invoke service model run))))]
+    (try
+      (is (identical? named (#'callbacks/resolve-handler service implementation)))
+      (dotimes [_ 2]
+        (.execute pool ^Runnable (fn [] (.countDown workers-started) @release)))
+      (is (.await workers-started 5 TimeUnit/SECONDS))
+      (.execute pool task)
+      (is (= 1 (.size (.getQueue pool))))
+      (deliver release true)
+      (is (= [:callback-owner :named]
+             (get-in (.get task 5 TimeUnit/SECONDS) [:edits :callback-owner :after])))
+      (finally
+        (deliver release true)
+        (callbacks/close! service)))))
+
+(deftest transit-restores-only-the-exact-runtime-owned-event-callback
+  (let [calls (atom [])
+        middleware (fn [owner]
+                     (fn [context _]
+                       (swap! calls conj owner)
+                       (assoc-in context [:variables :callback-owner] owner)))
+        runtime (fn [id callbacks]
+                  (show/create-runtime {:model (assoc (demo/model) :show-id id)
+                                        :workspace-options nil
+                                        :event-callback-options {:callbacks callbacks}}))
+        a (runtime :closures/a {:kicks (middleware :named)})
+        b (runtime :closures/b {})]
+    (try
+      (doseq [[current owner] [[a :a] [b :b]]]
+        (let [reply (show/register-event-subscriber! current (assoc (listener []) :middleware (middleware owner)))]
+          (show/tick! current 0)
+          (is (= :accepted (:status (deref reply 1000 {}))))))
+      (let [handlers (get-in a [:event-callbacks :inline-handlers])
+            registered @handlers]
+        (show/tick! a 1)
+        (is (identical? registered @handlers) "An idle tick reuses the registered callback map"))
+      (let [source-a (show/export-show-source a)
+            source-b (show/export-show-source b)
+            definition (fn [source] (get-in (files/read-string source) [:model :event-subscribers :subscribers 0]))
+            a-definition (definition source-a)
+            b-definition (definition source-b)
+            implementation #(get-in % [:actions 0 :implementation])
+            import! (fn [source] (show/submit! a :import {:source source}))]
+        (is (= :kicks (:id a-definition) (:id b-definition)))
+        (is (= :inline (:type (implementation a-definition)) (:type (implementation b-definition))))
+        (is (not= (:callback-id (implementation a-definition)) (:callback-id (implementation b-definition))))
+
+        (testing "The same runtime can reimport its callback, including when a competing import is rejected"
+          (let [own (import! source-a)
+                stale (import! source-b)]
+            (is (not (realized? stale)))
+            (show/tick! a 1)
+            (is (= :accepted (:status (deref own 1000 {}))))
+            (let [receipt (deref stale 1000 {})]
+              (is (= :rejected (:status receipt)))
+              (is (re-find #"previous show session" (:message receipt ""))))
+            (is (= :a (get-in (play-kick! a) [:variables :callback-owner])))
+            (is (= [:a] @calls))))
+
+        (testing "A different subscriber cannot reuse the reference in the same runtime"
+          (let [reply (show/submit! a :event-subscriber {:op :save :subscriber (assoc a-definition :id :copy)})]
+            (show/tick! a 20)
+            (is (= :accepted (:status (deref reply 1000 {}))))
+            (let [model (play-kick! a)]
+              (is (= :copy (get-in model [:event-subscribers :last-error :subscriber-id])))
+              (is (= [:a :a] @calls)))))
+
+        (testing "A different show's reference stays visible and fails without calling either implementation"
+          (let [foreign (import! source-b)]
+            (show/tick! a 30)
+            (is (= :accepted (:status (deref foreign 1000 {}))))
+            (let [catalog ((studio/handler a) {:uri "/api/event-subscribers" :request-method :get
+                                              :headers {"accept" "application/transit+json"}})]
+              (is (= [b-definition] (:subscribers (wire/decode (:body catalog))))))
+            (let [model (play-kick! a)
+                  fault (get-in (show/snapshot a) [:event-subscribers :last-error])]
+              (is (= :closures/b (:show-id model)))
+              (is (nil? (get-in model [:variables :callback-owner])))
+              (is (= [:a :a] @calls))
+              (is (= {:type :event/handler-failed :subscriber-id :kicks}
+                     (select-keys fault [:type :subscriber-id])))
+              (is (re-find #"Process-local callback unavailable.*Re-register" (:message fault "")))
+              (is (empty? @(get-in a [:event-callbacks :inline-handlers]))))))
+
+        (testing "An explicitly named reference still finds the host callback with the same name"
+          (let [registration (listener [{:op :callback :implementation {:type :registered :id :kicks}}])
+                saved (show/register-event-subscriber! b registration)]
+            (show/tick! b 1)
+            (is (= :accepted (:status (deref saved 1000 {}))))
+            (let [named (import! (show/export-show-source b))]
+              (show/tick! a 40)
+              (is (= :accepted (:status (deref named 1000 {}))))
+              (is (= :named (get-in (play-kick! a) [:variables :callback-owner])))
+              (is (= [:a :a :named] @calls))))))
+      (finally (show/stop! a) (show/stop! b)))))
 
 (deftest all-selection-chunks-preserve-chosen-targets-and-save-cursor
   (let [model (-> (configured [{:op :cue/launch :select {:pick :all}}])

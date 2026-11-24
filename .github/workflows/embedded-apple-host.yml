@@ -1,0 +1,64 @@
+name: Embedded Apple Studio Native Image
+on:
+  push:
+    branches: [codex/apple-embedded-native-host]
+  workflow_dispatch:
+  pull_request:
+    paths: ['native/EmbeddedHost/**', 'native/iOS/OnDeviceStudio.swift', 'src/tolglow/fixed_host.clj', 'src/tolglow/native_resources.clj', 'dev/tolglow/native_assets.clj', '.github/workflows/embedded-apple-host.yml', '.github/workflows/apple-resources.yml']
+permissions: {contents: read, actions: read}
+concurrency:
+  group: embedded-local-studio-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  resources:
+    uses: ./.github/workflows/apple-resources.yml
+    with: {embedded-host: true}
+  host:
+    needs: resources
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: ios-sim, runner: macos-15-intel}
+          - {target: ios, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v4
+        with: {name: studio-runtime, path: build/release}
+      - name: Compile and link the Clojure application
+        run: native/EmbeddedHost/build-framework "${{ matrix.target }}" build/release/studio.jar build/native-host
+      - name: Open, stop and reopen the local Ring show on iPad
+        if: matrix.target == 'ios-sim'
+        run: native/Tests/check-embedded-studio
+      - name: Build the unsigned device app with the ARM64 framework
+        if: matrix.target == 'ios'
+        run: |
+          command -v xcodegen || brew install xcodegen
+          native/EmbeddedHost/generate-project
+          xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath native/DerivedData CODE_SIGNING_ALLOWED=NO build
+          app=native/DerivedData/Build/Products/Release-iphoneos/TolglowPhone.app
+          test -s "$app/Frameworks/TolglowRuntime.framework/TolglowRuntime"
+          ditto -c -k --keepParent "$app" unsigned-iphone-studio.zip
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: embedded-host-${{ matrix.target }}
+          path: |
+            build/native-host/*.log
+            build/native-host/target/gluonfx/*/gvm/log/
+            native/build/embedded/runtime-symbols.txt
+            embedded-ipad-studio.zip
+            unsigned-iphone-studio.zip
+            run-ui.xcresult
+      - uses: actions/upload-artifact@v7.0.2
+        if: matrix.target == 'ios-sim' && always()
+        with:
+          name: embedded-ipad-studio-preview
+          path: |
+            build/ipad-media/ipad.png
+            build/ipad-media/ipad.gif
+            build/ipad-media/last-start-error.log
+            build/ipad-media/attachments/manifest.json

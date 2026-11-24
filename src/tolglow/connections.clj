@@ -147,7 +147,8 @@
     (try
       (let [agents (agent-manager/create-manager (:agent-options options))
             _ (vswap! resources assoc :agents agents)
-            audio (capture/create-manager (:audio-options options))
+            audio (capture/create-manager (assoc (:audio-options options) :config
+                                                 (get-in data [:integrations :audio-capture :config])))
             _ (vswap! resources assoc :audio audio)
             fixture-options (cond-> (:fixture-options options)
                               (get-in data [:integrations :fixtures])

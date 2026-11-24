@@ -1,13 +1,15 @@
 (ns tolglow.studio.routing-host-test
   (:require [clojure.test :refer [deftest is]]
             [afterglow.control.model :as control]
+            [tolglow.audio.capture-test :as pcm]
             [tolglow.clock :as clock]
             [tolglow.show :as show]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.connections :as connections]
             [tolglow.persistence :as persistence]
             [tolglow.routing :as routing]
-            [afterglow.sync.session :as session]))
+            [afterglow.sync.session :as session])
+  (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def head {:id :head :position [0 0 0] :universe 1 :address 1 :channels {:dimmer 1 :red 2 :green 3 :blue 4}})
 (def effect {:id :wash :version 1 :params {:level {:type :number :default 0.8 :bounds [0.0 1.0]}}
@@ -101,6 +103,71 @@
         (show/tick! runtime 150.0)
         (is (not (contains? (show/variables runtime) :audio/energy)))
         (is (= 0.65 (get-in @(:state runtime) [:model :instances id :params :level]))))
+      (finally (show/stop! runtime)))))
+
+(deftest four-channel-pcm-drives-the-show-only-from-the-selected-channel
+  (let [config {:default? true :channels 4 :input-channel 3}
+        neighbors (pcm/pcm (mapcat identity (repeat 480 [24576 -16384 0 32767])) false)
+        selected (pcm/pcm (mapcat identity (repeat 480 [0 0 16384 0])) false)
+        blocks [neighbors selected neighbors]
+        reads (atom -1)
+        opened (atom [])
+        closed (atom 0)
+        dimmer (atom nil)
+        waiting (vec (repeatedly 4 #(CountDownLatch. 1)))
+        available (vec (repeatedly 4 #(CountDownLatch. 1)))
+        runtime (show/create-runtime
+                 {:model (-> (model)
+                             (assoc :time-ms 100.0)
+                             (assoc-in [:registry :effects :wash :params :level :default] 0.0))
+                  :sink {:send! (fn [universes _]
+                                  (reset! dimmer (bit-and 255 (aget ^bytes (get universes 1) 0))))}
+                  :audio-options {:open-source!
+                                  (fn [settings]
+                                    (swap! opened conj (select-keys settings [:default? :channels :input-channel]))
+                                    {:started-at-ms 0.0
+                                     :read! (fn [out offset length]
+                                              (let [n (swap! reads inc)]
+                                                (.countDown (nth waiting n))
+                                                (if (and (.await (nth available n) 3 TimeUnit/SECONDS)
+                                                         (< n (count blocks)))
+                                                  (do (System/arraycopy (nth blocks n) 0 out offset length) length)
+                                                  -1)))
+                                     :close! #(do (swap! closed inc)
+                                                  (doseq [gate available] (.countDown gate)))})}})]
+    (try
+      (let [id (prepare! runtime (spec "audio/rms" :audio [0.0 1.0]))]
+        ;; Prime the host before admitting capture. The test source's 0 ms
+        ;; origin precedes the initialized 100 ms clock for all three reads.
+        (show/tick! runtime 100.0)
+        (is (= config (select-keys (:config (show/audio-action! runtime :start config)) (keys config))))
+        (doseq [[n rms] [[0 0.0] [1 0.5] [2 0.0]]]
+          (.countDown (nth available n))
+          (is (.await (nth waiting (inc n)) 2 TimeUnit/SECONDS))
+          (show/tick! runtime (+ 120.0 (* n 20.0)))
+          (let [model (:model @(:state runtime))
+                waveform (:waveform (show/audio-action! runtime :status {}))]
+            (is (= rms (get-in model [:variables :audio :features :rms])))
+            (is (= rms (get-in model [:routing :ports "audio/rms" :value])))
+            (is (= rms (get-in model [:instances id :params :level])))
+            (is (= rms (first (get-in (show/snapshot runtime) [:output :values :head :emitted-color]))))
+            (is (= (if (= 1 n) 128 0) @dimmer))
+            (is (= {:channels 4 :input-channel 3 :mix :selected-channel :sample-end (* 480 (inc n))}
+                   (select-keys waveform [:channels :input-channel :mix :sample-end])))
+            (is (pcm/close? (if (zero? n) 0.0 (/ 0.5 (Math/sqrt 2.0)))
+                            (:rms (first (:bins waveform)))))
+            (when (= 1 n)
+              (is (pos? (:audio/energy (show/variables runtime)))))))
+        (is (:stopped? (show/audio-action! runtime :stop {})))
+        (is (= 1 @closed))
+        (let [saved (show/export-show runtime)]
+          (is (= {:version 1 :config (:config (show/audio-action! runtime :status {})) :capture-wanted? false}
+                 (get-in saved [:model :integrations :audio-capture])))
+          (is (= :accepted (:status (apply-at! runtime :import {:source (pr-str saved)} 180.0))))
+          (let [status (show/audio-action! runtime :status {})]
+            (is (= :idle (:state status)))
+            (is (= config (select-keys (:config status) (keys config)))))
+          (is (= [config] @opened))))
       (finally (show/stop! runtime)))))
 
 (deftest transient-gate-release-and-show-restore-retain-captured-ownership
