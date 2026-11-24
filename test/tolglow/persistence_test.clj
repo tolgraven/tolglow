@@ -1,6 +1,7 @@
 (ns tolglow.persistence-test
   (:require [clojure.test :refer :all]
             [afterglow.control.model :as control]
+            [afterglow.control.pages :as cue-pages]
             [tolglow.transit :as wire]
             [thi.ng.color.core :as color]
             [afterglow.runtime.engine :as engine]
@@ -211,6 +212,37 @@
                     (assoc-in document [:model :auto :state :seed] 1.2)]]
       (is (thrown? Exception (files/thaw model broken))))
     (is (= before (pr-str model)))))
+
+(deftest saved-recent-cue-history-rejects-invalid-shapes-and-identities
+  (let [model (demo/model)
+        document (files/freeze model)
+        path [:control :recent-cue-ids]
+        rejected-path (fn [load!]
+                        (try (load!)
+                             (catch clojure.lang.ExceptionInfo error
+                               (let [{:keys [errors] :as data} (ex-data error)]
+                                 (when (= :invalid-show (:persistence/error data))
+                                   (:path (first errors)))))))]
+    (doseq [[ids suffix] [[nil []] ['(:ember) []] [#{:ember} []]
+                          [[:ember :ember] []] [(mapv #(str "cue-" %) (range 65)) []]
+                          [[:ember 42] [1]] [[" "] [0]] [[""] [0]] [[nil] [0]]]]
+      (let [invalid (assoc-in document (into [:model] path) ids)
+            expected (into path suffix)]
+        (is (= expected (rejected-path #(files/read-string (wire/encode invalid)))))
+        (is (= expected (rejected-path #(files/thaw model invalid))))))))
+
+(deftest saved-recent-cue-history-keeps-valid-stale-ids-and-allows-older-files
+  (let [model (demo/model)
+        path [:control :recent-cue-ids]
+        ids (into [:ember "ember"] (map #(keyword "stale" (str %))) (range 62))
+        restored (files/thaw model (files/read-string (files/write-string (assoc-in model path ids))))
+        legacy (files/thaw model (files/read-string (files/write-string (update model :control dissoc :recent-cue-ids))))
+        launched (:model (command restored :launch-after-restore {:op :cue/launch :cue-id :ice}))]
+    (is (= ids (get-in restored path)))
+    (is (= {[0 7] :ember} (:cells (cue-pages/page restored cue-pages/recent-page-id))))
+    (is (= [:ice :ember] (get-in launched path)))
+    (is (not (contains? (:control legacy) :recent-cue-ids)))
+    (is (empty? (cue-pages/recent-page-source legacy)))))
 
 (deftest rejects-nonportable-state-and-secrets-without-silently-dropping-them
   (let [model (demo/model)]
