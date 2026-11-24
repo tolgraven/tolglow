@@ -13,7 +13,8 @@
             [tolglow.event-subscribers :as sub]
             [tolglow.events.callbacks :as callbacks]
             [tolglow.persistence :as files]
-            [tolglow.transit :as wire]))
+            [tolglow.transit :as wire])
+  (:import [java.util.concurrent Callable CountDownLatch FutureTask ThreadPoolExecutor TimeUnit]))
 
 (def kick {:category :audio :type :audio/kick :emitter {:kind :audio :id :analysis}
            :data {:confidence 0.92} :time {:beat 0}})
@@ -236,6 +237,31 @@
                                                                   [:event-subscribers :last-error :message] ""))))
       (finally (show/stop! runtime)))
     (is (.isShutdown ^java.util.concurrent.ThreadPoolExecutor (:pool service)))))
+
+(deftest a-queued-worker-can-use-the-previous-callback-signature
+  (let [named (fn [context _] (assoc-in context [:variables :callback-owner] :named))
+        service (dissoc (callbacks/create {:callbacks {:kicks named}}) :inline-handlers :inline-inputs)
+        ^ThreadPoolExecutor pool (:pool service)
+        workers-started (CountDownLatch. 2)
+        release (promise)
+        implementation {:type :registered :id :kicks}
+        model (demo/model)
+        run {:event kick :index 0 :steps [{:op :callback :implementation implementation}]}
+        task (FutureTask. ^Callable (reify Callable
+                                     (call [_] (#'callbacks/invoke service model run))))]
+    (try
+      (is (identical? named (#'callbacks/resolve-handler service implementation)))
+      (dotimes [_ 2]
+        (.execute pool ^Runnable (fn [] (.countDown workers-started) @release)))
+      (is (.await workers-started 5 TimeUnit/SECONDS))
+      (.execute pool task)
+      (is (= 1 (.size (.getQueue pool))))
+      (deliver release true)
+      (is (= [:callback-owner :named]
+             (get-in (.get task 5 TimeUnit/SECONDS) [:edits :callback-owner :after])))
+      (finally
+        (deliver release true)
+        (callbacks/close! service)))))
 
 (deftest transit-restores-only-the-exact-runtime-owned-event-callback
   (let [calls (atom [])

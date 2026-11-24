@@ -43,53 +43,60 @@
           (reset! inline-handlers retained)
           (vreset! inline-inputs (when (seq retained) [subscribers runs])))))))
 
-(defn- resolve-handler [service implementation inline-handler]
-  (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
-                                             {:trusted-source? true})]
-    (cond
-      (= :inline (:type implementation))
-      (or inline-handler (throw (ex-info "Process-local callback unavailable. Re-register the middleware in this runtime." {})))
+(defn- resolve-handler
+  ;; A worker already in the earlier invocation can still call this arity.
+  ([service implementation] (resolve-handler service implementation nil))
+  ([service implementation inline-handler]
+   (let [resolve-fn #(reactive/resolve-handler {:kind :fx :id ::middleware :implementation implementation}
+                                              {:trusted-source? true})]
+     (cond
+       (= :inline (:type implementation))
+       (or inline-handler (throw (ex-info "Process-local callback unavailable. Re-register the middleware in this runtime." {})))
 
-      (= :registered (:type implementation))
-      (or (get @(:handlers service) (:id implementation))
-          (throw (ex-info "Register this named callback in the current host's :event-callback-options :callbacks" {})))
+       (= :registered (:type implementation))
+       (or (get @(:handlers service) (:id implementation))
+           (throw (ex-info "Register this named callback in the current host's :event-callback-options :callbacks" {})))
 
-      (not (:trusted-source? service))
-      (throw (ex-info "Trusted callback source or Var execution is disabled on this host" {}))
+       (not (:trusted-source? service))
+       (throw (ex-info "Trusted callback source or Var execution is disabled on this host" {}))
 
-      (= :source (:type implementation))
-      (or (get @(:sources service) implementation)
-          (let [handler (resolve-fn)]
-            (swap! (:sources service)
-                   (fn [cache]
-                     (assoc (cond-> cache (>= (count cache) 128) (dissoc (ffirst cache)))
-                            implementation handler)))
-            handler))
+       (= :source (:type implementation))
+       (or (get @(:sources service) implementation)
+           (let [handler (resolve-fn)]
+             (swap! (:sources service)
+                    (fn [cache]
+                      (assoc (cond-> cache (>= (count cache) 128) (dissoc (ffirst cache)))
+                             implementation handler)))
+             handler))
 
-      :else (resolve-fn))))
+       :else (resolve-fn)))))
 
-(defn- invoke [service model run implementation inline-handler]
-  (try
-    (let [handler (resolve-handler service implementation inline-handler)
-          context {:show model :event (:event run) :variables (:variables model {}) :actions []}
-          output (handler context (:event run))
-          variables (:variables output)
-          actions (:actions output)]
-      (when-not (and (map? output) (map? variables) (vector? actions)
-                     (<= (+ (count actions) (count (:steps run))) 32)
-                     (every? #(not= :callback (:op %)) actions))
-        (throw (ex-info "Middleware must return its context with variables and built-in actions" {})))
-      (run! subscribers/validate-action actions)
-      (let [before (:variables context)
-            changed (for [k (set/union (set (keys before)) (set (keys variables)))
-                          :let [old (find before k) new (find variables k)]
-                          :when (not= old new)]
-                      (do (when-not (and (reactive/portable? k) (or (nil? new) (reactive/portable? (val new))))
-                            (throw (ex-info "Middleware returned a nonportable variable" {})))
-                          [k {:before old :after new}]))]
-        {:edits (into {} changed) :actions actions}))
-    (catch Throwable error
-      {:error (or (.getMessage error) "Event callback failed") :diagnostic (subscribers/error-details error)})))
+(defn- invoke
+  ;; A queued worker from before a namespace reload still calls this arity.
+  ([service model run]
+   (invoke service model run (get-in run [:steps (:index run) :implementation]) nil))
+  ([service model run implementation inline-handler]
+   (try
+     (let [handler (resolve-handler service implementation inline-handler)
+           context {:show model :event (:event run) :variables (:variables model {}) :actions []}
+           output (handler context (:event run))
+           variables (:variables output)
+           actions (:actions output)]
+       (when-not (and (map? output) (map? variables) (vector? actions)
+                      (<= (+ (count actions) (count (:steps run))) 32)
+                      (every? #(not= :callback (:op %)) actions))
+         (throw (ex-info "Middleware must return its context with variables and built-in actions" {})))
+       (run! subscribers/validate-action actions)
+       (let [before (:variables context)
+             changed (for [k (set/union (set (keys before)) (set (keys variables)))
+                           :let [old (find before k) new (find variables k)]
+                           :when (not= old new)]
+                       (do (when-not (and (reactive/portable? k) (or (nil? new) (reactive/portable? (val new))))
+                             (throw (ex-info "Middleware returned a nonportable variable" {})))
+                           [k {:before old :after new}]))]
+         {:edits (into {} changed) :actions actions}))
+     (catch Throwable error
+       {:error (or (.getMessage error) "Event callback failed") :diagnostic (subscribers/error-details error)}))))
 
 (defn- start! [service model run]
   (let [implementation (get-in run [:steps (:index run) :implementation])
