@@ -1,0 +1,370 @@
+[
+  {
+    "mode": "exact-no-detail",
+    "auto": true,
+    "phase": "room-haze",
+    "raster": [
+      301,
+      135
+    ],
+    "device": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "pixels": [
+      {
+        "gain": 1,
+        "comparison": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 731475,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        },
+        "repeat": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 731475,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        }
+      },
+      {
+        "gain": 8,
+        "comparison": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 2440197,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        },
+        "repeat": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 2440197,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        }
+      }
+    ],
+    "time": [
+      {
+        "atlasMode": false,
+        "ms": 5.644999
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.839958
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.847291
+      },
+      {
+        "atlasMode": false,
+        "ms": 2.179125
+      },
+      {
+        "atlasMode": false,
+        "ms": 2.059374
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.824875
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.82125
+      },
+      {
+        "atlasMode": false,
+        "ms": 2.057791
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.829749
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.599791
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.606875
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.65175
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.663125
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.438458
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.727583
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.4985
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.514125
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.31775
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.317624
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.446125
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.451833
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.259749
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.265791
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.374874
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.333041
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.160624
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.153125
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.322541
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.323499
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.1535
+      },
+      {
+        "atlasMode": true,
+        "ms": 1.153583
+      },
+      {
+        "atlasMode": false,
+        "ms": 1.229291
+      }
+    ]
+  },
+  {
+    "mode": "exact-no-detail",
+    "auto": false,
+    "phase": "room-haze",
+    "raster": [
+      480,
+      270
+    ],
+    "device": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "pixels": [
+      {
+        "gain": 1,
+        "comparison": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 137608,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        },
+        "repeat": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 137608,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        }
+      },
+      {
+        "gain": 8,
+        "comparison": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 421957,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        },
+        "repeat": {
+          "changed": 0,
+          "severe": 0,
+          "lit": 421957,
+          "maximum": 0,
+          "rmsLit": 0,
+          "maxRadiance": 0,
+          "maxOpacity": 0
+        }
+      }
+    ],
+    "time": [
+      {
+        "atlasMode": false,
+        "ms": 8.56475
+      },
+      {
+        "atlasMode": true,
+        "ms": 7.882499
+      },
+      {
+        "atlasMode": true,
+        "ms": 8.041375
+      },
+      {
+        "atlasMode": false,
+        "ms": 6.091708
+      },
+      {
+        "atlasMode": false,
+        "ms": 7.070499
+      },
+      {
+        "atlasMode": true,
+        "ms": 7.897583
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.105208
+      },
+      {
+        "atlasMode": false,
+        "ms": 5.505624
+      },
+      {
+        "atlasMode": false,
+        "ms": 5.112125
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.11075
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.450833
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.81975
+      },
+      {
+        "atlasMode": false,
+        "ms": 5.221916
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.116541
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.508916
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.821125
+      },
+      {
+        "atlasMode": false,
+        "ms": 6.785041
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.107541
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.565291
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.843583
+      },
+      {
+        "atlasMode": false,
+        "ms": 6.051166
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.926416
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.210708
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.898625
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.825999
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.399375
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.129666
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.850249
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.838208
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.118874
+      },
+      {
+        "atlasMode": true,
+        "ms": 4.130166
+      },
+      {
+        "atlasMode": false,
+        "ms": 4.948666
+      }
+    ]
+  }
+]
