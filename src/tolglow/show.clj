@@ -460,10 +460,12 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :event-subscriber (let [updated (subscribers/configure model payload)]
-                        (when-let [handler (::inline-handler payload)]
-                          (event-callbacks/register! (:event-callbacks runtime) (get-in payload [:subscriber :id]) handler))
-                        {:model updated :ack {:status :accepted}})
+    :event-subscriber (let [inline-registration (::inline-registration payload)]
+                        (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
+                          (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
+                        {:model (subscribers/configure model payload)
+                         :ack {:status :accepted}
+                         :inline-registration inline-registration})
     :rdm-update (do (when (and (:rdm-session-id payload)
                               (not (rdm/session-current? (:rdm runtime) (:rdm-session-id payload))))
                       (throw (ex-info "RDM result belongs to a retired device session" {})))
@@ -1054,6 +1056,7 @@
            (let [before @(:state runtime)
                  time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
+                 inline-registrations (volatile! {})
                  _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
@@ -1079,6 +1082,8 @@
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                        (when-let [[key handler] (:inline-registration result)]
+                          (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
@@ -1295,7 +1300,7 @@
                       (when-not restored? (get-in next-state [:output :fog-demands]))))
              (reset! (:state runtime) (dissoc next-state :autopilot-author-request :pending-reactive-faults))
              (vreset! author-request (:autopilot-author-request next-state))
-             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state))
+             (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
              (vreset! committed-fault-events
                       (into (vec (:fault-events next-state)) (keep (fn [event]
                               (when (= :event/handler-failed (:type event))
@@ -1401,22 +1406,23 @@
      reply)))
 
 (defn register-event-subscriber!
-  "Register show data from the REPL. An inline :middleware function is bound in
-  this process; a qualified Var or portable :implementation can be restored."
+  "Register show data from the REPL. A raw :middleware function is bound to its
+  callback identity in this runtime. Use a Var or source for portable code."
   [runtime {:keys [id middleware] :as registration}]
-  (let [registration (if middleware
+  (let [inline-id (when (fn? middleware) (str (random-uuid)))
+        registration (if middleware
                        (let [_ (when-not (or (fn? middleware) (var? middleware))
                                  (throw (ex-info "Expected middleware function or Var" {:id id})))
                              implementation (if (var? middleware)
                                               {:type :var :symbol (str (symbol middleware))}
-                                              {:type :registered :id id})
+                                              {:type :inline :callback-id inline-id})
                              definition (-> registration (dissoc :middleware)
                                             (update :actions (fnil conj []) {:op :callback :implementation implementation}))]
                          (subscribers/validate-definition definition)
                          definition)
                        registration)]
     (submit! runtime :event-subscriber (cond-> {:op :save :subscriber registration}
-                                         (fn? middleware) (assoc ::inline-handler middleware)))))
+                                         inline-id (assoc ::inline-registration [[id inline-id] middleware])))))
 
 (defmacro reg-event-subscriber!
   "Register a literal middleware fn as restorable REPL source. Supply lexical
