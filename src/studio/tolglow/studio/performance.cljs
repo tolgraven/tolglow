@@ -12,7 +12,7 @@
             [tolglow.studio.spatial-picker :as spatial]
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-source :as sources]
-            [tolglow.studio.parameter-visualization :as visualization]))
+            [tolglow.studio.param-visualization :as visualization]))
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
