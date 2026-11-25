@@ -1,0 +1,15 @@
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+
+lein test afterglow.output.scheduler-test
+
+lein test afterglow.render.presentation-test
+
+lein test afterglow.render.edge-tracking-test
+
+lein test afterglow.render.frame-test
+
+lein test afterglow.render.ir-test
+
+Ran 107 tests containing 1481 assertions.
+0 failures, 0 errors.

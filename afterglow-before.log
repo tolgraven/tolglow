@@ -1,0 +1,16 @@
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+
+lein test afterglow.output.scheduler-test
+
+lein test :only afterglow.output.scheduler-test/buffered-tracking-cuts-keep-rejected-emission-dark-between-exact-endpoints
+
+FAIL in (buffered-tracking-cuts-keep-rejected-emission-dark-between-exact-endpoints) (scheduler_test.clj:63)
+expected: (= [[255 0 0 255 0] [128 255 255 0 51] [128 255 255 0 102] [128 255 255 0 179] [64 0 0 255 255]] (mapv lanes rich))
+  actual: (not (= [[255 0 0 255 0] [128 255 255 0 51] [128 255 255 0 102] [128 255 255 0 179] [64 0 0 255 255]] [[255 0 0 255 0] [255 0 0 128 51] [128 255 255 0 102] [128 255 255 128 179] [64 0 0 255 255]]))
+
+Ran 1 tests containing 12 assertions.
+1 failures, 0 errors.
+Subprocess failed (exit code: 1)
+Error encountered performing task 'test' with profile(s): 'base,system,user,provided,dev,offline'
+Subprocess failed (exit code: 1)
