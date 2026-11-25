@@ -959,36 +959,51 @@
     (is (nil? (:dispatch late)))))
 
 (deftest response-envelope-targets-the-current-instance-with-musical-durations
-  (let [db (-> base (assoc-in [:ui :selected-instance] "7:9")
+  (let [db (-> (:db (full-frame base (merge (:show base) checkpoint-owner)))
+               (assoc-in [:ui :selected-instance] "7:9")
                (assoc-in [:ui :response-form :scope] "instance"))
         response (events/response-definition db)
-        start (transition db [:studio/response-start])
-        release (transition db [:studio/response-action :release "performance-envelope"])]
+        start (:studio/http (transition db [:studio/response-start]))]
     (is (= {:instance-ids ["7:9"]} (:select response)))
-    (is (= ["level"] (:params response)))
+    (is (= :performance-envelope (:id response)))
+    (is (= [:level] (:params response)))
+    (is (= :multiply (:operation response)))
     (is (= {:beats 0.5} (get-in response [:envelope :attack])))
     (is (= {:beats 1} (get-in response [:envelope :release])))
     (is (not (contains? (:envelope response) :decay)))
     (is (not (contains? (:envelope response) :sustain)))
-    (is (= "/api/response" (get-in start [:studio/http :path])))
-    (is (= "/api/response/release" (get-in release [:studio/http :path])))
+    (is (= "/api/response" (:path start)))
+    (is (true? (:typed? start)))
     (is (thrown? js/Error (events/response-definition (assoc-in db [:ui :selected-instance] nil))))))
+
+(deftest response-actions-keep-the-types-of-projected-ids
+  (let [ids [:live/fade "live/fade"]
+        view (assoc (merge (:show base) checkpoint-owner) :responses (mapv #(hash-map :id %) ids))
+        db (:db (full-frame base view))]
+    (is (= ["live/fade" "live/fade"] (mapv :id (get-in db [:show :responses]))))
+    (doseq [id (map :id (get-in db [:server-projection :view :responses]))
+            [action path] [[:release "/api/response/release"] [:delete "/api/response/delete"]]]
+      (let [request (:studio/http (transition db [:studio/response-action action id]))]
+        (is (= path (:path request)))
+        (is (true? (:typed? request)))
+        (is (= id (get-in request [:body :id])))))))
 
 (deftest response-envelope-submits-decay-and-sustain-through-the-existing-command
   (let [db (update-in base [:ui :response-form] merge {:attack-value 80 :decay-value 120
                                                        :sustain 0 :release-value 250 :unit "ms"})
         submitted (get-in (transition db [:studio/response-start]) [:studio/http :body])]
     (is (nil? (:select submitted)))
-    (is (= {:attack {:ms 80} :decay {:ms 120} :sustain 0 :release {:ms 250} :curve "smoothstep"}
+    (is (= {:attack {:ms 80} :decay {:ms 120} :sustain 0 :release {:ms 250} :curve :smoothstep}
            (:envelope submitted))))
-  (let [db (-> base
-               (assoc-in [:ui :selected-instance] "7:9")
-               (assoc-in [:show :instances 0 :effect-id] "ember")
-               (update-in [:ui :response-form] merge {:scope "effect" :decay-value 0.25 :sustain 0.6}))
-        submitted (get-in (transition db [:studio/response-start]) [:studio/http :body])]
-    (is (= {:effect-ids ["ember"]} (:select submitted)))
-    (is (= {:beats 0.25} (get-in submitted [:envelope :decay])))
-    (is (= 0.6 (get-in submitted [:envelope :sustain])))))
+  (doseq [effect-id [:ember "ember"]]
+    (let [view (assoc-in (merge (:show base) checkpoint-owner) [:instances 0 :effect-id] effect-id)
+          db (-> (:db (full-frame base view))
+                 (assoc-in [:ui :selected-instance] "7:9")
+                 (update-in [:ui :response-form] merge {:scope "effect" :decay-value 0.25 :sustain 0.6}))
+          submitted (get-in (transition db [:studio/response-start]) [:studio/http :body])]
+      (is (= {:effect-ids [effect-id]} (:select submitted)))
+      (is (= {:beats 0.25} (get-in submitted [:envelope :decay])))
+      (is (= 0.6 (get-in submitted [:envelope :sustain]))))))
 
 (deftest response-envelope-rejects-invalid-decay-and-sustain-before-submitting
   (doseq [[field value] [[:decay-value -0.1] [:decay-value js/Infinity]
