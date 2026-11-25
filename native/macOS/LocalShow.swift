@@ -78,7 +78,8 @@ final class LocalShow: ObservableObject {
                 child.arguments = [folder.path, ready.path]
             } else {
                 child.executableURL = resources.appendingPathComponent("runtime/bin/java")
-                child.arguments = ["-Djava.awt.headless=true", "-cp", resources.appendingPathComponent("studio.jar").path,
+                child.arguments = ["-XX:+UseZGC", "-Djava.awt.headless=true",
+                                   "-cp", resources.appendingPathComponent("studio.jar").path,
                                    "clojure.main", "-m", "tolglow.desktop", folder.path, ready.path]
             }
             child.standardInput = pipe
