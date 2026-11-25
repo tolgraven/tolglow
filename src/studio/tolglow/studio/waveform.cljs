@@ -121,12 +121,33 @@
 (defn clock-bound? [value]
   (boolean (some #(and (map? %) (contains? #{"time" "time-seconds" "beat" "bar" "phrase"} (wire (:op %))))
                  (tree-seq coll? seq value))))
+(defn- transport-key [transport]
+  (update (select-keys transport [:source :source-epoch :source-selection-epoch :playing? :meter :generation]) :source wire))
+
+(defn live-timing-key [entry transport]
+  [(transport-key transport) (when (get-in entry [:data :timeline]) (:beat transport))])
+
+(defn timeline-chart [timeline transport]
+  (when (and timeline (widgets/finite? (:beat timeline)) (widgets/finite? (:beat transport))
+             (= (transport-key (assoc (:transport timeline) :generation (:transport-generation timeline 0)))
+                (transport-key transport))
+             (<= 0 (- (:beat transport) (:beat timeline)) (get-in transport [:meter :beats-per-bar] 4)))
+    (when-let [{:keys [x-min x-max] :as chart} (chart-data (:samples timeline) :value)]
+      (when (and (<= -1.000001 x-min -0.999999) (<= 0.999999 x-max 1.000001))
+        (assoc chart :ticks (into [] (comp (filter #(and (widgets/finite? (:position %))
+                                                        (<= -1 (:position %) 1)
+                                                        (#{"beat" "bar" "phrase"} (wire (:kind %)))))
+                                           (map (fn [{:keys [kind position]}]
+                                                  {:kind (wire kind) :x (+ 256 (* position 246))})))
+                                  (take 195 (:ticks timeline))))))))
+
 (rf/reg-sub :waveform/live-inputs
   (fn [db [_ id]]
     (let [instance (some #(when (= (wire id) (wire (:id %))) %) (get-in db [:show :instances]))
           overrides (or (get-in db [:show :modulation :overrides id])
                         (get-in db [:show :modulation :overrides (keyword (wire id))]))]
       {:instance instance :params (merge (:params instance) overrides)
+       :transport (assoc (get-in db [:show :transport]) :generation (get-in db [:show :transport-generation] 0))
        :clock (when (clock-bound? (get-in instance [:definition :params]))
                 [(get-in db [:show :time-ms]) (get-in db [:show :transport]) (:system instance)])
        :waveform-revision (get-in db [:show :waveform-revision])})))
@@ -176,8 +197,10 @@
   (fn [{:keys [db]} [_ token key request-id payload data]]
     (if (and (= token (request-token db)) (= request-id (:request-id (entry db key))))
       (let [valid? (every? #(chart-data (:samples data) (first %)) channels)
-            e (cond-> (assoc (entry db key) :in-flight? false)
-                valid? (assoc :data data :result-payload payload :error nil :failed-payload nil)
+            previous (entry db key)
+            e (cond-> (assoc previous :in-flight? false)
+                valid? (assoc :data data :result-payload payload :error nil :failed-payload nil
+                              :previous-timeline (when (:timeline data) (get-in previous [:data :timeline])))
                 (not valid?) (assoc :error "The server returned invalid waveform samples." :failed-payload payload))]
         (schedule (put-entry db key e) key)) {})))
 (rf/reg-event-fx :waveform/failed
@@ -265,16 +288,26 @@
 
 (defn- compact-preview-view [key _selection _options _settings _token]
   (let [e @(rf/subscribe [:waveform/entry key]) data (:data e)
+        live @(rf/subscribe [:waveform/live-inputs (first key)])
+        timed (when (and (:instance-id (:desired e)) (not (or (:input-error e) (:error e))))
+                (or (timeline-chart (:timeline data) (:transport live))
+                    (timeline-chart (:previous-timeline e) (:transport live))))
+        shape (or timed (chart-data (:samples data) :value))
         current? (= (:desired e) (:result-payload e))]
     [:div.waveform-compact {:aria-label "Live waveform shape" :aria-busy (boolean (or (:scheduled? e) (:in-flight? e)))}
-     (if-let [shape (chart-data (:samples data) :value)]
+     (if shape
        [:svg {:view-box "0 0 512 184" :preserve-aspect-ratio "none" :role "img"
                :aria-label (str "Resulting waveform, minimum " (widgets/number-label (:minimum shape))
-                                ", maximum " (widgets/number-label (:maximum shape)))}
+                                ", maximum " (widgets/number-label (:maximum shape))
+                                (when timed ", centered on the current beat with beat, bar and phrase marks"))}
+        (for [{:keys [x kind]} (:ticks timed)]
+          ^{:key x} [:line {:class (str "waveform-tick " kind) :x1 x :x2 x :y1 20 :y2 164}])
         [:line.waveform-zero {:x1 10 :x2 502 :y1 (:zero-y shape) :y2 (:zero-y shape)}]
-        [:polyline {:points (:points shape) :fill "none" :stroke "currentColor" :stroke-width 1.8 :vector-effect "non-scaling-stroke"}]]
+        [:polyline {:points (:points shape) :fill "none" :stroke "currentColor" :stroke-width 1.8 :vector-effect "non-scaling-stroke"}]
+        (when timed [:line.waveform-now {:x1 256 :x2 256 :y1 14 :y2 172}])]
        [:span (or (:input-error e) (:error e) "Sampling waveform…")])
-     [:span.waveform-compact-status (cond (:input-error e) (:input-error e) (:error e) (:error e)
+     (when timed [:span.waveform-now-label "Now"])
+     [:span.waveform-compact-status (cond (:input-error e) (:input-error e) (:error e) (:error e) timed "Live waveform"
                                          (not current?) "Updating shape…" :else "Live shape")]]))
 
 (def compact-preview-component
@@ -295,10 +328,15 @@
         choices (vec (:choices schema)) selected (choice-index choices value) choice (get choices selected)
         title (or (:label schema) (:name schema) (widgets/label parameter)) category (wire (:category choice))
         actual? (and (:instance live) (not= false (:live? context)))
+        transport (:transport live)
+        timing-key (live-timing-key e transport)
         selection (if actual? {:instance-id instance-id :parameter parameter
-                               :input-key (str (hash [(:params live) (:definition (:instance live)) choices (:waveform-revision live) (:clock live)]))}
+                               :input-key (str (hash [(:params live) (:definition (:instance live)) choices
+                                                      (:waveform-revision live) (:clock live) timing-key
+                                                      (get-in live [:instance :system :paused?])]))}
                               {:selector selected :choices choices})
         options (cond-> (:preview/options schema {})
+                  actual? (assoc :live-timing? true)
                   (and (not actual?) (:params context)) (assoc :context-params (:params context)))]
     [:div.waveform-picker {:data-waveform-param (wire parameter)}
      [:div.waveform-choice-row

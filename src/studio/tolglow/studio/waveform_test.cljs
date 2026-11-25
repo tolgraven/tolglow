@@ -75,6 +75,31 @@
   (is (= "10,164 502,20"
          (:points (waveform/chart-data [{:phase 0 :value -1.0e308} {:phase 1 :value 1.0e308}] :value)))))
 
+(deftest timeline-guides-use-the-captured-beat-and-drop-stale-transport
+  (let [clock {:source "link" :source-epoch 2 :source-selection-epoch 1 :playing? true
+               :beat 4.5 :meter {:beats-per-bar 3.5} :generation 8}
+        timeline {:beat 4.25 :transport (dissoc clock :beat :generation) :transport-generation 8
+                  :ticks [{:position -1 :kind "phrase"} {:position 0 :kind "bar"}
+                          {:position 0.5 :kind "beat"} {:position 100 :kind "beat"}]
+                  :samples [{:phase -1 :value 0} {:phase 0 :value 1} {:phase 1 :value 0}]}
+        chart (waveform/timeline-chart timeline clock)]
+    (is (= "10,164 256,20 502,164" (:points chart)))
+    (is (= [{:x 10 :kind "phrase"} {:x 256 :kind "bar"} {:x 379 :kind "beat"}] (:ticks chart)))
+    (doseq [changed [(assoc clock :source-epoch 3) (assoc clock :beat 3.75) (assoc clock :generation 9)
+                     (assoc clock :source-selection-epoch 2) (assoc clock :playing? false)
+                     (assoc clock :beat 20) (assoc-in clock [:meter :beats-per-bar] 4)]]
+      (is (nil? (waveform/timeline-chart timeline changed))))
+    (is (nil? (waveform/timeline-chart nil clock)))))
+
+(deftest untimed-selectors-refresh-on-a-new-meter-or-generation-only
+  (let [clock {:source "link" :source-epoch 2 :generation 8 :beat 4.5 :meter {:beats-per-bar 3.5}}
+        key #(waveform/live-timing-key {} %)
+        moving-key #(waveform/live-timing-key {:data {:timeline {:beat 4.5}}} %)]
+    (is (= (key clock) (key (assoc clock :beat 4.75))))
+    (is (not= (key clock) (key (assoc clock :generation 9))))
+    (is (not= (key clock) (key (assoc-in clock [:meter :beats-per-bar] 4))))
+    (is (not= (moving-key clock) (moving-key (assoc clock :beat 4.75))))))
+
 (deftest requests-coalesce-and-never-overlap-for-one-preview
   (let [first (ensure-preview base selection)
         second (ensure-preview (:db first) (assoc selection :selector 1))
