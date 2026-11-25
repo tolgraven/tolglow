@@ -1,0 +1,128 @@
+{:policy
+ {:enabled? true,
+  :on :bar,
+  :patterns [:midnight-groove],
+  :show-seed 514},
+ :registration {:status :accepted},
+ :subscriber
+ {:id :track-patterns,
+  :match
+  {:category :music,
+   :type :music/section-pattern,
+   :pattern :midnight-groove},
+  :actions
+  [{:op :effect/launch, :select {:ids [:ember], :pick :first}}]},
+ :capture
+ {:run-id "a59400ed-fbb5-41c2-b544-cf8bc49dff88",
+  :status :completed,
+  :source-closed 1,
+  :sample-rate 8000,
+  :sample-count 40000},
+ :output :preview,
+ :physical-sink? false,
+ :events
+ [{:event
+   {:type :clock/bar,
+    :emitter {:kind :transport, :id :manual},
+    :category :clock,
+    :time
+    {:show-id :main,
+     :epoch 0,
+     :frame-number 3,
+     :time-ms 3920,
+     :beat 7.84},
+    :data {:index 1, :crossed 1}},
+   :recipients nil}
+  {:event
+   {:type :audio/section-change,
+    :emitter {:kind :audio, :id :audio-input},
+    :category :audio,
+    :time
+    {:show-id :main,
+     :epoch 0,
+     :frame-number 4,
+     :time-ms 4000,
+     :beat 8.0},
+    :data
+    {:boundary-beat 4.0,
+     :clock-confidence 1.0,
+     :clock-source :manual,
+     :observed-at-ms 14792.673208,
+     :clock-epoch 0,
+     :capture-run-id "a59400ed-fbb5-41c2-b544-cf8bc49dff88",
+     :available-at-beat 29.585346416,
+     :evidence
+     {:drivers [:bass-pattern],
+      :distance
+      {:bass 0.5339366515837104, :accents 0.0010618871664891116},
+      :repeat-distance
+      {:bass 0.11764705882352941, :accents 3.982781165925847E-4},
+      :pitch-coverage 0.8},
+     :confirmed-at-beat 8.0,
+     :latency-ms 10792.673208,
+     :source {:type :audio-analysis, :id :audio-input},
+     :confirmed-at-ms 4000.0,
+     :level
+     {:previous-rms 0.258936622327139,
+      :current-rms 0.25893662232713904},
+     :inference :beat-synchronous-bass-and-accents,
+     :timing
+     {:basis :confirmation-hop-end,
+      :filter-delay-compensated? false,
+      :includes-processing-time? false,
+      :capture-clock-valid? true,
+      :timestamp-method :sample-counter-start-estimate},
+     :sequence 41,
+     :confirmation-delay-beats 4.0,
+     :version 1,
+     :time-ms 4000.0,
+     :confidence 0.7970393079255093,
+     :clock-session-id "0/0/0"}},
+   :recipients nil}
+  {:event
+   {:type :music/section-pattern,
+    :emitter {:kind :music, :id :section-patterns},
+    :category :music,
+    :time
+    {:show-id :main,
+     :epoch 0,
+     :frame-number 4,
+     :time-ms 4000,
+     :beat 8.0},
+    :data
+    {:delivery-id
+     [{:show-epoch 0, :clock [:manual 0 "0/0/0"]}
+      {:source-id :audio-input,
+       :session-id "a59400ed-fbb5-41c2-b544-cf8bc49dff88"}
+      41],
+     :section
+     {:start-beat 4.0, :boundary-confidence 0.7970393079255093},
+     :mode :causal,
+     :scope {:show-epoch 0, :clock [:manual 0 "0/0/0"]},
+     :stream
+     {:source-id :audio-input,
+      :session-id "a59400ed-fbb5-41c2-b544-cf8bc49dff88"},
+     :show-beat 8.0,
+     :decision-seed -117981606,
+     :policy-version 1,
+     :version 1,
+     :time-ms 4000,
+     :pattern :midnight-groove}},
+   :recipients [:track-patterns]}
+  {:event
+   {:type :clock/bar,
+    :emitter {:kind :transport, :id :manual},
+    :category :clock,
+    :time
+    {:show-id :main,
+     :epoch 0,
+     :frame-number 4,
+     :time-ms 4000,
+     :beat 8.0},
+    :data {:index 2, :crossed 1}},
+   :recipients nil}],
+ :instances
+ [{:effect-id :ember,
+   :cue-id nil,
+   :source
+   {:adapter :event-subscriber, :session-id ":track-patterns"}}]}
