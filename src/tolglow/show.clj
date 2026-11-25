@@ -72,6 +72,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
+            [tolglow.effects.state-migration :as state-migration]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.recovery :as recovery]
@@ -1755,7 +1756,10 @@
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                                             ;; Certified literals have no parameter schemas, and
                                             ;; these transforms touch only declared parameters.
-                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
+                                            (cond-> (keyframes/with-inputs step inputs {:preserve-time-invariance? true})
+                                              ;; :migrate reloads call this pure transform once, at takeover.
+                                              (contains? definition :state-migration)
+                                              (engine/with-state-migration (state-migration/compile (:state-migration definition))))))
                            result (engine/advance model frame-input compile-step
                                                   (executor/mapper (:executor runtime)))
                            manual-aim (surface-aim/contribution model patch)

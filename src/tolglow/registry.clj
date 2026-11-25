@@ -12,7 +12,8 @@
             [afterglow.control.categories :as categories]
             [afterglow.control.params :as params]
             [afterglow.control.system :as system]
-            [afterglow.control.targets :as selection]))
+            [afterglow.control.targets :as selection]
+            [tolglow.effects.state-migration :as state-migration]))
 
 (defn valid-public-query-ids?
   "Show-configured subscriptions exposed to Studio are an explicit collection of names."
@@ -294,7 +295,9 @@
                         (= [] (:outputs definition))))
              [] (validate-outputs (:outputs definition)))
            (when (and (contains? definition :modulation) (not (map? (:modulation definition))))
-             [(error [:modulation] "Modulation must be a portable configuration map")]))
+             [(error [:modulation] "Modulation must be a portable configuration map")])
+           (when (contains? definition :state-migration)
+             (state-migration/errors (:state-migration definition))))
           :cues
           (concat
            (when (and (contains? definition :selector) (not (selection/selector? (:selector definition))))
@@ -303,7 +306,9 @@
            (when-not (or (nil? params) (map? params)) [(error [:params] "Cue parameter values must be a map")])
            (when (and (contains? definition :saved-params) (not (map? (:saved-params definition))))
              [(error [:saved-params] "Saved cue parameter values must be a map")])
-           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")]))
+           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")])
+           (when (contains? definition :reload-policy)
+             (state-migration/reload-policy-errors (:reload-policy definition))))
           :fixtures
           (let [channels (:channels definition)]
             (concat

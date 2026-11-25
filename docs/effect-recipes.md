@@ -219,6 +219,37 @@ overwrite a running instance's explicit parameter values.
                    :wave {:period {:bars 4}}})})
 ```
 
+### Migrate running effect state
+
+A cue or launch with `:reload-policy :migrate` adopts a newer revision like
+`:preserve-state` and, once at the frame where the new revision takes over,
+transforms the instance's private `:state`. The new definition declares the
+transform as portable data, which publication and show loading validate:
+
+```clojure
+(assoc effect :version 3
+       :state-migration {:from [2]  ; optional accepted previous versions
+                         :steps [{:op :rename :from [:count] :to [:frames]}
+                                 {:op :default :path [:phase] :value 0}
+                                 {:op :scale :path [:frames] :by 2}]})
+```
+
+Steps are `:assoc`, `:default`, `:dissoc`, `:rename` and `:scale`, applied in
+order. [`tolglow.effects.state-migration`](../src/tolglow/effects/state_migration.clj)
+compiles them into Afterglow's pure `(old-state old-version new-version context)`
+function, which the show owner attaches to the compiled step. Imported shows
+never resolve vars or run code to migrate. Effects compiled from `:outputs` do not
+read `:state` today; the migrated map is retained, persisted and visible to steps
+that do.
+
+If the migration throws, for example scaling a value that is absent, the
+instance keeps its last good revision and state. It records a bounded
+`:reload-fault` with `:stage :migrate`, `:effect-version`, `:from-version` and the
+authored cause path, such as `[:state-migration :steps 2 :path]`. Other cues keep
+rendering the same bytes. Publish a newer revision or submit `:instance/retry`
+to try again. The engine contract is in Afterglow's
+[effect failure isolation](../../afterglow/doc/architecture/effect-fault-isolation.md#state-migration-on-reload).
+
 The focused tests render real scalar and typed contributions at quarter-cycle
 positions, compare final DMX bytes, exercise fractional periods, captured meter
 and pause, compose target-aware layers, resolve world-space aiming, round-trip
