@@ -12,11 +12,13 @@
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
             [tolglow.studio.fixture-library :as fixtures]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.views :as views]
+            [tolglow.transit :as transit]
             [tolglow.studio.chat]))
 
 ;; Execute actual registered event handlers/interceptors while leaving their
@@ -702,6 +704,66 @@
     (is (= {:bars 0.5} (get-in changed [:db :ui :composition :slots 0 :duration])))
     (is (nil? (get-in changed [:db :ui :composition :slots 0 :duration-ms])))
     (is (thrown? js/Error (events/musical-duration js/NaN "beats")))))
+
+(deftest building-a-reactive-effect-uses-owner-schema-and-exact-beats
+  (let [draft (-> (reactive-editor/new-draft)
+                  (assoc-in [:targets 0 :fixture-id] "head/one")
+                  (assoc-in [:bindings 0 :address] ":wash/level")
+                  (assoc :transition "1/3"))
+        form (assoc events/default-builder :reactive draft :keyframes {:interval {:beats 1}} :blocks {:ignored true})
+        compiled (events/builder-definition form 1)]
+    (is (= ["head/one"] (:targets compiled)))
+    (is (= {:inputs {:level [:source :wash/level]} :transition {:beats (transit/->BeatFraction "1" "3")}}
+           (:reactive compiled)))
+    (is (= {:op :reactive :key :level} (get-in compiled [:outputs :dimmer])))
+    (is (every? #(not (contains? compiled %)) [:envelope :params :keyframes :blocks]))
+    (is (nil? (:reactive (events/builder-definition (assoc-in form [:reactive :enabled?] false) 1))))
+    (doseq [invalid [(assoc draft :transition "0/3")
+                     (assoc-in draft [:targets 0 :fixture-id] nil)
+                     (update draft :bindings conj {:id "duplicate" :alias "level" :kind :subscription :address "[:wash/level]"})
+                     (assoc-in draft [:bindings 0 :address] ":one :two")
+                     (assoc-in (assoc-in draft [:bindings 0 :kind] :subscription) [:bindings 0 :address] "[:valid] [:extra]")]]
+      (is (thrown? js/Error (events/builder-definition (assoc form :reactive invalid) 1))))))
+
+(deftest reactive-binding-edits-preserve-expressions-and-use-the-loaded-owner-version
+  (let [typed {:id :ember :version 2 :name "Ember" :targets [:head-1]
+               :reactive {:inputs {:level [:subscription [:wash/level (transit/->BeatFraction "1" "3")]]}}
+               :outputs {:dimmer {:op :multiply :args [0.5 {:op :reactive :key :level}]}}}
+        db (assoc base :server-projection {:view {:rig {:fixtures [{:id :head-1}]}}})
+        request (transition db [:studio/definition-load "effects" "ember"])
+        completion (conj (get-in request [:studio/http :on-success]) {:source (pr-str typed) :definition typed})
+        loaded (:db (transition (:db request) completion))
+        draft (get-in loaded [:ui :builder :reactive])
+        form (assoc-in loaded [:ui :definition :mode] :form)
+        unchanged (events/builder-definition (get-in form [:ui :builder]) 2)
+        edited (:db (transition form [:studio/builder-reactive #(assoc % :transition "1/2")]))
+        newer-owner (assoc-in edited [:show :effects 0 :version] 3)
+        sent (transition newer-owner [:studio/definition-publish])
+        publication (transition (:db sent) (:dispatch sent))
+        accepted {:id "ember" :version 3}
+        published (:db (transition (:db publication) (conj (get-in publication [:studio/http :on-success]) accepted)))
+        republish (transition published [:studio/definition-publish])
+        replaced (assoc-in edited [:show :epoch] 8)
+        source-edited (assoc-in edited [:ui :definition :mode] :source)
+        source-send (transition source-edited [:studio/definition-publish])
+        source-publish (transition (:db source-send) (:dispatch source-send))
+        source-published (:db (transition (:db source-publish)
+                                         (conj (get-in source-publish [:studio/http :on-success]) accepted)))
+        stale-form (assoc-in source-published [:ui :definition :mode] :form)]
+    (is (= true (get-in request [:studio/http :raw-response?])))
+    (is (empty? (transition (:db (transition (:db request) [:studio/definition-new])) completion)))
+    (is (= typed unchanged))
+    (is (= "Unpublished changes" (get-in edited [:ui :definition :status])))
+    (is (= 2 (get-in publication [:studio/http :body :expected-version])))
+    (is (str/includes? (get-in publication [:studio/http :body :source]) ":transition {:beats 1/2}"))
+    (is (str/includes? (get-in publication [:studio/http :body :source]) (pr-str (:outputs typed))))
+    (is (= 3 (get-in (transition (:db republish) (:dispatch republish)) [:studio/http :body :expected-version])))
+    (is (= [:studio/editor-error "The show changed. Reload the definition from the registry."]
+           (:dispatch (transition replaced [:studio/definition-publish]))))
+    (is (= [:studio/editor-error "The definition changed. Reload it from the registry."]
+           (:dispatch (transition stale-form [:studio/definition-publish]))
+           (:dispatch (transition stale-form [:studio/builder-generate]))))
+    (is (nil? (get-in (:db (transition edited [:studio/definition-new])) [:ui :builder :reactive])))))
 
 (deftest existing-definition-publication-is-optimistic
   (let [db (update-in base [:ui :definition] merge {:loaded-id "ember" :kind "effects" :version 2})
