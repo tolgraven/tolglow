@@ -42,6 +42,19 @@
     (is (= "saved-shows" (:display-mode normalized)))
     (is (not (contains? (:saved-show-catalog normalized) :confirmation)))))
 
+(deftest registered-preview-retains-only-display-metadata
+  (let [catalog {:kind "cue" :next-kind? true
+                 :rows [{:name "Amber" :version 5 :selected? true :selection {:key [:cue :amber]}}]
+                 :preview {:name "Amber" :version 5 :effect-version 3 :effect-id :amber
+                           :categories (concat [{:internal :discard}] (repeat 8 "emission"))
+                           :usage {:page-count 1 :running-count 0 :internal :discard}}}
+        normalized (:saved-show-catalog (display/normalize-view {:saved-show-catalog catalog}))]
+    (is (= {:kind "cue" :next-kind? true
+            :rows [{:name "Amber" :version 5 :selected? true}]
+            :preview {:name "Amber" :version 5 :effect-version 3 :sources []
+                      :categories (vec (repeat 6 "emission")) :usage {:page-count 1 :running-count 0}}}
+           normalized))))
+
 (deftest web-and-push-widgets-render-the-shared-color-record
   (let [v (color/rgba 1 0 0 0.5)]
     (is (= [1 0 0 0.5] (widgets/color-components v)))
