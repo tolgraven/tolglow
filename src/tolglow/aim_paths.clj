@@ -123,7 +123,7 @@
              :targets targets :categories [:movement]
              :outputs (or (:outputs move) {:aim {:op :tween :spec {:mode mode :keyframes frames}}})
              :editor (cond-> {:type (if sync? :synchronized-aim-path :aim-path)
-                              :points editor-points :duration (or (:duration move) duration)
+                              :points editor-points :duration duration
                               :mode mode :curve curve :closed? closed?}
-                       sync? (assoc :sync-arrival? true))}
+                       sync? (assoc :sync-arrival? true :arrival-duration (:duration move)))}
       (and (= mode :once) (not sync?)) (assoc :duration duration))))

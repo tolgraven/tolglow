@@ -56,8 +56,10 @@ It chooses the destination pan wrap relative to the starting pose and takes
 the maximum of mechanical angular travel divided by calibrated rate across
 all heads and both axes. Pan and tilt then interpolate linearly in their
 mechanical coordinates for that common interval. The acknowledgement reports
-`:arrival-duration-ms` and the effect keeps the endpoint and timing data in
-ordinary saved show state.
+`:arrival-duration-ms`. The effect keeps the endpoint and timing data in
+ordinary saved show state. Its editor metadata keeps the requested minimum as
+`:duration` and the solved interval as `:arrival-duration`, so republishing
+saved editor settings after a recalibration solves the interval again.
 
 Preposition the heads at the first-point pose before launching. Launch the
 published cue normally from the Studio cue grid or REPL with

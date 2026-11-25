@@ -827,7 +827,7 @@
       (update result :ack merge
               (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
                 synchronized?
-                (assoc :arrival-duration-ms (get-in definition [:editor :duration :ms])))))
+                (assoc :arrival-duration-ms (get-in definition [:editor :arrival-duration :ms])))))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])

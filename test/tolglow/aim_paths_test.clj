@@ -85,7 +85,7 @@
 (deftest calibrated-arrival-uses-angular-travel-and-the-rate-limiting-head
   (let [rig (assoc-in model [:rig :fixtures] paired-heads)
         effect (paths/definition rig synchronized-spec)
-        duration (get-in effect [:editor :duration :ms])]
+        duration (get-in effect [:editor :arrival-duration :ms])]
     (is (empty? (registry/validate-definition :effects effect)))
     (is (near? 2000.0 duration))
     (is (nil? (:duration effect)) "The active cue holds the endpoint after one traversal")
@@ -96,11 +96,11 @@
         (is (near? start (:pan-deg (frame/fixture-pose fixture {:pan from :tilt 0.5}))))
         (is (near? end (:pan-deg (frame/fixture-pose fixture {:pan to :tilt 0.5}))))))
     (is (= 3000.0 (get-in (paths/definition rig (assoc synchronized-spec :duration {:ms 3000}))
-                          [:editor :duration :ms])))
+                          [:editor :arrival-duration :ms])))
     (is (near? 2000.0 (get-in (paths/definition rig (assoc synchronized-spec :duration {:ms 250}))
-                            [:editor :duration :ms])))
+                            [:editor :arrival-duration :ms])))
     (let [rig (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)]
-      (is (near? 1000.0 (get-in (paths/definition rig synchronized-spec) [:editor :duration :ms]))))))
+      (is (near? 1000.0 (get-in (paths/definition rig synchronized-spec) [:editor :arrival-duration :ms]))))))
 
 (deftest calibrated-arrival-uses-the-selected-mechanical-wrap-and-all-axes
   (let [head (-> (first paired-heads)
@@ -112,9 +112,20 @@
         effect (paths/definition rig (assoc synchronized-spec :targets [:far-travel]
                                              :points [(point 170 0) (point -170 1)]))
         [from to] (axis-endpoints effect :far-travel :pan)]
-    (is (near? 3000.0 (get-in effect [:editor :duration :ms])) "45 degrees of tilt at 15 degrees/s governs arrival")
+    (is (near? 3000.0 (get-in effect [:editor :arrival-duration :ms])) "45 degrees of tilt at 15 degrees/s governs arrival")
     (is (near? 170.0 (:pan-deg (frame/fixture-pose head {:pan from :tilt 0.5}))))
     (is (near? 190.0 (:pan-deg (frame/fixture-pose head {:pan to :tilt 0.5}))))))
+
+(deftest reopened-synchronized-path-recomputes-arrival-from-current-calibration
+  (let [rig (assoc-in model [:rig :fixtures] paired-heads)
+        effect (paths/definition rig synchronized-spec)
+        reopened (merge synchronized-spec (:editor effect))
+        faster (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)]
+    (is (= {:ms 0} (get-in effect [:editor :duration])) "The editor keeps the requested minimum, not the solved interval")
+    (is (= effect (paths/definition rig reopened)))
+    (is (near? 1000.0 (get-in (paths/definition faster reopened) [:editor :arrival-duration :ms]))
+        "Republishing saved editor settings after recalibration does not ratchet the old interval")
+    (is (= {:ms 3000} (get-in (paths/definition rig (assoc synchronized-spec :duration {:ms 3000})) [:editor :duration])))))
 
 (deftest synchronized-aim-path-rejects-incomplete-calibration-and-unsupported-paths
   (let [rig (assoc-in model [:rig :fixtures] paired-heads)]
