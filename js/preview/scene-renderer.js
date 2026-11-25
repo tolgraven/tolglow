@@ -483,7 +483,10 @@ export class SceneRenderer {
     this.reflections.illuminate(this.fog.field, this.fogAmount, this.fog.extinctionPerM);
     this.renderer.setRenderTarget(this.sceneTarget); this.renderer.clear(); this.renderer.render(this.scene, this.camera);
     this.renderedShadows = this.fixtures.filter(entry => entry.light?.castShadow && entry.light.shadow.map).length;
-    this.fog.render(this.sceneTarget, this.camera, this.compositeTarget);
+    // Glass reads an immutable HDR source while drawing into the composer.
+    // When there is no glass, write fog directly into the composer input.
+    this.inputPass.enabled = this.glass.enabled;
+    this.fog.render(this.sceneTarget, this.camera, this.glass.enabled ? this.compositeTarget : this.composer.readBuffer);
     this.film.uniforms.phase.value = this.reducedMotion.matches ? 0 : Math.floor(this.clock * 24) % 1024;
     this.composer.render(dt); this.editorOverlay?.render(this.renderer, this.camera); this.lastCPU = performance.now() - started; this.draws++;
     this.canvas.tolglowCaptureVideo?.(this.canvas);

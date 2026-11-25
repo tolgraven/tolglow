@@ -97,8 +97,10 @@ vec3 incident(int i,vec3 position,float density,bool halo){
    float coreRadius=axial*lightProfile[i].y;
    float width=path*lightProfile[i].z;
    float radial=length(lateral), outside=radial-coreRadius;
-   if(width<=0.||outside>=width)return vec3(0.);
-   spot=.26*(1.-fogTransmission(extinctionPerM,density,path))*(1.-smoothstep(0.,width,outside));
+   // The optical core already contributes here. Start the halo continuously
+   // outside the core so it cannot count the same light twice at intersections.
+   if(width<=0.||outside<=0.||outside>=width)return vec3(0.);
+   spot=smoothstep(0.,width*.15,outside)*.26*(1.-fogTransmission(extinctionPerM,density,path))*(1.-smoothstep(0.,width,outside));
    // Sample the shadow on the illuminated edge that feeds this halo.
    shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*min(1.,.98*coreRadius/max(radial,.001));
   }

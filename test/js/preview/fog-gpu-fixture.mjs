@@ -123,7 +123,21 @@ window.fogTest = () => {
   const vertical={position:new THREE.Vector3(0,3,0),direction:new THREE.Vector3(0,-1,0),
     color:new THREE.Color(1,0,0), angle:.035,penumbra:.3,intensity:160,distance:8};
   result.opticalCore=render([vertical])[mid];
-  camera.position.x=.26; camera.lookAt(.26,1.5,0); camera.updateMatrixWorld();
+  // This central ray travels down two coaxial beams. Turning off their halo
+  // explicitly must leave the already illuminated core unchanged.
+  camera.up.set(0,0,-1); camera.position.set(0,2.9,0); camera.lookAt(0,0,0); camera.updateMatrixWorld();
+  const beams = [vertical, {...vertical, color: new THREE.Color(0, 0, 1)}];
+  const coreWithHalo = render(beams);
+  const beforeRender = fog.quad.onBeforeRender;
+  fog.quad.onBeforeRender = () => {
+    for (const profile of fog.uniforms.lightProfile.value) profile.z = 0;
+  };
+  const coreWithoutHalo = render(beams);
+  fog.quad.onBeforeRender = beforeRender;
+  result.overlappingBeamCore = [coreWithHalo[mid], coreWithHalo[mid + 2]];
+  result.overlappingBeamHaloInCore = Math.max(...[0, 2].map(channel =>
+    Math.abs(coreWithHalo[mid + channel] - coreWithoutHalo[mid + channel])));
+  camera.up.set(0,1,0); camera.position.set(.26,1.5,4); camera.lookAt(.26,1.5,0); camera.updateMatrixWorld();
   const halo=render([vertical]); result.halo=halo[mid]; result.haloGreen=halo[mid+1];
   result.brighterHalo=render([{...vertical,intensity:320}])[mid];
   fog.setAtmosphere('venue',host(55000,0,0,25.6,0));
