@@ -83,12 +83,13 @@
 
 (deftest restore-acknowledgement-follows-the-owner-across-the-matching-new-epoch
   (let [{:keys [db]} (checkpoint-db)
-        db (assoc-in db [:ui :rig-dirty?] true)
+        db (update db :ui assoc :rig-dirty? true :rig-draft {:name "Old unsaved rig"})
         chosen (:db (transition db [:checkpoints/confirm :restore :recovery]))
         posted (transition chosen [:checkpoints/submit])
         ack (conj (get-in posted [:studio/http :on-success]) {:status :accepted :epoch 8})
         waiting (:db (transition (:db posted) ack))
-        new-view (merge (:show base) checkpoint-owner {:epoch 8 :rig {:name "Restored venue"}})
+        rig {:name "Restored venue" :room {:measured-fog {:extinction-per-m 0.2}}}
+        new-view (merge (:show base) checkpoint-owner {:epoch 8 :rig rig})
         newer #(:db (full-frame % (assoc new-view :revision 4)))
         early-ack (transition (newer waiting) [:checkpoints/show-changed])
         stream-first (:db (transition (newer (:db posted)) [:checkpoints/show-changed]))
@@ -99,7 +100,7 @@
       (is (= "Restored Working autosave." (get-in effect [:db :show-checkpoints :feedback :message])))
       (is (nil? (get-in effect [:db :show-checkpoints :operation])))
       (is (false? (get-in effect [:db :ui :rig-dirty?])))
-      (is (= {:name "Restored venue"} (get-in effect [:db :ui :rig-draft])))
+      (is (= rig (get-in effect [:db :ui :rig-draft])))
       (is (= [:checkpoints/refresh] (:dispatch effect))))))
 
 (deftest a-late-checkpoint-ack-keeps-edits-to-the-new-show
@@ -114,11 +115,29 @@
         edited (:db (transition changed [:studio/rig-set [:name] "Fresh edit"]))
         ack (conj (get-in submitted [:studio/http :on-success]) {:status :accepted :epoch 8})
         completed (transition edited ack)]
-    (is (= {:name "Restored rig"} (get-in installed [:ui :rig-draft])))
-    (is (false? (get-in installed [:ui :rig-dirty?])))
+    (is (= {:name "Old unsaved rig"} (get-in installed [:ui :rig-draft])))
+    (is (true? (get-in installed [:ui :rig-dirty?])))
     (is (= [:studio/toast "Restored Named save." false] (:dispatch completed)))
     (is (= {:name "Fresh edit"} (get-in completed [:db :ui :rig-draft])))
     (is (true? (get-in completed [:db :ui :rig-dirty?])))))
+
+(deftest a-peer-show-change-keeps-the-draft-when-our-restore-is-rejected
+  (let [{:keys [db]} (checkpoint-db)
+        draft {:name "Unconfirmed draft"}
+        db (update db :ui assoc :rig-dirty? true :rig-draft draft)
+        chosen (:db (transition db [:checkpoints/confirm :restore :named]))
+        submitted (transition chosen [:checkpoints/submit])
+        peer-view (merge (:show base) checkpoint-owner {:epoch 8 :revision 4 :rig {:name "Peer restored rig"}})
+        installed (:db (full-frame (:db submitted) peer-view))
+        changed (:db (transition installed [:checkpoints/show-changed]))
+        failed (conj (get-in submitted [:studio/http :on-failure])
+                     "Checkpoint operation belongs to a previous show session")
+        rejected (:db (transition changed failed))]
+    (is (= 8 (get-in installed [:show :epoch])))
+    (is (= draft (get-in installed [:ui :rig-draft])))
+    (is (= draft (get-in rejected [:ui :rig-draft])))
+    (is (true? (get-in rejected [:ui :rig-dirty?])))
+    (is (true? (get-in rejected [:show-checkpoints :feedback :error?])))))
 
 (deftest checkpoint-catalog-confirmations-and-results-fence-stale-shows
   (let [{:keys [db loading]} (checkpoint-db)

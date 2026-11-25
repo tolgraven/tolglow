@@ -248,7 +248,7 @@
                                          #(assoc (or % (get-in show [:rig :room])) :measured-fog current))
                       :else (update-in updated [:ui :rig-draft :room] dissoc :measured-fog)))
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
-    {:db updated
+    {:db (checkpoints/carry-restore-draft db updated)
      :fx (cond-> []
            (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
                 (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))

@@ -7,8 +7,11 @@
   (array-map :recovery "Working autosave" :named "Named save" :prior "Previous session"))
 
 (defn- checkpoint-name [kind] (get checkpoints kind))
+
 (defn- identity-of [db] (projection/identity-of (get-in db [:server-projection :view])))
+
 (defn- connected? [db] (and (get-in db [:connection :connected?]) (not (:awaiting-full? db))))
+
 (defn- catalog [db]
   (let [catalog (get-in db [:show-checkpoints :catalog])]
     (when (= (identity-of db) (projection/identity-of catalog)) catalog)))
@@ -21,19 +24,33 @@
     {:db (update-panel db #(-> % (dissoc :operation) (assoc :feedback {:message message :error? error?})))}
     {:db (dissoc db :show-checkpoints) :dispatch [:studio/toast message error?]}))
 
+(defn- rig-draft [db] (get-in db [:ui :rig-draft]))
+
+(defn- original-rig-draft? [db]
+  (let [operation (get-in db [:show-checkpoints :operation])]
+    (and (get-in db [:ui :rig-dirty?])
+         (contains? operation :draft-before-restore)
+         (identical? (:draft-before-restore operation) (rig-draft db)))))
+
+(defn carry-restore-draft [before updated]
+  ;; A streamed view can update measured fog in the draft without editing it.
+  (cond-> updated
+    (and (original-rig-draft? before) (get-in updated [:ui :rig-dirty?]))
+    (assoc-in [:show-checkpoints :operation :draft-before-restore] (rig-draft updated))))
+
 (defn- restored [db kind]
-  (finish db (str "Restored " (checkpoint-name kind) ".") false))
+  (let [db (cond-> db
+             (original-rig-draft? db)
+             (update :ui assoc :rig-dirty? false :rig-draft (get-in db [:show :rig])))]
+    (finish db (str "Restored " (checkpoint-name kind) ".") false)))
 
 (defn- same-show? [a b]
   (= (dissoc a :epoch) (dissoc b :epoch)))
 
 (defn replaces-rig-draft? [db view]
   (let [{:keys [action identity phase epoch]} (get-in db [:show-checkpoints :operation])]
-    (when (and (= :restore action) (= identity (identity-of db)))
-      (let [next-identity (projection/identity-of view)]
-        (and (same-show? identity next-identity)
-             (< (:epoch identity) (:epoch next-identity))
-             (or (not= :awaiting-view phase) (= epoch (:epoch next-identity))))))))
+    (and (= :restore action) (= :awaiting-view phase) (= identity (identity-of db))
+         (= (assoc identity :epoch epoch) (projection/identity-of view)))))
 
 (rf/reg-event-fx :checkpoints/open
   (fn [{:keys [db]} _]
@@ -97,10 +114,13 @@
 
 (rf/reg-event-fx :checkpoints/submit [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} _]
-    (let [{:keys [action kind identity] :as confirmation} (get-in db [:show-checkpoints :confirmation])]
+    (let [{:keys [action kind identity] :as confirmation} (get-in db [:show-checkpoints :confirmation])
+          operation (cond-> (assoc confirmation :id unique :phase :sending)
+                      (and (= :restore action) (get-in db [:ui :rig-dirty?]))
+                      (assoc :draft-before-restore (rig-draft db)))]
       (when (and (= identity (identity-of db)) (actionable? db action kind))
         {:db (update-panel db #(-> % (dissoc :confirmation :feedback)
-                                  (assoc :operation (assoc confirmation :id unique :phase :sending))))
+                                  (assoc :operation operation)))
          :studio/http {:path (if (= :restore action) "/api/show/checkpoints/restore"
                                  "/api/show/checkpoints/discard-prior")
                        :typed? true :raw-response? true :timeout-ms 12000
