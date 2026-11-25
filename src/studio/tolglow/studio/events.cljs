@@ -979,10 +979,12 @@
          :dispatch [:studio/toast (if unchanged? "Rig saved. Preview and output use this layout."
                                     "Rig saved. Your newer edits remain unsaved.")]}))))
 
+(defn- definition-owner [db]
+  (select-keys (:show db) [:runtime-id :epoch]))
+
 (rf/reg-event-fx :studio/definition-load
   (fn [{:keys [db]} [_ kind id]]
-    (let [owner (select-keys (:show db) [:runtime-id :epoch])
-          token (assoc owner :id (str (random-uuid)))
+    (let [token (assoc (definition-owner db) :id (str (random-uuid)))
           typed? (= "effects" kind)]
       {:db (assoc-in db [:ui :definition :load-token] token)
        :studio/http {:path (str "/api/definition?kind=" kind "&id=" (js/encodeURIComponent id) (when typed? "&data=true"))
@@ -991,10 +993,11 @@
 (rf/reg-event-fx :studio/definition-loaded
   (fn [{:keys [db]} [_ kind id token {:keys [source definition]}]]
     (when (and (= token (get-in db [:ui :definition :load-token]))
-               (= (select-keys token [:runtime-id :epoch]) (select-keys (:show db) [:runtime-id :epoch])))
+               (= (dissoc token :id) (definition-owner db)))
       (let [version (or (:version definition) (js/parseInt (or (second (re-find #":version\s+(\d+)" source)) "1") 10))
             typed (when (and (= "effects" kind) (:reactive definition)) definition)]
         {:db (cond-> (update-in db [:ui :definition] merge {:kind kind :source source :loaded-id id :version version
+                                                          :loaded-owner (dissoc token :id)
                                                           :mode :source :auto? false :status (str id " · v" version)
                                                           :result "Loaded from the running show." :error? false
                                                           :publication nil :publishing? false :load-token nil})
@@ -1005,6 +1008,7 @@
 (rf/reg-event-fx :studio/definition-new
   (fn [{:keys [db]} _]
     {:db (cond-> (update-in db [:ui :definition] merge {:kind "effects" :source initial-source :loaded-id nil :version 1
+                                                       :loaded-owner nil
                                                        :auto? false :status "New definition" :result "" :error? false
                                                        :publication nil :publishing? false :load-token nil})
            (get-in db [:ui :builder :reactive]) (assoc-in [:ui :builder] default-builder))
@@ -1073,11 +1077,16 @@
           (seq blocks) (assoc :blocks blocks))))))
 
 (defn- builder-source [db]
-  (let [definition (builder-definition (get-in db [:ui :builder]) (get-in db [:ui :definition :version] 1))
-        fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
-    (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
-      (throw (js/Error. "Choose targets from the current rig.")))
-    (pr-str definition)))
+  (let [builder (get-in db [:ui :builder])
+        version (get-in db [:ui :definition :version] 1)
+        baseline (get-in builder [:reactive :base :version])]
+    (when (and baseline (not= baseline version))
+      (throw (js/Error. "The definition changed. Reload it from the registry.")))
+    (let [definition (builder-definition builder version)
+          fixtures (into #{} (map :id) (get-in db [:server-projection :view :rig :fixtures]))]
+      (when (and (:reactive definition) (not (every? fixtures (:targets definition))))
+        (throw (js/Error. "Choose targets from the current rig.")))
+      (pr-str definition))))
 
 (rf/reg-event-db :studio/builder-reactive
   (fn [db [_ draft]]
@@ -1113,7 +1122,10 @@
     (when-not (get-in db [:ui :definition :publishing?])
       (try
         (let [definition (get-in db [:ui :definition]) built? (= :form (:mode definition))
-              token (assoc (select-keys (:show db) [:runtime-id :epoch]) :id (str (random-uuid)))
+              owner (definition-owner db)
+              _ (when (and (:loaded-owner definition) (not= owner (:loaded-owner definition)))
+                  (throw (js/Error. "The show changed. Reload the definition from the registry.")))
+              token (assoc owner :id (str (random-uuid)))
               pending (update-in db [:ui :definition] merge {:publication token :publishing? true})
               source (if built? (builder-source db) (:source definition))]
           (if (and (= :neovim (:engine definition)) (not built?))
@@ -1121,20 +1133,26 @@
                                            :on-failure [:studio/publication-error token]}}
             {:db pending :dispatch [:studio/publish-source token automatic? (when built? (get-in db [:ui :builder])) source]}))
         (catch :default error {:dispatch [:studio/editor-error (error-message error)]})))))
+
 (rf/reg-event-fx :studio/publish-source
   (fn [{:keys [db]} [_ token automatic? built source]]
     (when (publication-current? db token)
       (let [{:keys [kind loaded-id version]} (get-in db [:ui :definition])
-          kind (if built "effects" kind)
-          existing (when built (effect db (:id built)))
-          expected (cond
-                     (and (get-in built [:reactive :enabled?]) (= loaded-id (:id built))) version
-                     built (:version existing)
-                     loaded-id version)]
-      {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
-       :studio/http {:path "/api/definition" :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)} expected (assoc :expected-version expected))
-                     :on-success [:studio/published token automatic? built kind expected]
-                     :on-failure [:studio/publication-error token]}}))))
+            kind (if built "effects" kind)
+            existing (when built (effect db (:id built)))
+            baseline (get-in built [:reactive :base :version])
+            expected (cond
+                       baseline baseline
+                       (and (get-in built [:reactive :enabled?]) (= loaded-id (:id built))) version
+                       built (:version existing)
+                       loaded-id version)]
+        {:db (update-in db [:ui :definition] merge {:publishing? true :source source :kind kind})
+         :studio/http {:path "/api/definition"
+                       :body (cond-> {:kind kind :source source :expected-epoch (:epoch token) :runtime-id (:runtime-id token)}
+                               expected (assoc :expected-version expected))
+                       :on-success [:studio/published token automatic? built kind expected]
+                       :on-failure [:studio/publication-error token]}}))))
+
 (rf/reg-event-fx :studio/published
   (fn [{:keys [db]} [_ token automatic? built kind expected ack]]
     (when (publication-current? db token)
@@ -1144,8 +1162,10 @@
           cue-source (when built (pr-str {:id (keyword (:id built)) :version 1 :name (:name built)
                                          :effect-id (keyword (:id built)) :swatch (:color built)
                                          :params {} :duration (musical-duration (:duration-value built) (:duration-unit built)) :reload-policy :preserve-state}))]
-      {:db (update-in db [:ui :definition] merge {:publishing? false :loaded-id id :version version :status "Published" :error? false
-                                                :result "Validated and published. The running show now has this definition."})
+      {:db (cond-> (update-in db [:ui :definition] merge {:publishing? false :loaded-id id :version version
+                                                        :loaded-owner (dissoc token :id) :status "Published" :error? false
+                                                        :result "Validated and published. The running show now has this definition."})
+             (get-in built [:reactive :base]) (assoc-in [:ui :builder :reactive :base :version] version))
        :fx (cond-> [] (not automatic?) (conj (notice "Definition validated and published."))
              (and built (:cue? built)) (conj [:studio/http {:path "/api/definition"
                                                           :body (cond-> {:kind "cues" :source cue-source :runtime-id (:runtime-id token) :expected-epoch (:epoch token)}

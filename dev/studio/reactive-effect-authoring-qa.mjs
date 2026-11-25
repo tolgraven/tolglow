@@ -49,9 +49,15 @@ async function open(width, height, hasTouch) {
 }
 
 const visualBuilder = page => page.getByRole('button', {name: 'Visual builder', exact: true}).click();
-const optIn = page => page.getByRole('checkbox', {name: 'Evaluate when inputs change'});
+const form = page => page.locator('#visual-editor');
+const optIn = page => form(page).getByRole('checkbox', {name: 'Evaluate when inputs change'});
 const selectedEffect = (page, version) => page.locator('.definition-item').filter({hasText: title})
   .filter({hasText: `Effect · v${version}`});
+const loadEffect = async (page, version) => {
+  await selectedEffect(page, version).click();
+  await page.locator('#definition-status').filter({hasText: `${id} · v${version}`}).waitFor();
+  await visualBuilder(page);
+};
 const capture = (page, name) => page.screenshot({path: join(output, name + '.png'), animations: 'disabled'});
 const registrySource = async () => (await get(`/api/definition?kind=effects&id=${id}`)).source;
 const publish = async page => {
@@ -65,10 +71,10 @@ try {
   await visualBuilder(desktop);
   assert.equal(await optIn(desktop).isChecked(), false);
   await optIn(desktop).check();
-  assert.equal(await desktop.getByLabel('Intensity', {exact: true}).count(), 0);
-  assert.equal(await desktop.getByRole('checkbox', {name: 'Sample at a fixed interval'}).count(), 0);
-  await desktop.getByLabel('Identifier', {exact: true}).fill(id);
-  await desktop.getByLabel('Name', {exact: true}).fill(title);
+  assert.equal(await form(desktop).getByLabel('Intensity', {exact: true}).count(), 0);
+  assert.equal(await form(desktop).getByRole('checkbox', {name: 'Sample at a fixed interval'}).count(), 0);
+  await form(desktop).getByLabel('Identifier', {exact: true}).fill(id);
+  await form(desktop).getByLabel('Name', {exact: true}).fill(title);
   await desktop.getByLabel('Target fixture 1', {exact: true}).selectOption({label: 'head-1'});
   await desktop.getByLabel('Input 1 Ratom ID').fill(':studio-qa/level');
   await desktop.getByRole('button', {name: 'Add input', exact: true}).click();
@@ -86,9 +92,7 @@ try {
   assert.match(await registrySource(), /:transition \{:beats 1\/3\}/);
   await capture(desktop, '03-owner-published');
 
-  await selectedEffect(desktop, 1).click();
-  await desktop.locator('#definition-source').waitFor();
-  await visualBuilder(desktop);
+  await loadEffect(desktop, 1);
   await desktop.getByLabel('Input 1 Subscription query').waitFor();
   const aliases = await desktop.locator('.reactive-binding').evaluateAll(rows =>
     rows.map(row => row.querySelector('input').value));
@@ -106,9 +110,7 @@ try {
   await desktop.locator('#validation-result.error').filter({hasText: 'Definition changed'}).waitFor();
   await capture(desktop, '04-owner-rejected-stale-edit');
 
-  await selectedEffect(desktop, 2).click();
-  await desktop.locator('#definition-source').waitFor();
-  await visualBuilder(desktop);
+  await loadEffect(desktop, 2);
   await desktop.getByLabel(`Input ${level} signal type`).selectOption('subscription');
   await desktop.getByLabel(`Input ${level} Subscription query`).fill('[:studio-qa/gain]');
   assert.ok((await publish(desktop)).ok());
@@ -133,9 +135,7 @@ try {
   for (const [name, width, height] of [['phone', 390, 844], ['ipad', 834, 1010]]) {
     const page = await open(width, height, true);
     await page.locator('#definition-search').fill(title);
-    await selectedEffect(page, 3).click();
-    await page.locator('#definition-source').waitFor();
-    await visualBuilder(page);
+    await loadEffect(page, 3);
     assert.equal(await optIn(page).isChecked(), true);
     await page.locator('.reactive-effect-editor').scrollIntoViewIfNeeded();
     geometry[name] = await page.evaluate(() => ({overflow: document.documentElement.scrollWidth - innerWidth,

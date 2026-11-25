@@ -739,7 +739,17 @@
         edited (:db (transition form [:studio/builder-reactive (assoc draft :transition "1/2")]))
         newer-owner (assoc-in edited [:show :effects 0 :version] 3)
         sent (transition newer-owner [:studio/definition-publish])
-        publication (transition (:db sent) (:dispatch sent))]
+        publication (transition (:db sent) (:dispatch sent))
+        accepted {:id "ember" :version 3}
+        published (:db (transition (:db publication) (conj (get-in publication [:studio/http :on-success]) accepted)))
+        republish (transition published [:studio/definition-publish])
+        replaced (assoc-in edited [:show :epoch] 8)
+        source-edited (assoc-in edited [:ui :definition :mode] :source)
+        source-send (transition source-edited [:studio/definition-publish])
+        source-publish (transition (:db source-send) (:dispatch source-send))
+        source-published (:db (transition (:db source-publish)
+                                         (conj (get-in source-publish [:studio/http :on-success]) accepted)))
+        stale-form (assoc-in source-published [:ui :definition :mode] :form)]
     (is (= true (get-in request [:studio/http :raw-response?])))
     (is (empty? (transition (:db (transition (:db request) [:studio/definition-new])) completion)))
     (is (= typed unchanged))
@@ -747,6 +757,12 @@
     (is (= 2 (get-in publication [:studio/http :body :expected-version])))
     (is (str/includes? (get-in publication [:studio/http :body :source]) ":transition {:beats 1/2}"))
     (is (str/includes? (get-in publication [:studio/http :body :source]) (pr-str (:outputs typed))))
+    (is (= 3 (get-in (transition (:db republish) (:dispatch republish)) [:studio/http :body :expected-version])))
+    (is (= [:studio/editor-error "The show changed. Reload the definition from the registry."]
+           (:dispatch (transition replaced [:studio/definition-publish]))))
+    (is (= [:studio/editor-error "The definition changed. Reload it from the registry."]
+           (:dispatch (transition stale-form [:studio/definition-publish]))
+           (:dispatch (transition stale-form [:studio/builder-generate]))))
     (is (nil? (get-in (:db (transition edited [:studio/definition-new])) [:ui :builder :reactive])))))
 
 (deftest existing-definition-publication-is-optimistic
