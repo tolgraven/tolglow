@@ -8,6 +8,8 @@
 //     displayHz: 120, busy: {work: 22, period: 25}});
 //   console.log(await load.measure(8000, 4000)); load.dispose();
 //
+// Presentation times come from the worker when it owns the canvas, otherwise
+// from the page task that showed the bitmap.
 // `rafHz` is the page's animation callback rate and `longTasks` its blocked
 // time. A hidden or background page throttles both; say so with the numbers.
 export async function installRoomLoad({base = '/studio/', heads = 8, pixels = 0, stripLength = 200, feedHz = 40, quality = 'auto', fog = .3, workLight = .12, lightingMode = 'hold', mainThread = false, surface = true, displayHz = null, busy = null, workerPrefix = ''}) {
@@ -69,7 +71,7 @@ export async function installRoomLoad({base = '/studio/', heads = 8, pixels = 0,
       await new Promise(r => setTimeout(r, warm));
       const frames = [], rafs = [], tele = [], long = [];
       const worker = engine.worker;
-      const onMsg = e => { if (e.data?.type === 'frame') { frames.push(performance.now()); const t = e.data.telemetry; tele.push([t.workerFrameMs, t.gpuCompletionWaitMs, t.frameCPUms, t.bitmapTransferMs, t.rafDeliveryMs, t.readyForFrameMs]); } };
+      const onMsg = e => { if (e.data?.type === 'frame' && e.data.presented !== false) { frames.push(e.data.telemetry.presentedAtMs ?? performance.timeOrigin + performance.now()); const t = e.data.telemetry; tele.push([t.workerFrameMs, t.gpuCompletionWaitMs, t.frameCPUms, t.bitmapTransferMs, t.rafDeliveryMs, t.readyForFrameMs]); } };
       let orig;
       if (worker) worker.addEventListener('message', onMsg);
       else { const r = engine.fallback || engine; orig = r.draw; r.draw = function (...a) { const b = this.draws, s = performance.now(), out = orig.apply(this, a); if (this.draws > b) { frames.push(performance.now()); tele.push([null, null, performance.now() - s, null, null, null]); } return out; }; }

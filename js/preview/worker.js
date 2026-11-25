@@ -100,7 +100,8 @@ function frameMessage(frame) {
     telemetry: {...telemetry, frameIntervalMs: engine.frameInterval,
       workerFrameMs: duration, rafDeliveryMs: started - time, readyForFrameMs: engine.lastReadyMs,
       gpuCompletionWaitMs: gpuWait, idleBudgetMs: Math.max(0, engine.frameInterval - duration),
-      bitmapTransferMs: bitmapMs, presentation: presenter ? 'worker' : 'proxy', presentSubmitMs: frame.presentMs}};
+      bitmapTransferMs: bitmapMs, presentation: presenter ? 'worker' : 'proxy', presentSubmitMs: frame.presentMs,
+      presentedAtMs: frame.presentedAt}};
 }
 
 // Show the image from this thread. An image from a show the page has already
@@ -115,6 +116,7 @@ function present(frame) {
     const begun = performance.now();
     presenter.transferFromImageBitmap(bitmap);
     frame.presentMs = performance.now() - begun;
+    frame.presentedAt = performance.timeOrigin + begun;
   }
   bitmap.close();
   completed(frame, performance.now());
