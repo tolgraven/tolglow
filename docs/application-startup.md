@@ -11,6 +11,11 @@ lein run --config ./club.edn
 lein run --config my.venue/friday --port 8600
 ```
 
+The JVM show host uses ZGC by default on the supported HotSpot JDKs. The
+packaged macOS app also uses ZGC in Full JVM Clojure mode. For a show that needs
+an explicit heap ceiling, `JVM_OPTS=-Xmx4g lein trampoline run` gives the
+show JVM up to 4 GiB. [Airie output timing](performance/macbook-air.md#jvm-pauses-with-the-moving-mixed-stage)
+
 `--config` accepts one EDN map or a qualified Clojure Var containing a map.
 Set `TOLGLOW_CONFIG` to the same path or Var to select the venue whenever
 `lein run` or zero-argument `app/start!` launches. An
