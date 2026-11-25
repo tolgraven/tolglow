@@ -186,14 +186,22 @@
                 (distinct))
           choices)))
 
+(defn beat-ratio-choices
+  "Return ordered exact ratios sampled within the authored bounds and mode,
+  including the current ratio when it is allowed. The pool is bounded even
+  when a Free-mode schema permits large numerator or denominator ranges."
+  [schema current mode]
+  (when (ratio-schema? schema)
+    (let [choices (ratio-choices schema current mode (:bounds schema))]
+      (vec (sort (distinct (cond-> choices (valid-beat-ratio? schema current mode) (conj current))))))))
+
 (defn edit-beat-ratio
   "Project knob detents or a normalized absolute position onto ordered exact
   ratios. The ratio mode determines the candidate set independently of fine
   tuning. Return nil for parameters outside the bounded beat-ratio contract."
   [schema current input mode ratio-mode]
   (when (and (ratio-schema? schema) (registry/finite-number? current))
-    (let [choices (ratio-choices schema current ratio-mode (:bounds schema))
-          choices (vec (sort (distinct (cond-> choices (valid-beat-ratio? schema current ratio-mode) (conj current)))))
+    (let [choices (beat-ratio-choices schema current ratio-mode)
           anchor (exact-decimal current)
           index (count (take-while #(< % anchor) choices))
           exact? (and (< index (count choices)) (== anchor (nth choices index)))

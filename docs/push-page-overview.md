@@ -56,9 +56,11 @@ A cue pad held before entering the overlay keeps its release binding. This
 route was exercised with injected MIDI and USB transfers.
 
 With those options, touch an encoder bound to the selected cue's beat-ratio
-parameter while the cue grid is open. The display shows exact ratios mapped
-to the top two captured pad rows, filtered by the parameter bounds, ratio
-component limits and Preferred or Free mode. Tap a shown pad to choose it.
+parameter while the cue grid is open. The chooser names the cue captured at
+touch and shows exact ratios in the top two captured pad rows. Preferred keeps
+the common grid positions. Free fills available pads with additional exact
+ratios and includes the current exact ratio when there is room. Both modes
+honor the parameter bounds and ratio component limits. Tap a shown pad to choose it.
 Several changes from the pads or turns of that encoder share one Undo step
 when you lift. Lifting returns to the cue grid. Accent-touch retains its
 temporary audition behavior, and a second encoder keeps its own control.
