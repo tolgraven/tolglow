@@ -61,6 +61,33 @@
             (is (= (:transforms (second members)) (:transforms (second (sort-by :member layers)))))))
         (finally (show/stop! rt))))))
 
+(deftest active-native-layer-priority-changes-the-captured-output-without-relaunch
+  (doseq [batch? [true false]]
+    (let [rt (show/create-runtime {:model (scene) :batch? batch? :workspace-options nil})
+          rgb #(mapv (fn [b] (bit-and 255 b)) (take 3 (get-in @(:state rt) [:output :universes 1])))
+          active #(get-in @(:state rt) [:model :instances])]
+      (try
+        (submit-at! rt 0 :command {:op :cue/launch :cue-id :under :launch {:priority 4}})
+        (submit-at! rt 25 :composition compound)
+        (submit-at! rt 50 :composition-run {:id :combine})
+        (let [before (active)
+              members (filterv #(get-in % [:source :native-layer]) (vals before))
+              member-ids (mapv :id members)]
+          (is (= [0 128 128] (rgb)))
+          (submit-at! rt 75 :command {:op :instance/set-priority :instance-id (first member-ids) :priority -2})
+          (is (= [0 0 255] (rgb)))
+          (is (= (set (keys before)) (set (keys (active)))))
+          (doseq [instance members]
+            (let [after (get (active) (:id instance))
+                  retained [:definition :id :order :params :priority :started-at-ms :source]]
+              (is (= -2 (:render-priority after)))
+              (is (= (select-keys instance retained) (select-keys after retained)))))
+          (is (= "0:1" (peek (:active-instance-order (show/snapshot rt)))))
+          (let [model (:model @(:state rt))
+                restored (persistence/thaw model (persistence/read-string (persistence/write-string model)))]
+            (is (= [-2 -2] (into [] (keep :render-priority) (vals (:instances restored)))))))
+        (finally (show/stop! rt))))))
+
 (deftest composition-validates-transforms-and-opacity-before-mutating-show
   (doseq [definition [(assoc compound :opacity 1.01)
                       (assoc-in compound [:slots 1 :transforms 0 :value :op] :typo)]]
