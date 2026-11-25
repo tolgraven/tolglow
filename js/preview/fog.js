@@ -152,7 +152,9 @@ void integrateFog(out vec4 volumeOutput){
                           coneHit(i,lightProfile[i].w,eye,ray,start,finish));
  }
  float stepSize=(finish-start)/float(raySteps);
- float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+ // Stable, decorrelated offsets avoid diagonal patterns in dense fog. Keep
+ // samples near each step's midpoint to limit high-frequency brightness noise.
+ float jitter=mix(.25,.75,hash(vec3(gl_FragCoord.xy,13.)));
  vec3 radiance=vec3(0.);float transmission=1.;
  for(int n=0;n<72;n++){
   if(n>=raySteps||transmission<.002)break;
