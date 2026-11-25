@@ -258,6 +258,103 @@
           (is (empty? (:errors (device-session/snapshot device))))))
       (finally (show/stop! runtime)))))
 
+(defn- open-history-push! [runtime]
+  (let [input (atom nil)
+        midi {:open! (fn [receive!] (reset! input receive!) :capture)
+              :send! (fn [_ _]) :close! (fn [_])}
+        device (show/connect-device! runtime :push-2
+                                     {:session-id "manual-push" :midi midi
+                                      :operator-gestures? true :schedule! nil :timeout-ms 30000})]
+    (doseq [index (range 128)]
+      (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
+    {:device device :receive! @input}))
+
+(deftest pending-push-touch-releases-through-a-full-command-queue
+  (with-redefs [show/device-command-wait-ms 0]
+    (let [runtime (show/create-runtime {:workspace-options nil})]
+      (try
+        (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0)
+        (let [{:keys [device receive!]} (open-history-push! runtime)
+              history #(get-in @(:state runtime) [:model :control :edit-history])
+              ends #(vals @(:push-gesture-ends runtime))]
+          (receive! [0x90 0 127])
+          (is (= :pending (get-in (device-session/snapshot device) [:last-ack :status])))
+          (is (empty? (:open (history))))
+          (dotimes [_ 255] (show/submit! runtime {:op :master/set :value 1}))
+          (is (= :rejected (:status @(show/submit! runtime {:op :master/set :value 1}))))
+          (receive! [0x80 0 0])
+          (receive! [0x80 0 0])
+          (let [{:keys [payload authority reply]} (first (ends))]
+            (is (= 1 (count (ends))))
+            (is (not (realized? reply)))
+            (is (= :gesture-end-queued
+                   (:code @(show/submit! runtime :command (assoc payload :command-id "duplicated-end") authority))))
+            (is (= :unknown-gesture
+                   (:code @(show/submit! runtime :command (assoc payload :gesture-id "unrelated-touch") authority))))
+            (is (= 1 (count (ends))))
+            (show/tick! runtime 25)
+            (is (= :accepted (:status (deref reply 0 nil))))
+            (is (= 0 (:cursor (history))))
+            (is (empty? (:open (history))))
+            (is (empty? (ends))))
+          (is (empty? (:errors (device-session/snapshot device))))
+          (receive! [0x90 0 127])
+          (show/disconnect-device! runtime "manual-push")
+          (let [reply (:reply (first (ends)))]
+            (is (= :closed (:status (device-session/snapshot device))))
+            (show/tick! runtime 50)
+            (is (= :accepted (:status (deref reply 0 nil))))
+            (is (empty? (:open (history)))))
+          (let [{:keys [receive!]} (open-history-push! runtime)
+                _ (receive! [0x90 0 127])
+                _ (receive! [0x80 0 0])
+                reply (:reply (first (ends)))]
+            (show/stop! runtime)
+            (is (= :rejected (:status (deref reply 0 nil))))
+            (is (empty? (ends)))))
+        (finally (show/stop! runtime))))))
+
+(deftest pending-push-sample-finishes-on-handoff-with-the-owner-sequence
+  (with-redefs [show/device-command-wait-ms 0]
+    (let [runtime (show/create-runtime {:workspace-options nil})]
+      (try
+        (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+              {:keys [device receive!]} (open-history-push! runtime)
+              model #(:model @(:state runtime))
+              history #(get-in (model) [:control :edit-history])
+              target [:instance-param id :level]
+              gesture #(get-in (history) [:open target])
+              level #(get-in (model) [:instances id :params :level])
+              initial (level)]
+          (receive! [0x90 0 127])
+          (show/tick! runtime 25)
+          (receive! [0xb0 71 1])
+          (show/tick! runtime 50)
+          (is (= 1 (:last-sequence (gesture))))
+          (let [{:keys [actor control-id gesture-id]} (gesture)
+                end {:op :gesture/end :instance-id id :param :level :control-id control-id :gesture-id gesture-id
+                     :last-sequence 0 :source {:adapter :push-2 :session-id "manual-push"}}]
+            (is (= :operator-required
+                   (:code (apply-at! runtime :command (assoc end :operator-id actor ::show/push-session-id "manual-push") 60))))
+            (is (= :stale-gesture-end
+                   (:code (apply-at! runtime :command end 65 {:operator-id actor})))))
+          (is (= 1 (:last-sequence (gesture))))
+          (receive! [0xb0 71 1])
+          (is (= :pending (get-in (device-session/snapshot device) [:last-ack :status])))
+          (receive! [0xb0 59 127])
+          (is (= :suspended (:status (device-session/snapshot device))))
+          (let [{:keys [payload reply]} (first (vals @(:push-gesture-ends runtime)))]
+            (is (= 1 (:last-sequence payload)))
+            (show/tick! runtime 75)
+            (is (= :accepted (:status (deref reply 0 nil)))))
+          (is (empty? (:open (history))))
+          (is (= 1 (:cursor (history))))
+          (let [{:keys [before after]} (get-in (history) [:nodes 1])]
+            (is (= [initial (level)] [before after]))
+            (is (< 0.019 (- after before) 0.021)))
+          (is (empty? (:errors (device-session/snapshot device)))))
+        (finally (show/stop! runtime))))))
+
 (deftest musical-modulation-renders-overlays-and-yields-to-human-control
   (let [runtime (show/create-runtime)]
     (try

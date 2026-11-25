@@ -328,6 +328,7 @@
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
+      :push-gesture-ends (volatile! {})
       :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
@@ -495,6 +496,18 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
+(defn- push-gesture-end? [payload {::keys [push-session-id]}]
+  (and (= :gesture/end (:op payload)) push-session-id
+       (= {:adapter :push-2 :session-id push-session-id} (:source payload))))
+
+(defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
+  [[:instance-param instance-id param] operator-id control-id gesture-id])
+
+(defn- open-push-gesture [model [target actor control-id gesture-id]]
+  (let [gesture (get-in model [:control :edit-history :open target])]
+    (when (and gesture (= [actor control-id gesture-id] ((juxt :actor :control-id :gesture-id) gesture)))
+      gesture)))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
@@ -507,6 +520,10 @@
 
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
+
+    (push-gesture-end? payload authority)
+    (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
+      (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
     :else (command model payload time-ms authority)))
 
@@ -1137,7 +1154,11 @@
                  inline-registrations (volatile! {})
                  ordinary-count (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  release-count (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
-                 _ (when (and (pos? ordinary-count) (pos? release-count))
+                 gesture-ends (vals @(:push-gesture-ends runtime))
+                 _ (when gesture-ends
+                     (vreset! (:push-gesture-ends runtime) {})
+                     (doseq [message gesture-ends] (.add messages message)))
+                 _ (when (or gesture-ends (and (pos? ordinary-count) (pos? release-count)))
                      (.sort messages ingress-order))
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
@@ -1452,6 +1473,25 @@
     (:cue-release-queue runtime)
     (:queue runtime)))
 
+(defn- enqueue-push-gesture-end! [runtime {:keys [payload authority reply expected-epoch] :as message}]
+  ;; Under the owner lock, each open gesture or queued begin can reserve only
+  ;; one end. Both sources are bounded and drained in the same owner cycle.
+  (let [ends (:push-gesture-ends runtime)
+        key (push-gesture-key payload authority)
+        queued-begin? (fn [queued]
+                        (and (= :command (:type queued)) (= :gesture/begin (get-in queued [:payload :op]))
+                             (= expected-epoch (:expected-epoch queued)) (= authority (:authority queued))
+                             (= key (push-gesture-key (:payload queued) (:authority queued)))))]
+    (cond
+      (contains? @ends key)
+      (deliver reply {:status :rejected :code :gesture-end-queued :command-id (:command-id payload)})
+
+      (or (open-push-gesture (:model @(:state runtime)) key)
+          (some queued-begin? (iterator-seq (.iterator ^LinkedBlockingQueue (:queue runtime)))))
+      (vswap! ends assoc key message)
+
+      :else (deliver reply {:status :rejected :code :unknown-gesture :command-id (:command-id payload)}))))
+
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
   the frame-owner lock, then committed atomically by the next owner cycle.
@@ -1498,10 +1538,12 @@
                queue (ingress-queue runtime type payload)
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
-                                (.offer ^LinkedBlockingQueue queue
-                                        (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
-                                                 :ingress-order (vswap! (:ingress-order runtime) inc)}
-                                          (and (= :command type) authority) (assoc :authority authority)))))]
+                                (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
+                                                       :ingress-order (vswap! (:ingress-order runtime) inc)}
+                                                (and (= :command type) authority) (assoc :authority authority))]
+                                  (if (and (= :command type) (push-gesture-end? payload authority))
+                                    (do (enqueue-push-gesture-end! runtime message) true)
+                                    (.offer ^LinkedBlockingQueue queue message)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
@@ -1560,6 +1602,9 @@
                           (vswap! candidates conj candidate))
                         (deliver (:reply message) {:status :rejected :message "Show stopped"})
                         (recur))))
+                  (doseq [message (vals @(:push-gesture-ends runtime))]
+                    (deliver (:reply message) {:status :rejected :message "Show stopped"}))
+                  (vreset! (:push-gesture-ends runtime) {})
                   true))]
     ;; No cleanup waits while holding the owner lock: a closing device or agent
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
@@ -1670,6 +1715,8 @@
       {:project! (fn [view]
                    (project-parameters @(:state runtime) view nil))})))
 
+(def ^:private device-command-wait-ms 5000)
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
@@ -1711,10 +1758,11 @@
                                                              reply (if gesture?
                                                                      (submit! runtime :command
                                                                               (update payload :command-id #(str operator-id "/" %))
-                                                                              {:operator-id operator-id})
+                                                                              {:operator-id operator-id ::push-session-id id})
                                                                      (submit! runtime payload))]
-                                                         (deref reply (if quantized? 0 5000)
-                                                                {:status :pending :command-id (:command-id command)})))}))]
+                                                         (deref reply (if quantized? 0 device-command-wait-ms)
+                                                                (cond-> {:status :pending :command-id (:command-id command)}
+                                                                  gesture? (assoc :completion reply)))))}))]
         (if (locking (:lock runtime)
               (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))
                 (swap! (:devices runtime) assoc id device)
