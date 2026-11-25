@@ -1,0 +1,170 @@
+{
+  "tolglow": "b05402d3691aefbafe05e39b2211650b514f2ce5",
+  "afterglow": "99f61c5bed2850daaeb87bc5b84ddf0d3c60bf64",
+  "chromium": "156.0.8078.79",
+  "servedAssetSha256": {
+    "airplay.js": "b5486131f7a328c203b71586ec8f5e1c6c35a8e6e4953c0f56213eafec74427b",
+    "preview.js": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+    "preview-worker.js": "749eb824b2622d18743881c1680c7c455315e8954fd8ddc0bdae4d2a87372554",
+    "compute/dispatcher.js": "d92dc1904b372a61899df4970177b58bfe129a73c0e7c982e76d5586473e96f7",
+    "js/main.js": "cfbe3b0754ed337c59cfbb9074b76ea0419fbcda66a8c54363404efbe4f3c910",
+    "compute/runtime/transport.js": "c249b6493d7d2ea140af5d816059d562421192472a98ed3a93a5eda5ff631f17",
+    "styles.css": "45a0cd5421d8bdeb09dcf1425e5b22aed3b07c51f3955b58190d583f63d1bcea"
+  },
+  "browser": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "mode": "desktop",
+      "committed": [
+        {
+          "kind": "Named save",
+          "epoch": 3,
+          "master": 0.5
+        }
+      ],
+      "writes": [
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"4e51cb4c-e034-4889-be4e-60fc0bb2de6c\",\"~:show-id\",\"~:main\",\"~:epoch\",2,\"~:kind\",\"~:named\"]"
+        }
+      ],
+      "focusReturned": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "mode": "phone",
+      "committed": [
+        {
+          "kind": "Working autosave",
+          "epoch": 4,
+          "master": 0.3
+        },
+        {
+          "kind": "Previous session",
+          "epoch": 5,
+          "master": 0.3
+        }
+      ],
+      "writes": [
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"4e51cb4c-e034-4889-be4e-60fc0bb2de6c\",\"~:show-id\",\"~:main\",\"~:epoch\",3,\"~:kind\",\"~:recovery\"]"
+        },
+        {
+          "route": "/api/show/checkpoints/restore",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"4e51cb4c-e034-4889-be4e-60fc0bb2de6c\",\"~:show-id\",\"~:main\",\"~:epoch\",4,\"~:kind\",\"~:prior\"]"
+        },
+        {
+          "route": "/api/show/checkpoints/discard-prior",
+          "wireBody": "[\"^ \",\"~:runtime-id\",\"4e51cb4c-e034-4889-be4e-60fc0bb2de6c\",\"~:show-id\",\"~:main\",\"~:epoch\",5]"
+        }
+      ],
+      "focusReturned": true,
+      "pageErrors": [],
+      "compositorScreencastFrames": 42
+    },
+    {
+      "viewport": {
+        "width": 820,
+        "height": 1180
+      },
+      "mode": "tablet",
+      "committed": [],
+      "writes": [],
+      "focusReturned": true,
+      "pageErrors": []
+    }
+  ],
+  "api": {
+    "jsonRestore": 200,
+    "jsonMaster": 0.5,
+    "staleJson": 400,
+    "wrongTypedTransit": 400,
+    "checkpointsAfterDiscard": [
+      "named",
+      "recovery"
+    ]
+  },
+  "peerRestoreRace": {
+    "accepted": "Named save at 50%",
+    "peerRestore": "Working autosave at 30% before local stale rejection",
+    "staleStatus": 400,
+    "pageErrors": [],
+    "feedback": "The show changed before Studio received the checkpoint result."
+  },
+  "productionBuild": {
+    "shadowTargets": [
+      "studio",
+      "compute-worker"
+    ],
+    "tolglowBuildInputsComparedWithCommit": 173,
+    "servedJavaScriptFilesCompared": 6,
+    "servedTrackedStylesheetCompared": true
+  },
+  "focusedStudioEvents": {
+    "namespace": "tolglow.studio.events-test",
+    "tests": 74,
+    "assertions": 401,
+    "failures": 0,
+    "errors": 0,
+    "coveredRigDraftOrders": [
+      "receipt before projection",
+      "projection before receipt",
+      "peer projection before stale rejection"
+    ]
+  },
+  "media": {
+    "checkpoint-desktop.png": {
+      "sha256": "dbff0b07c6eb8d53e8d52c4df51926c2969441942c957ffb77b2af1810946136",
+      "bytes": 145241,
+      "width": 1440,
+      "height": 900
+    },
+    "checkpoint-phone.mp4": {
+      "sha256": "c56a8512d748b22d19042d73934d591d0a836f4f5f547947024761abc676ba64",
+      "bytes": 259615,
+      "width": 390,
+      "height": 844,
+      "codec": "h264",
+      "durationSeconds": 39.12,
+      "frames": 978
+    },
+    "checkpoint-phone.png": {
+      "sha256": "a0daff4a637fc748846401830bbdca8e73f6ef816f241deb8fbed6df54bc1016",
+      "bytes": 60665,
+      "width": 390,
+      "height": 844
+    },
+    "checkpoint-tablet.png": {
+      "sha256": "6fb152b3d7f356476c128dc90162a8d54264b35be36ccc58c93500a1558ccaba",
+      "bytes": 108854,
+      "width": 820,
+      "height": 1180
+    }
+  },
+  "definitionSpacing": {
+    "files": 530,
+    "violations": 0
+  },
+  "jvmFocusedInitial": {
+    "afterglow": "16efb8b525e01d02a27897a389960da755247d13",
+    "namespaces": [
+      "tolglow.show.recovery-test",
+      "tolglow.studio-test",
+      "tolglow.studio.state-stream-test"
+    ],
+    "tests": 45,
+    "assertions": 400,
+    "failures": 0,
+    "errors": 1,
+    "error": "Expected a pushed state message in live-registration-repairs-a-missing-query-without-reconnecting",
+    "log": "jvm-focused-initial.log"
+  }
+}

@@ -1,0 +1,5 @@
+Verified production assets served by Studio
+Browser desktop [{'kind': 'Named save', 'epoch': 3, 'master': 0.5}]
+Browser phone [{'kind': 'Working autosave', 'epoch': 4, 'master': 0.3}, {'kind': 'Previous session', 'epoch': 5, 'master': 0.3}]
+Browser tablet []
+Verified JSON restore, stale JSON rejection and wrong-typed Transit rejection.
