@@ -1,11 +1,91 @@
 (ns tolglow.studio.modulation-host-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [afterglow.control.codecs.push-2 :as push-codec]
+            [afterglow.control.devices.session :as device-session]
+            [clojure.test :refer [deftest is]]
             [tolglow.show :as show]))
 
-(defn- apply-at! [runtime type payload time]
-  (let [receipt (show/submit! runtime type payload)]
-    (show/tick! runtime time)
-    (deref receipt 1000 ::missing)))
+(defn- apply-at!
+  ([runtime type payload time] (apply-at! runtime type payload time nil))
+  ([runtime type payload time authority]
+   (let [receipt (show/submit! runtime type payload authority)]
+     (show/tick! runtime time)
+     (deref receipt 1000 ::missing))))
+
+(deftest operator-edits-publish-only-the-committed-parameter-changes
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        authority {:operator-id "test-operator"}
+        observed (atom [])]
+    (try
+      (show/attach-observer! runtime :history-test
+                             (fn [] {:tracing? (constantly false)
+                                     :events! (fn [_ events _ _] (swap! observed into events))
+                                     :frame! (fn [_]) :close! (fn [])}))
+      (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+            level #(get-in @(:state runtime) [:model :instances id :params :level])
+            emitted #(first (get-in (show/snapshot runtime) [:output :values :head-1 :emitted-color]))
+            initial (level)
+            held? #(some? (get-in @(:state runtime) [:model :modulation :holds id :level]))
+            gesture {:instance-id id :param :level :control-id :encoder-0 :gesture-id "turn"}
+            begin (assoc gesture :op :gesture/begin :command-id "begin")
+            sample (assoc gesture :op :gesture/sample :command-id "sample" :sequence 1 :value 0.9)
+            end (assoc gesture :op :gesture/end :command-id "end" :last-sequence 1)]
+        (is (= :operator-required (:code (apply-at! runtime :command
+                                                   (assoc begin :authority authority :operator-id "forged") 20))))
+        (is (= :accepted (:status (apply-at! runtime :modulation-start
+                                            {:id :rhythm :seed 42 :every {:beats 1/4} :params [:level]
+                                             :select {:instance-ids [id]} :ranges {:level [0.1 0.4]}} 100))))
+        (is (= :accepted (:status (apply-at! runtime :command begin 100 authority))))
+        (let [ack (apply-at! runtime :command sample 120 authority)]
+          (is (= :accepted (:status ack)))
+          (is (= 0.9 (emitted)))
+          (is (held?))
+          (apply-at! runtime :modulation-resume {:instance-id id :params [:level]} 150)
+          (is (not (held?)))
+          (is (= ack (apply-at! runtime :command sample 160 authority)))
+          (is (not (held?)) "A replay must leave the resumed modulation alone")
+          (let [matching (filter #(= "sample" (get-in % [:data :command-id])) @observed)]
+            (is (= [:command/accepted] (mapv :type matching)))
+            (is (= "test-operator" (get-in (first matching) [:emitter :id])))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command end 180 authority))))
+        (is (= 0 (:history-cursor (apply-at! runtime :command
+                                             {:op :history/undo :expected-cursor 1} 200 authority))))
+        (is (== initial (level) (emitted)))
+        (is (held?)))
+      (finally (show/stop! runtime)))))
+
+(deftest captured-push-encoder-updates-become-one-operator-edit
+  (let [runtime (show/start! {:workspace-options nil} (constantly nil))
+        input (atom nil)
+        midi {:open! (fn [receive!] (reset! input receive!) :capture)
+              :send! (fn [_ _]) :close! (fn [_])}]
+    (try
+      (let [device (show/connect-device! runtime :push-2
+                                         {:session-id "history-push" :midi midi
+                                          :operator-gestures? true :schedule! nil})]
+        (doseq [index (range 128)]
+          (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (let [model #(:model @(:state runtime))
+              history #(get-in (model) [:control :edit-history])
+              [x y] (some (fn [[coordinate cue]] (when (= :ember cue) coordinate))
+                          (get-in (model) [:pages :main :cells]))
+              _ (@input [0x90 (push-codec/pad-note x y) 127])
+              instance-id (get-in (device-session/snapshot device) [:local :selected-instance])
+              level #(get-in (model) [:instances instance-id :params :level])
+              initial (level)]
+          (is (number? initial))
+          (@input [0x90 0 127])
+          (dotimes [_ 5] (@input [0xb0 71 1]))
+          (is (> (level) initial))
+          (is (= 0 (:cursor (history))))
+          (@input [0x80 0 0])
+          (let [{:keys [target actor before after]} (get-in (history) [:nodes (:cursor (history))])]
+            (is (= [:instance-param instance-id :level] target))
+            (is (re-find #"^push-2/history-push/" actor))
+            (is (= [initial (level)] [before after]))
+            (is (= 2 (count (:nodes (history)))))
+            (is (empty? (:open (history)))))
+          (is (empty? (:errors (device-session/snapshot device))))))
+      (finally (show/stop! runtime)))))
 
 (deftest musical-modulation-renders-overlays-and-yields-to-human-control
   (let [runtime (show/create-runtime)]
