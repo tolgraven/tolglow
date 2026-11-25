@@ -543,14 +543,13 @@
 
       :else result)))
 
-(def ^:private human-adapters #{:web "web" :studio :push-2 :push-3 :x-touch :xtouch :midi :osc :sensor})
-
 (def ^:private gesture-ops #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel})
 
 (defn- override-ramps
   "A committed write outside the scheduler cancels running ramps on the same
   destination. Gestures and human surfaces record :human-override; other
-  sources (agents, REPL, reactive actions) record :superseded."
+  sources (agents, reactive actions) record :superseded. Writers that bypass
+  this path are caught by subscribers/advance-ramps from the committed value."
   [result {:keys [op source instance-id param command-id]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
@@ -558,13 +557,14 @@
                                             (case type
                                               :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
                                               :master/changed {:target :master}
+                                              :variable/changed {:target :variable :variable (:variable event)}
                                               :instance/system-changed
                                               (when (#{:instance/opacity-set :instance/opacity-toggle :group/apply} op)
                                                 {:target :opacity :instance-id (:instance-id event)})
                                               nil))
                                           (:events result)))
                          (= :gesture/begin op) (conj {:target :param :instance-id instance-id :param param}))
-          human? (or (some? authority) (gesture-ops op) (human-adapters (:adapter source)))]
+          human? (or (some? authority) (gesture-ops op) (subscribers/human-source? source))]
       (if (seq destinations)
         (update result :model subscribers/override destinations (if human? :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
@@ -1773,7 +1773,12 @@
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
-                                     (routing/advance time-ms command))
+                                     (routing/advance time-ms command)
+                                     ;; Macro, automation and routing writes above can override a ramp this frame.
+                                     (subscribers/advance-ramps time-ms))
+                           ;; Ramp values are a frame overlay; committed values move only when a ramp commits.
+                           ramp-frame (subscribers/frame-overlays model time-ms)
+                           frame-master (get ramp-frame :master (:master model))
                            parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
                                                                       (get-in before [:parameter-samples :plans]))
                            control-view (if (seq (:overrides parameter-samples))
@@ -1788,7 +1793,7 @@
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
-                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
+                           hard-off? (or (pause-look/blackout? model) (zero? frame-master))
                            suspended? (or bypass? hard-off?)
                            meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
@@ -1809,7 +1814,8 @@
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                           ;; Active modulation and waveform bindings take precedence over a ramp overlay.
+                           input-overrides (merge-with merge (:params ramp-frame) (:overrides modulation-result) (:overrides parameter-samples)
                                                        (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
@@ -1842,6 +1848,8 @@
                                            group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
+                                         (seq (:variables ramp-frame))
+                                         (update :resolved-variables #(merge (or % (:variables model)) (:variables ramp-frame)))
                                          response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
@@ -1855,8 +1863,9 @@
                                             ;; Certified literals have no parameter schemas, and
                                             ;; these transforms touch only declared parameters.
                                             (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
-                           result (engine/advance model frame-input compile-step
-                                                  (executor/mapper (:executor runtime)))
+                           result (update (engine/advance (subscribers/with-frame-overlays model ramp-frame) frame-input compile-step
+                                                          (executor/mapper (:executor runtime)))
+                                          :model subscribers/without-frame-overlays model ramp-frame)
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
                            meter-opts (get-in model [:settings :lighting-capacity])
@@ -1870,11 +1879,11 @@
                            observation (if (get-in model [:settings :fog-control :enabled?])
                                          (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
                            previous-control (get-in before [:output :fog-control])
-                           fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+                           fog-bypass? (or bypass? (zero? frame-master) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            limit (when plan
                                    (capacity/control (merge capacity/defaults meter-opts)
                                      previous
-                                     (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
+                                     frame-master time-ms (when (= (:epoch model) (:epoch audio)) audio)
                                      bypass?))
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
                                  (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
@@ -1893,7 +1902,7 @@
                                           (:music setpoint) (conj (:music setpoint))
                                           (:block photo-session) (conj (:block photo-session))
                                           pause-layer (conj pause-layer))
-                           render-options (cond-> {:master (get limit :effective-master (:master model))
+                           render-options (cond-> {:master (get limit :effective-master frame-master)
                                                    :blackout? (pause-look/blackout? model)
                                                    :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                                    :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
@@ -1913,13 +1922,13 @@
                                       (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
                                         (lighting/contributions standby (:contributions result) extra-blocks) time-ms
                                         calibrating? hard-off?
-                                        (get limit :effective-master (:master model))))
+                                        (get limit :effective-master frame-master)))
                            delivered (or (:frame finished) (:output resolved))
                            frame (cond-> delivered
                                    setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
                                    plan (assoc :lighting-capacity
                                                (merge limit (capacity/measure plan (:universes delivered))
-                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
+                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? frame-master)) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
                        (let [observation (when (:plan prepared)

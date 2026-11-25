@@ -63,9 +63,10 @@
             before (mapv (fn [t] (show/tick! rt t) (frame t)) (range 375 2250 125))
             tempo (at! rt 2250 {:op :transport/set :transport {:bpm 60.0} :source {:adapter :repl :session-id "r"}})
             mid (frame 2250)
+            committed-mid [(level rt id)]
             projection (show/schedule rt)
             after (mapv (fn [t] (show/tick! rt t) (frame t)) (range 2500 6500 250))]
-        {:id id :posted posted :tempo tempo :projection projection
+        {:id id :posted posted :tempo tempo :projection projection :frames-meta {:committed-mid committed-mid}
          :frames (into [first-frame] (concat before [mid] after))
          :level (level rt id) :recent (recent rt) :ramps (get-in (show/snapshot rt) [:schedule :ramps])
          :history (get-in @(:state rt) [:model :control :history])
@@ -73,10 +74,11 @@
       (finally (show/stop! rt)))))
 
 (deftest param-ramp-matches-the-easing-curve-across-a-mid-ramp-tempo-change
-  (let [{:keys [posted tempo projection frames level recent ramps packets id history]} (ramp-scenario)
+  (let [{:keys [posted tempo projection frames level recent ramps packets id history frames-meta]} (ramp-scenario)
         expected (fn [b] (* 255.0 (easing/sample :ease-in-out (/ (- b 0.5) 8.0))))]
     (is (= :accepted (:status posted)))
     (is (= ["swell"] (:event-ids posted)))
+    (is (= [0.5] (:due-beats posted)) "the receipt shows the resolved due beat")
     (is (= :accepted (:status tempo)))
     (testing "every captured frame matches the curve sampled at that frame's beat within DMX quantization"
       (doseq [[t b value] frames]
@@ -88,7 +90,9 @@
                 :destination {:target :param :instance-id id :param :level}}
                (select-keys ramp [:event-id :label :category :from :to :curve :unit :over :start :end :destination])))
         (is (= :agent (get-in ramp [:source :adapter])))
-        (is (= 0.5 (:progress ramp)))))
+        (is (not (contains? ramp :progress)) "live progress is derived from the transport, not published per frame")))
+    (testing "mid-ramp values are a frame overlay; the committed parameter keeps its start value"
+      (is (every? #(= 0.0 %) (:committed-mid frames-meta))))
     (testing "the remaining four beats take twice as long after the tempo halves"
       (let [by-time (into {} (map (fn [[t b v]] [t [b v]])) frames)]
         (is (= 4.5 (first (by-time 2250))))
@@ -198,7 +202,7 @@
                event (case (mod i 4)
                        0 {:op "cue/launch" :cue-id "wash" :at at}
                        1 {:op "param/ramp" :cue-id "wash" :param "level" :to 0.5 :over {:beats 2} :curve "sine" :at at}
-                       2 {:op "master/set" :value 0.8 :at at}
+                       2 {:op "instance/end" :cue-id "wash" :at at}
                        3 {:op "variable/set" :variable "section" :value i :at at})]
            (cond-> (assoc event :id (str "e" i) :label (str "Event " i))
              (= i bad-index) (assoc :curve "wobble"))))))
@@ -225,16 +229,35 @@
         (is (= :accepted (:status accepted)))
         (is (= (mapv #(str "e" %) (range 16)) (:event-ids accepted)))
         (is (= (mapv #(str "e" %) (range 16)) (mapv :event-id upcoming)))
-        (is (= (take 16 (cycle [:cue :ramp :master :variable])) (map :category upcoming)))
+        (is (= (take 16 (cycle [:cue :ramp :instance :variable])) (map :category upcoming)))
         (is (= (mapv #(double (+ 4 %)) (range 16)) (mapv :due-beat upcoming)))
         (is (every? #(= {:adapter :agent :session-id "agent-run"} (:source %)) upcoming))
         (is (= {:target :param :param :level :to 0.5 :over {:beats 2} :curve :sine
-                :select {:ids [:wash] :pick :first}}
+                :select {:ids [:wash] :pick :all}}
                (select-keys (second upcoming) [:target :param :to :over :curve :select])))
         (is (= [4.0 "e0" :cue/launch "Event 0"] (first (:upcoming compact))))
         (is (= 16 (count (:upcoming compact))))
         (testing "REPL and Studio read one projection"
           (is (= (show/schedule rt) (:schedule (show/snapshot rt)))))
+        (testing "agents cannot schedule master or blackout, and cannot cancel or move other posters' events"
+          (let [master (tool! 250 "schedule_events" {:events [{:id "m" :op "master/set" :value 0.2 :in {:bars 1}}]} "agent-master")
+                blackout (tool! 250 "schedule_events" {:events [{:id "b" :op "blackout/set" :value true :in {:bars 1}}]} "agent-blackout")]
+            (is (= :rejected (:status master)))
+            (is (re-find #"authoritative" (:message master)))
+            (is (= :rejected (:status blackout))))
+          (at! rt (inc (get-in @(:state rt) [:model :time-ms]))
+               {:op :schedule/post :source {:adapter :repl :session-id "fod"}
+                :events [{:id "human" :op :cue/launch :cue-id :wash :in {:bars 8}}]})
+          (let [denied (tool! 260 "cancel_scheduled" {:event-ids ["human"]} "agent-cancel-other")
+                compact (show/dispatch-tool! rt "inspect_schedule" {} {:run-id "agent-run"})
+                move (at! rt (inc (get-in @(:state rt) [:model :time-ms]))
+                          {:op :schedule/move :event-id "human" :at {:bar 20} :source {:adapter :agent :session-id "agent-run"}})]
+            (is (= [] (:event-ids denied)) "an agent's cancel only matches what it posted")
+            (is (some #(= "human" (second %)) (:upcoming compact)))
+            (is (= :rejected (:status move)))
+            (is (re-find #"poster or a human" (:message move)))
+            (show/cancel-events! rt {:event-ids ["human"]})
+            (show/tick! rt (inc (get-in @(:state rt) [:model :time-ms])))))
         (testing "cancel by source withdraws everything that agent run posted"
           (let [cancelled (tool! 300 "cancel_scheduled" {:mine? true} "cancel-mine")]
             (is (= :accepted (:status cancelled)))
@@ -247,7 +270,7 @@
   (let [{:keys [rt]} (harness)]
     (try
       (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
-            _ (at! rt 250 {:op :schedule/post :source agent
+            _ (at! rt 250 {:op :schedule/post :source {:adapter :repl :session-id "fod"}
                            :events [{:id "glow" :op :param/ramp :instance-id id :param :tint
                                      :to [1.0 0.5 0.0] :over {:bars 2} :curve :ease-out}
                                     {:id "dark" :op :master/set :value 0.25 :in {:phrases 1}}
@@ -262,9 +285,10 @@
         (is (= ["glow"] (mapv :event-id (:ramps s))))
         (is (= (mapv #(dissoc % :source) (:upcoming (subscribers/schedule-view model)))
                (mapv #(dissoc % :source) (:upcoming (subscribers/schedule-view (assoc restored :transport (:transport model)))))))
-        (is (= (map #(select-keys % [:event-id :from :to :curve :start :end :progress]) (:ramps (subscribers/schedule-view model)))
-               (map #(select-keys % [:event-id :from :to :curve :start :end :progress]) (:ramps s))))
-        (let [tint (get-in model [:instances id :params :tint])]
+        (is (= (map #(select-keys % [:event-id :from :to :curve :start :end]) (:ramps (subscribers/schedule-view model)))
+               (map #(select-keys % [:event-id :from :to :curve :start :end]) (:ramps s))))
+        (is (= [0.0 0.0 0.0] (get-in model [:instances id :params :tint])) "a backup holds the committed start value")
+        (let [tint (get-in (subscribers/frame-overlays model 1250) [:params id :tint])]
           (is (every? #(< 0 % 1) (take 2 tint)) (pr-str tint))))
       (finally (show/stop! rt)))))
 
@@ -300,24 +324,28 @@
         energy #(get-in @(:state rt) [:model :variables :energy])]
     (try
       (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent :params {:level 1.0}}})
-      (at! rt 100 {:op :schedule/post :source agent
+      (at! rt 100 {:op :schedule/post :source {:adapter :repl :session-id "fod"}
                    :events [{:id "fade" :op :param/ramp :target :master :to 0.0 :over {:ms 1000}}
                             {:id "count" :op :param/ramp :target :variable :variable :energy :from-note "x"}]})
       (is (empty? (:upcoming (show/schedule rt))) "an unknown option rejects the batch")
-      (at! rt 100 {:op :schedule/post :source agent
+      (at! rt 100 {:op :schedule/post :source {:adapter :repl :session-id "fod"}
                    :events [{:id "fade" :op :param/ramp :target :master :to 0.0 :over {:ms 1000}}
                             {:id "count" :op :variable/set :variable :energy :value 0.0}
                             {:id "rise" :op :param/ramp :target :variable :variable :energy :to 1.0
                              :over {:bars 1} :in {:beats 1}}]})
       (show/tick! rt 600)
-      (is (= 0.5 (:master (:model @(:state rt)))) "a millisecond ramp is an explicit boundary unit")
-      (is (<= 126 (dimmer (peek @packets)) 129))
+      (is (= 1.0 (:master (:model @(:state rt)))) "the committed master keeps its value mid-ramp")
+      (is (<= 126 (dimmer (peek @packets)) 129) "the frame uses the ramped master; ms is an explicit boundary unit")
       (is (= 0.0 (energy)) "the bar-long variable ramp starts at beat 1.2")
       (show/tick! rt 1100)
       (is (= 0.0 (:master (:model @(:state rt)))))
       (is (= 0 (dimmer (peek @packets))))
       (show/tick! rt 1600)
-      (is (< (Math/abs (- 0.5 (energy))) 1e-9) "beat 3.2 is halfway through the four-beat ramp")
+      (is (= 0.0 (energy)) "the committed variable keeps its value mid-ramp")
+      (is (< (Math/abs (- 0.5 (get-in (subscribers/frame-overlays (:model @(:state rt)) 1600) [:variables :energy]))) 1e-9)
+          "beat 3.2 is halfway through the four-beat ramp")
+      (is (= :rejected (:status (at! rt 1700 {:op :variable/set :variable :runtime :value 1})))
+          "runtime-owned variables are reserved")
       (testing "subscriber actions accept :at, :in and :grid next to :delay"
         (is (= [4.0 :absolute] (subscribers/step-due {:op :master/set :value 1.0 :grid {:bars 1}} 1.5 1.5 nil)))
         (is (= [4.0 :absolute] (subscribers/step-due {:op :master/set :value 1.0 :grid {:bars 1}} 4.0 4.0 nil)))
@@ -343,4 +371,99 @@
     (is (= [["soon" 36.0] ["bar10" 40.0]] (mapv (juxt (comp :event-id :scheduled) :due-beat) (:runs s))))
     (is (= [30.0 38.0] ((juxt :start :end) (first (:ramps s)))) "the ramp keeps its elapsed musical progress")
     (is (= [["bar5" :missed :clock-discontinuity]] (mapv (juxt :event-id :status :reason) (:recent s))))
-    (is (= s (subscribers/validate-state s)))))
+    (is (= s (subscribers/validate-state s)))
+    (testing "a small forward phase correction leaves a crossed bar due now instead of missed"
+      (let [nudged (subscribers/rebase-clock (assoc-in model [:transport :beat] 20.01) 0.02 20.01)]
+        (is (= ["soon" "bar5" "bar10"] (mapv (comp :event-id :scheduled) (get-in nudged [:event-subscribers :runs]))))
+        (is (empty? (get-in nudged [:event-subscribers :recent])))))
+    (testing ":grid steps re-quantize from the new position instead of freezing"
+      (let [grid (assoc model :event-subscribers
+                        (assoc (:event-subscribers model) :runs [(run 1 "next-phrase" {:grid {:phrases 1}} 16.0 :absolute)]))
+            seeked (subscribers/rebase-clock (assoc-in grid [:transport :beat] 37.0) 27.0 37.0)]
+        (is (= [48.0] (mapv :due-beat (get-in seeked [:event-subscribers :runs]))))
+        (is (empty? (get-in seeked [:event-subscribers :recent])))))))
+
+(deftest a-position-already-past-is-rejected-at-post
+  (let [{:keys [rt]} (harness)]
+    (try
+      (show/tick! rt 0)
+      (show/tick! rt 2500)                                  ; beat 5.0
+      (let [past (at! rt 2600 {:op :cue/launch :cue-id :wash :at {:bar 1} :source agent})
+            now (at! rt 2700 {:op :cue/launch :cue-id :wash :at {:bar 2} :event-id "b2" :source agent})]
+        (is (= :rejected (:status past)))
+        (is (re-find #"already passed" (:message past)))
+        (is (re-find #"zero-based" (:message past)))
+        (is (= :accepted (:status now)))
+        (is (= [8.0] (:due-beats now))))
+      (finally (show/stop! rt)))))
+
+(deftest any-committed-write-to-a-ramped-destination-cancels-it-at-the-domain-layer
+  (let [model (assoc-in (live-model) [:transport :beat] 0.0)
+        cmd (fn [m id payload]
+              (:model (control/apply-command m (merge {:show-id (:show-id m) :epoch (:epoch m) :time-ms 0.0
+                                                       :command-id id} payload))))
+        launched (cmd model "launch" {:op :cue/launch :cue-id :wash :source {:adapter :repl}})
+        id (first (keys (:instances launched)))
+        ramped (-> (:model (control/apply-domain-command
+                            launched {:op :schedule/post :show-id (:show-id launched) :epoch (:epoch launched)
+                                      :time-ms 0.0 :command-id "post" :source agent
+                                      :events [{:id "r" :op :param/ramp :instance-id id :param :level :to 1.0 :over {:beats 8}}]}
+                            subscribers/apply-operation))
+                   (subscribers/advance 0.0 {}))
+        cancelled (fn [source]
+                    (-> (cmd (assoc-in ramped [:transport :beat] 2.0) "write"
+                             {:op :param/set :instance-id id :param :level :value 0.3 :source source})
+                        (subscribers/advance-ramps 1000.0)))]
+    (is (= 1 (count (get-in ramped [:event-subscribers :ramps]))))
+    (testing "a macro, routing or automation write (any non-human source) supersedes the ramp"
+      (let [m (cancelled {:adapter :composition :session-id "macro-1"})]
+        (is (empty? (get-in m [:event-subscribers :ramps])))
+        (is (= {:event-id "r" :status :cancelled :reason :superseded}
+               (select-keys (last (get-in m [:event-subscribers :recent])) [:event-id :status :reason])))
+        (is (= {:op :param/set :command-id "write" :source {:adapter :composition :session-id "macro-1"}}
+               (:by (last (get-in m [:event-subscribers :recent])))))
+        (is (= 0.3 (get-in m [:instances id :params :level])) "the writer's value stays")))
+    (testing "a write from a human surface records a human override"
+      (is (= :human-override (:reason (last (get-in (cancelled {:adapter :push-3 :session-id "p"})
+                                                    [:event-subscribers :recent]))))))))
+
+(deftest a-restored-schedule-follows-a-transport-that-starts-elsewhere
+  (let [file (java.io.File/createTempFile "schedule-restore" ".tolglow")
+        source {:adapter :repl :session-id "fod"}]
+    (try
+      (let [{:keys [rt]} (harness)]
+        (try
+          (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))]
+            (at! rt 500 {:op :schedule/post :source source
+                         :events [{:id "wait" :op :variable/set :variable :section :value 2 :in {:bars 2}}
+                                  {:id "bar4" :op :cue/launch :cue-id :wash :at {:bar 4}}
+                                  {:id "swell" :op :param/ramp :instance-id id :param :level :to 1.0 :over {:bars 2}}
+                                  {:id "fade" :op :param/ramp :target :master :to 0.5 :over {:ms 4000}}]})
+            (show/tick! rt 1000)                            ; beat 2.0
+            (show/save-show! rt (str file)))
+          (finally (show/stop! rt))))
+      (let [{:keys [rt]} (harness)
+            manager #(connections/sync (:connections rt))   ; a restore replaces the sync session
+            clock! (fn [position at] (session/apply-clock! (manager) nil {:type :clock :source-id :midi-clock :time-ms at
+                                                                        :beat position :bpm 120 :playing? true
+                                                                        :confidence 1 :discontinuity? false}))]
+        (try
+          (show/tick! rt 50)
+          (is (= :accepted (:status (let [reply (show/load-show! rt (str file))]
+                                      (show/tick! rt 60) (deref reply 1000 ::missing)))))
+          (is (= ["wait" "bar4"] (mapv :event-id (:upcoming (show/schedule rt))))
+              "on the restored show clock nothing has moved")
+          ;; The restored show now follows a clock that is elsewhere (beat 100).
+          (let [restored-ms (get-in @(:state rt) [:model :time-ms])]
+            (sync/select-source! (manager) :midi-clock)
+            (clock! 100.0 (+ restored-ms 10))
+            (show/tick! rt (+ restored-ms 10))
+            (let [{:keys [upcoming ramps recent]} (show/schedule rt)
+                  by-id (into {} (map (juxt :event-id identity)) ramps)]
+              (is (= ["wait"] (mapv :event-id upcoming)))
+              (is (= 107.0 (:due-beat (first upcoming))) "the relative wait keeps its remaining 7 beats")
+              (is (= ["bar4" :missed :clock-discontinuity] ((juxt :event-id :status :reason) (last recent))))
+              (is (= [99.0 107.0] ((juxt :start :end) (get by-id "swell"))) "the beat ramp keeps its elapsed beat")
+              (is (= 3500.0 (- (:end (get by-id "fade")) restored-ms)) "the ms ramp keeps its remaining milliseconds")))
+          (finally (show/stop! rt))))
+      (finally (.delete file)))))

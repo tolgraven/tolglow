@@ -253,6 +253,12 @@
   pending scheduled events and running ramps, each cancellable by event ID."
   [db]
   (let [{:keys [upcoming ramps]} (get-in db [:show :schedule])
+        show (:show db)
+        ;; The projection is stable; live progress comes from the transport clock.
+        progress (fn [{:keys [start end unit]}]
+                   (let [now (if (= "ms" (events/wire-id unit)) (:time-ms show) (get-in show [:transport :beat]))]
+                     (if (and (number? now) (number? start) (number? end) (< start end))
+                       (max 0 (min 1 (/ (- now start) (- end start)))) 0)))
         scheduled (filterv #(= "scheduled" (events/wire-id (:origin %))) upcoming)
         connected? (get-in db [:connection :connected?])
         cancel! (fn [event-id] #(send! [:studio/command "schedule/cancel" {:event-ids [event-id]}]))]
@@ -267,12 +273,12 @@
            [:span (str title " · beat " (numeric/number-label due-beat))]
            [:button.text-button {:type "button" :aria-label (str "Cancel scheduled " title)
                                  :disabled (not connected?) :on-click (cancel! event-id)} "Cancel"]])
-        (for [{:keys [event-id label to progress end destination]} ramps
+        (for [{:keys [event-id label to end destination] :as ramp} ramps
               :let [title (or label event-id)]]
           ^{:key (str "ramp-" event-id "-" (pr-str destination))}
           [:li {:data-ramp-id event-id}
            [:span (str title " → " (ramp-target-label to) " by beat " (numeric/number-label end))]
-           [:progress {:max 1 :value (or progress 0) :aria-label (str title " progress")}]
+           [:progress {:max 1 :value (progress ramp) :aria-label (str title " progress")}]
            [:button.text-button {:type "button" :aria-label (str "Stop ramp " title)
                                  :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])]])))
 

@@ -7,6 +7,7 @@
             [tolglow.spatial :as spatial]
             [afterglow.reactive.registry :as reactive]
             [afterglow.time :as time]
+            [afterglow.control.model :as control]
             [afterglow.control.params :as params]
             [afterglow.render.easing :as easing]
             [afterglow.runtime.events :as staging]
@@ -29,8 +30,9 @@
    :variable/set :variable :macro/run :macro :macro/stop :macro :callback :callback})
 
 (def operations
-  "Owner commands that edit the schedule. Their receipts use the shared reducer."
-  #{:schedule/post :schedule/cancel :schedule/move})
+  "Owner domain commands: schedule edits, validated show-variable writes and
+  macro start/stop. Their receipts use the shared reducer."
+  #{:schedule/post :schedule/cancel :schedule/move :variable/set :macro/run :macro/stop})
 
 (def ^:private timing-keys #{:delay :at :in :grid})
 
@@ -115,6 +117,16 @@
 (defn- numeric-value? [v]
   (or (registry/finite-number? v) (and (vector? v) (seq v) (every? registry/finite-number? v))))
 
+(def ^:private runtime-variables
+  #{:audience :audio :audio-return-voices :runtime :sensors :spatial :surface-aim :sync})
+
+(def ^:private runtime-variable-namespaces #{"audio" "fog" "lighting" "sensor" "sensors" "sync" "spatial"})
+
+(defn reserved-variable?
+  "Show variables written by the runtime (analysis, sensors, faults, lighting)."
+  [k]
+  (or (not (keyword? k)) (runtime-variables k) (contains? runtime-variable-namespaces (namespace k))))
+
 (defn validate-action [{:keys [op select delay implementation launch value] :as action}]
   (check (and (some #{op} actions)
               (only-keys? action (into timing-keys
@@ -191,6 +203,9 @@
       (curve! (:curve action :linear))
       (when (= :variable (destination-target action))
         (check (numeric-value? (:to action)) "A variable ramp needs a numeric target" {}))))
+  (when (= :variable (destination-target action))
+    (check (not (reserved-variable? (:variable action)))
+           "That show variable is owned by the runtime; choose your own variable name" {:variable (:variable action)}))
   (when (= op :callback)
     (case (:type implementation)
       :registered (check (and (only-keys? implementation #{:type :id}) (keyword? (:id implementation)))
@@ -210,13 +225,17 @@
   becomes the action's own timing and textual enum choices become keywords."
   [action]
   (check (map? action) "An action must be a map" {})
-  (let [{:keys [cue-id effect-id instance-id start]} action]
+  (let [{:keys [cue-id effect-id instance-id start]} action
+        action (update action :op textual-keyword)
+        ;; A cue or effect ID on an instance action addresses every running instance of it.
+        pick (if (instance-target? (cond-> action (contains? action :target) (update :target textual-keyword)))
+               :all :first)]
     (check (or (nil? start) (and (map? start) (= 1 (count start)) (#{:in :at :grid} (ffirst start))))
            "Ramp :start takes one of :in, :at or :grid" {:start start})
-    (cond-> (-> action (update :op textual-keyword) (dissoc :cue-id :effect-id :instance-id :start))
+    (cond-> (dissoc action :cue-id :effect-id :instance-id :start)
       start (merge start)
-      (some? cue-id) (assoc :select {:ids [cue-id] :pick :first})
-      (some? effect-id) (assoc :select {:ids [effect-id] :pick :first})
+      (some? cue-id) (assoc :select {:ids [cue-id] :pick pick})
+      (some? effect-id) (assoc :select {:ids [effect-id] :pick pick})
       (some? instance-id) (assoc :select {:ids [instance-id] :pick :all})
       (contains? action :target) (update :target textual-keyword)
       (contains? action :param) (update :param textual-keyword)
@@ -457,6 +476,14 @@
 
 ;; Ramps -----------------------------------------------------------------
 
+(def ^:private human-adapters #{:web "web" :studio :push-2 :push-3 :x-touch :xtouch :midi :osc :sensor :repl})
+
+(defn human-source?
+  "Studio, web, Push, X-Touch, MIDI, OSC, sensor and REPL sources are human
+  operator surfaces; agents, reactive actions and subscribers are not."
+  [source]
+  (boolean (and (map? source) (human-adapters (:adapter source)))))
+
 (defn- destination-key [destination]
   (select-keys destination [:target :instance-id :param :variable]))
 
@@ -492,13 +519,6 @@
     (= :gradient (:type schema)) (gradient-interpolate from to fraction)
     :else (modulation/interpolate-value schema from to fraction)))
 
-(defn- write-destination [model {:keys [target instance-id param variable]} value]
-  (case target
-    :param (assoc-in model [:instances instance-id :params param] value)
-    :opacity (assoc-in model [:instances instance-id :system :opacity] value)
-    :master (assoc model :master value)
-    :variable (assoc-in model [:variables variable] value)))
-
 (defn- progress [{:keys [start end]} clock]
   (double (max 0 (min 1 (/ (- clock start) (- end start))))))
 
@@ -516,7 +536,7 @@
   (merge {:event-id (:event-id ramp) :op :param/ramp :category :ramp :status status
           :destination (:destination ramp) :at-beat (double (get-in model [:transport :beat] 0))
           :time-ms (:time-ms model)}
-         (select-keys ramp [:label :source :value :to])
+         (select-keys ramp [:label :source :to])
          extra))
 
 (defn- remove-ramps [model pred status extra]
@@ -555,12 +575,12 @@
         event-id (run-event-id run)
         [unit over] (let [[k v] (first (:over action))]
                       (if (= k :ms) [:ms v] [:beats (time/duration->beats (:over action) meter)]))
-        start (if (= :ms unit) now (:due-beat run))
+        ;; The ramp starts where it actually fires, on the frozen frame clock.
+        start (if (= :ms unit) now beat)
         previous (some #(when ((same-destination destination) %) %) (get-in model [:event-subscribers :ramps]))
-        ;; Continue from the superseded ramp's value at this start, without a jump.
-        from (if (and previous (= unit (:unit previous)))
-               (second (sample-ramp model previous (if (= :ms unit) beat start) (if (= :ms unit) start now)))
-               (current-value model destination))
+        base (current-value model destination)
+        ;; Continue from the superseded ramp's current frame value, without a jump.
+        from (if previous (second (sample-ramp model previous beat now)) base)
         to (:to action)]
     (check (or (nil? schema) (rampable-types (:type schema)))
            "This parameter type cannot ramp; use :param/set" {:destination destination})
@@ -573,32 +593,59 @@
     (-> model
         (supersede destination event-id)
         (update-in [:event-subscribers :ramps] (fnil conj [])
-                   (cond-> {:event-id event-id :destination destination :from from :to to
+                   (cond-> {:event-id event-id :destination destination :from from :to to :base base
                             :curve (:curve action :linear) :unit unit :over (:over action)
-                            :start start :end (+ start over) :value from :progress 0.0
-                            :source (run-source run) :category :ramp}
+                            :start start :end (+ start over) :source (run-source run) :category :ramp}
                      (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
 
+(declare apply-operation)
+
+(defn- submit-command
+  "Admit one command through the shared reducer: schedule/variable/macro
+  operations as domain commands, everything else through spatial/apply-command."
+  [model cmd]
+  (if (operations (:op cmd))
+    (control/apply-domain-command model cmd apply-operation)
+    (spatial/apply-command model cmd)))
+
 (defn- commit-ramp [model ramp now]
-  (let [{:keys [target instance-id param]} (:destination ramp)
+  (let [{:keys [target instance-id param variable]} (:destination ramp)
         cmd (case target
               :param {:op :param/set :instance-id instance-id :param param :value (:to ramp)}
               :opacity {:op :instance/opacity-set :instance-id instance-id :value (:to ramp)}
               :master {:op :master/set :value (:to ramp)}
-              nil)]
-    (if-not cmd
-      (update model :revision inc)
-      (let [result (spatial/apply-command
-                    model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
-                                      :source (:source ramp)
-                                      :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
-                                                       (pr-str (destination-key (:destination ramp))) "/" (:start ramp))}))]
-        (:model result)))))
+              :variable {:op :variable/set :variable variable :value (:to ramp)})]
+    (:model (submit-command
+             model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
+                               :source (:source ramp)
+                               :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
+                                                (pr-str (destination-key (:destination ramp))) "/" (:start ramp))})))))
+
+(defn- writes-destination? [command {:keys [target instance-id param variable]}]
+  (let [op (:op command)]
+    (case target
+      :param (and (= instance-id (:instance-id command)) (= param (:param command)))
+      :opacity (and (= instance-id (:instance-id command)) (#{:instance/opacity-set :instance/opacity-toggle} op))
+      :master (= :master/set op)
+      :variable (and (= :variable/set op) (= variable (:variable command))))))
+
+(defn- last-writer
+  "The latest committed command that wrote this destination, from the shared
+  receipt history. Macro steps, routing, automation and controllers all commit
+  through that reducer."
+  [model destination]
+  (some (fn [id]
+          (let [command (get-in model [:control :history id :command])]
+            (when (and command (writes-destination? command destination))
+              (cond-> {:op (:op command) :command-id id}
+                (map? (:source command)) (assoc :source (select-keys (:source command) [:adapter :session-id :device-id]))))))
+        (take 64 (rseq (vec (get-in model [:control :history-order] []))))))
 
 (defn advance-ramps
-  "Sample every active ramp from the frame transport (or the explicit
-  millisecond boundary clock) and write the destination. A finished ramp writes
-  its exact target through the shared reducer so its receipt and event exist."
+  "Settle ramp lifecycles on the owner: a committed write to a ramp's
+  destination by anyone cancels it with the writer's reason; a finished ramp
+  commits its exact target through the shared reducer. Per-frame values are a
+  frame overlay (frame-overlays), never committed."
   [model now]
   (if-not (seq (get-in model [:event-subscribers :ramps]))
     model
@@ -607,19 +654,66 @@
         (if-not (seq pending)
           (assoc-in model [:event-subscribers :ramps] kept)
           (let [destination (:destination ramp)]
-            (if (and (#{:param :opacity} (:target destination))
-                     (or (nil? (get-in model [:instances (:instance-id destination)]))
-                         (and (= :param (:target destination)) (nil? (schema-of model destination)))))
+            (cond
+              (and (#{:param :opacity} (:target destination))
+                   (or (nil? (get-in model [:instances (:instance-id destination)]))
+                       (and (= :param (:target destination)) (nil? (schema-of model destination)))))
               (recur (remember model (ramp-entry model ramp :cancelled {:reason :destination-removed})) more kept)
-              (let [[p value] (sample-ramp model ramp beat now)
-                    model (write-destination model destination value)]
+
+              (not= (current-value model destination) (:base ramp))
+              (let [by (last-writer model destination)]
+                (recur (remember model (ramp-entry model ramp :cancelled
+                                                   {:reason (if (human-source? (:source by)) :human-override :superseded)
+                                                    :by (or by {:writer :unknown})}))
+                       more kept))
+
+              :else
+              (let [[p value] (sample-ramp model ramp beat now)]
                 (if (>= p 1.0)
-                  (let [done (assoc ramp :value value :progress 1.0)]
-                    (recur (-> (assoc-in model [:event-subscribers :ramps] (into kept more))
-                               (commit-ramp done now)
-                               (remember (ramp-entry model done :completed {})))
-                           more kept))
-                  (recur model more (conj kept (assoc ramp :value value :progress p))))))))))))
+                  (recur (-> (assoc-in model [:event-subscribers :ramps] (into kept more))
+                             (commit-ramp ramp now)
+                             (remember (ramp-entry model ramp :completed {:value value})))
+                         more kept)
+                  (recur model more (conj kept ramp)))))))))))
+
+(defn frame-overlays
+  "Sample every active ramp for the frozen frame: {:params {id {k v}}
+  :opacity {id v} :master v :variables {k v}}. Overlay values only reach the
+  frame; the committed destination keeps its value until the ramp commits."
+  [model now]
+  (let [beat (get-in model [:transport :beat] 0)]
+    (reduce (fn [out ramp]
+              (let [[_ value] (sample-ramp model ramp beat now)
+                    {:keys [target instance-id param variable]} (:destination ramp)]
+                (case target
+                  :param (assoc-in out [:params instance-id param] value)
+                  :opacity (assoc-in out [:opacity instance-id] value)
+                  :master (assoc out :master value)
+                  :variable (assoc-in out [:variables variable] value))))
+            {} (get-in model [:event-subscribers :ramps]))))
+
+(defn with-frame-overlays
+  "A frame-only model for the engine with ramped master and opacity applied."
+  [model {:keys [master opacity]}]
+  (cond-> model
+    (some? master) (assoc :master master)
+    (seq opacity) (as-> m (reduce-kv (fn [m id v] (if (get-in m [:instances id])
+                                                    (assoc-in m [:instances id :system :opacity] v) m))
+                                     m opacity))))
+
+(defn without-frame-overlays
+  "Restore committed master and opacity after the engine evaluated a frame model."
+  [result committed {:keys [master opacity]}]
+  (cond-> result
+    (some? master) (assoc :master (:master committed))
+    (seq opacity)
+    (as-> m (reduce-kv (fn [m id _]
+                         (cond
+                           (nil? (get-in m [:instances id])) m
+                           (contains? (get-in committed [:instances id :system]) :opacity)
+                           (assoc-in m [:instances id :system :opacity] (get-in committed [:instances id :system :opacity]))
+                           :else (update-in m [:instances id :system] dissoc :opacity)))
+                       m opacity))))
 
 ;; Playback ----------------------------------------------------------------
 
@@ -632,7 +726,7 @@
     (str "sub/" (:epoch model) "/" (:id run) "/" (:index run) "/" n)))
 
 (defn- apply-step [model run base cmd-id cmd]
-  (let [result (spatial/apply-command model (merge base cmd {:command-id cmd-id}))]
+  (let [result (submit-command model (merge base cmd {:command-id cmd-id}))]
     (if (= :accepted (get-in result [:ack :status])) (:model result)
         (report model run (get-in result [:ack :message] "Action rejected")))))
 
@@ -669,20 +763,15 @@
         value (:value action)]
     (case (:op action)
       :blackout/set (apply-step model run base cmd-id {:op :blackout/set :value value})
-      (:macro/run :macro/stop)
-      (let [id (:macro-id action)
-            id (if (contains? (:compositions model) id) id
-                   (some #(when (= (name id) (str %)) %) (keys (:compositions model))))]
-        (check id "Unknown macro" {:macro-id (:macro-id action)})
-        (if (= :macro/run (:op action)) (composition/start model id now) (composition/stop model id now)))
+      ;; Macros run as owner commands with the poster's source in the receipt.
+      (:macro/run :macro/stop) (apply-step model run base cmd-id {:op (:op action) :macro-id (:macro-id action)})
       :param/ramp (start-ramp model run action (cond-> {:target target}
                                                  (= :variable target) (assoc :variable (:variable action))) now)
       (:master/set :param/set :variable/set)
       (case target
         :master (apply-step (supersede model {:target :master} by) run base cmd-id {:op :master/set :value value})
-        :variable (-> (supersede model {:target :variable :variable (:variable action)} by)
-                      (assoc-in [:variables (:variable action)] value)
-                      (update :revision inc))))))
+        :variable (apply-step (supersede model {:target :variable :variable (:variable action)} by)
+                              run base cmd-id {:op :variable/set :variable (:variable action) :value value})))))
 
 (defn- perform [model run action now budget]
   (cond
@@ -781,9 +870,9 @@
           (assoc-in model [:event-subscribers :runs] keep-runs))))))
 
 (defn advance
-  "Apply up to 128 commands per cycle, then sample active ramps. A large :all
-  selection keeps its exact candidate list and cursor across ticks. Other runs
-  can progress during a callback. Due runs fire in due-beat order, then in
+  "Apply up to 128 commands per cycle, then settle ramp lifecycles. A large
+  :all selection keeps its exact candidate list and cursor across ticks. Other
+  runs can progress during a callback. Due runs fire in due-beat order, then in
   admission order."
   [model now results]
   (-> (advance-runs model now results) (advance-ramps now)))
@@ -810,15 +899,14 @@
                                     (throw (ex-info (str "Unknown " (name (namespace (:op action))) " " %) {:id %})))))
       action)))
 
+(defn- macro-key [model id]
+  (registry-key (:compositions model) id))
+
 (defn- check-references [model action]
   (let [{:keys [op select]} action
         ids (:ids select)]
-    (case op
-      (:macro/run :macro/stop)
-      (check (or (contains? (:compositions model) (:macro-id action))
-                 (some #(= (name (:macro-id action)) (str %)) (keys (:compositions model))))
-             "Unknown macro" {:macro-id (:macro-id action)})
-      nil)
+    (when (#{:macro/run :macro/stop} op)
+      (check (macro-key model (:macro-id action)) "Unknown macro" {:macro-id (:macro-id action)}))
     ;; Exact running instance IDs are checked now; cue/effect selectors resolve when due.
     (when (= :param (destination-target action))
       (doseq [id ids :let [instance (get-in model [:instances id])] :when instance
@@ -831,8 +919,24 @@
           (check (rampable-types (:type schema)) "This parameter type cannot ramp; use :param/set"
                  {:instance-id id :param (:param action)}))))))
 
-(defn- scheduled-ids [s]
-  (into (set (keep #(get-in % [:scheduled :event-id]) (:runs s))) (map :event-id) (:ramps s)))
+(defn- agent-source? [source] (and (map? source) (#{:agent "agent"} (:adapter source))))
+
+(defn- check-authority [source action]
+  ;; Human master and blackout stay authoritative over agent plans.
+  (check (not (and (agent-source? source)
+                   (or (#{:master/set :blackout/set} (:op action))
+                       (= :master (destination-target action)))))
+         "Human master and blackout stay authoritative: agents cannot schedule master or blackout changes"
+         {:op (:op action)}))
+
+(defn- scheduled-ids
+  "IDs that cannot be reused: pending events, running ramps and recent outcomes."
+  [s]
+  (-> (set (keep #(get-in % [:scheduled :event-id]) (:runs s)))
+      (into (map :event-id) (:ramps s))
+      (into (map :event-id) (:recent s))))
+
+(defn- position-text [at] (pr-str at))
 
 (defn- prepare-event [model command beat meter index event]
   (try
@@ -844,8 +948,13 @@
       (check (identifier? id) "Event ID must be a keyword or nonblank string" {})
       (check (or (nil? label) (and (string? label) (<= (count label) 128))) "Label must be text up to 128 characters" {})
       (check (not= :callback (:op action)) "Scheduled events use built-in actions; register middleware as a subscriber" {})
+      (check-authority (:source command) action)
       (check-references model action)
       (let [[due anchor] (step-due action beat beat meter)]
+        (check (or (not (contains? action :at)) (>= due beat))
+               (str "Position " (position-text (:at action)) " (beat " (double due) ") has already passed; the transport is at beat "
+                    (double beat) ". Positions are zero-based: {:bar 0} is the first bar.")
+               {:due-beat due :beat beat})
         {:id id :label label :action action :due due :anchor anchor}))
     (catch clojure.lang.ExceptionInfo error
       (throw (ex-info (str "Event " index ": " (.getMessage error))
@@ -864,10 +973,12 @@
         ids (mapv :id prepared)
         taken (scheduled-ids s)]
     (check (apply distinct? ids) "Event IDs must be unique within a batch" {:event-ids ids})
-    (check (not-any? taken ids) "An event with that ID is already scheduled" {:event-ids (filterv taken ids)})
+    (check (not-any? taken ids) "That event ID is already scheduled or recently used; choose a new ID"
+           {:event-ids (filterv taken ids)})
     (check (<= (+ (count (filter :scheduled (:runs s))) (count prepared)) scheduled-limit)
            "The schedule is full" {:limit scheduled-limit})
     {:event-ids ids
+     :due-beats (mapv (comp double :due) prepared)
      :model (reduce (fn [m {:keys [id label action due anchor]}]
                       (let [serial (inc (get-in m [:event-subscribers :next-run]))]
                         (-> m
@@ -894,23 +1005,31 @@
        (or (nil? (:instance-id wanted)) (= (:instance-id wanted) (:instance-id destination))
            (contains? (set ids) (:instance-id wanted)))))
 
+(defn- same-source? [wanted actual]
+  (and (map? actual) (map? wanted)
+       (= (update-vals wanted id-text) (update-vals (select-keys actual (keys wanted)) id-text))))
+
 (defn- selection-match? [{:keys [event-ids posted-by label destination]} event-id run-source run-label dest ids]
   (and (or (nil? event-ids) (contains? (set (map id-text event-ids)) event-id))
-       (or (nil? posted-by) (and (map? run-source) (map? posted-by)
-                                 (= (update-vals posted-by id-text) (update-vals (select-keys run-source (keys posted-by)) id-text))))
+       (or (nil? posted-by) (same-source? posted-by run-source))
        (or (nil? label) (= label run-label))
        (or (nil? destination) (and dest (destination-match? destination dest ids)))))
 
+(defn- requester-owner [source] (select-keys source [:adapter :session-id]))
+
 (defn cancel
   "Cancel scheduled events and running ramps selected by every supplied
-  criterion: :event-ids, :posted-by (a source submap), :label or :destination. A ramp
-  holds its current value."
-  [model {:keys [event-ids posted-by label destination reason] :as request}]
+  criterion: :event-ids, :posted-by (a source submap), :label or :destination.
+  A human operator surface may cancel anything; any other requester (an agent,
+  a reactive action) only what it posted itself. A ramp holds its value."
+  [model {:keys [event-ids reason source] :as request}]
   (check (some #(contains? request %) [:event-ids :posted-by :label :destination])
          "Cancel by event IDs, source, label or destination" {})
   (check (or (nil? event-ids) (and (vector? event-ids) (every? identifier? event-ids))) "Event IDs must be a vector" {})
   (let [criteria (select-keys request [:event-ids :posted-by :label :destination])
-        criteria (cond-> criteria (:destination criteria) (update :destination #(update % :target textual-keyword)))
+        criteria (cond-> criteria
+                   (:destination criteria) (update :destination #(update % :target textual-keyword))
+                   (not (human-source? source)) (assoc :posted-by (requester-owner source)))
         reason (or reason :operator-cancel)
         s (state model)
         run-hit? (fn [run]
@@ -928,34 +1047,56 @@
      :event-ids (vec (distinct (concat (map run-event-id gone) ramp-ids)))}))
 
 (defn move
-  "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}."
-  [model {:keys [event-id] :as request}]
+  "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.
+  Only its poster or a human operator surface may move it."
+  [model {:keys [event-id source] :as request}]
   (let [timing (select-keys request [:at :in :grid])
         meter (get-in model [:transport :meter])
         beat (get-in model [:transport :beat] 0)
         runs (get-in model [:event-subscribers :runs] [])
         index (first (keep-indexed #(when (= (id-text event-id) (get-in %2 [:scheduled :event-id])) %1) runs))]
     (check index "No pending event has that ID" {:event-id event-id})
+    (check (or (human-source? source) (same-source? (requester-owner source) (get-in runs [index :scheduled :source])))
+           "Only the event's poster or a human operator can move it" {:event-id event-id})
     (check (= 1 (count timing)) "Move needs one of :at, :in or :grid" {})
     (let [action (validate-action (merge (apply dissoc (first (:steps (nth runs index))) timing-keys) timing))
           [due anchor] (step-due action beat beat meter)]
-      (assoc-in model [:event-subscribers :runs index]
-                (assoc (nth runs index) :steps [action] :due-beat due :anchor anchor)))))
+      (check (or (not (contains? action :at)) (>= due beat))
+             (str "Position " (position-text (:at action)) " (beat " (double due) ") has already passed") {})
+      [(assoc-in model [:event-subscribers :runs index]
+                 (assoc (nth runs index) :steps [action] :due-beat due :anchor anchor))
+       (double due)])))
 
 (defn apply-operation
-  "Pure [model command] operation for control/apply-domain-command."
+  "Pure [model command] operation for control/apply-domain-command: schedule
+  edits, validated show-variable writes and macro start/stop."
   [model {:keys [op] :as command}]
   (try
     (case op
       :schedule/post
-      (let [{updated :model ids :event-ids} (post model command)]
-        {:model updated :events [{:type :schedule/posted :event-ids ids}] :result {:event-ids ids}})
+      (let [{updated :model ids :event-ids due :due-beats} (post model command)]
+        {:model updated :events [{:type :schedule/posted :event-ids ids}] :result {:event-ids ids :due-beats due}})
       :schedule/cancel
       (let [{:keys [model event-ids]} (cancel model command)]
         {:model model :events [{:type :schedule/cancelled :event-ids event-ids}] :result {:event-ids event-ids}})
       :schedule/move
-      {:model (move model command) :events [{:type :schedule/moved :event-ids [(:event-id command)]}]
-       :result {:event-ids [(:event-id command)]}})
+      (let [[model due] (move model command)]
+        {:model model :events [{:type :schedule/moved :event-ids [(id-text (:event-id command))]}]
+         :result {:event-ids [(id-text (:event-id command))] :due-beats [due]}})
+      :variable/set
+      (let [{:keys [variable value]} command]
+        (check (not (reserved-variable? variable))
+               "That show variable is owned by the runtime; choose your own variable name" {:variable variable})
+        (check (and (some? value) (registry/data? value)) "A variable value must be portable data" {})
+        {:model (assoc-in model [:variables variable] value)
+         :events [{:type :variable/changed :variable variable :value value}]})
+      (:macro/run :macro/stop)
+      (let [id (macro-key model (:macro-id command))]
+        (check id "Unknown macro" {:macro-id (:macro-id command)})
+        {:model (if (= :macro/run op)
+                  (composition/start model id (:time-ms command (:time-ms model)))
+                  (composition/stop model id (:time-ms command (:time-ms model))))
+         :events [{:type (if (= :macro/run op) :macro/started :macro/stopped) :macro-id id}]}))
     (catch clojure.lang.ExceptionInfo error
       (if (:control/error (ex-data error))
         (throw error)
@@ -968,8 +1109,7 @@
   (or (= :param/ramp op)
       (and (some #{op} actions) (not= :callback op)
            (or (contains? command :at) (contains? command :in)
-               (and (contains? command :grid) (not= :cue/launch op)))
-           (not (operations op)))))
+               (and (contains? command :grid) (not= :cue/launch op))))))
 
 (defn as-post
   "Wrap one direct command as a single-event :schedule/post."
@@ -982,21 +1122,35 @@
 
 ;; Clock discontinuities, restart and restore -------------------------------
 
+(def phase-tolerance
+  "A forward clock correction at most this many beats (a Link phase nudge)
+  is continuous: absolute events it crosses fire now instead of being missed."
+  1/4)
+
 (defn rebase-clock
-  "Apply a seek, loop or clock-source change. Relative waits and ramps keep
-  their remaining musical time. Absolute (:at/:grid) events before the new beat
-  are reported missed and dropped, so a later return cannot fire them twice."
+  "Apply a seek, loop or clock-source change. Relative waits and beat ramps keep
+  their remaining musical time. :grid steps re-quantize to the next boundary
+  from the new position. Absolute (:at) events before the new beat are
+  reported missed and dropped, so a later return cannot fire them twice. A
+  small forward correction (<= phase-tolerance) leaves them due now."
   [model offset new-beat]
   (let [runs (get-in model [:event-subscribers :runs] [])
-        missed? #(and (= :absolute (:anchor %)) (< (:due-beat %) new-beat))
+        meter (get-in model [:transport :meter])
+        small? (<= 0 offset phase-tolerance)
+        step #(get (:steps %) (:index %))
+        grid? #(and (= :absolute (:anchor %)) (contains? (step %) :grid))
+        missed? #(and (= :absolute (:anchor %)) (not (grid? %)) (not small?) (< (:due-beat %) new-beat))
         model (reduce #(remember %1 (run-entry %1 %2 :missed {:reason :clock-discontinuity}))
                       model (filter missed? runs))]
     (-> model
         (assoc-in [:event-subscribers :runs]
                   (into [] (comp (remove missed?)
-                                 (map #(if (= :absolute (:anchor %)) %
-                                           (cond-> (update % :due-beat + offset)
-                                             (get-in % [:event :time :beat]) (update-in [:event :time :beat] + offset)))))
+                                 (map #(cond
+                                         (and (grid? %) (not small?))
+                                         (assoc % :due-beat (grid-beat (:grid (step %)) new-beat meter))
+                                         (= :absolute (:anchor %)) %
+                                         :else (cond-> (update % :due-beat + offset)
+                                                 (get-in % [:event :time :beat]) (update-in [:event :time :beat] + offset)))))
                         runs))
         (update :event-subscribers
                 (fn [s] (cond-> s
@@ -1042,11 +1196,13 @@
              (:subscriber run) (assoc :subscriber-id (:subscriber run))))))
 
 (defn- ramp-view [ramp]
-  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :value :curve :unit :over])
-      (assoc :start (double (:start ramp)) :end (double (:end ramp)) :progress (double (:progress ramp 0.0)))))
+  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over])
+      (assoc :start (double (:start ramp)) :end (double (:end ramp)))))
 
 (defn schedule-view
-  "Stable projection shared by Studio, Push, REPL and agents (docs/scheduler.md)."
+  "Stable projection shared by Studio, Push, REPL and agents (docs/scheduler.md).
+  It changes only when the schedule changes; consumers derive a ramp's live
+  progress from :start/:end and the transport beat (or :time-ms for :ms)."
   [model]
   (let [s (state model)
         {:keys [beat bpm meter playing?]} (:transport model)]
@@ -1055,6 +1211,11 @@
      :upcoming (mapv upcoming-entry (sort-by (juxt :due-beat :id) (:runs s)))
      :ramps (mapv ramp-view (:ramps s []))
      :recent (vec (:recent s []))}))
+
+(defn ramp-progress
+  "Read-time [progress value] for a ramp at the model's current clock."
+  [model ramp]
+  (sample-ramp model ramp (get-in model [:transport :beat] 0) (:time-ms model 0)))
 
 (defn- short-destination [{:keys [target instance-id param variable]}]
   (case target
@@ -1069,15 +1230,16 @@
   "Low-token read-back for agents planning a phrase ahead. Positions are
   zero-based transport beats; see :legend."
   [model]
-  (let [{:keys [beat meter upcoming ramps recent bpm]} (schedule-view model)
+  (let [{:keys [beat meter upcoming recent bpm]} (schedule-view model)
         bpb (:beats-per-bar meter)]
-    {:legend {:upcoming [:due-beat :event-id :op :label] :ramps [:event-id :destination :progress :value :to :end-beat]
+    {:legend {:upcoming [:due-beat :event-id :op :label] :ramps [:event-id :destination :progress :value :to :end]
               :recent [:event-id :status :reason]}
      :beat (round3 beat) :bar (long (Math/floor (/ beat bpb))) :beats-per-bar bpb :bpm bpm
      :upcoming (mapv (fn [{:keys [due-beat event-id op label]}] (cond-> [(round3 due-beat) event-id op] label (conj label)))
                      (take 64 upcoming))
-     :ramps (mapv (fn [r] [(:event-id r) (short-destination (:destination r)) (round3 (:progress r))
-                           (if (vector? (:value r)) (mapv round3 (:value r)) (round3 (:value r))) (:to r) (round3 (:end r))])
-                  ramps)
+     :ramps (mapv (fn [r] (let [[p value] (ramp-progress model r)]
+                            [(:event-id r) (short-destination (:destination r)) (round3 p)
+                             (if (vector? value) (mapv round3 value) (round3 value)) (:to r) (round3 (:end r))]))
+                  (get-in model [:event-subscribers :ramps]))
      :recent (mapv (fn [{:keys [event-id status reason]}] (cond-> [event-id status] reason (conj reason)))
                    (take-last 8 recent))}))

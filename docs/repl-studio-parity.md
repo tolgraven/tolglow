@@ -238,6 +238,11 @@ snapshot. Select **Stop** on the ramp and read the outcome back in the REPL:
 ```
 
 Studio's **Stop** and **Cancel** submit `{:op :schedule/cancel :event-ids [id]}`.
+Studio and the REPL are operator surfaces, so they can cancel or move any
+event. An agent can only change what it posted. Studio draws a ramp's progress
+bar from the projection's `:start` and `:end` and the transport beat. Its knob
+keeps showing the committed value until the ramp commits, because the ramp is a
+frame overlay.
 The REPL equivalent is `(show/cancel-events! runtime {:event-ids ["ice-in"]})`.
 While a ramp runs, moving the **Level** control on Ember's active card cancels
 it. `:recent` then records `:reason :human-override`, and the control keeps the

@@ -92,7 +92,8 @@
                       "Each event is an action {op, ...} with optional id, label and one timing key: at {bar|beat|phrase} (zero-based transport position), "
                       "in {beats|bars|phrases} from now, or grid {bars:1} for the next boundary. Ops: cue/launch {cue-id, launch}, instance/end {instance-id}, "
                       "param/set {instance-id|cue-id, param, value}, param/ramp {instance-id|cue-id, param, to, over {beats:8}, curve} "
-                      "(target master|opacity|variable instead of param), master/set {value}, blackout/set {value}, macro/run {macro-id}. "
+                      "(target opacity|variable instead of param; a cue-id addresses every running instance of that cue), variable/set {variable, value}, macro/run {macro-id}. "
+                      "Master and blackout stay with the human operator and cannot be scheduled. A position already passed is rejected. "
                       "Curves: linear, ease-in, ease-out, ease-in-out, sine, smoothstep, step. A ramp starts from the current value; the show animates it.")
     :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}}
                  :required ["events"] :additionalProperties false}}

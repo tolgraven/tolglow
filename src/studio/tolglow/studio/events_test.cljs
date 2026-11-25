@@ -571,16 +571,18 @@
                                         :label "Drop" :due-beat 8.0}
                                        {:event-id "subscriber/kicks/3" :origin :subscriber :op :cue/launch
                                         :category :cue :due-beat 2.5}]
-                  :ramps [{:event-id "swell" :label "Swell" :to 0.8 :progress 0.25 :end 10.0
+                  :ramps [{:event-id "swell" :label "Swell" :to 0.8 :start 2.0 :end 10.0 :unit :beats
                            :destination {:target :param :instance-id "1:1" :param :level}}]
                   :recent []}
-        installed (:db (full-frame base (assoc (:show base) :show-id :main :runtime-id "host" :schedule schedule)))
+        installed (:db (full-frame base (assoc (:show base) :show-id :main :runtime-id "host" :schedule schedule
+                                                         :transport (assoc (get-in base [:show :transport]) :beat 4.0))))
         html (renderToStaticMarkup (r/as-element [views/scheduled-events installed]))
         cancel (first-command (transition installed [:studio/command "schedule/cancel" {:event-ids ["drop"]}]))]
     (is (str/includes? html "Scheduled"))
     (is (str/includes? html "Drop · beat 8"))
     (is (not (str/includes? html "subscriber/kicks")) "subscriber steps stay in Debug")
     (is (str/includes? html "Swell → 0.8 by beat 10"))
+    (is (str/includes? html "value=\"0.25\"") "progress is derived from the transport beat (4 of 2..10)")
     (is (str/includes? html "Cancel scheduled Drop"))
     (is (str/includes? html "Stop ramp Swell"))
     (is (= "schedule/cancel" (:op cancel)))
