@@ -41,9 +41,14 @@
   (doseq [[schema base endpoints] [[{:type :boolean} true [false true]]
                                   [{:type :integer :bounds [0 255]} 64 [0 255]]
                                   [{:type :integer :bounds [1.2 4.8]} 2 [2 4]]
+                                  [{:type :integer :recommended [1.2 4.8]} 2 [2 4]]
+                                  [{:type :integer :recommended [1.2 1.8]} 2 [0 1]]
                                   [{:type :color} [1 0 0] [[0 0 0] [1 1 1]]]
                                   [{:type :color :bounds [-1 0.8]} [0 0.2 0.4] [[0 0 0] [0.8 0.8 0.8]]]
-                                  [{:type :color :bounds [0.2 2]} [0.2 0.4 0.6] [[0.2 0.2 0.2] [1 1 1]]]
+                                  [{:type :color :bounds [0.2 2] :recommended [0.4 0.6]} [0.2 0.4 0.6] [[0.2 0.2 0.2] [1 1 1]]]
+                                  [{:type :color :recommended [0.2 3]} [0.2 0.4 0.6] [[0.2 0.2 0.2] [1 1 1]]]
+                                  [{:type :color :recommended [2 3]} [0.2 0.4 0.6] [[0 0 0] [1 1 1]]]
+                                  [{:type :color :recommended [-3 -2]} [0.2 0.4 0.6] [[0 0 0] [1 1 1]]]
                                   [{:type :vector :size 3 :bounds [-1 1]} [0 0 0] [[-1 -1 -1] [1 1 1]]]]]
     (is (= endpoints ((juxt :from :to) (source/draft schema base nil)))))
   (is (thrown? js/Error (source/binding-config (assoc (source/draft {} 0 nil) :period "0")))))

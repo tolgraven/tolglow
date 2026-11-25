@@ -248,7 +248,9 @@
     [lo hi]))
 
 (defn- bounds [schema base]
-  (let [[lo hi] (numeric-bounds schema (or (:bounds schema) (:recommended schema) [0 1]))]
+  (let [[lo hi :as limits] (numeric-bounds schema (or (:bounds schema) (:recommended schema) [0 1]))
+        ;; A recommendation can miss the color range or contain no integer.
+        [lo hi] (if (<= lo hi) limits [0 1])]
     (cond
       (seq (options schema)) [(first (options schema)) (last (options schema))]
       (= :boolean (keyword (:type schema))) [false true]
