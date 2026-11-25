@@ -2203,7 +2203,8 @@
                            {:op :schedule/post :events (vec events)}))))
 
 (defn cancel-events!
-  "Cancel scheduled events and running ramps by :event-ids, :source, :label or :destination."
+  "Cancel scheduled events and running ramps by :event-ids, :posted-by (a
+  source submap), :label or :destination. A cancelled ramp holds its current value."
   [runtime selection]
   (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} selection {:op :schedule/cancel})))
 
