@@ -11,6 +11,7 @@
             [tolglow.qa.live-pickup :as pickup])
   (:import [java.net InetSocketAddress]
            [java.io ByteArrayOutputStream]
+           [java.util.concurrent LinkedBlockingQueue TimeUnit]
            [javax.sound.midi MidiSystem ShortMessage]
            [com.sun.net.httpserver HttpServer HttpHandler]))
 
@@ -430,4 +431,35 @@
       (is (some? (live-sync/parameter-routing manager)))
       (sync/stop! manager)
       (is (nil? (live-sync/parameter-routing manager)))
+      (finally (sync/close! manager)))))
+
+(deftest polled-forward-seek-fences-clock-without-treating-tempo-or-latency-as-a-seek
+  (let [now (atom 0)
+        sample (atom {:beat 10 :bpm 120 :latency-ms 20})
+        statuses (LinkedBlockingQueue.)
+        manager (live-sync/create-manager
+                 {:now-ms #(deref now)
+                  :config {:selected-source :ableton-live :live {:enabled? true :poll-ms 500}}
+                  :live-factory (fn [_]
+                                  {:open! (fn [_] :live) :close! (fn [_])
+                                   :request! (fn [_ id _ _]
+                                               (let [{:keys [beat bpm latency-ms]} @sample]
+                                                 (swap! now + latency-ms)
+                                                 {:id id :status :executed
+                                                  :result {:clock {:beat beat :bpm bpm :playing? true}}}))})})
+        await-status! #(.poll statuses 2 TimeUnit/SECONDS)
+        source-epoch #(get-in (session/clock-at manager @now) [:clock :source-epoch])]
+    (try
+      (sync/start! manager {:events! #(when (= :live/status (:type %)) (.add statuses (:status %)))})
+      (is (= 10 (get-in (await-status!) [:clock :beat])))
+      (let [epoch (source-epoch)]
+        (doseq [[start-ms beat bpm latency-ms expected]
+                [[500 111/10 180 20 epoch]
+                 [1000 111/5 180 300 epoch]
+                 [1500 221/5 180 20 (inc epoch)]
+                 [2000 457/10 180 20 (inc epoch)]]]
+          (reset! sample {:beat beat :bpm bpm :latency-ms latency-ms})
+          (reset! now start-ms)
+          (is (= beat (get-in (await-status!) [:clock :beat])))
+          (is (= expected (source-epoch)))))
       (finally (sync/close! manager)))))

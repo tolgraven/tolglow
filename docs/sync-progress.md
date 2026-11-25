@@ -141,6 +141,11 @@ Note-off after acceptance ends the instance named by the receipt. Graceful
 handoff or stop releases held cues and asks the owner to cancel pending
 launches. The host returns receipts through `acknowledge!`. A receipt from a
 prior run or an earlier press leaves the current note binding alone.
+Polled Live clock samples flag forward jumps beyond what can occur within the
+elapsed time at Live's documented maximum tempo. The calculation includes
+request round-trip windows and a quarter beat of measurement tolerance.
+Smaller forward seeks can look like ordinary progress between polls.
+[Live Object Model Song transport](https://docs.cycling74.com/apiref/lom/song/#tempo)
 
 After publishing a control receipt, the host calls
 `record! manager stamped-command acknowledgement`. Recording requires fresh,

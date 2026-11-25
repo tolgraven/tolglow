@@ -169,7 +169,16 @@
           (cond-> (assoc sample :beat (clip-beat-at sample delta))
             (finite? (:song-beat sample)) (update :song-beat + delta)))))))
 
-(defn- process-status! [manager run result at-ms round-trip-ms]
+(defn- forward-jump? [previous current]
+  (when (and previous current (<= (:at-ms previous) (:at-ms current)))
+    (let [elapsed-ms (+ (- (:at-ms current) (:at-ms previous))
+                        (/ (+ (:round-trip-ms previous) (:round-trip-ms current)) 2.0))
+          ;; LOM Song.tempo can automate anywhere in 20–999 BPM between polls.
+          ;; Use the full range and allow a quarter beat of measurement error.
+          max-progress (+ 1/4 (* 999 (/ elapsed-ms 60000.0)))]
+      (> (- (:beat current) (:beat previous)) max-progress))))
+
+(defn- process-status! [manager run result at-ms round-trip-ms polled?]
   (let [config (:config @(:state manager)) source (get-in config [:live :source-id])
         transport (:clock result)
         recording (assoc result :sampled-at-ms at-ms :round-trip-ms round-trip-ms)]
@@ -179,8 +188,14 @@
                    (or (nil? transport) (and (map? transport) (finite? (:bpm transport)) (pos? (:bpm transport)))))
       (fail! :invalid-live-status "Invalid Live status timing"))
     (when transport
-      (apply-clock! manager run (merge transport {:type :clock :kind :ableton-live :source-id source :time-ms at-ms
-                                                :confidence (max 0.0 (- 1.0 (/ round-trip-ms (/ 60000.0 (:bpm transport 120)))))})))
+      (let [sample (when (and polled? (finite? (:beat transport)))
+                     {:at-ms at-ms :round-trip-ms round-trip-ms :beat (:beat transport)})
+            previous @(:polled-position run)
+            clock (merge transport {:type :clock :kind :ableton-live :source-id source :time-ms at-ms
+                                    :confidence (max 0.0 (- 1.0 (/ round-trip-ms (/ 60000.0 (:bpm transport 120)))))})]
+        (apply-clock! manager run (cond-> clock (forward-jump? previous sample) (assoc :discontinuity? true)))
+        (when (or sample (:discontinuity? transport))
+          (reset! (:polled-position run) sample))))
     (when (and (:mode result) (compare-and-set! (:setup-mode? run) false true)
                (not= (keyword (:mode result)) (get-in config [:live :mode])))
       (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (get-in config [:live :mode])}))
@@ -256,7 +271,7 @@
 (defn- receive-response! [manager run {:keys [op response status-version time-ms round-trip-ms payload]}]
   (when (and (= :executed (:status response)) (#{:inspect :configure-destination} op))
     (if (= status-version @(:status-version run))
-      (process-status! manager run (:result response) time-ms round-trip-ms)
+      (process-status! manager run (:result response) time-ms round-trip-ms true)
       (swap! (:state manager) update-in [:metrics :stale-live-statuses] (fnil inc 0))))
   (when (= :executed (:status response))
     (case op
@@ -274,7 +289,7 @@
 (defn- receive! [manager run event at]
   (case (:type event)
     :midi/control (midi-control! manager run (update (:event event) :time-ms #(or % at)))
-    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0))
+    :live/status (do (process-status! manager run (:status event) (get event :time-ms at) (get event :round-trip-ms 0.0) false)
                      (swap! (:status-version run) inc))
     (:live/parameter :live/parameter-error) (receive-parameter! manager run event)
     :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
@@ -297,7 +312,7 @@
 
 (defn- run-state []
   {:status-version (atom 0) :parameter-generation (atom nil) :setup-watchers? (atom false) :setup-mode? (atom false) :mirrored-pair (atom nil)
-   :poll-pending? (atom false) :next-poll (atom 0) :callback-ids (atom [])})
+   :poll-pending? (atom false) :next-poll (atom 0) :callback-ids (atom []) :polled-position (atom nil)})
 
 (defn- tick! [manager run now]
   (when (and (:live @(:resources run)) (>= now @(:next-poll run))
@@ -313,6 +328,7 @@
               (when-let [pairing (get-in @(:state manager) [:config :live :pairing])]
                 (live-request! manager run (str (UUID/randomUUID)) :configure-destination pairing)))
     :rebind (do (reset! (:callback-ids run) []) (reset! (:poll-pending? run) false)
+                (reset! (:polled-position run) nil)
                 (reset! (:setup-watchers? run) false) (reset! (:parameter-generation run) nil))
     :stopping (release-held! manager run)))
 
