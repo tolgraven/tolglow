@@ -342,7 +342,7 @@
       :capture-effect-samples? (:capture-effect-samples? options)
       :browser-observations browser-inputs
       :observers (atom {}) :frame-rate (get options :frame-rate 40)
-      :publisher publisher :presentation-clock (volatile! 0)
+      :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
       :leases (atom {})
@@ -848,36 +848,97 @@
                                 [model state] commands)]
       (-> model (assoc-in [:auto :state] state) (assoc-in [:auto :reasons] reasons))) model))
 
-(defn- prepare-output [runtime {:keys [compiled retirement]} universes {:keys [safety-state stale-source?]}]
+(defn- output-retirement [runtime {:keys [compiled retirement] :as context}]
+  (let [{wire-context :context wire-plan :plan :keys [possible] :as wire} @(:wire-retirement runtime)]
+    (if (and (identical? context wire-context) (nil? possible))
+      wire
+      (let [previous (:compiled wire-context)
+            ;; A partial handoff can already drive a pump. Keep its off byte ahead
+            ;; of light off bytes for unclaimed slots. Within fog, prefer the last
+            ;; complete handoff, then the most recent possible fog encoding.
+            fog-off (merge (:fog-off-bytes possible) (:fog-off-bytes wire))
+            plan (if (or wire-context possible)
+                   (retirement/plan {:known (into (:known retirement) (concat (:known wire-plan) (:known possible)))
+                                     :held (merge (:held retirement) (:held possible) (:held wire-plan)
+                                                  (render/physical-off-bytes previous) fog-off)}
+                                    nil compiled)
+                   retirement)]
+        {:context context :plan plan
+         ;; The current patch claims slots on a complete handoff, clearing any
+         ;; old fog byte there. A retired, still unclaimed fog slot keeps its byte.
+         :fog-off-bytes (merge (select-keys fog-off (keys (:held plan))) (:fog-off-bytes compiled))}))))
+
+(defn- guard-output [runtime compiled retirement universes {:keys [safety-state stale-source?]}]
   (let [packet (retirement/include-retired retirement universes)]
     (if (seq safety-state)
       (fog-deadline/guard-source @(:fog-deadlines runtime) compiled packet safety-state
                                  ((get-in runtime [:publisher :now-ms])) stale-source?)
       packet)))
 
-(defn- prepare-safety-output [runtime universes {:keys [output-context stale-source? uncertain?] :as source}]
-  (let [{:keys [compiled retirement]} output-context
+(defn- prepare-output [runtime context universes source]
+  (let [{:keys [plan] :as wire} (output-retirement runtime context)]
+    (vary-meta (guard-output runtime (:compiled context) plan universes source)
+               assoc ::wire-retirement wire)))
+
+(defn- hold-unchanged-fixtures
+  "Start with current idle output. Preserve complete wire values for compatible
+  channels and use current off values for fog."
+  [compiled wire-patch universes]
+  (let [output (render/idle-universes compiled)
+        mapping [:universe :address :footprint :channels]]
+    (doseq [{:keys [id compiled-channels] :as fixture} (:fixtures compiled)
+            :let [previous (get-in wire-patch [:by-id id])]
+            :when (and previous (= (select-keys fixture mapping) (select-keys previous mapping)))
+            [attribute channel] compiled-channels
+            :when (not= :fog attribute)
+            :let [slots (keep channel [:coarse :fine])]
+            :when (every? (fn [[universe _]] (contains? universes universe)) slots)
+            [universe index] slots]
+      (aset-byte ^bytes (get output universe) (int index)
+                 (aget ^bytes (get universes universe) (int index))))
+    output))
+
+(defn- prepare-safety-output
+  [runtime universes {:keys [output-context wire-patch stale-source? uncertain?] :as source}]
+  (let [compiled (:compiled output-context)
+        {retirement :plan :as wire} (output-retirement runtime output-context)
+        layout-changed? (and (contains? source :wire-patch) (not= wire-patch compiled))
         off-bytes (:fog-off-bytes compiled)
-        corrected (prepare-output runtime output-context universes source)
-        corrected (if (and (or stale-source? uncertain?) (seq off-bytes))
-                    ;; Old light bytes may now address a pump. Recover it using
-                    ;; the current patch, even if its universe was absent before.
+        corrected (if layout-changed?
+                    (retirement/include-retired retirement (hold-unchanged-fixtures compiled wire-patch universes))
+                    (guard-output runtime compiled retirement universes source))
+        corrected (if (and (not layout-changed?) (or stale-source? uncertain?) (seq off-bytes))
                     (let [missing (into #{} (comp (map (comp first key)) (remove #(contains? corrected %))) off-bytes)
                           packet (if (seq missing) (merge corrected (select-keys (render/idle-universes compiled) missing)) corrected)]
                       (fog-deadline/apply-off-bytes packet off-bytes))
                     corrected)]
     ;; A transport can fail after writing only part of the attempted packet.
-    (when (or (and uncertain? (or (seq off-bytes) (seq (:held retirement))))
+    (when (or (and uncertain? (or layout-changed? (seq off-bytes) (seq (:held retirement))))
               (and (not (identical? universes corrected))
                    (some (fn [[universe ^bytes bytes]]
                            (not (Arrays/equals ^bytes (get universes universe) bytes)))
                          corrected)))
-      corrected)))
+      (vary-meta corrected assoc ::wire-retirement wire))))
 
 (defn- present-output! [runtime packet frame-number]
-  ((get-in runtime [:sink :send!]) packet frame-number)
-  (when (:plan @(:venue-fog runtime))
-    (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet)))
+  (let [metadata (meta packet)
+        {:keys [context plan] :as wire} (::wire-retirement metadata)]
+    (try
+      ((get-in runtime [:sink :send!]) (with-meta packet (dissoc metadata ::wire-retirement)) frame-number)
+      (when (:plan @(:venue-fog runtime))
+        (venue-fog/presented! (:venue-fog runtime) ((get-in runtime [:publisher :now-ms])) packet))
+      (catch Exception error
+        ;; A failed handoff may already have driven some universes. Remember one
+        ;; possible off byte per slot and one possible fog off byte per fog slot.
+        (let [compiled (:compiled context)
+              off-bytes (render/physical-off-bytes compiled)]
+          (swap! (:wire-retirement runtime) update :possible
+                 (fn [{:keys [known held fog-off-bytes]}]
+                   {:known (into (or known #{}) (:known plan))
+                    :held (merge held (:held plan) off-bytes)
+                    :fog-off-bytes (merge fog-off-bytes (:fog-off-bytes compiled))})))
+        (throw error)))
+    (reset! (:wire-retirement runtime) wire)))
 
 (defn- send-output! [runtime universes frame-number fog-demands]
   (when (get-in runtime [:sink :send!])
