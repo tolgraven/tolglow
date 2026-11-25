@@ -5,6 +5,7 @@
             [tolglow.integrations.gdtf-test :as gdtf-data]))
 
 (def manufacturers {"example" {"name" "Example Lighting" "fixtureCount" 2 "color" "#ffffff"}})
+
 (def catalog {"key" "example" "name" "Example Lighting" "fixtures"
               [{"key" "head" "name" "RGBW Head" "categories" ["Moving Head"]}
                {"key" "wash" "name" "Wide Wash" "categories" ["Color Changer"]}]

@@ -17,7 +17,9 @@
 (def state-path [:extensions ::world])
 
 (defn body [context [_ id]] (get-in @(:db context) [:variables :spatial :signals id]))
+
 (defn scene [context _] (get-in @(:db context) [:variables :spatial :signals] {}))
+
 (defn members [context [_ id]] (get-in @(:db context) [:variables :spatial :members id] #{}))
 
 (defn register! [system existing]

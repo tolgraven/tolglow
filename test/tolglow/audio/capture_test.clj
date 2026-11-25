@@ -5,7 +5,9 @@
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def config {:default? true :sample-rate 48000.0 :channels 1 :block-frames 480})
+
 (defn close? [a b] (< (Math/abs (double (- a b))) 1.0e-9))
+
 (defn pcm [values big-endian?]
   (byte-array (mapcat (fn [value]
                        (let [u (bit-and value 65535) low (unchecked-byte (bit-and u 255)) high (unchecked-byte (bit-shift-right u 8))]

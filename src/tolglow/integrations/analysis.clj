@@ -7,7 +7,9 @@
             [tolglow.integrations.sections :as sections]))
 
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- clamp [x lo hi] (max lo (min hi x)))
+
 (defn- approach [old value elapsed-ms time-constant-ms]
   (+ old (* (- 1.0 (Math/exp (/ (- elapsed-ms) time-constant-ms))) (- value old))))
 

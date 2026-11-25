@@ -6,7 +6,9 @@
            [java.nio.file.attribute FileAttribute PosixFilePermissions]))
 
 (def no-links (make-array LinkOption 0))
+
 (defn temp-directory [] (Files/createTempDirectory "tolglow-credential-test-" (make-array FileAttribute 0)))
+
 (defn remove-tree! [path]
   (doseq [file (reverse (file-seq (.toFile path)))] (.delete file)))
 

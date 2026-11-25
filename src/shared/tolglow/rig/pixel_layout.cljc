@@ -12,6 +12,7 @@
 
 ;; Submitted specs can represent many more heads than there are bytes in the request.
 (def max-pixels 131072)
+
 (def ^:private last-universe 2147483647)
 
 (defn- invalid! [field message]

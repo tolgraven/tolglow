@@ -5,6 +5,7 @@
 (def ring {:shape :difference
            :parts [{:shape :rounded-box :position [0 0 0] :size [2.6 2.2 1.5] :rounding 0.84}
                    {:shape :sphere :position [0 0 0] :radius 0.55 :scale [1 1 4]}]})
+
 (defn ball [position] {:volume {:shape :ball :position position :radius 1 :geometry ring}
                        :paint {:color [0.1 0.6 0.9]} :position position :deformation 0.1})
 

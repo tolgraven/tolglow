@@ -60,11 +60,17 @@
     state))
 
 (defn agents [connections] (get-in (live-state connections) [:bundle :agents]))
+
 (defn audio [connections] (get-in (live-state connections) [:bundle :audio]))
+
 (defn fixtures [connections] (get-in (live-state connections) [:bundle :fixtures]))
+
 (defn reactive [connections] (get-in (live-state connections) [:bundle :reactive]))
+
 (defn sync [connections] (get-in (live-state connections) [:bundle :sync]))
+
 (defn repls [connections] (get-in (live-state connections) [:bundle :repls]))
+
 (defn sensors [connections] (get-in (live-state connections) [:bundle :sensors]))
 
 (defn observe-status!

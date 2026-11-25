@@ -7,6 +7,7 @@
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn result [receipt] (deref (:completion receipt) 3000 ::timeout))
+
 (defn entered? [^CountDownLatch latch] (.await latch 2 TimeUnit/SECONDS))
 
 (deftest manager-is-inert-and-owns-a-bounded-set-of-distinct-live-sessions

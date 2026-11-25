@@ -30,11 +30,14 @@
                       :instances {"0:1" (instance "0:1" definition)}})))
 
 (defn frame [beat] {:beat beat :time-ms (* beat 500.0)})
+
 (defn start
   ([] (start {}))
   ([config] (modulation/start (modulation/new-state)
                               (merge {:id :random :seed 7 :params [:level]} config) (frame 0))))
+
 (defn level [result] (get-in result [:overrides "0:1" :level]))
+
 (defn controller [result] (first (get-in result [:state :controllers])))
 
 (deftest fractional-musical-steps-catch-up-and-pause-with-identical-seed-state

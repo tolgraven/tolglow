@@ -8,22 +8,30 @@
             [tolglow.studio.events :as events]))
 
 (def radians (/ js/Math.PI 180))
+
 (def sample-period-ms 50)
+
 (def sample-freshness-ms 250)
+
 (defn finite? [x] (and (number? x) (js/Number.isFinite x)))
+
 (defn- measured [out value key scale]
   (if (finite? value) (assoc out key (* scale value)) out))
+
 (defn normalize-motion [sample]
   (reduce (fn [out [path key scale]] (measured out (get-in sample path) key scale)) {}
           [[[:acceleration :x] :accel-x 1] [[:acceleration :y] :accel-y 1] [[:acceleration :z] :accel-z 1]
            [[:rotationRate :beta] :rotation-x radians] [[:rotationRate :gamma] :rotation-y radians]
            [[:rotationRate :alpha] :rotation-z radians]]))
+
 (defn normalize-orientation [sample]
   (reduce (fn [out [key target]] (measured out (get sample key) target radians)) {}
           [[:alpha :orientation-alpha] [:beta :orientation-beta] [:gamma :orientation-gamma]]))
+
 (defn fresh-values [values now]
   (into {} (keep (fn [[key {:keys [value at]}]]
                   (when (and (finite? value) (<= 0 (- now at) sample-freshness-ms)) [key value]))) values))
+
 (def preview-config
   {:version 1 :timeout-ms 500
    :channels [{:id :tilt :input :orientation-beta :calibrated? true :smoothing-ms 40
@@ -32,19 +40,26 @@
               {:id :acceleration :input {:op :magnitude :inputs [:accel-x :accel-y :accel-z]} :smoothing-ms 20}
               {:id :rotation :input {:op :magnitude :inputs [:rotation-x :rotation-y :rotation-z]} :smoothing-ms 20}]
    :bindings [] :triggers [] :gestures []})
+
 (def defaults {:visible? false :generation 0 :device-id nil :label "Browser motion" :paired? false
                :capture :stopped :session-id nil :pending #{} :polling? false :status nil :error nil
                :values {} :received 0 :sent 0 :age-ms nil :permission nil
                :mapping {:instance-id "" :param "" :cue-id ""} :source (pr-str preview-config)
                :osc-host "127.0.0.1" :osc-port "9001"})
+
 (defn state [db] (merge defaults (:sensors db)))
+
 (defn token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn current? [db request-token] (= request-token (token db)))
+
 (defn source-state [s] (some #(when (= (:device-id s) (:device-id %)) %) (get-in s [:status :sources])))
+
 (defn instance-params [db id]
   (when-let [instance (some #(when (= id (:id %)) %) (get-in db [:show :instances]))]
     (or (get-in instance [:definition :params])
         (:params (some #(when (= (:effect-id instance) (:id %)) %) (get-in db [:show :effects]))))))
+
 (defn mapping-config [db]
   (let [{:keys [instance-id param cue-id]} (:mapping (state db))
         schemas (instance-params db instance-id)
@@ -68,8 +83,11 @@
 
 ;; Tokens, listener handles and in-flight transport live only at this IO boundary.
 (defonce resources (atom {:credentials {} :run nil}))
+
 (defn- alive? [run-id] (= run-id (get-in @resources [:run :id])))
+
 (defn- ignore-error [promise] (when promise (.catch (js/Promise.resolve promise) (fn [_] nil))))
+
 (defn- disarm! [run]
   (when (:session-id run)
     (ignore-error
@@ -77,6 +95,7 @@
                 #js {:method "POST" :keepalive true :headers #js {"Content-Type" "application/json"}
                      :body (js/JSON.stringify (clj->js {:device-id (:device-id run) :session-id (:session-id run)
                                                        :armed? false :runtime-id (:runtime-id run) :expected-epoch (:epoch run)}))}))))
+
 (defn stop-capture! [forget?]
   (let [run (:run @resources)]
     (swap! resources assoc :run nil)
@@ -93,12 +112,14 @@
   (if (and constructor (fn? (aget constructor "requestPermission")))
     (js-invoke constructor "requestPermission")
     (js/Promise.resolve (if constructor "available" "unavailable"))))
+
 (defn event-values [kind sample]
   ((if (= kind :motion) normalize-motion normalize-orientation)
    (if (= kind :motion)
      {:acceleration (let [v (aget sample "acceleration")] (when v {:x (aget v "x") :y (aget v "y") :z (aget v "z")}))
       :rotationRate (let [v (aget sample "rotationRate")] (when v {:alpha (aget v "alpha") :beta (aget v "beta") :gamma (aget v "gamma")}))}
      {:alpha (aget sample "alpha") :beta (aget sample "beta") :gamma (aget sample "gamma")})))
+
 (defn- receive! [id kind sample]
   (when (alive? id)
     (let [now (.now js/performance) values (event-values kind sample)]
@@ -106,6 +127,7 @@
         (swap! resources update :run
                (fn [run] (-> run (update :received inc) (assoc :dirty? true :last-at now)
                              (update :values merge (into {} (map (fn [[k value]] [k {:value value :at now}])) values)))))))))
+
 (defn- send-sample! [id]
   (when (alive? id)
     (let [run (:run @resources) now (.now js/performance)
@@ -135,6 +157,7 @@
                           (rf/dispatch [:sensors/capture-failed (:token run) (events/error-message error)]))))
               (.finally (fn [] (js/clearTimeout timeout)
                           (when (alive? id) (swap! resources update :run dissoc :sending? :controller))))))))))
+
 (defn start-capture! [{:keys [device-id request-token session-id] :as options}]
   (stop-capture! false)
   (let [[runtime-id epoch] request-token credential (get-in @resources [:credentials device-id])
@@ -301,7 +324,9 @@
     (when (and (:armed? (source-state (state db))) (= :listening (:capture (state db)))) {:sensors/pulse true})))
 
 (defn- edit! [path value] (rf/dispatch-sync [:sensors/edit path value]))
+
 (defn- number-text [value] (if (finite? value) (.toFixed value 3) "—"))
+
 (defn sensor-panel [db s]
   (let [source (source-state s) armed? (boolean (:armed? source)) pending? (boolean (seq (:pending s)))
         listening? (= :listening (:capture s)) available? (boolean (seq (:values s)))
@@ -372,6 +397,7 @@
        [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/start])} "Start OSC receiver"]
        [:button.button {:disabled pending? :on-click #(rf/dispatch [:sensors/action :osc/stop])} "Stop OSC receiver"]]
       [:pre (pr-str (get-in s [:status :udp]))]]]))
+
 (def panel
   (r/create-class {:display-name "Phone motion"
                    :component-did-mount (fn [_] (rf/dispatch [:sensors/open]))

@@ -14,9 +14,12 @@
    :paint {:color [1 0.35 0.1]} :members [] :path [] :add-shape :sphere :undo []})
 
 (defn model [db] (or (:sculpt (drafts/state db)) initial))
+
 (defn- put [db draft] (drafts/update-ui db assoc :sculpt draft))
+
 (defn- remember [draft]
   (update draft :undo #(vec (take-last 25 (conj % (select-keys draft [:volume :path]))))))
+
 (defn- field [draft path v]
   (let [draft (if (= :volume (first path)) (remember draft) draft)]
     (assoc-in draft path v)))
@@ -135,8 +138,11 @@
     (if (matches? db owner token) (put db (-> (model db) (dissoc :pending) (assoc :message (str error)))) db)))
 
 (defn- dispatch! [event] (rf/dispatch-sync event))
+
 (defn- assign! [path value] (dispatch! [::set path value]))
+
 (defn- value [e] (.. e -target -value))
+
 (defn- choices [caption options selected change!]
   [:label caption
    [:select {:aria-label caption :value (pr-str selected)
@@ -144,6 +150,7 @@
     (for [[v label] options] ^{:key (pr-str v)} [:option {:value (pr-str v)} label])]])
 
 (def shape-options [[:box "Cube"] [:rounded-box "Rounded box"] [:sphere "Sphere"]])
+
 (defn- controls [draft]
   (let [{:keys [volume path add-shape]} draft
         at (into [:volume] path)
@@ -191,6 +198,7 @@
 
 (defn- hex-color [rgb]
   (str "#" (apply str (map #(.padStart (.toString (js/Math.round (* 255 %)) 16) 2 "0") rgb))))
+
 (defn- rgb-color [hex] (mapv #(/ (js/parseInt (subs hex % (+ 2 %)) 16) 255) [1 3 5]))
 (rf/reg-sub ::scenes
   (fn [db _] (filterv #(= :macro (:mode %)) (:compositions (picker/show db)))))

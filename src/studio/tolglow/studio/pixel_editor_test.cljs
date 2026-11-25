@@ -5,8 +5,10 @@
             [tolglow.studio.rig-editor :as editor]))
 
 (def rig {:fixtures [{:id "spot" :universe 2 :address 1 :position [0 2 0]}]})
+
 (def db {:show {:runtime-id "r" :show-id "s" :epoch 1 :rig rig}
          :ui {:rig-draft rig}})
+
 (defn pointer [db type fields]
   (editor/interaction db (merge {:type type :identity (editor/identity-key db) :token 4} fields)))
 

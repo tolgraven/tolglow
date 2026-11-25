@@ -7,6 +7,7 @@
            [java.nio.charset CharsetDecoder StandardCharsets]))
 
 (def ^:private ^:const sample-period-ns 35000000)
+
 (def ^:private chunk-size 4096)
 
 (defn- socket-address [path]
@@ -104,6 +105,13 @@
       {:alignment (:alignment state) :revoked? true}
       (catch Throwable error
         {:alignment (:alignment state) :revoked? false :revoke-error error}))))
+
+(defn validate-options!
+  "Validate trusted local player options without opening a socket."
+  [{:keys [socket-path provenance catalog adapter-options] :as options}]
+  (socket-address socket-path)
+  (observations/connect provenance catalog adapter-options)
+  options)
 
 (defn open!
   "Start observing an existing trusted mpv socket at an absolute :socket-path.

@@ -10,13 +10,17 @@
 
 (defn identity-key [db]
   (js/JSON.stringify (clj->js (mapv #(get-in db [:show %]) [:runtime-id :show-id :epoch]))))
+
 (def defaults {:tool "navigate" :plane "xz" :plane-value 0 :snap 0.1 :points [] :targets [] :undo []
                :aim-mode "together" :along "u" :surface-id "floor" :aim-point [0 0 0]
                :path {:id "drawn-path" :name "Drawn path" :duration-value 4 :duration-unit "bars" :mode "loop" :curve "linear" :closed? false}})
+
 (defn editor [db]
   (let [state (get-in db [:ui :rig-editor])]
     (if (= (:identity state) (identity-key db)) state (assoc defaults :identity (identity-key db)))))
+
 (defn put-editor [db state] (assoc-in db [:ui :rig-editor] state))
+
 (defn rebase-editor [db]
   (if-let [previous (get-in db [:ui :rig-editor :identity])]
     (if (= previous (identity-key db)) db
@@ -27,23 +31,30 @@
     :after (fn [context] (if (get-in context [:effects :db]) (update-in context [:effects :db] rebase-editor) context))))
 
 (defn finite-point? [point] (and (vector? point) (= 3 (count point)) (every? #(and (number? %) (js/Number.isFinite %) (<= (js/Math.abs %) 10000)) point)))
+
 (defn item-index [db selection]
   (first (keep-indexed #(when (= (str (:id %2)) (str (:id selection))) %1)
                       (get-in db [:ui :rig-draft (keyword (:kind selection))]))))
+
 (def selection-keys [:points :selected-point :pixel-id :pixel-mode :pixel-index :anchor-index])
+
 (defn checkpoint [db state]
   (assoc (select-keys state selection-keys) :rig (get-in db [:ui :rig-draft])))
+
 (defn remember [db state]
   (update state :undo #(vec (take-last 30 (conj (or % []) (checkpoint db state))))))
+
 (defn restore-checkpoint [db state saved]
   (-> db (assoc-in [:ui :rig-draft] (:rig saved))
       (assoc-in [:ui :rig-dirty?] (not= (:rig saved) (get-in db [:show :rig])))
       (put-editor (merge (apply dissoc state selection-keys) (select-keys saved selection-keys)))))
+
 (defn set-pose [db selection field value]
   (if-let [index (item-index db selection)]
     (if (and (#{:position :rotation-deg} field) (finite-point? value))
       (-> db (assoc-in [:ui :rig-draft (keyword (:kind selection)) index field] value)
           (assoc-in [:ui :rig-dirty?] true)) db) db))
+
 (defn- pixel-edit [db state command checkpoint?]
   (let [rig (get-in db [:ui :rig-draft])
         [next-rig next-state] (pixels/edit rig state command)]
@@ -247,10 +258,13 @@
                              (put-editor db (-> state (dissoc :publishing) (assoc :message message))) db))))
 
 (defn- dispatch! [event] (rf/dispatch-sync event))
+
 (defn- value [event] (.. event -target -value))
+
 (defn- choice [label selected choices path]
   [:label label [:select {:aria-label label :value selected :on-change #(dispatch! [:rig-editor/set path (value %)])}
                  (for [[id caption] choices] ^{:key id} [:option {:value id} caption])]])
+
 (defn- pose-fields [db state]
   (let [selection (:selection state) index (item-index db selection) item (get-in db [:ui :rig-draft (keyword (:kind selection)) index])]
     [:div.rig-selection
@@ -271,6 +285,7 @@
         [:div.rig-nudge {:role "group" :aria-label "Move selected object"}
          (for [[label axis amount] [["← X" 0 -0.1] ["X →" 0 0.1] ["↓ Y" 1 -0.1] ["Y ↑" 1 0.1] ["− Z" 2 -0.1] ["+ Z" 2 0.1]]]
            ^{:key label} [:button.button {:on-click #(dispatch! [:rig-editor/nudge axis amount])} label])]])]))
+
 (defn- target-fields [db state]
   (let [fixtures (filter #(and (get-in % [:channels :pan]) (get-in % [:channels :tilt])) (get-in db [:ui :rig-draft :fixtures]))]
     [:fieldset.rig-targets [:legend "Moving heads to aim"]
@@ -334,6 +349,7 @@
       [:button.button.primary {:disabled (or (:publishing state) (< (count (:points state)) 2) (empty? (:targets state))) :on-click #(rf/dispatch [:rig-editor/publish false])} "Create cue"]
       [:button.button {:disabled (or (:publishing state) (< (count (:points state)) 2) (empty? (:targets state))) :on-click #(rf/dispatch [:rig-editor/publish true])} "Create + run"]]
      (when (:message state) [:p.rig-editor-message {:role "status"} (:message state)])]))
+
 (defn- editor-panel [db]
   (r/with-let [cached (volatile! nil)]
     (let [state (editor db)

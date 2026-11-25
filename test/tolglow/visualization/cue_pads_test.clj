@@ -14,6 +14,7 @@
             [tolglow.studio.query-stream :as queries]))
 
 (def main [pads/query-id :main [0 0] 1])
+
 (def other [pads/query-id "other" [0 0] 1])
 
 (defn- rig []

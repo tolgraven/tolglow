@@ -160,6 +160,7 @@
  ;         (fn [p] (conj p (create-particle
  ;                          location :velocity (divv (mapv #(/ (- %1) 2) velocity)))))))
 (defn is-dead? [{:keys [lifespan]}] (<= lifespan 0.0))
+
 (defn get-wind "Get wind. Now from mouse location but would have other sources like fog machine origin"
  [& source]
  [(- (q/map-range (q/mouse-x)  0.0 (q/width)   -0.05 0.05))
@@ -207,8 +208,11 @@
   ;         :d (* #_-1 -100 (cfg :venue :wall :stage))}}); use scale instead if can work for everything...
 
 (defonce lightscounter  (atom 1)) ;cant go in s cause its during draw. unless make decision during update which to use but then much more complex than just counting...
+
 (defonce shader         (atom nil))
+
 (defonce print-ok       (atom false)) ;flip this so can have a fn eg dumping s just for coming frame...
+
 (defonce state-pusher   (atom nil))
 
 (defn print-if-requested [s]
@@ -219,6 +223,7 @@
 
 (defn push-to-state "Put some stuff in state map _once_ not each loop. Avoid relaunching etc"
  [m] (when (map? m) (reset! state-pusher m)))
+
 (defn check-for-new-data "Take any new available data" [s]
  (if-let [m @state-pusher]
   (do (reset! state-pusher nil) ;; (merge s m)) ;tho we possibly want a merging of actual submaps hmm?
@@ -414,6 +419,7 @@
    s))) ; setup function returns initial state.
 
 (defn mouse-scroll "Respond to scroll"   [s & what] s)
+
 (defn key-pressed  "Respond to keypress" [s pressed-key]
  (print (:key pressed-key) " ") s)
 

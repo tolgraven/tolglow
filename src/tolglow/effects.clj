@@ -30,14 +30,23 @@
   {:op :param :key key})
 
 (defn- operation [op values] {:op op :args (mapv expression values)})
+
 (defn add [& values] (operation :add values))
+
 (defn subtract ([value] (operation :subtract [value])) ([a b] (operation :subtract [a b])))
+
 (defn multiply [& values] (operation :multiply values))
+
 (defn divide [a b] (operation :divide [a b]))
+
 (defn clamp ([value] (clamp value 0.0 1.0)) ([value low high] (operation :clamp [value low high])))
+
 (defn mix [a b amount] (operation :mix [a b amount]))
+
 (defn xyz [x y z] (operation :vec3 [x y z]))
+
 (defn rgb [r g b] (xyz r g b))
+
 (defn position [axis]
   (when-not (#{:x :y :z} axis) (fail! [:axis] "Position axis must be :x, :y or :z"))
   {:op :position :axis axis})
@@ -121,10 +130,13 @@
          (add (divide {:op op :clock clock} amount) phase))))))
 
 (def ^:private wave-options #{:period :clock :phase-reference :phase :low :high :duty})
+
 (defn- options! [options allowed]
   (when-not (and (map? options) (every? allowed (keys options)))
     (fail! [] (str "Unknown or invalid options; expected " (pr-str (sort allowed))))) options)
+
 (defn- wave-range [options value] (mix (:low options 0.0) (:high options 1.0) value))
+
 (defn- cycle-expression [options] (cycles (:period options {:bars 1}) options))
 
 (defn sine
@@ -184,10 +196,15 @@
    (options! options #{:blend :targets})
    (when-not (keyword? attribute) (fail! [:attribute] "Output attribute must be a keyword"))
    (merge {:attribute attribute :value (expression value) :blend :replace} options)))
+
 (defn color ([value] (color value {})) ([value options] (output :color (clamp value) options)))
+
 (defn intensity ([value] (intensity value {})) ([value options] (output :dimmer (clamp value) options)))
+
 (defn aim ([point] (aim point {})) ([point options] (output :aim point options)))
+
 (defn zoom ([value] (zoom value {})) ([value options] (output :zoom (clamp value) options)))
+
 (defn focus ([value] (focus value {})) ([value options] (output :focus (clamp value) options)))
 
 (defn compose

@@ -14,9 +14,12 @@
         (range 8)))
 
 (defn constant [value] {:op :const :value value})
+
 (defn param [key] {:op :param :key key})
+
 (def level {:type :number :default 0.7 :bounds [0.0 1.0]
             :recommended [0.15 0.85] :random {:enabled? true}})
+
 (def colors
   [[:ember "Ember" [1.0 0.025 0.008] "#f45232"]
    [:merlot "Merlot" [0.65 0.015 0.07] "#ca365b"]

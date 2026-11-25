@@ -9,8 +9,11 @@
            [org.eclipse.jetty.server NetworkConnector]))
 
 (def ^:private segment-pattern #"segment-1-([1-9][0-9]{0,9})\.ts")
+
 (def ^:private playlists #{"master.m3u8" "playlist-1.m3u8"})
+
 (def ^:private idle-ms 45000)
+
 (defn create [] (atom nil))
 
 (defn interfaces []
@@ -23,7 +26,9 @@
        (sort-by (juxt :interface :address)) vec))
 
 (defn- fail! [status reason] (throw (ex-info reason {:http/status status})))
+
 (defn- segment-number [file] (some->> (re-matches segment-pattern file) second parse-long))
+
 (defn- file-type [file]
   (cond (playlists file) "application/vnd.apple.mpegurl"
         (segment-number file) "video/mp2t"))

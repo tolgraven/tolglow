@@ -5,12 +5,17 @@
             [tolglow.transit :as wire]))
 
 (def empty-config {:channels 2 :block-frames 1024 :sample-rate 48000 :lanes []})
+
 (defn- epoch [db] ((juxt :runtime-id :epoch) (:show db)))
+
 (defn- saved [db] (merge empty-config (get-in db [:server-projection :view :settings :audio-returns])))
+
 (defn- state [db] (get-in db [:audio-returns (epoch db)]))
+
 (defn- draft [db]
   (let [{:keys [draft submitted baseline]} (state db) current (saved db)]
     (or draft (when (= current baseline) submitted) current)))
+
 (defn assign-lane [config]
   (let [lanes (:lanes config)
         next-free (fn [key] (first (remove (set (map key lanes)) (range 1 (inc (:channels config))))))
@@ -20,10 +25,12 @@
       (update config :lanes conj {:id id :send-channel send :return-channel receive
                                   :feature :pitch :curve :linear :max-tail {:beats 8}})
       config)))
+
 (defn- checked-params [effects cue]
   (let [effect (get effects (:effect-id cue))]
     (keep (fn [[id schema]] (when (and (#{"number" "integer"} (events/wire-id (:type schema)))
                                        (= 2 (count (:bounds schema)))) id)) (:params effect))))
+
 (defn- ui [db]
   (let [show (:show db) typed (get-in db [:server-projection :view])
         effects (into {} (map (juxt :id identity)) (:effects typed))]
@@ -68,12 +75,16 @@
                            (update! (some (fn [[id _]] (when (= v (events/wire-id id)) id)) options)))}
     [:option {:value ""} "Choose…"]
     (for [[id title] options] ^{:key (events/wire-id id)} [:option {:value (events/wire-id id)} title])]])
+
 (defn- edit [path value] (rf/dispatch [:audio-returns/edit path value]))
+
 (defn- numeric-input [label value min max change!]
   [:label [:span label] [:input {:type "number" :min min :max max :step "any" :value (if (wire/fraction? value) (wire/fraction-value value) (or value ""))
                                   :on-change #(let [n (.. % -target -valueAsNumber)]
                                                 (when (js/Number.isFinite n) (change! n)))}]])
+
 (defn- numeric [label value min max path] [numeric-input label value min max #(edit path %)])
+
 (defn- endpoint [lane index cues side]
   (let [dry? (= side :dry) cue-key (if dry? :dry-cue :wet-cue) param-key (if dry? :dry-param :wet-param)
         path [:lanes index] cue (get lane cue-key) select-cue #(do (edit (conj path cue-key) %)
@@ -83,6 +94,7 @@
      [select-field (if dry? "Carrier parameter" "Return parameter") (get lane param-key)
       (map (fn [p] [p (events/wire-id p)]) (get-in cues [cue :params]))
       #(edit (conj path param-key) %)]]))
+
 (defn- mixer-field [label key config mixers send?]
   (let [list-id (str "live-audio-" (name key))]
     [:label [:span label]
@@ -90,6 +102,7 @@
      [:datalist {:id list-id}
       (for [m (filter (if send? :send? :return?) mixers)]
         ^{:key (:name m)} [:option {:value (:name m)}])]]))
+
 (defn panel []
   (let [{:keys [config local status cues saved?]} @(rf/subscribe [:audio-returns/view])
         request! #(rf/dispatch [:audio-returns/request %])

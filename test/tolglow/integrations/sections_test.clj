@@ -4,10 +4,15 @@
             [tolglow.integrations.sections :as sections]))
 
 (def ^:private rate 8000)
+
 (def ^:private samples-per-beat 4000)
+
 (def ^:private beat-ms 500.0)
+
 (def ^:private clock {:time-ms 0.0 :beat 0.0 :bpm 120.0 :source :midi-clock :epoch 1})
+
 (def ^:private phrase-a [48.0 64.0 84.0 104.0])
+
 (def ^:private phrase-b [84.0 104.0 48.0 64.0])
 
 (defn- sine [hz phase seconds]

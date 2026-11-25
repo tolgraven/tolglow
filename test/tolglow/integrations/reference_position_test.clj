@@ -3,6 +3,7 @@
             [tolglow.integrations.reference-position :as position]))
 
 (def ^:private provenance {:source-id :deck-a :session-id :one :clock-id :capture})
+
 (def ^:private recording {:id :track-a :version 1})
 
 (defn- event [type time-ms occurrence]

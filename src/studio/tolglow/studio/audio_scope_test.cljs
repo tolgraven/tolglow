@@ -6,8 +6,10 @@
             [tolglow.studio.connections :as connections]))
 
 (def base {:show {:runtime-id "one" :epoch 2}})
+
 (def waveform {:bins [{:min -0.3 :max 0.4 :rms 0.2 :bands {:low 0.8 :mid 0.1 :high 0.1}}]
                :source-id "software-test-source" :sample-end 480})
+
 (defn transition [state event]
   (reset! db/app-db state)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))

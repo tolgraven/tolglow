@@ -5,7 +5,9 @@
   (:import [java.net DatagramSocket DatagramPacket InetAddress]))
 
 (def fixture-root "native/Core/Tests/TolglowSensorCoreTests/Fixtures/")
+
 (def fixture (wire/decode-json (slurp (str fixture-root "observation.json"))))
+
 (def packet (byte-array (map #(unchecked-byte (Integer/parseInt % 16))
                             (re-seq #".." (str/trim (slurp (str fixture-root "observation.osc.hex")))))))
 

@@ -10,26 +10,36 @@
 
 (def defaults {:generation 0 :session-id nil :status "closed" :cursor 0
                :input "" :sending? false :mounted? false})
+
 (defonce resources (atom {}))
+
 (defn state [db key] (merge defaults (get-in db [:terminals key])))
+
 (defn token [db key] [(get-in db [:show :runtime-id]) key (:generation (state db key)) (:session-id (state db key))])
+
 (defn current? [db key captured] (= captured (token db key)))
+
 (defn append-input [pending text]
   (let [next (str pending text)]
     (when (> (.-byteLength (.encode (js/TextEncoder.) next)) 65536)
       (throw (js/Error. "Terminal input is full. Wait for the current input to be delivered.")))
     next))
+
 (defn input-prefix [text]
   (let [n (min 4096 (count text)) code (when (pos? n) (.charCodeAt text (dec n)))
         n (if (and (< n (count text)) (<= 0xD800 code 0xDBFF)) (dec n) n)]
     (subs text 0 n)))
+
 (defn encode [text]
   (let [bytes (.encode (js/TextEncoder.) text)]
     (js/btoa (apply str (map #(js/String.fromCharCode %) (array-seq bytes))))))
+
 (defn decode [base64]
   (let [text (js/atob base64) bytes (js/Uint8Array. (count text))]
     (dotimes [index (count text)] (aset bytes index (.charCodeAt text index))) bytes))
+
 (defn- response-error [error] (events/error-message error))
+
 (defn- request [db key operation body]
   {:path (str "/api/terminal/" (name operation))
    :body (merge {:runtime-id (get-in db [:show :runtime-id]) :session-id (:session-id (state db key))} body)

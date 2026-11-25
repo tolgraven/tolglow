@@ -24,29 +24,40 @@
    :live {:enabled? false :endpoint "http://127.0.0.1:8750/live" :bridge-id "tolglow-m4l" :record-route "bridge"
           :mode "lighting" :channel 1 :automap? true :observed-parameters {} :poll-ms 500 :timeout-ms 2000 :pairing nil
           :mappings {} :parameters {}}})
+
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
                      :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
-(def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil
+
+(def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil :section-reference nil
                :ports [] :inputs [] :sync-form sync-defaults :audio-form audio-defaults
                :sync-dirty? false :audio-dirty? false :notes [] :parameters []})
+
 (defn state [db] (merge defaults (:connections db)))
+
 (defn token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn current? [db request-token] (= request-token (token db)))
+
 (defn- req [db key path body success]
   [:studio/http (cond-> {:path path :on-success [success (token db) key]
                          :on-failure [:connections/failed (token db) key] :timeout-ms 6000}
                   (= key :configure) (assoc :raw-response? true)
                   (some? body) (assoc :body body))])
+
 (defn- text [event] (.. event -target -value))
+
 (defn- edit! [path value] (rf/dispatch-sync [:connections/edit path value]))
+
 (defn- integer! [value label low high]
   (let [n (js/Number value)]
     (when-not (and (not (str/blank? (str value))) (js/Number.isInteger n) (<= low n high))
       (throw (js/Error. (str label " must be an integer from " low " to " high ".")))) n))
+
 (defn- finite! [value label]
   (let [n (js/Number value)]
     (when-not (and (not (str/blank? (str value))) (js/Number.isFinite n))
       (throw (js/Error. (str label " must be a finite number.")))) n))
+
 (defn- optional-port [ports value direction expected-name]
   (when-not (or (nil? value) (= "" value))
     (let [index (integer! value "MIDI port" 0 4096)
@@ -54,15 +65,18 @@
       (when-not port (throw (js/Error. "Refresh ports and choose an available MIDI port.")))
       (when (and expected-name (not= expected-name (:name port)))
         (throw (js/Error. "The selected MIDI port name changed. Select the device again."))) port)))
+
 (defn- duration-parts [mapping]
   (if-let [[unit value] (first (:duration mapping))] [(str value) (name unit)]
     (if-let [ms (:duration-ms mapping)] [(str ms) "ms"] ["1" "beats"])))
+
 (defn mapping-rows [config key]
   (mapv (fn [[control mapping]]
           (let [[value unit] (duration-parts mapping)]
             (merge mapping {:control (events/wire-id control) :duration-value value :duration-unit unit
                             :low (str (first (:bounds mapping [0 1]))) :high (str (second (:bounds mapping [0 1])))})))
         (sort-by (comp str first) (get-in config [:live key]))))
+
 (defn parameter-rows [form typed-config]
   (let [values (into {} (keep (fn [[control mapping]] (when-let [choices (:values mapping)] [(events/wire-id control) choices])))
                      (get-in typed-config [:live :parameters]))]
@@ -89,6 +103,7 @@
                                (assoc :lane-note (integer! (:lane-note row) "Parameter lane pitch" 0 127)))))])) rows)]
     (when-not (= (count pairs) (count (distinct (map first pairs)))) (throw (js/Error. "Each MIDI note/controller can have only one mapping.")))
     (into {} pairs)))
+
 (defn sync-payload [db]
   (let [s (state db) form (:sync-form s)
         input (when (get-in form [:midi :enabled?])
@@ -118,6 +133,7 @@
                                       :timeout-ms (integer! (:timeout-ms live) "Live request timeout" 50 10000)
                                       :mappings (mappings! (:notes s) :notes)
                                       :parameters (mappings! (:parameters s) :parameters)))))
+
 (defn audio-payload [db]
   (let [s (state db) form (:audio-form s) selection (:input form)
         mixer (some #(when (= (str (:mixer-index %)) selection) %) (:inputs s))]
@@ -136,6 +152,7 @@
                        :big-endian? (:big-endian? form false) :analyzer-options (:analyzer-options form {})}
                       (if mixer {:mixer-index (:mixer-index mixer) :mixer-name (:name mixer)} {:default? true}))
         input-channel (assoc :input-channel input-channel)))))
+
 (defn- audio-form [config]
   (merge audio-defaults (select-keys config [:sample-rate :channels :input-channel :block-frames :buffer-blocks :big-endian? :analyzer-options])
          {:expected-name (:mixer-name config) :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
@@ -149,7 +166,7 @@
      :studio/connections-interest true}))
 (rf/reg-event-fx :connections/close
   (fn [{:keys [db]} _]
-    {:db (update db :connections #(-> (merge defaults %) (assoc :visible? false :pending #{} :sync nil :audio nil)
+    {:db (update db :connections #(-> (merge defaults %) (assoc :visible? false :pending #{} :sync nil :audio nil :section-reference nil)
                                       (update :generation inc)))
      :studio/connections-interest false}))
 (rf/reg-event-db :connections/runtime-change
@@ -169,7 +186,7 @@
 (rf/reg-event-fx :connections/pushed
   (fn [{:keys [db]} _]
     (let [s (state db)
-          {:keys [sync audio]} (get-in db [:show :connection-status])
+          {:keys [sync audio section-reference]} (get-in db [:show :connection-status])
           config (:config sync)
           initialize-sync? (and config (not (:sync-dirty? s))
                                 (or (not (:sync-form-loaded? s)) (not= config (get-in s [:sync :config]))))
@@ -178,7 +195,7 @@
           enumerate? (and sync (not (:devices-requested? s)))]
       (when (:visible? s)
         (cond-> {:db (update db :connections
-                       #(cond-> (assoc % :sync sync :audio audio)
+                       #(cond-> (assoc % :sync sync :audio audio :section-reference section-reference)
                           initialize-sync?
                           (merge {:sync-form-loaded? true
                                   :sync-form (reduce (fn [out k] (update out k (partial merge (get sync-defaults k))))
@@ -228,6 +245,9 @@
                         :arrange ["/api/sync/arrange" {:request-id (str (random-uuid)) :song-beat (js/Number value)}]
                         :source ["/api/sync/source" {:source-id value}]
                         :handoff ["/api/sync/handoff" {:mode value}]
+                        :reference-reconnect ["/api/section-reference/reconnect"
+                                              {:runtime-id (get-in db [:show :runtime-id])
+                                               :expected-epoch (get-in db [:show :epoch])}]
                         :audio-stop ["/api/audio/stop" {}])]
       {:db (-> db (update-in [:connections :pending] (fnil conj #{}) operation)
                 (cond-> (= operation :source) (assoc-in [:connections :sync-form :selected-source] value))
@@ -309,6 +329,7 @@
                    (pos? fade) (<= 0 latency (* 2 (:period-ms form 25))))
       (throw (js/Error. "Choose an output mode, a positive fade, and at most two frames of latency.")))
     (assoc form :fade-ms fade :latency-ms latency)))
+
 (defn pause-form [db]
   (merge {:mode "show" :color [1.0 0.4 0.12] :level 0.08}
          (get-in db [:show :settings :output :pause-look])
@@ -396,6 +417,7 @@
                                :on-change #(edit! [:pause-form :level] (/ (js/Number (text %)) 100))}]]])
       [:button#pause-save.button {:type "button" :disabled pending? :on-click #(rf/dispatch [:connections/save-pause])}
        "Apply pause lighting"]]]))
+
 (defn- output-panel [db s]
   (let [form (merge {:mode "direct" :fade-ms 100 :latency-ms 25}
                     (get-in db [:show :settings :output :presentation]) (:output-form s))
@@ -446,12 +468,40 @@
                  :disabled (contains? (:pending s) :push-display)
                  :on-change #(rf/dispatch [:connections/parameter-view :history-beats (js/Number (text %))])}
         (for [n [0.5 1 2 4 8 16]] ^{:key n} [:option {:value n} (str n " beats")])]]]]))
+
 (defn- field [s path title & [attrs]]
   [:label title [:input (merge {:type "text" :value (get-in s path "") :on-change #(edit! path (text %))} attrs)]])
+
 (defn- checkbox [s path title disabled?]
   [:label.checkbox-label [:input {:type "checkbox" :checked (boolean (get-in s path)) :disabled (boolean disabled?)
                                   :on-change #(edit! path (.. % -target -checked))}] title])
+
 (defn- status-chip [active? title] [:span.connection-chip {:class (when active? "active")} [:i] title])
+
+(defn- section-reference-panel [s]
+  (let [{:keys [status reason configured? override?]} (:section-reference s)
+        pending? (contains? (:pending s) :reference-reconnect)
+        title (get {"unavailable" "Unavailable" "acquiring" "Acquiring"
+                    "aligned" "Aligned" "ambiguous" "Ambiguous" "stale" "Stale"}
+                   status "Loading")
+        message (case reason
+                  "not-configured" "No local mpv reference is configured."
+                  "not-attached" "Connect to the configured local mpv player."
+                  "show-changed" "Reconnect for this show session."
+                  "session-replaced" "The reference session changed."
+                  "expired" "The last matching observation expired."
+                  "error" "The configured mpv connection is unavailable."
+                  (some-> reason name (str/replace "-" " ")))]
+    [:section.panel {:aria-label "Track reference"}
+     [:div.panel-top [:span.section-label "TRACK REFERENCE"] [status-chip (= "aligned" status) title]]
+     [:div.form-body
+      (when message [:p.small.muted message])
+      (when override? [:p.small.muted "Patterns suspended"])
+      [:div.button-row
+       [:button#reference-reconnect.button {:type "button" :disabled (or (not configured?) pending?)
+                                            :on-click #(rf/dispatch [:connections/action :reference-reconnect])}
+        (if pending? "Reconnecting…" "Reconnect mpv")]]]]))
+
 (defn- clock-panel [s transport]
   (let [status (:sync s) clock-projection (:clock status)
         clock (or (:clock clock-projection) (when (= "manual" (get-in status [:config :selected-source] "manual")) transport))
@@ -471,6 +521,7 @@
        [:div [:span "Source age"] [:strong (value-text (:source-age-ms clock) 0) [:small " ms"]]]
        [:div [:span "Confidence"] [:strong (if (number? (:confidence clock)) (str (js/Math.round (* 100 (:confidence clock))) "%") "—")]]]
       [:p.small.muted "Choose a source, then connect its adapter."]]]))
+
 (defn- mapping-editor [s kind cues disabled?]
   [:details.connection-mappings
    [:summary (if (= kind :notes) "Drum pads → cues" "MIDI controllers → parameters")]
@@ -511,6 +562,7 @@
                             :on-click #(rf/dispatch [:connections/mapping-remove kind index])} "×"]])
    [:button.text-button {:type "button" :disabled disabled? :on-click #(rf/dispatch [:connections/mapping-add kind])}
     (if (= kind :notes) "Add pad mapping +" "Add parameter mapping +")]])
+
 (defn- midi-panel [s disabled?]
   [:section.panel
    [:div.panel-top [:span.section-label "MIDI"] [checkbox s [:sync-form :midi :enabled?] "Enabled" disabled?]]
@@ -531,6 +583,7 @@
                               ^{:key (:index port)} [:option {:value (str (:index port))} (str (:index port) " · " (:name port))])]])]
     [checkbox s [:sync-form :midi :control?] "Use mapped notes and controllers to perform cues" disabled?]
     [:p.small.muted "Port selections include a name guard. If enumeration changes, reconnecting requires choosing the device again."]]])
+
 (defn- beat-link-panel [s disabled?]
   (let [peers (get-in s [:sync :peers]) selected (get-in s [:sync-form :beat-link :peer])
         index (first (keep-indexed #(when (= (select-keys %2 [:device-number :address]) (select-keys selected [:device-number :address])) %1) peers))]
@@ -545,6 +598,7 @@
       [checkbox s [:sync-form :beat-link :align-bars?] "Align to the player's bar position" disabled?]
       [checkbox s [:sync-form :beat-link :status?] "Request player status (announces a virtual device)" disabled?]
       [:p.small.muted "Connect to discover players. Disconnect before changing the pairing. Passive beat/device reception is the default; status mode also sends network announcements."]]]))
+
 (defn- link-panel [s disabled?]
   [:section.panel
    [:div.panel-top [:span.section-label "ABLETON LINK"] [checkbox s [:sync-form :link :enabled?] "Enabled" disabled?]]
@@ -553,6 +607,7 @@
      {:id "link-port" :type "number" :min 1 :max 65535 :disabled disabled?}]
     [checkbox s [:sync-form :link :follow-transport?] "Follow Link play and stop" disabled?]
     [:p.small.muted "Enable Link and Start Stop Sync in Live, then select Ableton Link as the show clock. Turn off transport following to operate the show’s play button independently."]]])
+
 (defn- live-panel [s cues disabled?]
   (let [live (get-in s [:sync-form :live]) recording (get-in s [:sync :recording]) execution (get-in s [:sync :last-execution])
         active? (and (get-in s [:sync :active?]) (:enabled? live))]
@@ -620,6 +675,7 @@
          (for [{:keys [cue-id param reason]} (:unmapped s)]
            ^{:key [cue-id param]} [:p.small (str cue-id (when param (str " / " param)) " · " reason)])])
       [mapping-editor s :notes cues disabled?] [mapping-editor s :parameters cues disabled?]]]))
+
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))
         pending? (boolean (some (:pending s) [:audio-start :audio-stop])) features (:features audio) metrics (:metrics audio)
@@ -695,10 +751,12 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [section-reference-panel s]
+      [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [compute-client/panel]
      [sensors/panel db]
      [patchbay/panel db]]))
+
 (def panel
   (r/create-class
     {:display-name "Connections"

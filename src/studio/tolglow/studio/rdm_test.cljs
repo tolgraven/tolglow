@@ -7,9 +7,13 @@
 
 (defn effects [event]
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))))
+
 (def show {:runtime-id "runtime" :epoch 2})
+
 (def snapshot-path [:server-projection :view :subscriptions [:rdm/status] :value])
+
 (defn- base [snapshot] (assoc-in {:show show} snapshot-path snapshot))
+
 (defn- dispatch! [e] (reset! db/app-db (:db (effects e))))
 
 (deftest device-actions-carry-pushed-session-identity-and-transit-values

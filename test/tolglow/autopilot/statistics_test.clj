@@ -4,6 +4,7 @@
             [tolglow.autopilot.statistics :as stats]))
 
 (defn- near? [expected actual] (< (abs (- expected actual)) 1e-7))
+
 (defn- advance [state clock window level]
   (stats/advance (:state state) clock window {:brightness level :activity (- 1.0 level)}
                  {:brightness 1 :activity 0} 0.02))

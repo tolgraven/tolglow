@@ -39,6 +39,7 @@ musical Live patchbay, dual-host Link/AbleSet, rich device widgets and sharing.
 
 ## Development contract
 
+- Leave a blank line between adjacent top-level Clojure and ClojureScript definitions. Run `lein check-definition-spacing` to check tracked source.
 - Run `lein test-pure` and applicable `lein test` against the paired
   fork. Frontend changes
   require the configured production build plus fresh browser interaction

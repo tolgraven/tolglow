@@ -13,7 +13,9 @@
            [javax.sound.sampled AudioFormat AudioInputStream AudioSystem]))
 
 (def ^:private profile-version 1)
+
 (def ^:private algorithm :causal-bass-and-accents-v1)
+
 (def ^:private hop-ms 10.0)
 
 (defn- finite? [value]
@@ -42,7 +44,9 @@
     file))
 
 (defn- utf8 ^bytes [^String value] (.getBytes value StandardCharsets/UTF_8))
+
 (defn- sha256 ^MessageDigest [] (MessageDigest/getInstance "SHA-256"))
+
 (defn- sha-id [^bytes digest] (str "sha256:" (.formatHex (HexFormat/of) digest)))
 
 (defn- frame-position-ms [frames rate] (* 1000.0 (/ frames rate)))

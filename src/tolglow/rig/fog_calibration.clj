@@ -4,7 +4,9 @@
             [tolglow.rig.calibration :as calibration]))
 
 (def session-path [:extensions ::session])
+
 (defn current [model] (get-in model session-path))
+
 (defn disarm [model]
   (if (current model) (update model :extensions dissoc ::session) model))
 
@@ -12,6 +14,7 @@
   (mapv #(select-keys % [:id :name]) (filter :fogger (get-in model [:rig :fixtures]))))
 
 (defn- check [ok msg] (when-not ok (throw (ex-info msg {:component :fog-calibration}))))
+
 (defn- verify [model session-id]
   (let [s (current model)]
     (check (and s (= session-id (:session-id s)) (= (:epoch model) (:epoch s))

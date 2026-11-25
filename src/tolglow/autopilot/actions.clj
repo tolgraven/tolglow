@@ -16,6 +16,7 @@
     (not (== 1.0 (get-in instance [:system :gain] 1.0))) (assoc :gain (get-in instance [:system :gain]))))
 
 (defn- owner [state] {:adapter :autopilot :session-id (:owner-id state)})
+
 (defn- outcome [model state result] {:model model :state state :result result})
 
 (defn session-source [state instance]

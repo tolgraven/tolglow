@@ -7,12 +7,16 @@
 (rf/reg-sub :fog-control/fixtures (fn [db _] (filterv :fogger (get-in db [:show :rig :fixtures]))))
 
 (defn wire-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
 (defn selected? [ids id] (boolean (some #{(wire-id id)} (map wire-id ids))))
+
 (defn select-pump [ids id]
   (if (selected? ids id) (filterv #(not= (wire-id id) (wire-id %)) ids) (conj (vec ids) id)))
 
 (defn- percent [x] (str (/ (js/Math.round (* 1000 x)) 10) "%"))
+
 (defn- change! [key value] (rf/dispatch [:connections/set-fog-control {key value}]))
+
 (defn- bound [label key value minimum step disabled?]
   (r/with-let [draft (r/atom nil)]
     (let [display (or @draft value)

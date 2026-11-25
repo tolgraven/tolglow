@@ -7,6 +7,7 @@
             [thi.ng.math.core :as cmath]))
 
 (def used-type thi.ng.color.core.HSLA)
+
 (defn color? "Is color?" [color] (= (type color) used-type))
 
 ; XXX for color effects simply scale end alpha with alpha from color...
@@ -77,13 +78,19 @@
 
 ;diz woz rong idea, fix macros
 (defn h "get/adjust hue" [& args] (apply (adjust-maker clr/hue clr/rotate-hue) args)) ;XXX ::colors/color fix rotate degrees yada
+
 (defn s "get/adjust sat" [& args] (apply (adjust-maker clr/saturation clr/adjust-saturation) args))
+
 (defn l "get/adjust lightness" [& args] (apply (adjust-maker clr/luminance clr/adjust-luminance) args))
+
 (defn a "get/adjust alpha" [& args] (apply (adjust-maker clr/alpha clr/adjust-alpha) args))
 
 (defn black? [color] (= color (convert :black))) ;; (defn black? [color] (= color (create :black)))
+
 (defn white? [color] (= color (convert :white)))
+
 (defn unsaturated? "Pretty much black-and/or-white" [color] (< (s color) 0.05)) ;or whatever tolerance?
+
 ;; (defn primary? "No mixing = RACIST. How dare they" [color] (and (< 357.5 color) (> 2.5 color)))
 (defn primary? "No mixing = RACIST. How dare they"
  [color]
@@ -119,6 +126,7 @@
 
 ;; (def default-color-like {:h-spread (/ (tf/degrees 50) Math/PI) :s-spread 0.3 :l-spread 0.15})
 (def default-color-like {:h-spread (/ 45 360) :s-spread 0.15 :l-spread 0.15})
+
 (defn like "Return a random color similar to one passed in, with adjustable rng range per h s l"
  ([] ;random color
   (like (create (rand 1.0), (+ 0.35 (rand 0.3)), (+ 0.4 (rand 0.2)))))

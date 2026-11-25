@@ -4,8 +4,11 @@
 
 (def fixtures [{:id :front/wash :groups [:rig/washes]} {:id :rear/wash :groups [:rig/washes]}
                {:id "warn" :groups [:rig/washes]} {:id :stage/fog :groups [:rig/washes]}])
+
 (def ids [:front/wash :rear/wash "warn"])
+
 (def identity-key {:epoch 3 :show-id :club :runtime-id "test-runtime"})
+
 (def db {:connection {:connected? true}
          :lighting-scene-ui {:identity identity-key :selected "group:rig/washes"}
          :server-projection {:view (assoc identity-key :rig {:fixtures fixtures}

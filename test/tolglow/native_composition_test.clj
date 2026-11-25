@@ -7,6 +7,7 @@
             [tolglow.show :as show]))
 
 (def ratio-step {:attribute :beat-ratio :value {:op :divide :args [1 3]}})
+
 (def compound
   {:id :combine :mode :macro :opacity 0.5
    :slots [{:cue-id :base}

@@ -8,9 +8,13 @@
             [tolglow.transit :as transit]))
 
 (defonce ^:private owner (atom nil))
+
 (defonce ^:private demand (atom {}))
+
 (defonce ^:private connections-open? (atom false))
+
 (defonce ^:private preview-surfaces (atom #{}))
+
 (defn- current? [id] (and id (= id (:id @owner))))
 
 (defn- close-socket! [reason]

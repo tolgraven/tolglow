@@ -5,6 +5,7 @@
   (:import [java.util PriorityQueue]))
 
 (def ^:private active-limit 128)
+
 (def ^:private idle-limit 16)
 
 (defn- emission-score [rich compact]

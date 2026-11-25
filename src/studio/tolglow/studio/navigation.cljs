@@ -7,9 +7,11 @@
             [tolglow.studio.page-routes :as pages]))
 
 (def router (frontend/router pages/routes))
+
 (defonce active-history (atom nil))
 
 (defn match-path [path] (frontend/match-by-path router path))
+
 (defn href
   ([page] (href page nil))
   ([page query] (frontend/match->path (frontend/match-by-name router page) query)))

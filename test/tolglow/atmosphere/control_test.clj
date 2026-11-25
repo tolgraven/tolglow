@@ -10,11 +10,17 @@
 
 (def jet {:id :jet :universe 1 :address 1 :channels {:fog 1}
           :fogger {:flow-m3-min 60 :mixing-seconds 0.12 :duty {:max-on-s 0.1 :min-off-s 0.2 :max-level 0.35}}})
+
 (def rig {:fixtures [jet] :room {:width 1 :height 1 :depth 1 :fog-half-life-s 3}})
+
 (def patch (frame/compile-patch [jet]))
+
 (def base (model/new-show {:rig rig}))
+
 (def options {:enabled? true :target 0.3 :hysteresis 0.05 :fog-fixture-ids [:jet]})
+
 (def armed (fog/configure base options))
+
 (defn observed [level time]
   {:epoch 0 :fog-level level :last-presented-ms time :sources [{:fixture-id :jet :flow-m3-s 0 :last-presented-ms time}]})
 

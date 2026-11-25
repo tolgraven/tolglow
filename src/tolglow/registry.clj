@@ -41,6 +41,7 @@
   (or (keyword? x) (and (string? x) (not (str/blank? x)))))
 
 (defn- error [path message] {:path path :message message})
+
 (defn- ordered-pair? [x]
   (and (vector? x) (= 2 (count x)) (every? finite-number? x)
        (<= (first x) (second x))))
@@ -146,6 +147,7 @@
         (validate-params (:params effect {}) (:saved-params cue {}))))
 
 (def emitter-attributes (set (keys photometry/emitter-spectrum)))
+
 (def attributes (into emitter-attributes
                       [:color :dimmer :pan :tilt :focus :zoom :strobe :fog :aim :direction
                        :shutter :iris :frost :speed]))
@@ -163,6 +165,7 @@
     :else []))
 
 (def category-colors categories/colors)
+
 (def definition-categories categories/definition-categories)
 
 (defn- validate-outputs [outputs]
