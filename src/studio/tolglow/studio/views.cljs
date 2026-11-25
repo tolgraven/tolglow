@@ -36,6 +36,7 @@
             [tolglow.studio.numeric-display :as numeric]
             [tolglow.studio.parameter-source :as sources]
             [tolglow.studio.param-visualization :as visualization]
+            [tolglow.studio.projection :as projection]
             [tolglow.studio.waveform :as waveform]
             [tolglow.studio.repl :as repl]
             [tolglow.studio.performance :as performance]
@@ -448,7 +449,8 @@
     "0"))
 
 (defn- response-panel [db]
-  (let [form (get-in db [:ui :response-form]) responses (get-in db [:show :responses])]
+  (let [form (get-in db [:ui :response-form])
+        responses (get-in db [:server-projection :view :responses])]
     [:details.panel.auto-panel.response-panel
      [:summary [:span.section-label "SHAPE THE RESPONSE"] [:span.muted.small (str (count responses) " envelopes")]]
      [:div.form-body
@@ -478,10 +480,11 @@
        (fn [value unit] (when (some? value) (set-ui! [:response-form :release-value] value))
          (when unit (set-ui! [:response-form :unit] unit))) true]
       [:div.button-row [button "response-start" "Start / retrigger" [:studio/response-start] "button primary"]]
-      (for [{:keys [id envelope state enabled?]} responses]
-        ^{:key id}
-        [:div.list-card {:data-response-id id}
-         [:div [:strong (label id)]
+      (for [{:keys [id envelope state enabled?]} responses
+            :let [envelope (projection/presentation envelope)]]
+        ^{:key (pr-str id)}
+        [:div.list-card {:data-response-id (events/wire-id id)}
+         [:div [:strong (pr-str id)]
           [:p.small.muted (cond
                            (false? enabled?) "Inactive"
                            (or (:released-at-beat state) (:released-at-ms state)) "Releasing / held at zero"

@@ -172,6 +172,42 @@
         (is (= full (get-in (show/snapshot r) [:output :values :head-1 :emitted-color])))
         (is (= canonical (get-in @(:state r) [:model :instances id :params])))))))
 
+(deftest studio-response-requests-preserve-repl-authored-ids
+  (let [r (show/start! {:recovery false :workspace-options nil :workers 1})
+        handler (studio/handler r)
+        repl! (fn [type body] (deref (show/submit! r type body) 5000 ::missing))
+        headers {"accept" "application/transit+json"}
+        ring-view #(wire/decode (:body (handler {:request-method :get :uri "/api/state" :headers headers})))
+        studio! (fn [path body]
+                  (let [response (handler {:request-method :post :uri path
+                                           :headers (assoc headers "content-type" "application/transit+json")
+                                           :body (java.io.ByteArrayInputStream. (.getBytes (wire/encode body) "UTF-8"))})]
+                    [(:status response) (:status (wire/decode (:body response)))]))
+        ids [:live/fade "live/fade"]]
+    (try
+      (doseq [id ids]
+        (is (= :accepted (:status (repl! :response {:id id :select {:effect-ids []}
+                                                     :params [:level] :envelope {:release {:beats 1}}})))))
+      (is (= ids (mapv :id (:responses (ring-view)))))
+      (doseq [[id remaining] [["live/fade" [:live/fade]] [:live/fade []]]]
+        (is (= [200 :accepted] (studio! "/api/response/release" {:id id})))
+        (is (= [id] (into [] (keep #(when (get-in % [:state :released-at-beat]) (:id %)))
+                          (:responses (show/snapshot r)))))
+        (is (= [200 :accepted] (studio! "/api/response/delete" {:id id})))
+        (is (= remaining (mapv :id (:responses (show/snapshot r))))))
+      (let [definition (assoc (get-in (demo/model) [:registry :effects :ember]) :id "ember")]
+        (is (= :accepted (:status (repl! :definition {:kind :effects :definition definition}))))
+        (doseq [id [:ember "ember"]]
+          (is (= :accepted (:status (repl! :command {:op :effect/launch :effect-id id})))))
+        (is (= [200 :accepted] (studio! "/api/response" {:id :response :params [:level] :operation :multiply
+                                                        :select {:effect-ids ["ember"]} :envelope {:sustain 0.5}})))
+        (let [{:keys [responses instances]} (ring-view)
+              levels (into {} (map (juxt :effect-id #(get-in % [:parameter-sources :level :effective-value]
+                                                           (get-in % [:params :level])))) instances)]
+          (is (= {:effect-ids ["ember"]} (get-in responses [0 :select])))
+          (is (= {:ember 0.7 "ember" 0.35} levels))))
+      (finally (show/stop! r)))))
+
 (deftest clock-integrates-old-tempo-before-applying-current-commands
   (with-runtime [r]
     (show/tick! r 500)
