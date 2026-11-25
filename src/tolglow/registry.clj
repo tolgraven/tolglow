@@ -2,6 +2,7 @@
   "Pure, versioned authoring definitions. This namespace never starts a show."
   (:require [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
+            [afterglow.reactive.registry :as reactive-registry]
             [clojure.string :as str]
             [tolglow.fixtures.shutter :as shutter]
             [afterglow.time :as time]
@@ -199,6 +200,38 @@
           (catch clojure.lang.ExceptionInfo cause
             [(error [:layer :transforms] (.getMessage cause))])))))
 
+(defn- reactive-binding? [binding]
+  (when (and (vector? binding) (= 2 (count binding)))
+    (let [[kind id] binding]
+      (case kind
+        :source (keyword? id)
+        :subscription (and (vector? id) (keyword? (first id)) (reactive-registry/portable? id))
+        false))))
+
+(defn- validate-reactive [kind {:keys [reactive targets params] :as definition}]
+  (let [{:keys [inputs transition]} reactive
+        supported (conj keyframe-values/continuous :strobe :shutter)]
+    (concat
+     (when-not (= :effects kind) [(error [:reactive] "Reactive inputs belong to an effect definition")])
+     (when-not (and (map? reactive) (every? #{:inputs :transition} (keys reactive)))
+       [(error [:reactive] "Use a map with :inputs and an optional :transition")])
+     (when-not (and (map? inputs) (<= 1 (count inputs) 64)
+                    (every? keyword? (keys inputs)) (every? reactive-binding? (vals inputs)))
+       [(error [:reactive :inputs] "Declare up to 64 named source IDs or subscription queries")])
+     (when (and (map? reactive) (contains? reactive :transition)
+                (not (and (map? transition) (= #{:beats} (set (keys transition)))
+                          (finite-number? (:beats transition)) (pos? (:beats transition)))))
+       [(error [:reactive :transition] "Transition needs a positive beat duration")])
+     (when-not (and (vector? targets) (every? #(or (keyword? %) (string? %)) targets))
+       [(error [:targets] "Reactive effects need explicit fixture/head IDs")])
+     (when (and (map? params) (seq params)) [(error [:params] "Read live values from declared reactive inputs")])
+     (for [key [:keyframes :envelope :blocks :modulation :release-duration :release-duration-ms
+                :show-control? :spatial-volume]
+           :when (contains? definition key)]
+       (error [key] "This definition feature is unavailable for a reactive effect"))
+     (when-not (every? (comp supported :attribute) (output-entries (:outputs definition)))
+       [(error [:outputs] "Reactive effects need supported native outputs")]))))
+
 (defn validate-definition
   "Validate authored data. DSL operator validation occurs during compile-effect.
   Cues may omit version; publish assigns the next version."
@@ -216,6 +249,7 @@
                       (and (integer? version) (pos? version)))
           [(error [:version] "Version must be a positive integer")])
         (when-not (data? definition) [(error [] "Definition must contain portable data only")])
+        (when (contains? definition :reactive) (validate-reactive kind definition))
         (when (contains? definition :system)
           (try (system/validate-options (:system definition)) []
                (catch clojure.lang.ExceptionInfo e [(error [:system] (.getMessage e))])))

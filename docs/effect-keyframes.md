@@ -26,6 +26,44 @@ A Transit show save includes the active endpoints and current progress. This als
 
 See [Afterglow's scheduling and native output contract](https://github.com/tolgraven/afterglow/blob/9387c0ae211397734a761ac98c4894cbfeeb83e4/doc/architecture/effect-keyframes.md).
 
+## Reactive effects
+
+An authored effect can calculate its output when named ratoms or subscriptions
+change. Declare the bindings on the definition and read them by alias in a
+numeric output expression.
+
+```clojure
+(require '[afterglow.reactive :as rx] '[tolglow.show :as show])
+
+(def reactions (show/reactions runtime))
+(def level (rx/ratom reactions :wash/level 0.25))
+
+(def reactive-wash
+  {:id :reactive-wash :version 1 :targets [:head-1]
+   :reactive {:inputs {:level [:source :wash/level]
+                       :gain [:subscription [:wash/gain]]}
+              :transition {:beats 1/2}}
+   :outputs {:dimmer {:op :multiply
+                       :args [{:op :reactive :key :level}
+                              {:op :reactive :key :gain}]}}})
+
+(show/submit! runtime :definition {:kind :effects :definition reactive-wash})
+```
+
+Register `[:wash/gain]` in the owner's graph and publish a cue for the effect.
+The show owns the subscription while an instance is active. Each committed graph
+publication supplies one coherent set of values to the next render. A missing
+signal suppresses the effect until all its bindings are present. Aliases are
+local to each effect definition.
+
+Use explicit fixture IDs. Outputs can combine constants and declared numeric
+inputs. `:type` defaults to `:number` and also accepts `:vec2`, `:vec3` or `:vec4`.
+Omit `:transition` to publish each new result on the first frame with those
+inputs. A transition uses the instance's private beat clock and retargets from
+the last committed sample. The existing `:runtime/keyframe` query exposes the
+settled result. A show file retains the definition and registered inputs. The
+host captures a fresh result after loading.
+
 ## Automatic sampling of timed edges
 
 The cost-ranked scheduler leaves clock-driven floor and fractional wraps and

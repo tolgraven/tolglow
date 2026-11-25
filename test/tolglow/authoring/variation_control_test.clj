@@ -26,15 +26,17 @@
     (show/tick! runtime 0)
     @reply))
 
-(defn- while-ticking [runtime f]
-  (let [operation (future (f))
-        deadline (+ (System/nanoTime) (long 6000000000))]
-    (try
-      (loop []
-        (cond (realized? operation) @operation
-              (> (System/nanoTime) deadline) (throw (ex-info "Owner command did not settle" {}))
-              :else (do (show/tick! runtime 0) (Thread/sleep 2) (recur))))
-      (finally (future-cancel operation)))))
+(defn- while-ticking
+  ([runtime f] (while-ticking runtime 0 f))
+  ([runtime time f]
+   (let [operation (future (f))
+         deadline (+ (System/nanoTime) (long 6000000000))]
+     (try
+       (loop []
+         (cond (realized? operation) @operation
+               (> (System/nanoTime) deadline) (throw (ex-info "Owner command did not settle" {}))
+               :else (do (show/tick! runtime time) (Thread/sleep 2) (recur))))
+       (finally (future-cancel operation))))))
 
 (defn- post [runtime handler uri payload]
   (let [response (while-ticking runtime
@@ -197,6 +199,53 @@
                 (is (= position (select-keys (history) [:cursor :position :nodes])))
                 (is (empty? (:open (history))))))
             (is (empty? (:errors (session/snapshot device)))))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-encoder-uses-the-same-exact-ratio-editor
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})
+        receive (atom nil)
+        options {:session-id "push3-ratio-capture" :user-mode? true :expression-mode :poly-aftertouch
+                 :cue-variations? true :schedule! nil
+                 :layout {:encoder-touches {:period {:channel 2 :note 9}}
+                          :encoders {:period {:channel 2 :controller 19}}}
+                 :encoder-bindings {:period {:param :period}}
+                 :display {:device :push-3 :input :view :open! (constantly :capture-display)
+                           :render! (fn [_ _]) :close! (fn [_])}
+                 :midi {:open! (fn [callback] (reset! receive callback) :capture)
+                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        :close! (fn [_])}}]
+    (try
+      (let [{id :instance-id} (submit! runtime {:op :cue/launch :cue-id :ember})
+            free-mode {:op :cue-variation/ratio-mode :instance-id id :mode :free}
+            set-ratio {:op :cue-variation/ratio-set :instance-id id :param :period :numerator 5 :denominator 11}
+            _ (is (= :accepted (:status (submit! runtime free-mode))))
+            _ (is (= :accepted (:status (submit! runtime set-ratio))))
+            device (show/connect-device! runtime :push-3 options)
+            current #(get-in (model runtime) [:instances id])
+            ratio #(get-in (current) [:params :period])
+            expected (:value (variations/edit-parameter (model runtime) (current) :period 1 {:mode :relative}))
+            input! (fn [time bytes]
+                       (while-ticking runtime time #(@receive bytes))
+                       (show/tick! runtime time))]
+        (is (= id (get-in (session/snapshot device) [:local :selected-instance])))
+        (is (= 5/11 (ratio)))
+        (is (and (ratio? expected) (not= 5/11 expected)))
+        (input! 20 [0xb2 19 1])
+        (is (= expected (ratio)))
+        (let [reply (show/submit! runtime set-ratio)]
+          (show/tick! runtime 30)
+          (is (= :accepted (:status @reply))))
+        (input! 40 [0xb0 49 127])
+        (input! 50 [0xb0 57 127])
+        (input! 60 [0x92 9 127])
+        (input! 70 [0xb2 19 1])
+        (is (= expected (ratio)))
+        (input! 80 [0xb0 57 0])
+        (input! 90 [0x82 9 0])
+        (is (= 5/11 (ratio)))
+        (input! 100 [0xb0 49 0])
+        (is (empty? (get-in (model runtime) [:control :edit-history :open])))
+        (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! runtime)))))
 
 (deftest exact-ratios-and-banked-states-survive-the-owned-save-restore

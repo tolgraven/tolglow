@@ -9,12 +9,23 @@
             [tolglow.studio.parameter-widgets :as widgets]
             [tolglow.studio.parameter-visualization :as visualization]))
 
+(defn- saved-show-catalog [catalog]
+  (when (map? catalog)
+    (cond-> (assoc (select-keys catalog [:page :page-count :total])
+                   :rows (mapv #(select-keys % [:name :selected? :sources]) (take 8 (:rows catalog))))
+      (map? (:preview catalog))
+      (assoc :preview (let [preview (:preview catalog)]
+                        (assoc (select-keys preview [:name :unavailable?])
+                               :sources (mapv #(select-keys % [:label :modified-at-ms])
+                                              (take 2 (:sources preview)))))))))
+
 (defn normalize-view [view]
   (let [view (if (map? view) view {})]
     (-> (select-keys view [:title :page :origin :status :master :blackout? :bpm :selected
                           :cue :effect :swatch :category-colors :page-overview :display-mode :scene :audio-waveform :instance-id
                           :parameter-bank :active-effect-navigation :touched-parameter :fine?])
-        (assoc :pad-overlay (when-let [overlay (:pad-overlay view)]
+        (assoc :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
+               :pad-overlay (when-let [overlay (:pad-overlay view)]
                               (assoc (select-keys overlay [:layout :ratio-mode])
                                      :rows (vec (take 7 (:rows overlay)))
                                      :cells (vec (take 64 (:cells overlay)))))
@@ -173,7 +184,7 @@
                    [:small (str "Saved " (inc i))]
                    (when-let [row (nth row-labels i nil)] [:strong (widgets/label row)])])]]))
 
-(defn display [view]
+(defn- live-display [view]
   (let [cue (:cue view) effect (:effect view) accent (widgets/color-css (or (:swatch view) (:color cue)))
         active? (:active? cue) audio? (contains? #{:audio "audio"} (:display-mode view))
         global (global-control-model view)]
@@ -210,6 +221,50 @@
                                     text (or (:name cell) (get (:labels view) index) "—")]]
            ^{:key index} [:div.push-cell {:style {"--cell-color" color} :class (when (:active? cell) "active")}
                          [:i] [:span text]])]])]))
+
+(defn- checkpoint-time [milliseconds]
+  (when (and (widgets/finite? milliseconds) (<= 0 milliseconds 8640000000000000))
+    (let [utc (.toISOString (js/Date. milliseconds))]
+      (str (subs utc 0 10) " " (subs utc 11 16) " UTC"))))
+
+(defn- catalog-display [{:keys [page page-count rows preview total]}]
+  [:main#push-display.push-catalog {:aria-label "Saved shows"}
+   [:header.push-catalog-header
+    [:span.push-brand "Tolglow"]
+    [:h1 (if preview "Saved show preview" "Saved shows")]
+    (when (pos? (or page-count 0))
+      [:span.push-catalog-page (str (inc page) " / " page-count " pages")])]
+   (cond
+     (:unavailable? preview)
+     [:p.push-catalog-empty "This show is no longer available."]
+
+     preview
+     [:section.push-catalog-detail {:aria-label "Saved show checkpoints"}
+      [:h2 (:name preview)]
+      [:div.push-catalog-sources
+       (for [{:keys [label modified-at-ms]} (:sources preview)]
+         ^{:key label} [:article
+                        [:strong label]
+                        (when-let [time (checkpoint-time modified-at-ms)] [:span time])])]]
+
+     (empty? rows)
+     [:p.push-catalog-empty "No saved shows available."]
+
+     :else
+     [:section.push-catalog-rows {:aria-label "Shows on this page"}
+      (for [[index {:keys [name selected? sources]}] (map-indexed vector rows)]
+        ^{:key index} [:article {:class (when selected? "selected")}
+                       [:strong {:title name} name]
+                       (for [source sources] ^{:key source} [:span source])])])
+   [:footer.push-catalog-footer
+    [:span (if preview "Back · Saved shows" "Back · Live display")]
+    (when (and (not preview) (pos? (or total 0)))
+      [:span (if (> page-count 1) "Page buttons · Browse   ·   Row buttons · Preview" "Row buttons · Preview")])]])
+
+(defn display [view]
+  (if-let [catalog (:saved-show-catalog view)]
+    [catalog-display catalog]
+    [live-display view]))
 
 (def component
   (r/create-class

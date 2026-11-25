@@ -2,6 +2,7 @@
   "Executable host for the shared functional lighting engine. Requiring it is inert.
   One owner advances the model; workers return data; physical output is opt-in."
   (:require [afterglow.control.model :as control]
+            [afterglow.control.instance-order :as instance-order]
             [afterglow.control.pages :as cue-pages]
             [tolglow.studio.parameter-precision :as precision]
             [afterglow.control.categories :as categories]
@@ -189,6 +190,7 @@
                             (sort-by (comp str :id) (vals (get-in model [:registry :effects]))))
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
+            :active-instance-order (mapv :id (instance-order/ordered model))
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -1622,6 +1624,7 @@
                                                :keyframes (:keyframes before) :keyframe-params input-overrides
                                                :keyframe-generation (:responses model) :spatial-aims (get-in space [:fields :aims])
                                                :hdr? (boolean (or hdr? (:observe-hdr? space))) :fixtures (get-in model [:rig :fixtures])}
+                                              (connections/effect-frame-inputs (:connections runtime) (:epoch model))
                                               (:inputs sampling))
                            group-levels (group-channels/frame-levels model)
                            ;; Spatial membership is attached after the engine runs. Keep
@@ -2148,7 +2151,7 @@
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence. Set :cue-variations? true
-  for the Push 2 Note-button variation overlay and exact beat-ratio edits.
+  for exact beat-ratio edits on both models and the Push 2 Note-button overlay.
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
   the first strips, followed by any configured cue channels."
   [runtime kind options]
@@ -2174,8 +2177,10 @@
                                                     {:op :effect-groups/level-set :channel-id id :value value}))
                       push-source (assoc :operator-gestures? true :target-search targets/search
                                          :launch-receipt cue-timing/receipt)
+                      (and push-source (true? (:cue-variations? options)))
+                      (assoc :parameter-editor variations/edit-parameter)
                       (and (= kind :push-2) (true? (:cue-variations? options)))
-                      (assoc :pad-overlay push-variations/pad-overlay :parameter-editor variations/edit-parameter)
+                      (assoc :pad-overlay push-variations/pad-overlay)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))

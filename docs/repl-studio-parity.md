@@ -48,6 +48,27 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Select and reorder running cues
+
+In **Perform → In the mix**, open **Detail** on a running card to select that
+launch for editing. If the same cue is running more than once, the cards
+show their distinct launch IDs. **Reorder** opens a separate mode. Choose
+**Move** on one running card and **Place after** on another. The cards show
+the committed compositing order.
+
+From the REPL, read the first two running launches in the current order and
+submit the same operation. Watch **In the mix** update in Studio.
+
+```clojure
+(let [{:keys [active-instance-order instances revision epoch runtime-id]} (show/snapshot runtime)
+      running-ids (into #{} (map :id) (filter #(= :running (:phase %)) instances))
+      [first-launch second-launch] (filter running-ids active-instance-order)]
+  (when second-launch
+    @(show/submit! runtime {:op :instance/move-after :instance-id first-launch
+                            :after-instance-id second-launch :expected-revision revision
+                            :epoch epoch :runtime-id runtime-id})))
+```
+
 ## Suspend automatic section patterns
 
 When the show starts with an enabled section pattern policy, open **Perform**

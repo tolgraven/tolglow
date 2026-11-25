@@ -3,6 +3,7 @@
   Afterglow numeric IR. Compilation and evaluation never start output."
   (:require [afterglow.render.ir :as ir]
             [tolglow.compiler.blocks :as blocks]
+            [tolglow.effects.reactive :as reactive]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.time :as time]
@@ -32,34 +33,43 @@
     :vector (when (<= 2 (:size schema) 4) (keyword (str "vec" (:size schema))))
     nil))
 
-(defn- prepare-expression [expression schemas path]
-  (cond
-    (or (number? expression) (vector? expression)) {:op :const :value expression}
-    (not (map? expression)) (fail! path "Expression must be a keyword map or numeric constant")
-    (= :param (:op expression))
-    (let [schema (get schemas (:key expression))
-          type (when schema (parameter-type schema))]
-      (when-not schema (fail! (conj path :key) "Expression references an unknown parameter"))
-      (when-not type (fail! path "This parameter type is not supported by the numeric expression IR"))
-      (when (and (:type expression) (not= type (:type expression)))
-        (fail! (conj path :type) "Expression parameter type disagrees with its schema"))
-      (assoc expression :type type))
-    (contains? expression :args)
-    (if (vector? (:args expression))
-      (update expression :args #(mapv (fn [i arg] (prepare-expression arg schemas (conj path :args i))) (range) %))
-      (fail! (conj path :args) "Expression args must be a vector"))
-    :else expression))
+(defn- prepare-expression
+  ([expression schemas path] (prepare-expression expression schemas nil path))
+  ([expression schemas reactive-inputs path]
+   (cond
+     (or (number? expression) (vector? expression)) {:op :const :value expression}
+     (not (map? expression)) (fail! path "Expression must be a keyword map or numeric constant")
+     (= :reactive (:op expression))
+     (let [input (:key expression)]
+       (when-not (contains? reactive-inputs input)
+         (fail! (conj path :key) "Expression references an undeclared reactive input"))
+       (when-not (every? #{:op :key :type} (keys expression))
+         (fail! path "Use :op, :key and optional :type to read a reactive input"))
+       {:op :param :key input :type (:type expression :number)})
+     (= :param (:op expression))
+     (let [schema (get schemas (:key expression))
+           type (when schema (parameter-type schema))]
+       (when-not schema (fail! (conj path :key) "Expression references an unknown parameter"))
+       (when-not type (fail! path "This parameter type is not supported by the numeric expression IR"))
+       (when (and (:type expression) (not= type (:type expression)))
+         (fail! (conj path :type) "Expression parameter type disagrees with its schema"))
+       (assoc expression :type type))
+     (contains? expression :args)
+     (if (vector? (:args expression))
+       (update expression :args #(mapv (fn [i arg] (prepare-expression arg schemas reactive-inputs (conj path :args i))) (range) %))
+       (fail! (conj path :args) "Expression args must be a vector"))
+     :else expression)))
 
 (def geometry-attributes
   "World positions and directions accept signed coordinates outside the unit interval."
   #{:aim :direction})
 
-(defn- compile-output [schemas bind-pure prepared? i output]
+(defn- compile-output [schemas bind-pure prepared? reactive-inputs i output]
   (let [path [:outputs i :value]
         value (:value output)
         tween? (= :tween (:op value))
         sample (when tween? (with-path (conj path :spec) #(tween/compile-tween (:spec value))))
-        expression (when-not tween? (if prepared? value (prepare-expression value schemas path)))
+        expression (when-not tween? (if prepared? value (prepare-expression value schemas reactive-inputs path)))
         errors (when expression (ir/validate-expression expression))]
     (when (seq errors)
       (throw (ex-info "Invalid effect expression"
@@ -77,6 +87,8 @@
       (fail! [:outputs i :blend] "Geometry assignments require replace blending"))
     (let [calculate (if tween? (fn [env] (:value (sample env))) (ir/compile-expression expression))
           inputs (if tween? [[:elapsed-beats] [:elapsed-ms] [:meter]] (ir/input-paths expression))]
+      (when (and reactive-inputs (some #(not= :params (first %)) inputs))
+        (fail! path "Reactive outputs read only declared signal values and constants"))
       (assoc output :blend (:blend output :replace) :frame-only? tween? :expression expression
              :inputs inputs
              :evaluate (if bind-pure (bind-pure {:pure? true :inputs inputs} calculate) calculate)))))
@@ -110,10 +122,14 @@
   (let [schemas (:params definition {})
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
+        reactive-inputs (get-in definition [:reactive :inputs])
+        block-outputs? (some (comp blocks/needs-plan? :value) entries)
+        _ (when (and reactive-inputs block-outputs?)
+            (fail! [:outputs] "Reactive outputs read only declared signal values and constants"))
         block-plan (when (or (contains? definition :blocks)
-                             (some (comp blocks/needs-plan? :value) entries))
+                             block-outputs?)
                      (blocks/prepare (merge {:blocks {}} definition) entries prepare-expression))
-        outputs (mapv (partial compile-output schemas bind-pure (some? block-plan)) (range)
+        outputs (mapv (partial compile-output schemas bind-pure (some? block-plan) reactive-inputs) (range)
                       (or (:outputs block-plan) entries))
         selected (when (contains? definition :targets) (set (:targets definition)))
         envelope-spec (:envelope definition)
@@ -145,6 +161,24 @@
   (let [outputs (registry/output-entries (:outputs definition))]
     (and (seq outputs) (every? (comp keyframe-values/continuous :attribute) outputs))))
 
+(defn- compile-reactive-effect [definition outputs rig]
+  (let [{:keys [inputs transition]} (:reactive definition)
+        definition-targets (:targets definition)
+        targets (if rig (filterv (set definition-targets) (map :id (validate-frame-fixtures! rig))) definition-targets)
+        calculate (fn [input-values]
+                    (let [env {:params input-values}
+                          resolved (mapv (fn [output] (assoc output :value ((:evaluate output) env))) outputs)]
+                      {:assignments (into []
+                                          (mapcat (fn [id]
+                                                    (keep (fn [{:keys [attribute blend value targets]}]
+                                                            (when (or (nil? targets) (some #{id} targets))
+                                                              {:target-id id :attribute attribute :blend blend :value value}))
+                                                          resolved)))
+                                          targets)}))]
+    (keyframes/with-inputs
+      (keyframes/dependency-driven {:inputs (vec (keys inputs)) :transition transition} calculate)
+      (partial reactive/project-inputs inputs))))
+
 (defn compile-effect
   "Return a context -> context middleware function. :outputs accepts an
   attribute->expression map or ordered output descriptors. Numeric expressions
@@ -163,9 +197,8 @@
   (let [{:keys [schemas defaults outputs selected block-plan envelope-fn envelope-attributes]}
         (compile-plan definition bind-pure)
         fixture-index (when block-plan (blocks/fixture-index rig))
-        select-fixtures (fixture-selector rig selected)]
-    (cond->
-     (fn [{:keys [frame instance state] :as context}]
+        select-fixtures (fixture-selector rig selected)
+        step (fn [{:keys [frame instance state] :as context}]
       (let [now (:time-ms frame)
             start (:started-at-ms instance 0)
             _ (when-not (and (registry/finite-number? now) (registry/finite-number? start))
@@ -233,9 +266,12 @@
             (blocks/observed block-plan env frame (when (identical? rig frame-fixtures) fixture-index))
             (assoc :state state :done? done?)
             (update :assignments (fnil into []) assignments)
-            (update :intents #(or % [])))))
-      block-plan (vary-meta blocks/step-info block-plan)
-      (predictable-outputs? definition) keyframes/predictable))))
+            (update :intents #(or % [])))))]
+    (if (:reactive definition)
+      (compile-reactive-effect definition outputs rig)
+      (cond-> step
+        block-plan (vary-meta blocks/step-info block-plan)
+        (predictable-outputs? definition) keyframes/predictable)))))
 
 (defn demo-definitions
   "Portable example effects for the studio, REPL, and deterministic tests."
