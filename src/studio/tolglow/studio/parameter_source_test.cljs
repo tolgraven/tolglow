@@ -31,9 +31,11 @@
 (deftest source-bindings-round-trip-typed-endpoints-and-musical-fractions
   (is (= "user/wave" (:waveform (source/editor-draft {} 0 nil [{:id "user/wave"}]))))
   (is (= :sine (:waveform (source/editor-draft {} 0 nil [{:id :triangle} {:id :sine}]))))
-  (doseq [id [:house/saw "house/saw"]]
+  (is (= :launch (:phase-reference (source/draft {} 0 nil))))
+  (is (= :launch (:phase-reference (source/draft {} 0 {:waveform :saw :phase 0.25}))))
+  (doseq [id [:house/saw "house/saw"] phase-reference [:launch :transport]]
     (let [binding {:type :lfo :waveform id :period {:phrases 0.5} :phase 0.25 :inputs {:slope 0.8}
-                   :from :lamp/red :to "lamp/red"}
+                   :phase-reference phase-reference :from :lamp/red :to "lamp/red"}
           form (source/draft {:type :enum :values [:lamp/red "lamp/red"]} :lamp/red binding)]
       (is (= binding (source/binding-config (assoc form :period "1/2"))))))
   (doseq [[schema base endpoints] [[{:type :boolean} true [false true]]

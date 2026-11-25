@@ -1,7 +1,9 @@
 (ns tolglow.parameter-sources-test
   (:require [afterglow.control.model :as control]
             [afterglow.control.params :as params]
-            [clojure.test :refer [deftest is]]
+            [afterglow.control.system :as system]
+            [clojure.test :refer [deftest is testing]]
+            [tolglow.clock :as clock]
             [tolglow.effects.parameter-sources :as sources]
             [tolglow.modulation :as modulation]
             [tolglow.modulation-test :as fixture]
@@ -15,6 +17,63 @@
 
 (defn- bind-to [model param binding]
   (sources/bind model {:instance-id "0:1" :param param :binding binding}))
+
+(deftest phase-reference-aligns-separate-launches-on-the-shared-clock
+  (let [old (assoc (fixture/instance "0:1" fixture/effect) :started-at-beat 5/2)
+        recent (assoc (fixture/instance "0:2" fixture/effect) :started-at-beat 17/4
+                      :timing-meter {:beats-per-bar 7/2 :bars-per-phrase 2})
+        model (assoc (fixture/model) :instances {"0:1" old "0:2" recent})
+        frame {:time-ms 3000 :transport {:beat 6 :meter {:beats-per-bar 3 :bars-per-phrase 2}}}
+        sample (fn [period reference frame]
+                 (let [binding (assoc saw :phase 1/8 :period period :phase-reference reference)
+                       bound (reduce (fn [m id] (sources/bind m {:instance-id id :param :level :binding binding}))
+                                     model ["0:1" "0:2"])
+                       {:keys [overrides]} (sources/sample bound frame {})]
+                   (mapv #(get-in overrides [% :level]) ["0:1" "0:2"])))]
+    (is (= [0.125 0.125] (sample {:beats 2} :transport frame)))
+    (is (= [0.875 0.0] (sample {:beats 2} :launch frame)))
+    (is (= [0.125 0.125] (sample {:bars 1} :transport frame)))
+    (is (= [0.0 0.625] (sample {:bars 1} :launch frame)))
+    (is (= [0.125 0.125] (sample {:phrases 1} :transport frame)))
+    (let [new-meter (assoc-in frame [:transport :meter :beats-per-bar] 4)]
+      (is (= [0.625 0.625] (sample {:bars 1} :transport new-meter)))
+      (is (= [0.875 0.875] (sample {:phrases 1} :transport new-meter)))
+      (is (= (sample {:bars 1} :launch frame) (sample {:bars 1} :launch new-meter))))))
+
+(deftest phase-reference-follows-pause-resume-and-seek-in-its-own-clock
+  (doseq [[reference expected] [[:launch [0.25 0.25 0.5 0.5]]
+                                [:transport [0.5 0.75 0.0 0.25]]]]
+    (testing (name reference)
+      (let [model (-> (fixture/model)
+                      (assoc-in [:instances "0:1" :started-at-beat] 5/2)
+                      (assoc-in [:transport :beat] 3)
+                      (bind-to :level (assoc saw :period {:beats 2} :phase-reference reference)))
+            pause-at (fn [m op frame]
+                       (update-in m [:instances "0:1"] system/apply-control {:op op} frame))
+            level (fn [m frame] (get-in (sources/sample m frame {}) [:overrides "0:1" :level]))
+            initial (fixture/frame 3)
+            waiting (fixture/frame 7/2)
+            paused (pause-at model :instance/pause initial)
+            resumed (pause-at paused :instance/resume waiting)
+            later (fixture/frame 4)
+            seek (assoc later :beat 5/2 :from-beat 4 :playing? false)
+            sought (clock/rebase resumed seek)
+            shared (fn [m t] {:time-ms t :transport (:transport m)})]
+        (is (= expected [(level model initial) (level paused waiting) (level resumed later)
+                         (level sought (shared sought 2000))]))
+        (is (= (level sought (shared sought 2000)) (level sought (shared sought 9000))))))))
+
+(deftest legacy-saved-bindings-default-to-cue-launch
+  (let [model (-> (fixture/model)
+                  (assoc-in [:instances "0:1" :started-at-beat] 5/2)
+                  (bind-to :level (assoc saw :period {:beats 2})))
+        instance (get-in model [:instances "0:1"])
+        result (sources/sample model (fixture/frame 3) {})]
+    (is (nil? (sources/validate-saved! model instance)))
+    (is (nil? (get-in instance [:parameter-bindings :level :binding :phase-reference])))
+    (is (= 0.25 (get-in result [:overrides "0:1" :level])))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (sources/validate-saved! model (assoc-in instance [:parameter-bindings :level :binding :phase-reference] :bar))))))
 
 (deftest every-declared-parameter-type-and-musical-period
   (let [model (fixture/model fixture/all-types)
@@ -30,6 +89,7 @@
            (mapv half [:level :steps :gate :shape :color :position :spread])))
     (is (= false (get-in (frame 1) [:overrides "0:1" :gate])))
     (doseq [bad [(assoc saw :period {:beats 0}) (assoc saw :period {:ms 50}) (assoc saw :phase ##NaN)
+                 (assoc saw :phase-reference nil) (assoc saw :phase-reference "transport")
                  (assoc saw :from 2) (assoc saw :inputs {:bogus 1}) (assoc saw :waveform :missing)]]
       (is (thrown? clojure.lang.ExceptionInfo (bind-to model :level bad))))))
 
@@ -72,7 +132,7 @@
       (let [left (launch :left) right (launch :right)
             addr {:instance-id left :param :level} hold {:instance-id left :params [:level]}]
         (is (not= left right))
-        (is (= 200 (post "bind" (assoc addr :binding (assoc saw :from 0.8 :to 0.8)))))
+        (is (= 200 (post "bind" (assoc addr :binding (assoc saw :phase-reference :transport :from 0.8 :to 0.8)))))
         (is (= [204 64] @packet))
         (is (= 0.25 (get-in (instance left) [:params :level])))
         (is (= 0.8 (get-in (instance left) [:parameter-sources :level :effective-value])))
@@ -89,6 +149,7 @@
           (is (= :accepted (:status receipt)) (pr-str receipt))
           (is (not= left restored-id))
           (is (= 0.8 (get-in (instance restored-id) [:parameter-sources :level :effective-value])))
+          (is (= :transport (get-in (instance restored-id) [:parameter-sources :level :sources 0 :binding :phase-reference])))
           (is (= 200 (post "bind" (assoc restored :binding (assoc saw :period {:beats 1/2})))))
           (let [before @packet]
             (show/tick! rt (swap! t + 125))
