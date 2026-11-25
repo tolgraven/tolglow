@@ -539,13 +539,14 @@
      label]))
 
 (defn- layer-priority-form [capture source instance draft]
-  (let [value (or draft (pr-str (render-priority instance)))]
+  (let [value (or draft (pr-str (render-priority instance)))
+        title (or (:name instance) (widgets/label (:cue-id instance)))]
     [:form.live-priority-form
      {:on-submit (fn [event]
                    (.preventDefault event)
                    (let [fields (js/FormData. (.-currentTarget event))]
                      (rf/dispatch [:performance/reorder-priority-set capture (:id source) (.get fields "priority")])))}
-     [:label "Layer priority"
+     [:label (str "Layer priority · " title)
       [:input {:type "text" :name "priority" :input-mode "decimal" :value value
                :on-change #(rf/dispatch [:performance/reorder-priority-edit source (.. % -target -value)])}]]
      [:button.button {:type "submit"} "Set priority"]]))
