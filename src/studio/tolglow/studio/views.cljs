@@ -18,6 +18,7 @@
             [tolglow.studio.connections :as connections]
             [tolglow.studio.events :as events]
             [tolglow.studio.keyframe-editor :as keyframes]
+            [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.fixture-library :as fixture-library]
             [tolglow.studio.fog-fields :as fog-fields]
@@ -728,29 +729,41 @@
      [rdm/panel]]))
 
 (defn- visual-builder [db]
-  (let [builder (get-in db [:ui :builder])]
+  (let [builder (get-in db [:ui :builder])
+        reactive (:reactive builder)
+        loaded? (some? (:base reactive))
+        reactive? (true? (:enabled? reactive))]
     [:div#visual-editor {:hidden (not= :form (get-in db [:ui :definition :mode]))}
      [:div.form-row
       [:label "Identifier" [:input#builder-id {:value (:id builder "") :pattern "[a-zA-Z][a-zA-Z0-9._/-]*"
+                                              :disabled loaded?
                                               :on-change #(set-ui! [:builder :id] (input-value %))}]]
       [:label "Name" [:input#builder-name {:value (:name builder "") :on-change #(set-ui! [:builder :name] (input-value %))}]]]
-     [:div.form-row
-      [:label "Color" [:input#builder-color {:type "color" :value (:color builder "#b981a3") :on-change #(set-ui! [:builder :color] (input-value %))}]]
-      [:label "Intensity" [numeric/number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
-                                               :on-change #(when-let [n (number-value %)] (set-ui! [:builder :level] n))}]]
-      [duration-control "builder-duration" "Duration" (:duration-value builder 4) (:duration-unit builder "beats")
-       (fn [value unit] (when (some? value) (set-ui! [:builder :duration-value] value))
-         (when unit (set-ui! [:builder :duration-unit] unit)))]]
-     [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
-      (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
-        (when unit (set-ui! [:builder :release-unit] unit))) true]
-     [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
      (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
-       [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
-                             :outputs {:color nil :dimmer nil}}
-        (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])
-     [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
-      "Create matching cue"]
+       [reactive-editor/editor reactive (boolean (get-in db [:ui :definition :publishing?]))
+        #(input! [:studio/builder-reactive %])])
+     (when-not loaded?
+       [:<>
+        [:div.form-row
+         [:label "Color" [:input#builder-color {:type "color" :value (:color builder "#b981a3") :on-change #(set-ui! [:builder :color] (input-value %))}]]
+         (when-not reactive?
+           [:label "Intensity" [numeric/number-input {:id "builder-level" :type "number" :min 0 :max 1 :step 0.01 :value (:level builder 0.7)
+                                                    :on-change #(when-let [n (number-value %)] (set-ui! [:builder :level] n))}]])
+         [duration-control "builder-duration" "Duration" (:duration-value builder 4) (:duration-unit builder "beats")
+          (fn [value unit] (when (some? value) (set-ui! [:builder :duration-value] value))
+            (when unit (set-ui! [:builder :duration-unit] unit)))]]
+        (when-not reactive?
+          [:<>
+           [duration-control "builder-release" "Release" (:release-value builder 1) (:release-unit builder "beats")
+            (fn [value unit] (when (some? value) (set-ui! [:builder :release-value] value))
+              (when unit (set-ui! [:builder :release-unit] unit))) true]
+           [keyframes/editor (:keyframes builder) [:level] #(set-ui! [:builder :keyframes] %)]
+           (when (and (= :library (get-in db [:ui :view])) (= :form (get-in db [:ui :definition :mode])))
+             [block-builder/field {:id (some-> builder :id not-empty keyword) :params {:level {}}
+                                   :outputs {:color nil :dimmer nil}}
+              (or (:blocks builder) {}) #(set-ui! [:builder :blocks] %)])])
+        [:label.checkbox-label [:input#builder-cue {:type "checkbox" :checked (boolean (:cue? builder)) :on-change #(set-ui! [:builder :cue?] (checked? %))}]
+         "Create matching cue"]])
      [button "builder-preview" "Generate EDN ↗" [:studio/builder-generate]]]))
 
 (defn- registry-results [show search]
