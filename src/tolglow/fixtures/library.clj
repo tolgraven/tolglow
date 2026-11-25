@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [afterglow.render.frame :as render]
             [afterglow.render.photometry :as photometry]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.registry :as registry]
             [tolglow.fixtures.definitions :as library])
   (:import [java.nio.charset StandardCharsets] [java.security MessageDigest] [java.util Base64]))
@@ -221,7 +222,7 @@
         policy (if (string? policy) (keyword policy) policy)
         calibration (merge (:calibration definition) (:calibration options))
         footprint (:footprint definition (reduce max 0 (filter integer? offsets)))
-        properties (into [:name :emission-color :fogger] photometry/fixture-keys)
+        properties (into [:name :emission-color :fogger :bounds-m] photometry/fixture-keys)
         candidate (merge (select-keys definition properties)
                          (select-keys options properties)
                          {:id (:id options) :fixture-type-id (:id definition) :fixture-type-version (:version definition)
@@ -243,6 +244,7 @@
                       (for [axis [:pan :tilt] :when (and (contains? channels axis) (nil? (get calibration axis)))]
                         {:severity :error :code :missing-calibration :path [:calibration axis]
                          :message (str "Set the documented " (name axis) " angle range before patching a moving fixture")})
+                      (map #(assoc % :severity :error :code :invalid-patch) (bounds/errors candidate))
                       (map #(assoc % :severity :error :code :invalid-patch) (render/validate-patch [candidate]))))
         valid? (not-any? #(= :error (:severity %)) diagnostics)]
     {:valid? valid? :fixture (when valid? candidate) :candidate candidate :diagnostics diagnostics}))
