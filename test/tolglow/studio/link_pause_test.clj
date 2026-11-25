@@ -5,7 +5,9 @@
             [clojure.test :refer :all]
             [tolglow.show :as show]
             [tolglow.persistence :as files])
-  (:import [java.net InetAddress ServerSocket]))
+  (:import [java.net InetAddress ServerSocket]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
 (defn- commit! [r type payload at]
   (let [ack (show/submit! r type payload)]
@@ -25,6 +27,46 @@
 (defn- status! [writer message]
   (.write writer (str "status " (pr-str message) "\n"))
   (.flush writer))
+
+(deftest saved-ableton-link-pairing-reconnects-a-fresh-show
+  (with-open [server (ServerSocket. 0 1 (InetAddress/getByName "127.0.0.1"))]
+    (.setSoTimeout server 3000)
+    (let [file (Files/createTempFile "tolglow-link-" ".transit" (make-array FileAttribute 0))
+          config {:selected-source :ableton-link
+                  :link {:enabled? true :follow-transport? true :port (.getLocalPort server)}}
+          author (show/create-runtime {:workspace-options nil})]
+      (try
+        (try
+          (show/sync-action! author :configure {:config config})
+          (show/sync-action! author :start {})
+          (with-open [socket (.accept server) reader (io/reader socket) writer (io/writer socket)]
+            (.setSoTimeout socket 3000)
+            (is (= "enable-start-stop-sync" (.readLine reader)))
+            (is (= "status" (.readLine reader)))
+            (status! writer {:peers 1 :start 1000 :bpm 105.0 :beat 8 :playing true})
+            (is (eventually #(= :locked (:status (clock author)))))
+            (show/tick! author)
+            (show/save-show! author (str file)))
+          (finally (show/stop! author)))
+        (let [restored (show/create-runtime {:workspace-options nil})]
+          (try
+            (is (= :manual (:selected-source (clock restored))))
+            (let [reply (show/load-show! restored (str file))]
+              (show/tick! restored)
+              (is (= :accepted (:status (deref reply 2000 nil)))))
+            (is (= {:selected-source :ableton-link :status :waiting :follow-transport? true}
+                   (select-keys (clock restored) [:selected-source :status :follow-transport?])))
+            (with-open [socket (.accept server) reader (io/reader socket) writer (io/writer socket)]
+              (.setSoTimeout socket 3000)
+              (is (= "enable-start-stop-sync" (.readLine reader)))
+              (is (= "status" (.readLine reader)))
+              (status! writer {:peers 1 :start 2000 :bpm 111.0 :beat 2 :playing false})
+              (is (eventually #(= :paused (:status (clock restored)))))
+              (show/tick! restored)
+              (is (= {:source :ableton-link :bpm 111.0 :playing? false}
+                     (select-keys (:transport (show/snapshot restored)) [:source :bpm :playing?]))))
+            (finally (show/stop! restored))))
+        (finally (Files/deleteIfExists file))))))
 
 (deftest loopback-link-status-reaches-the-owned-show-transport
   (doseq [follow? [true false]]
