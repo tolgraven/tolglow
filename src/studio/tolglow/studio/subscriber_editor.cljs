@@ -153,7 +153,8 @@
     :else (named-id text)))
 
 (defn- clean-match [match]
-  (let [match (into {} (remove (comp nil? val)) match)]
+  (let [match (cond-> match (string? (:pattern match)) (update :pattern #(not-empty (str/trim %))))
+        match (into {} (remove (comp nil? val)) match)]
     (cond-> match
       (contains? match :emitter-id) (update :emitter-id named-id)
       (not= :music/section-pattern (:type match)) (dissoc :pattern)
@@ -308,7 +309,7 @@
                                         :on-change #(let [v (raw %)] (input! [:match :emitter-id] (not-empty v)))}]]
           (when (= :music/section-pattern (:type match))
             [:label "Pattern ID" [:input {:value (str (:pattern match)) :placeholder ":slow, slow, 42, or #uuid \"…\""
-                                          :on-change #(input! [:match :pattern] (not-empty (str/trim (raw %))))}]])
+                                          :on-change #(input! [:match :pattern] (raw %))}]])
           [:label.debug-check [:input {:type "checkbox" :checked (get form :enabled? true)
                                        :on-change #(input! [:enabled?] (.. % -target -checked))}] "Enabled"]]
          (for [[i action] (map-indexed vector (:actions form))]

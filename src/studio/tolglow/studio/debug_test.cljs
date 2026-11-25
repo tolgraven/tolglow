@@ -78,6 +78,8 @@
               :actions [(editor/new-action :cue/launch)]}]
     (is (= {:type :music/section-pattern :pattern :slow} (:match (editor/clean-form form))))
     (is (= "slow" (get-in (editor/clean-form (assoc-in form [:match :pattern] "slow")) [:match :pattern])))
+    (is (= "slow groove" (get-in (editor/clean-form (assoc-in form [:match :pattern] " slow groove ")) [:match :pattern])))
+    (is (= {:type :music/section-pattern} (:match (editor/clean-form (assoc-in form [:match :pattern] "  ")))))
     (is (= {:type :audio/kick} (:match (editor/clean-form (assoc-in form [:match :type] :audio/kick)))))))
 
 (deftest an-operator-can-enter-numeric-and-uuid-patterns-without-changing-text-ids
@@ -95,6 +97,7 @@
     (is (= long-id (wire/decode (wire/encode (pattern long)))))
     (is (= wide-id (wire/decode (wire/encode (pattern wide)))))
     (is (= (uuid id) (wire/decode (wire/encode (pattern (str "#uuid \"" id "\""))))))
+    (is (= (uuid id) (pattern (str " #uuid \"" id "\" "))))
     (is (thrown? js/Error (pattern "#uuid \"invalid\"")))
     (doseq [stored [514 long-id wide-id (uuid id) "514" ":slow" "#uuid \"text\"" " trailing "]]
       (let [db (:db (transition {:debug {:handle "tab"}}
