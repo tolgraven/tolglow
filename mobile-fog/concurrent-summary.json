@@ -1,0 +1,49 @@
+{
+  "previewFps": 59.115274785843404,
+  "previewSha256": "fd033c20357c3ee37c5e4601d067232a7e980ddfeecfd5c7d740150b58280af5",
+  "jvmProcessors": 9,
+  "heapMaxBytes": 4294967296,
+  "collectors": [
+    "ZGC Minor Cycles",
+    "ZGC Minor Pauses",
+    "ZGC Major Cycles",
+    "ZGC Major Pauses"
+  ],
+  "captureOnly": true,
+  "windows": [
+    {
+      "name": "show-only",
+      "durationMs": 6000.0,
+      "observedOutputSlots": 240,
+      "missedSlotsBetweenSends": 0,
+      "outputHz": 39.994169260103945,
+      "p95SendGapMs": 28.129638671875,
+      "maxSendGapMs": 33.20654296875,
+      "maxGcPauseMs": 0.005859375,
+      "sends": 240
+    },
+    {
+      "name": "show-and-graphics-replay",
+      "durationMs": 5985,
+      "observedOutputSlots": 239,
+      "missedSlotsBetweenSends": 0,
+      "outputHz": 40.02565983247532,
+      "p95SendGapMs": 29.502197265625,
+      "maxSendGapMs": 32.5546875,
+      "maxGcPauseMs": 0.016357421875,
+      "sends": 239
+    },
+    {
+      "name": "show-only-after",
+      "durationMs": 6000,
+      "observedOutputSlots": 240,
+      "missedSlotsBetweenSends": 0,
+      "outputHz": 39.99098496894312,
+      "p95SendGapMs": 28.7119140625,
+      "maxSendGapMs": 30.6142578125,
+      "maxGcPauseMs": 0,
+      "sends": 240
+    }
+  ],
+  "universesPerSend": 2
+}
