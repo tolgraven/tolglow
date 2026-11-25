@@ -1394,13 +1394,18 @@
         fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
         skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
         history (get-in after [:control :history])
+        gesture-writes (into {} (keep (fn [[_ ack _ _ write]]
+                                        (when write [(:command-id ack) write])))
+                             receipts)
         from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
         outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
     (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))
     ;; Include automation, composition and controller commands, not only HTTP.
     (doseq [{:keys [command ack]} outcomes]
-      (let [instance (get-in after [:instances (:instance-id ack)])
+      (let [write (get gesture-writes (:command-id command))
+            command (cond-> command write (assoc :op :param/set :value (:value write)))
+            instance (get-in after [:instances (:instance-id ack)])
             timing (or (:duration instance) (when-let [ms (:duration-ms instance)] {:ms ms}))]
         (live-sync/record! manager (cond-> command
                                (:instance-id command)
@@ -1503,7 +1508,11 @@
                  (reduce
                   (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
                     (try
-                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)]
+                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)
+                            command (when (= :command (:type message)) (:payload message))
+                            ;; The reducer supplies the committed sample or rollback value.
+                            gesture-write (when (#{:gesture/sample :gesture/cancel} (:op command))
+                                            (first (filter (comp #{:param/changed} :type) (:events result))))]
                         (when-let [candidate (:candidate result)]
                           (vswap! retired conj (connections/commit-restore! (:connections runtime) candidate))
                           (vreset! restored-generation (:generation (connections/status (:connections runtime))))
@@ -1514,8 +1523,7 @@
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
-                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))
-                                                         (:replayed? result)])
+                        [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
                       (catch Exception error

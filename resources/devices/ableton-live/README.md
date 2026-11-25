@@ -106,6 +106,8 @@ The [pickup and loop qualification](../../../docs/live-routing.md#record-a-picku
    127 the high endpoint. Integers and enum choices snap, booleans switch at
    the midpoint. Note-off for a parameter sample leaves the last value in
    effect. A parameter arriving before its launch applies when the cue starts.
+   Push encoder turns record each committed change. A temporary Accent turn
+   also records the restored value when you lift, while the clip is recording.
 4. Open the clip’s piano roll to move cue starts, resize held notes, edit
    velocities or draw additional samples. In Lighting mode the same recorded
    notes drive the common cue and parameter handlers when the clip plays.
