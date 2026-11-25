@@ -1,11 +1,262 @@
 (ns tolglow.studio.modulation-host-test
-  (:require [clojure.test :refer [deftest is]]
-            [tolglow.show :as show]))
+  (:require [afterglow.control.codecs.push-2 :as push-codec]
+            [afterglow.control.devices.session :as device-session]
+            [afterglow.control.model :as control]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [tolglow.operator-history :as operator-history]
+            [tolglow.show :as show]
+            [tolglow.studio :as studio]
+            [tolglow.studio.access :as access]
+            [tolglow.transit :as transit])
+  (:import [java.io StringReader]))
 
-(defn- apply-at! [runtime type payload time]
-  (let [receipt (show/submit! runtime type payload)]
-    (show/tick! runtime time)
-    (deref receipt 1000 ::missing)))
+(defn- apply-at!
+  ([runtime type payload time] (apply-at! runtime type payload time nil))
+  ([runtime type payload time authority]
+   (let [receipt (show/submit! runtime type payload authority)]
+     (show/tick! runtime time)
+     (deref receipt 1000 ::missing))))
+
+(defn- turn! [runtime instance-id gesture-id value time authority]
+  (let [gesture {:instance-id instance-id :param :level :control-id "private-control" :gesture-id gesture-id}]
+    (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/begin) time authority))))
+    (is (= :accepted (:status (apply-at! runtime :command (assoc gesture :op :gesture/sample :sequence 1 :value value)
+                                        (inc time) authority))))
+    (apply-at! runtime :command (assoc gesture :op :gesture/end :last-sequence 1) (+ time 2) authority)))
+
+(defn- history-request [app method payload headers]
+  (let [media "application/transit+json"
+        response (app {:request-method method :uri (if (= :get method) "/api/state" "/api/command")
+                       :headers (merge {"host" "localhost" "accept" media "content-type" media
+                                        "x-tolglow-form" "studio-v1"} headers)
+                       :body (when payload (StringReader. (transit/encode payload)))})]
+    (cond-> response
+      (str/starts-with? (get-in response [:headers "Content-Type"] "") media)
+      (update :body transit/decode))))
+
+(defn- post-history! [runtime app payload headers time]
+  (let [reply (future (history-request app :post payload headers))
+        deadline (+ (System/nanoTime) 3000000000)]
+    (try
+      (loop []
+        (cond
+          (realized? reply) @reply
+          (< (System/nanoTime) deadline) (do (show/tick! runtime time) (Thread/sleep 5) (recur))
+          :else (throw (ex-info "Studio history request timed out" {:op (:op payload)}))))
+      (finally (future-cancel reply)))))
+
+(deftest studio-history-commands-share-committed-travel-and-listener-authority
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        app (studio/handler runtime)
+        token "test-only-studio-history-credential"
+        signed (access/authenticated app token)
+        local (access/listener-handler app {})
+        login {"authorization" (str "Bearer " token)}
+        push {:operator-id "push-2/history-fixture"}
+        scope {:runtime-id (:id runtime) :expected-epoch 0}]
+    (try
+      (let [id (:instance-id (apply-at! runtime :command
+                                       {:op :cue/launch :cue-id :ember :launch {:params {:level 0.2}}} 0))
+            level #(get-in @(:state runtime) [:model :instances id :params :level])
+            cursor #(:current-id (show/operator-history runtime))
+            undo (merge scope {:op :history/undo :expected-cursor 2 :command-id "studio-undo"})
+            forged (assoc undo :operator-id "forged" :authority {:operator-id "forged"}
+                          ::access/operator-authority {:operator-id "forged"}
+                          :source {:adapter :forged :session-id "forged"} :epoch 99 :show-id :forged)]
+        (is (= 1 (:history-cursor (turn! runtime id "first" 0.4 5 push))))
+        (is (= 2 (:history-cursor (turn! runtime id "second" 0.7 10 push))))
+        (testing "Preview reads committed history and supplies no authority to command payloads"
+          (let [before @(:state runtime)
+                view (:body (history-request app :get nil {}))]
+            (is (= (show/operator-history runtime) (:operator-history view)))
+            (is (= [2 0.7] [(cursor) (level)]))
+            (is (= 401 (:status (history-request signed :post forged {}))))
+            (is (= :operator-required (get-in (history-request app :post forged {}) [:body :code])))
+            (is (= 403 (:status (history-request local :post undo {"origin" "https://elsewhere.test"}))))
+            (is (identical? before @(:state runtime)))))
+        (testing "Signed browser sessions retain server-assigned authority across retries"
+          (let [session (history-request signed :get nil login)
+                cookie (first (str/split (get-in session [:headers "Set-Cookie"]) #";"))
+                result (post-history! runtime signed forged {"cookie" cookie} 20)
+                entry #(get-in @(:state runtime) [:model :control :history "studio-undo"])]
+            (is (= 200 (:status result)))
+            (is (= [:accepted 1] ((juxt :status :history-cursor) (:body result))))
+            (is (= [1 0.4] [(cursor) (level)]))
+            (is (re-find #"^studio/" (:operator-id (entry))))
+            (is (= {:adapter :studio :session-id "studio"} (get-in (entry) [:command :source])))
+            (is (not (re-find #"forged" (pr-str (entry)))))
+            (is (not-any? #(contains? (:command (entry)) %) [:operator-id :authority ::access/operator-authority]))
+            (is (= (:body result) (:body (post-history! runtime signed undo login 25))))
+            (is (= [1 0.4] [(cursor) (level)]))))
+        (testing "The default listener supports undo, explicit redo and alternate branch selection"
+          (is (= 3 (:history-cursor (turn! runtime id "alternate" 0.5 30 push))))
+          (let [select (merge scope {:op :history/select :expected-cursor 3 :node-id 2 :command-id "studio-select"})
+                submit #(get (post-history! runtime local % {} 40) :body)]
+            (doseq [field [:runtime-id :expected-epoch :expected-cursor :node-id]]
+              (is (= :invalid-history-command (get-in (history-request local :post (dissoc select field) {}) [:body :code]))))
+            (doseq [stale [(assoc select :runtime-id "retired-runtime") (assoc select :expected-epoch 1)]]
+              (is (= :rejected (:status (submit stale)))))
+            (is (= :stale-history-cursor (:code (submit (assoc select :expected-cursor 1)))))
+            (is (= [3 0.5] [(cursor) (level)]))
+            (is (= 2 (:history-cursor (submit select))))
+            (is (= [2 0.7] [(cursor) (level)]))
+            (is (= 1 (:history-cursor (submit (merge scope {:op :history/undo :expected-cursor 2})))))
+            (is (= 3 (:history-cursor (submit (merge scope {:op :history/redo :expected-cursor 1 :node-id 3})))))
+            (is (= [3 0.5] [(cursor) (level)]))
+            (is (= [nil 0 1 1] (mapv :parent-id (:nodes (show/operator-history runtime)))))
+            (apply-at! runtime :command {:op :param/set :instance-id id :param :level :value 0.8} 45)
+            (is (= :history-conflict (:code (:body (post-history! runtime local
+                                                    (merge scope {:op :history/undo :expected-cursor 3}) {} 50)))))
+            (is (= [3 0.8] [(cursor) (level)])))))
+      (finally (show/stop! runtime)))))
+
+(deftest snapshots-and-repl-share-committed-operator-history
+  (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+        studio {:operator-id "studio/private-session"}
+        push {:operator-id "push-2/private-port/private-connection"}]
+    (try
+      (let [initial (show/snapshot runtime)
+            identity (mapv initial [:runtime-id :show-id :epoch])
+            launch! (fn [cue time]
+                      (:instance-id (apply-at! runtime :command
+                                               {:op :cue/launch :cue-id cue :launch {:params {:level 0.2}}} time)))
+            ember (launch! :ember 0)
+            ice (launch! :ice 1)]
+        (is (= {:identity identity :current-id nil :nodes []
+                :retention {:limit control/edit-history-limit :retained 0 :pruned? false}}
+               (:operator-history initial)))
+        (is (= 1 (:history-cursor (turn! runtime ember "private-ember-turn" 0.4 5 push))))
+        (is (= 2 (:history-cursor (turn! runtime ice "private-ice-turn" 0.7 10 studio))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 2} 15 studio))))
+        (is (= 3 (:history-cursor (turn! runtime ice "private-alternate" 0.5 20 {:operator-id :caller}))))
+        (let [committed @(:state runtime)
+              projection (show/operator-history runtime)
+              [root first-edit second-edit alternate] (:nodes projection)]
+          (is (= projection (:operator-history (show/snapshot runtime))))
+          (is (identical? committed @(:state runtime)))
+          (is (= identity (:identity projection)))
+          (is (= 3 (:current-id projection)))
+          (is (= {:limit control/edit-history-limit :retained 4 :pruned? false} (:retention projection)))
+          (is (= {:id 0 :parent-id nil :sequence 0} root))
+          (is (= {:id 1 :parent-id 0 :sequence 1 :actor "Push 2" :parameter :level :before 0.2 :after 0.4
+                  :cue-id :ember :cue-label "Ember" :effect-id :ember :effect-label "Ember"}
+                 first-edit))
+          (is (= [2 1 "Studio" :ice "Ice" :ice "Ice"]
+                 (mapv second-edit [:id :parent-id :actor :cue-id :cue-label :effect-id :effect-label])))
+          (is (= [3 1 "Operator"] (mapv alternate [:id :parent-id :actor])))
+          (is (not (re-find #"private-" (pr-str projection)))))
+        (is (= :accepted (:status (apply-at! runtime :command {:op :instance/end :instance-id ember :force? true} 25))))
+        (let [[root first-edit second-edit alternate] (:nodes (show/operator-history runtime))]
+          (is (string? (:unavailable-reason root)))
+          (is (string? (:target-unavailable-reason first-edit)))
+          (is (= :level (:parameter first-edit)))
+          (is (every? #(nil? (:unavailable-reason %)) [first-edit second-edit alternate])))
+        (is (= 1 (:history-cursor (apply-at! runtime :command {:op :history/undo :expected-cursor 3} 30 studio))))
+        (is (= :target-unavailable
+               (:code (apply-at! runtime :command {:op :history/select :expected-cursor 1 :node-id 0} 35 studio))))
+        (let [before (show/operator-history runtime)
+              source (show/export-show-source runtime)
+              restored (apply-at! runtime :import {:source source} 40)
+              after (show/operator-history runtime)]
+          (is (= :accepted (:status restored)))
+          (is (= (update identity 2 inc) (:identity after)))
+          (is (= 1 (:current-id after)))
+          (is (= (dissoc before :identity) (dissoc after :identity)))))
+      (finally (show/stop! runtime)))))
+
+(deftest operator-history-reports-retention-after-pruning
+  (let [model (assoc-in (control/new-show) [:control :edit-history]
+                        {:limit 2 :cursor 9 :next-id 10
+                         :nodes {7 {:parent nil}
+                                 9 {:parent 7 :target [:unavailable-instance-param "0:1" :level 0]
+                                    :actor :caller :control-id :slider :before 0.2 :after 0.6 :generation 0}}})
+        projection (operator-history/project "runtime" model)]
+    (is (= {:limit 2 :retained 2 :pruned? true} (:retention projection)))
+    (is (= [7 9] (mapv :id (:nodes projection))))
+    (is (string? (get-in projection [:nodes 0 :unavailable-reason])))))
+
+(deftest operator-edits-publish-only-the-committed-parameter-changes
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        authority {:operator-id "test-operator"}
+        observed (atom [])]
+    (try
+      (show/attach-observer! runtime :history-test
+                             (fn [] {:tracing? (constantly false)
+                                     :events! (fn [_ events _ _] (swap! observed into events))
+                                     :frame! (fn [_]) :close! (fn [])}))
+      (let [id (:instance-id (apply-at! runtime :command {:op :cue/launch :cue-id :ember} 0))
+            level #(get-in @(:state runtime) [:model :instances id :params :level])
+            emitted #(first (get-in (show/snapshot runtime) [:output :values :head-1 :emitted-color]))
+            initial (level)
+            held? #(some? (get-in @(:state runtime) [:model :modulation :holds id :level]))
+            gesture {:instance-id id :param :level :control-id :encoder-0 :gesture-id "turn"}
+            begin (assoc gesture :op :gesture/begin :command-id "begin")
+            sample (assoc gesture :op :gesture/sample :command-id "sample" :sequence 1 :value 0.9)
+            end (assoc gesture :op :gesture/end :command-id "end" :last-sequence 1)]
+        (is (= :operator-required (:code (apply-at! runtime :command
+                                                   (assoc begin :authority authority :operator-id "forged") 20))))
+        (is (= :accepted (:status (apply-at! runtime :modulation-start
+                                            {:id :rhythm :seed 42 :every {:beats 1/4} :params [:level]
+                                             :select {:instance-ids [id]} :ranges {:level [0.1 0.4]}} 100))))
+        (is (= :accepted (:status (apply-at! runtime :command begin 100 authority))))
+        (let [ack (apply-at! runtime :command sample 120 authority)]
+          (is (= :accepted (:status ack)))
+          (is (= 0.9 (emitted)))
+          (is (held?))
+          (apply-at! runtime :modulation-resume {:instance-id id :params [:level]} 150)
+          (is (not (held?)))
+          (is (= ack (apply-at! runtime :command sample 160 authority)))
+          (is (not (held?)) "A replay must leave the resumed modulation alone")
+          (let [matching (filter #(= "sample" (get-in % [:data :command-id])) @observed)]
+            (is (= [:command/accepted] (mapv :type matching)))
+            (is (= "test-operator" (get-in (first matching) [:emitter :id])))))
+        (is (= 1 (:history-cursor (apply-at! runtime :command end 180 authority))))
+        (is (= 0 (:history-cursor (apply-at! runtime :command
+                                             {:op :history/undo :expected-cursor 1} 200 authority))))
+        (is (== initial (level) (emitted)))
+        (is (held?)))
+      (finally (show/stop! runtime)))))
+
+(deftest captured-push-encoder-updates-become-one-operator-edit
+  (let [runtime (show/start! {:workspace-options nil} (constantly nil))
+        input (atom nil)
+        midi {:open! (fn [receive!] (reset! input receive!) :capture)
+              :send! (fn [_ _]) :close! (fn [_])}]
+    (try
+      (let [device (show/connect-device! runtime :push-2
+                                         {:session-id "history-push" :midi midi
+                                          :operator-gestures? true :schedule! nil})]
+        (doseq [index (range 128)]
+          (@input (assoc (push-codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (let [model #(:model @(:state runtime))
+              history #(get-in (model) [:control :edit-history])
+              [x y] (some (fn [[coordinate cue]] (when (= :ember cue) coordinate))
+                          (get-in (model) [:pages :main :cells]))
+              _ (@input [0x90 (push-codec/pad-note x y) 127])
+              instance-id (get-in (device-session/snapshot device) [:local :selected-instance])
+              level #(get-in (model) [:instances instance-id :params :level])
+              initial (level)]
+          (is (number? initial))
+          (@input [0x90 0 127])
+          (dotimes [_ 5] (@input [0xb0 71 1]))
+          (is (> (level) initial))
+          (is (= 0 (:cursor (history))))
+          (@input [0x80 0 0])
+          (let [{:keys [target actor before after]} (get-in (history) [:nodes (:cursor (history))])]
+            (is (= [:instance-param instance-id :level] target))
+            (is (re-find #"^push-2/history-push/" actor))
+            (is (= [initial (level)] [before after]))
+            (is (= 2 (count (:nodes (history)))))
+            (is (empty? (:open (history)))))
+          (let [app (access/listener-handler (studio/handler runtime) {})
+                scope {:runtime-id (:id runtime) :expected-epoch (:epoch (model))}
+                submit #(get-in (history-request app :post (merge scope %) {}) [:body :history-cursor])
+                edited (level)]
+            (is (= [0 initial] [(submit {:op :history/undo :expected-cursor 1}) (level)]))
+            (is (= [1 edited] [(submit {:op :history/redo :expected-cursor 0 :node-id 1}) (level)])))
+          (is (empty? (:errors (device-session/snapshot device))))))
+      (finally (show/stop! runtime)))))
 
 (deftest musical-modulation-renders-overlays-and-yields-to-human-control
   (let [runtime (show/create-runtime)]

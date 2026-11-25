@@ -71,6 +71,7 @@
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.persistence :as persistence]
+            [tolglow.operator-history :as operator-history]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
@@ -173,6 +174,7 @@
                              (sort-by :order (vals (:instances model))))
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
+            :operator-history (operator-history/project (:id runtime) model)
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -207,6 +209,11 @@
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(defn operator-history
+  "Read the same committed operator history shown in Studio."
+  [runtime]
+  (operator-history/project (:id runtime) (:model @(:state runtime))))
 
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
@@ -397,40 +404,52 @@
                                                  [id (-> source (assoc :armed-intent? false)
                                                          (update :state (fn [state] (:state (sensor-core/set-armed state false)))))])) %)))))
 
-(defn- command [model payload time-ms]
-  (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
-        payload (prefabs/prepare-command model payload)
-        ;; Declarative code may use string identities (generated pages do).
-        ;; JSON keyword normalization must still address those existing objects.
-        payload (reduce (fn [p [field entries]]
-                          (let [id (get p field) s (when (keyword? id) (subs (str id) 1))]
-                            (if (and s (not (contains? entries id)) (contains? entries s))
-                              (assoc p field s) p))) payload
-                        [[:cue-id (get-in model [:registry :cues])]
-                         [:page-id (:pages model)]])]
-    (let [result (spatial/apply-command model
-                          (merge {:command-id (str (UUID/randomUUID))
-                                 :show-id (:show-id model) :epoch (:epoch model)
-                                 :source {:adapter :studio :session-id "studio"}}
-                                 payload {:time-ms time-ms}))
-          result (if (and (= :accepted (get-in result [:ack :status]))
-                          (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
-                   (update result :model
-                           (fn [next-model]
-                             (cond-> (restart-model next-model time-ms)
-                               (contains? model ::staging/pending)
-                               (as-> m (staging/collect (staging/begin m) :control
-                                                        {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
-                                                        (:events result))))))
-                   result)]
-      (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (or (seq (get-in model [:modulation :controllers]))
-                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
-               (not= :patch (get-in payload [:source :type]))
-               (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
-                {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
-        result))))
+(defn- hold-manual-params [model result {:keys [source]} authority]
+  (if (or authority (and (not= :patch (:type source)) (not= :live-playback (:origin source))))
+    (reduce (fn [result {:keys [type instance-id param]}]
+              (if (and (= :param/changed type)
+                       (or (seq (get-in model [:modulation :controllers]))
+                           (get-in model [:instances instance-id :parameter-bindings param])))
+                (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+                           {:instance-id instance-id :params [param] :until-beat nil})
+                result))
+            result (:events result))
+    result))
+
+(defn- command
+  ([model payload time-ms] (command model payload time-ms nil))
+  ([model payload time-ms authority]
+   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
+         payload (prefabs/prepare-command model payload)
+         ;; Declarative code may use string identities (generated pages do).
+         ;; JSON keyword normalization must still address those existing objects.
+         payload (reduce (fn [p [field entries]]
+                           (let [id (get p field) s (when (keyword? id) (subs (str id) 1))]
+                             (if (and s (not (contains? entries id)) (contains? entries s))
+                               (assoc p field s) p))) payload
+                         [[:cue-id (get-in model [:registry :cues])]
+                          [:page-id (:pages model)]])
+         envelope (merge {:command-id (str (UUID/randomUUID))
+                          :show-id (:show-id model) :epoch (:epoch model)
+                          :source {:adapter :studio :session-id "studio"}}
+                         payload {:time-ms time-ms})
+         result (spatial/apply-command model envelope authority)
+         accepted? (= :accepted (get-in result [:ack :status]))]
+     (cond
+       (and accepted? (= (:revision model) (get-in result [:model :revision])))
+       (assoc result :replayed? true)
+
+       (and accepted? (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
+       (update result :model
+               (fn [next-model]
+                 (cond-> (restart-model next-model time-ms)
+                   (contains? model ::staging/pending)
+                   (as-> m (staging/collect (staging/begin m) :control
+                                            {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
+                                            (:events result))))))
+
+       accepted? (hold-manual-params model result payload authority)
+       :else result))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -476,7 +495,7 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
-(defn- dispatch-owner-command [runtime model payload time-ms]
+(defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
@@ -489,14 +508,14 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    :else (command model payload time-ms)))
+    :else (command model payload time-ms authority)))
 
-(defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
+(defn- apply-message [model {:keys [type payload expected-epoch authority]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
                                                                     :received-epoch expected-epoch})))
   (case type
-    :command (dispatch-owner-command runtime model payload time-ms)
+    :command (dispatch-owner-command runtime model payload time-ms authority)
     :cue-schedule (cue-timing/schedule model (cue-clock-identity runtime model) time-ms payload command)
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
@@ -1146,7 +1165,8 @@
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
-                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))])
+                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))
+                                                         (:replayed? result)])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
                       (catch Exception error
@@ -1349,10 +1369,12 @@
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))
-                 operations (map (fn [message [_ ack]]
-                                   {:operation (:type message) :command (get-in message [:payload :op])
-                                    :ack ack :emitter-id (get-in message [:payload :source :adapter])})
-                                 messages receipts)
+                 operations (keep (fn [[message [_ ack _ replayed?]]]
+                                    (when-not replayed?
+                                      {:operation (:type message) :command (get-in message [:payload :op])
+                                       :ack ack :emitter-id (or (get-in message [:authority :operator-id])
+                                                              (get-in message [:payload :source :adapter]))}))
+                                  (map vector messages receipts))
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state :audio-clock-confidence
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
@@ -1433,9 +1455,12 @@
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
   the frame-owner lock, then committed atomically by the next owner cycle.
-  Use :cue-schedule and :cue-cancel for explicit musical launch timing."
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
+  Host adapters pass authenticated operator authority as a separate argument.
+  Serialized payloads cannot confer operator privileges."
   ([runtime payload] (submit! runtime :command payload))
-  ([runtime type payload]
+  ([runtime type payload] (submit! runtime type payload nil))
+  ([runtime type payload authority]
    (let [reply (promise) candidate (volatile! nil)]
      (try
        (let [before (:model @(:state runtime))
@@ -1474,8 +1499,9 @@
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (.offer ^LinkedBlockingQueue queue
-                                        {:type type :payload payload :reply reply :expected-epoch epoch
-                                         :ingress-order (vswap! (:ingress-order runtime) inc)})))]
+                                        (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
+                                                 :ingress-order (vswap! (:ingress-order runtime) inc)}
+                                          (and (= :command type) authority) (assoc :authority authority)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
@@ -1648,15 +1674,18 @@
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
-  Push 2 accepts :native-display? true for the Wayang parameter display. An
-  explicit :display transport takes precedence."
+  Push 2 accepts :native-display? true for the Wayang parameter display and
+  :operator-gestures? true to record held scalar encoder edits. An explicit
+  :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
+      (let [operator-id (when (and (= :push-2 kind) (true? (:operator-gestures? options)))
+                          (str "push-2/" id "/" (UUID/randomUUID)))
+            open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -1673,10 +1702,17 @@
                                           :now-ms! #(now-ms runtime)
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
-                                                       (let [reply (submit! runtime (assoc command :expected-epoch epoch))
+                                                       (let [payload (assoc command :expected-epoch epoch)
+                                                             gesture? (and operator-id (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
+                                                                                         (:op command)))
                                                              quantized? (or (= :cue/cancel-launch (:op command))
                                                                             (and (= :cue/launch (:op command))
-                                                                                 (contains? command :grid)))]
+                                                                                 (contains? command :grid)))
+                                                             reply (if gesture?
+                                                                     (submit! runtime :command
+                                                                              (update payload :command-id #(str operator-id "/" %))
+                                                                              {:operator-id operator-id})
+                                                                     (submit! runtime payload))]
                                                          (deref reply (if quantized? 0 5000)
                                                                 {:status :pending :command-id (:command-id command)})))}))]
         (if (locking (:lock runtime)

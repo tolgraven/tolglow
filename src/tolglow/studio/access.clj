@@ -11,6 +11,16 @@
 (def ^:private cookie-name "tolglow-studio-session")
 (def ^:private session-seconds (* 12 3600))
 
+(defn operator-authority
+  "Return the authority assigned by the trusted listener to this Ring request."
+  [request]
+  (::operator-authority request))
+
+(defn- admit-operator [handler]
+  ;; The listener's access policy identifies a shared operator, independently of HTTP payloads.
+  (let [authority {:operator-id (str "studio/" (random-uuid))}]
+    #(handler (assoc % ::operator-authority authority))))
+
 (defn- bytes-of [s] (.getBytes ^String s StandardCharsets/UTF_8))
 (defn- equal-text? [a b] (MessageDigest/isEqual (bytes-of a) (bytes-of b)))
 
@@ -49,16 +59,17 @@
     (throw (ex-info "Studio operator token must contain 24 to 1024 characters" {})))
   (let [key-bytes (byte-array 32)
         _ (.nextBytes (SecureRandom.) key-bytes)
-        key (SecretKeySpec. key-bytes "HmacSHA256")]
+        key (SecretKeySpec. key-bytes "HmacSHA256")
+        admitted (admit-operator handler)]
     (fn [request]
       (let [now (quot (System/currentTimeMillis) 1000)]
         (cond
           (valid-session? key now (session-cookie request))
-          (handler (assoc request ::operator? true))
+          (admitted request)
 
           (header-authorized? token (get-in request [:headers "authorization"]))
           (let [stamp (str (+ now session-seconds))]
-            (-> (handler (assoc request ::operator? true))
+            (-> (admitted request)
                 (assoc-in [:headers "Set-Cookie"]
                           (str cookie-name "=" stamp "." (sign key stamp)
                                "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" session-seconds
@@ -94,6 +105,6 @@
       (throw (ex-info "Studio :auth requires {:token-env ...}" {})))
     (when (and auth (not local?) (not tls))
       (throw (ex-info "Authenticated LAN access requires TLS or a loopback TLS proxy" {})))
-    (let [app (if (some? auth) (authenticated handler (secret-setting (:token-env auth))) handler)
+    (let [app (if (some? auth) (authenticated handler (secret-setting (:token-env auth))) (admit-operator handler))
           app (if public (origin/wrap-proxy app public) app)]
       (origin/wrap-listener-host app host (cond-> (set allowed-hosts) public (conj (second public)))))))
