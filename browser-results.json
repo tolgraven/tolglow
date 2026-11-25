@@ -1,0 +1,51 @@
+{
+  "browser": "156.0.8078.79",
+  "servedBundleSha256": "16686654eb89fb62084a6966d9bb1be404fffa1e0efcc562c923ac42de667764",
+  "widthProfiles": [
+    1440,
+    1024,
+    390
+  ],
+  "launchIds": {
+    "first": "0:1",
+    "second": "0:2",
+    "ice": "0:3"
+  },
+  "before": [
+    "0:1",
+    "0:2",
+    "0:3"
+  ],
+  "moved": [
+    "0:2",
+    "0:3",
+    "0:1"
+  ],
+  "reversed": [
+    "0:2",
+    "0:1",
+    "0:3"
+  ],
+  "head1EmittedColor": {
+    "before": [
+      0.148,
+      0.481,
+      0.5327999999999999
+    ],
+    "after": [
+      0.86,
+      0.021500000000000002,
+      0.00688
+    ]
+  },
+  "checks": [
+    "keyboard selects only the intended duplicate without submitting a command",
+    "desktop reorder commits across priorities",
+    "running REPL observes and changes Studio order",
+    "competing REPL operation is shown and stale Studio command is rejected",
+    "tablet and phone touch reorder and cancellation",
+    "Cue variations stay on the selected launch across reorders on desktop and phone",
+    "selected launch can refresh its variation preview after reordering without changing the show",
+    "no page errors or horizontal overflow"
+  ]
+}
