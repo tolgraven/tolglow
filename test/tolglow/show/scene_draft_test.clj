@@ -190,6 +190,77 @@
             (is (apply < (take 6 levels))))))
       (finally (show/stop! (:runtime audition)) (show/stop! (:runtime applied))))))
 
+(def ^:private counter
+  {:id :counter :version 1 :name "Counter wash" :targets [:head-3]
+   :params {:level {:type :number :default 0.4 :bounds [0.0 1.0]}}
+   :outputs {:dimmer {:op :param :key :level}}})
+
+(defn- stateful-show []
+  (-> (smoothed-show)
+      (assoc-in [:registry :effects :counter] counter)
+      (assoc-in [:registry :cues :counter] {:id :counter :version 1 :effect-id :counter
+                                           :priority 20 :reload-policy :migrate})))
+
+(defn- accepted! [rt time-ms type payload]
+  (let [reply (show/submit! (:runtime rt) type payload)]
+    (tick rt time-ms)
+    (is (= :accepted (:status (receipt reply))) (pr-str type payload))
+    (receipt reply)))
+
+(deftest an-audition-leaves-stateful-live-frames-and-caches-untouched
+  ;; The live show carries state from frame to frame: output smoothing, a
+  ;; waveform on a parameter, a waveform on layer priority with hysteresis and
+  ;; a running :migrate cue. The draft reloads that cue, ends a live cue and
+  ;; launches new ones, so its private timeline diverges on every one of them.
+  (let [plain (runtime (stateful-show)) auditioned (runtime (stateful-show))
+        source {:adapter :repl :session-id "test"}
+        sweep {:type :lfo :waveform :triangle :period {:beats 2} :phase-reference :transport}
+        reload {:op :registry/publish :kind :effects
+                :definition (assoc counter :version 2
+                                   :state-migration {:from {1 [{:op :default :path [:frames] :value 4}]}})}
+        compiled #(count @(:cache @(:compiler-context (:runtime %))))
+        frame-state #(-> @(:state (:runtime %))
+                         (select-keys [:keyframes :modulation-view :resolved-param-overrides :parameter-samples])
+                         (update :parameter-samples dissoc :plans))]
+    (try
+      (let [[ember counter-id]
+            (last (for [rt [plain auditioned]]
+                    (let [launch (fn [time-ms cue-id]
+                                   (:instance-id (accepted! rt time-ms :command
+                                                            {:op :cue/launch :cue-id cue-id :source source
+                                                             :command-id (str "live-" (name cue-id))})))
+                          ember (launch 25 :ember)
+                          counter-id (launch 50 :counter)]
+                      (launch 75 :indigo)
+                      (accepted! rt 100 :modulation-bind
+                                 {:instance-id ember :param :level :binding (assoc sweep :from 0.1 :to 0.9)})
+                      (accepted! rt 125 :modulation-bind
+                                 {:instance-id ember :param :layer/priority
+                                  :binding (assoc sweep :period {:beats 1} :from -1 :to 1 :hysteresis {:band 0})})
+                      [ember counter-id])))
+            staged (submit auditioned {:op :scene-draft/stage :draft-id "scene"
+                                       :operations (into [reload {:op :instance/end :instance-id ember}] edits)})]
+        (doseq [time-ms (range 150 1151 frame-ms)] (tick plain time-ms) (tick auditioned time-ms))
+        (is (= :accepted (:status (receipt staged))))
+        (is (= @(:sent plain) @(:sent auditioned)) "every live packet byte is unchanged")
+        (is (< 20 (count (distinct (map second @(:sent plain))))) "the live frames keep moving")
+        (is (= (model-of plain) (model-of auditioned)))
+        (is (= (frame-state plain) (frame-state auditioned)))
+        (is (contains? #{-1 0 1} (get-in (frame-state auditioned) [:parameter-samples :priorities ember :value]))
+            "layer-priority hysteresis is still carried by the live frame state")
+        (testing "the private timeline took the reload; the live instance did not"
+          (let [private (get-in @(:scene-draft (:runtime auditioned)) [:frame :model :instances counter-id])
+                live (get-in (model-of auditioned) [:instances counter-id])]
+            (is (= [2 {:frames 4}] ((juxt :effect-version :state) private)))
+            (is (= 1 (:effect-version live)))
+            (is (nil? (:reload-fault private)))))
+        (testing "compiled effects and migrations stay in the audition's own caches"
+          (is (= (compiled plain) (compiled auditioned)))
+          (is (empty? @(:state-migrations (:runtime auditioned))))
+          (is (= 1 (count @(get-in @(:scene-draft (:runtime auditioned)) [:caches :state-migrations])))))
+        (is (= {:rendered 41 :skipped 0} (:frames (show/scene-draft (:runtime auditioned))))))
+      (finally (show/stop! (:runtime plain)) (show/stop! (:runtime auditioned))))))
+
 (deftest a-slow-audition-never-delays-or-changes-live-frames
   (let [render @#'show/render-audition-frame
         untouched (runtime nil {}) slowed (runtime nil {})]
