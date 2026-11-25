@@ -42,10 +42,11 @@
   (let [plan (prefabs/draft-plan :draft material dry (:mode material))
         expression (get-in plan [:expressions [:varyings :sample]])
         sample (ir/compile-expression expression)
-        env (fields/sample-tweens
+        meter {:beats-per-bar 4 :bars-per-phrase 4}
+        env (fields/sample-inputs
              plan {:beat beat :elapsed-beats beat :time-ms (* 500.0 beat) :elapsed-ms (* 500.0 beat)
-                   :params (draft-params plan variables)
-                   :meter {:beats-per-bar 4 :bars-per-phrase 4}})
+                   :params (draft-params plan variables) :meter meter}
+             {:beat beat :meter meter})
         at (fn [x y]
              (let [u (/ x (double (dec columns))) v (/ y (double (dec rows)))]
                (sample (assoc env :position [(* 4.0 u) (* 2.0 v) 0.0] :surface-uv [u v]))))

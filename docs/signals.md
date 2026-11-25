@@ -83,10 +83,10 @@ coordinate:
 
 ```clojure
 (signal/sample waveforms :sine
-  {:phase (fx/cycles {:beats 2})})
+  {:phase (fx/cycles {:beats 2} {:phase-reference :transport})})
 
 (signal/sample waveforms :pulse
-  {:phase (fx/add (fx/cycles {:bars 1})
+  {:phase (fx/add (fx/cycles {:bars 1} {:phase-reference :launch})
                  (fx/divide (fx/position :x) 4.0))
    :params {:duty (fx/param :duty)}})
 ```

@@ -58,12 +58,56 @@
         (let [id (:id (first (:instances (show/snapshot runtime))))]
           (is (string? id))
           (is (= :held (get-in @(:state runtime) [:model :instances id :launch-mode])))
+          (let [gesture-id (get-in @(:state runtime) [:model :instances id :gesture-id])]
+            (is (= {:status :fired :grid :off}
+                   (select-keys (show/quantized-cue-status runtime gesture-id) [:status :grid]))))
           (message! receive! 100 [0x80 60 0])
           (is (session/flush! manager))
           (show/tick! runtime 200)
           (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))
           (show/tick! runtime 1200)
           (is (empty? (:instances (show/snapshot runtime))))))
+      (finally (show/stop! runtime)))))
+
+(deftest captured-playback-grid-cancels-a-brief-hold-and-timestamps-the-next-press
+  (let [{:keys [runtime] :as f} (fixture)]
+    (try
+      (let [receive! (start-capture! f {:midi {:enabled? true :input-index 0 :control? true}
+                                       :live {:launch-grid {:beats 1}
+                                              :mappings {60 {:cue-id :ember :mode :held}
+                                                         61 {:cue-id :ice :grid :off}}}})
+            manager (connections/sync (:connections runtime))
+            midi-at! (fn [ingress tick bytes]
+                       (message! receive! ingress bytes)
+                       (is (session/flush! manager))
+                       (show/tick! runtime tick))
+            pending-id #(-> (show/snapshot runtime) :pending-cue-launches first :command-id)]
+        (message! receive! 50 [0x90 60 100])
+        (midi-at! 70 90 [0x80 60 0])
+        (is (empty? (:pending-cue-launches (show/snapshot runtime))))
+        (midi-at! 110 120 [0x90 60 100])
+        (let [id (pending-id)]
+          (is (= {:status :pending :due-beat 1}
+                 (select-keys (show/quantized-cue-status runtime id) [:status :due-beat])))
+          (midi-at! 140 150 [0x80 60 0])
+          (is (= :cancelled (:status (show/quantized-cue-status runtime id))))
+          (is (empty? (:instances (show/snapshot runtime)))))
+        (midi-at! 170 200 [0x90 60 100])
+        (let [id (pending-id)]
+          (midi-at! 210 220 [0x90 61 100])
+          (show/tick! runtime 499)
+          (is (= [:ice] (mapv :cue-id (:instances (show/snapshot runtime)))))
+          (show/tick! runtime 525)
+          (let [receipt (show/quantized-cue-status runtime id)
+                instance-id (:instance-id receipt)
+                command (get-in @(:state runtime) [:model :control :history id :command])]
+            (is (= :fired (:status receipt)))
+            (is (= 170 (get-in receipt [:raw :time-ms])))
+            (is (= {:time-ms 200 :beat 0.4} (:requested-at receipt)))
+            (is (= {:time-ms 525 :beat 1.05} (:admitted-at receipt)))
+            (is (= 1 (get-in command [:cue-timing :due-beat])))
+            (midi-at! 530 550 [0x80 60 0])
+            (is (= :releasing (get-in @(:state runtime) [:model :instances instance-id :phase]))))))
       (finally (show/stop! runtime)))))
 
 (deftest settings-and-stale-callbacks-survive-owned-restore

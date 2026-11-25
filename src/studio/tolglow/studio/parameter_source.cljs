@@ -191,14 +191,16 @@
   (let [[lo hi] (bounds schema base)
         [unit count] (or (first (:period binding)) [:beats 1])]
     {:waveform (get binding :waveform :sine) :unit (keyword unit) :period (str count)
-     :phase (str (:phase binding 0)) :from (get binding :from lo) :to (get binding :to hi)
+     :phase-reference (:phase-reference binding :launch) :phase (str (:phase binding 0))
+     :from (get binding :from lo) :to (get binding :to hi)
      :inputs (or (:inputs binding) {})}))
 
 (defn binding-config [form]
   (let [period (motion/number-value (:period form) "Period")]
     (when-not (pos? period) (throw (js/Error. "Period must be positive.")))
     {:type :lfo :waveform (:waveform form) :period {(:unit form) period}
-     :phase (motion/number-value (:phase form) "Phase") :from (:from form) :to (:to form)
+     :phase-reference (:phase-reference form) :phase (motion/number-value (:phase form) "Phase")
+     :from (:from form) :to (:to form)
      :inputs (:inputs form)}))
 
 (defn- number-field [label value change! schema]
@@ -234,7 +236,7 @@
 (defn- lfo-editor [id param schema base source catalog]
   (let [lfo (source-of source :lfo)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog)) error (r/atom nil)]
-      (let [{:keys [waveform period unit phase from to inputs]} @form
+      (let [{:keys [waveform period unit phase-reference phase from to inputs]} @form
             in-flight @(rf/subscribe [::request id param])
             wave (if (some? waveform)
                    (some #(when (= waveform (:id %)) %) catalog)
@@ -258,6 +260,11 @@
           [:label.source-field [:span "Unit"]
            [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
             (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
+          [:label.source-field [:span "Phase reference"]
+           [:select {:value (name phase-reference)
+                     :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
+            [:option {:value "launch"} "Cue launch"]
+            [:option {:value "transport"} "Show transport"]]]
           [number-field "Phase (cycles)" phase #(update! :phase %) {}]
           [endpoint "From" schema from #(update! :from %)]
           [endpoint "To" schema to #(update! :to %)]]

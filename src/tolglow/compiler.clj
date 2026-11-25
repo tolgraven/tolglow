@@ -111,7 +111,7 @@
         defaults (registry/resolve-params schemas {})
         entries (registry/output-entries (:outputs definition))
         block-plan (when (or (contains? definition :blocks)
-                             (some (comp blocks/reads-variable? :value) entries))
+                             (some (comp blocks/needs-plan? :value) entries))
                      (blocks/prepare (merge {:blocks {}} definition) entries prepare-expression))
         outputs (mapv (partial compile-output schemas bind-pure (some? block-plan)) (range)
                       (or (:outputs block-plan) entries))
@@ -189,7 +189,8 @@
                  :elapsed-beats (when (and (number? (:beat clock)) (number? (:started-at-beat instance)))
                                   (max 0 (- (:beat clock) (:started-at-beat instance))))
                  :meter (time/normalize-meter (:timing-meter instance))}
-            env (if (and (seq (:tweens block-plan)) (not done?)) (blocks/sample-tweens block-plan env) env)
+            env (if (and block-plan (not done?))
+                  (blocks/sample-inputs block-plan env (or (:transport-clock frame) clock)) env)
             ;; A tween depends on the instance clock, not fixture geometry.
             ;; Resolve it once per frame, including captured-meter normalization.
             outputs (if done? outputs

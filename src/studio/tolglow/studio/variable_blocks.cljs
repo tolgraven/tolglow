@@ -169,7 +169,7 @@
      (when (:fixed? ui)
        [:label "Dry value or expression" [:input {:value (:base-str ui) :on-change #(edit! :base-str (text-of %))}]])
      [builder/stage-editor {:stages (:stages ui) :library (merge library (:prefabs settings))
-                            :parameters [] :on-change #(edit! :stages %)}]
+                            :parameters [] :transport-only? true :on-change #(edit! :stages %)}]
      [:div.button-row
       [:button.button.primary {:type "button" :disabled (or (not online?) changed? (:pending ui))
                                :on-click #(rf/dispatch [::submit :put])} "Save variable chain"]

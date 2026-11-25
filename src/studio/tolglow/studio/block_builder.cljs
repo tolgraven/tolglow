@@ -6,6 +6,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.block-trace :as trace]
+            [tolglow.studio.modulation :as motion]
             [tolglow.studio.parameter-widgets :as widget]
             [tolglow.studio.signal-picker :as signal]))
 
@@ -51,27 +52,65 @@
        ^{:key [i n]} [scalar (str label " " (inc i)) n #(update! (assoc value i %))])]
     ^{:key (str value)} [scalar label value update!]))
 
-(defn- input-control [id default inputs set-input! clear! params]
+(def ^:private period-units {:beat :beats :bar :bars :phrase :phrases})
+
+(defn oscillator-timing [value transport-only?]
+  (let [default {:op :oscillator-phase :period {:beats 1} :phase 0.0
+                 :phase-reference (if transport-only? :transport :launch)}]
+    (if (= :oscillator-phase (:op value)) (merge default value)
+        (if-let [unit (period-units (:op value))] (assoc default :period {unit 1}) default))))
+
+(defn- oscillator-fields [label value transport-only? change!]
+  (let [{:keys [phase phase-reference period] :as spec} (oscillator-timing value transport-only?)
+        [unit amount] (first period)]
+    [:div.form-row
+     (when (and transport-only? (= phase-reference :launch))
+       [:button.button.secondary {:type "button" :on-click #(change! (assoc spec :phase-reference :transport))}
+        "Use show transport"])
+     (when-not transport-only?
+       [options "Phase reference" [:launch :transport] phase-reference
+        #(case % :launch "Cue launch" :transport "Show transport")
+        #(change! (assoc spec :phase-reference %))])
+     [:label "Period"
+      ^{:key (pr-str amount)}
+      [:input {:type "text" :aria-label (str label " period") :default-value (str amount)
+               :on-blur (fn [e]
+                          (let [input (.-target e)]
+                            (try
+                              (let [n (motion/number-value (.-value input) "Period")]
+                                (when-not (pos? n) (throw (js/Error. "Period must be positive.")))
+                                (change! (assoc spec :period {unit n})))
+                              (catch :default _ (set! (.-value input) (str amount))))))}]]
+     [options "Period unit" [:beats :bars :phrases] unit widget/label #(change! (assoc spec :period {% amount}))]
+     [:label "Phase (cycles)" ^{:key (pr-str phase)}
+      [scalar "Phase (cycles)" phase #(change! (assoc spec :phase %))]]]))
+
+(defn- input-control [id default inputs set-input! clear! params & [transport-only?]]
   (let [label (if (= id :amount) "Wet amount" (widget/label id))
         value (get inputs id default)
         expr? (map? value)
         param? (= :param (:op value))
         mode (cond param? :parameter expr? (:op value) :else :constant)
-        modes (vec (distinct (concat [:constant :beat :bar :phrase :time] (when (seq params) [:parameter]) [mode])))
+        phase? (or (= mode :oscillator-phase) (and (= "phase" (name id)) (= :number (signal/value-type default))))
+        modes (vec (distinct (concat [:constant :beat :bar :phrase :time] (when phase? [:oscillator-phase])
+                                    (when (seq params) [:parameter]) [mode])))
         choose (fn [next]
                  (set-input! (case next
                                :constant (if (map? default) (signal/fixed-value (signal/value-type default)) default)
                                :parameter {:op :param :key (first params)}
+                               :oscillator-phase (oscillator-timing value transport-only?)
                                {:op next})))]
     [:div.block-input
-     [options label modes mode widget/label choose]
+     [options label modes mode #(if (= % :oscillator-phase) "Musical period" (widget/label %)) choose]
      (cond param? [options (str label " parameter") params (:key value) widget/label #(set-input! {:op :param :key %})]
+           (and phase? (or (= mode :oscillator-phase) (and (period-units mode) (not (contains? value :clock)))))
+           [oscillator-fields label value transport-only? set-input!]
            (or (number? value) (and (vector? value) (every? number? value))) [numeric-field label value set-input!]
            (and expr? (not (#{:variable :beat :bar :phrase :time} mode))) [:code (pr-str value)])
      [signal/picker label value (signal/value-type default) set-input!]
      (when (contains? inputs id) [:button.text-button {:type "button" :on-click clear!} "Reset"])]))
 
-(defn- stage-controls [i stage template params change! move! remove! total]
+(defn- stage-controls [i stage template params change! move! remove! total transport-only?]
   (let [coordinates (or (:coordinates stage) :world)
         title (or (:name template) (trace/path-label [(:block stage)]))
         inputs (or (:inputs stage) {})]
@@ -92,15 +131,15 @@
      [:details [:summary "Inputs"]
       (for [[id default] (sort-by (comp str key) (:inputs template))]
         ^{:key id} [input-control id default inputs #(change! (assoc-in stage [:inputs id] %))
-                    #(change! (update stage :inputs dissoc id)) params])]]))
+                    #(change! (update stage :inputs dissoc id)) params transport-only?])]]))
 
-(defn- stage-list [catalog stages params save!]
+(defn- stage-list [catalog stages params save! transport-only?]
   [:div.block-stage-list
    (for [[i stage] (map-indexed vector stages)]
      ^{:key [i (:block stage)]}
      [stage-controls i stage (get catalog (:block stage)) params #(save! (assoc stages i %))
       #(save! (move-stage stages i %))
-      #(save! (into (subvec stages 0 i) (subvec stages (inc i)))) (count stages)])])
+      #(save! (into (subvec stages 0 i) (subvec stages (inc i)))) (count stages) transport-only?])])
 
 (defn private-path [kind text]
   (let [parts (str/split (str/trim text) #"\s+")
@@ -128,12 +167,12 @@
 
 (defn stage-editor
   "A controlled stage list. The caller supplies its catalog and commits edits."
-  [{:keys [stages library parameters on-change]}]
+  [{:keys [stages library parameters on-change transport-only?]}]
   (r/with-let [chosen (r/atom nil)]
     (let [ids (sort-by #(get-in library [% :name] (str %)) (keys library))
           id (or (some #{@chosen} ids) (first ids))]
       [:div.block-stage-editor
-       [stage-list library (vec stages) parameters on-change]
+       [stage-list library (vec stages) parameters on-change transport-only?]
        (if (seq ids)
          [:div.block-stage-add
           [options "New block" ids id #(get-in library [% :name] (str %)) #(reset! chosen %)]

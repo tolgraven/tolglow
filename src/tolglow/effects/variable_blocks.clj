@@ -23,6 +23,8 @@
          (throw (ex-info "One binding would replace the parent of another" {:path path}))))
      (let [no-params (fn [_ _ path] (throw (ex-info "Use show variables as global block inputs" {:path path})))
            plan (blocks/prepare {:blocks bindings :prefabs prefabs :imported-prefabs entries} [] no-params)]
+       (when (some (fn [[spec _]] (= :launch (:phase-reference spec :launch))) (:oscillators plan))
+         (throw (ex-info "Show-wide variable blocks require a transport phase reference" {})))
        (assoc plan :evaluate (update-vals (:expressions plan) ir/compile-expression))))))
 
 (defn compile-model [model]
@@ -48,11 +50,11 @@
         plan))))
 
 (defn- environment [plan model time-ms]
-  (let [{:keys [beat meter]} (:transport model)]
-    (blocks/sample-tweens
+  (let [{:keys [beat meter] :as transport} (:transport model)]
+    (blocks/sample-inputs
      plan {:beat beat :elapsed-beats beat :meter (time/normalize-meter meter)
            :time-ms time-ms :elapsed-ms time-ms :position [0.0 0.0 0.0]
-           :params (blocks/with-variables plan {} model)})))
+           :params (blocks/with-variables plan {} model)} transport true)))
 
 (defn- writable? [model path]
   (loop [parent model depth 0]

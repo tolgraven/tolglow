@@ -6,6 +6,7 @@
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
             [tolglow.modulation :as modulation]
+            [tolglow.oscillator :as oscillator]
             [tolglow.signals :as signals]))
 
 (def ^:private builtins (delay (signals/new-registry)))
@@ -23,14 +24,15 @@
   (when-not condition (throw (ex-info message {:type ::invalid-binding}))))
 
 (defn- checked-binding [schema waveform binding]
-  (require! (and (map? binding) (every? #{:type :waveform :period :phase :from :to :inputs} (keys binding))
+  (require! (and (map? binding) (every? #{:type :waveform :period :phase :phase-reference :from :to :inputs} (keys binding))
                  (= :lfo (:type binding))) "Expected a waveform parameter binding")
   (let [{:keys [period phase inputs from to] :as binding}
         (merge {:period {:beats 1} :phase 0.0 :inputs {}} binding)]
     (require! (and waveform (= (:id waveform) (:waveform binding))) "Unknown waveform")
-    (require! (and (map? period) (= 1 (count period)) (#{:beats :bars :phrases} (ffirst period))
-                   (time/finite-number? (val (first period))) (pos? (val (first period))))
+    (require! (oscillator/musical-period? period)
               "A waveform period needs positive beats, bars or phrases")
+    (require! (oscillator/phase-references (:phase-reference binding :launch))
+              "Waveform phase reference must be :launch or :transport")
     (require! (time/finite-number? phase) "Waveform phase must be finite")
     (require! (and (map? inputs) (empty? (params/validate-values (:params waveform) inputs)))
               "Waveform inputs must match the registered scalar parameters")
@@ -77,7 +79,7 @@
                        (modulation/interpolate-value schema (:from binding) (:to binding) weight))))})
     (catch Exception error {:error (.getMessage error)})))
 
-(defn- sample-one [model instance clock previous result param {:keys [binding]}]
+(defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding]}]
   (let [id (:id instance)
         schema (get-in (modulation/owner-definition model instance) [:params param])
         registry (waveforms model)
@@ -87,7 +89,7 @@
                  (prepare registry waveform schema binding))
         hold (get-in model [:modulation :holds id param])
         held? (boolean (and hold (or (nil? (:until-beat hold))
-                                      (< (get-in model [:transport :beat] (:beat clock)) (:until-beat hold)))))
+                                      (< (get-in model [:transport :beat] (:beat private-clock)) (:until-beat hold)))))
         result (assoc-in result [:plans cache-key] plan)
         source {:type :lfo :binding binding :held? held?}
         diagnostic (fn [result message]
@@ -97,20 +99,23 @@
       (let [result (assoc-in result [:sources id param] source)]
         (if held? result
           (try
-            (let [period (time/duration->beats (:period binding) (:timing-meter instance))
-                  phase (+ (:phase binding) (/ (- (:beat clock) (or (:started-at-beat instance) 0.0)) period))
+            (let [elapsed (when (= :launch (:phase-reference binding :launch))
+                            (- (:beat private-clock) (or (:started-at-beat instance) 0.0)))
+                  phase (oscillator/phase binding transport-clock elapsed (:timing-meter instance))
                   value ((:evaluate plan) phase)]
               (require! (params/valid-value? schema value) "Waveform produced an invalid parameter value")
               (assoc-in result [:overrides id param] value))
             (catch Exception error (diagnostic result (.getMessage error)))))))))
 
 (defn sample [model frame previous-plans]
-  (reduce-kv (fn [result _ instance]
-               (if-let [bindings (not-empty (:parameter-bindings instance))]
-                 (let [clock (system/private-clock instance frame)]
-                   (reduce-kv (partial sample-one model instance clock previous-plans) result bindings))
-                 result))
-             {:plans {} :sources {} :overrides {}} (:instances model)))
+  (let [transport-clock (time/frame-clock frame)]
+    (reduce-kv (fn [result _ instance]
+                 (if-let [bindings (not-empty (:parameter-bindings instance))]
+                   (let [private-clock (system/private-clock instance transport-clock)]
+                     (reduce-kv (partial sample-one model instance transport-clock private-clock previous-plans)
+                                result bindings))
+                   result))
+               {:plans {} :sources {} :overrides {}} (:instances model))))
 
 (defn- append [sources id param entry] (update-in sources [id param] (fnil conj []) entry))
 

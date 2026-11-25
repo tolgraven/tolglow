@@ -47,6 +47,33 @@
       (is (= "old-instance" (:instance-id (first (:commands late)))))
       (is (empty? (:commands (live/midi->commands (:state handed) note-on envelope)))))))
 
+(deftest grid-holds-use-the-original-note-and-source-through-handoff
+  (let [initial (live/new-bridge {:launch-grid {:beats 1/2}
+                                  :mappings {36 {:cue-id :red :mode :held}
+                                             37 {:cue-id :ice :mode :persistent}}
+                                  :parameters {1 {:cue-id :red :param :level :bounds [0 1]}}})
+        play (fn [state event source id]
+               (live/midi->commands state event
+                                    (assoc envelope :command-id id :source {:source-id source :sync-run-id "run"
+                                                                           :note (:note event)})))
+        live-press (play initial note-on :live "live-press")
+        midi-press (play (:state live-press) note-on :midi "midi-press")
+        pending (live/acknowledge-launch (:state midi-press) 36 {:command-id "midi-press" :status :pending} envelope)
+        adjusted (play (:state pending) {:type :cc :channel 1 :controller 1 :value 127} :midi "knob")
+        fired (live/acknowledge-launch (:state adjusted) 36 {:command-id "midi-press" :status :accepted :instance-id "midi-instance"} envelope)
+        released (play (:state fired) note-off :live "release")
+        persistent (play (:state released) (assoc note-on :note 37) :live "persistent")
+        handoff (live/handoff (:state persistent) :live (assoc envelope :command-id "handoff"))]
+    (is (= {:beats 1/2} (-> midi-press :commands first :grid)))
+    (is (empty? (:commands adjusted)))
+    (is (= {:op :param/set :instance-id "midi-instance" :value 1.0}
+           (select-keys (first (:commands fired)) [:op :instance-id :value])))
+    (is (= "live-press" (-> released :commands first :launch-command-id)))
+    (is (= (-> live-press :commands first :source) (-> released :commands first :source)))
+    (is (= [{:op :cue/cancel-launch :launch-command-id "midi-press" :reason :held-release}
+            {:op :cue/cancel-launch :launch-command-id "persistent" :reason :surface-handoff}]
+           (mapv #(select-keys % [:op :instance-id :launch-command-id :reason]) (:commands handoff))))))
+
 (deftest bridge-suppresses-feedback-and-scales-controller-input
   (is (empty? (:commands (live/midi->commands (bridge) (assoc note-on :origin :tolglow-feedback) envelope))))
   (is (empty? (:commands (live/midi->commands (bridge) (assoc note-on :channel 2) envelope))))

@@ -62,6 +62,19 @@
         step (batch/compile-effect definition fixtures)]
     (is (close? 0.25 (get-in (frame step (assoc-in (context 0.0) [:frame :time-ms] 250.0)) [:values :left :dimmer])))))
 
+(deftest expression-waveform-helpers-select-the-cue-or-transport-phase
+  (let [input (-> (context 3.0)
+                  (assoc-in [:frame :transport-clock] {:beat 7.0 :meter {:beats-per-bar 3}})
+                  (assoc-in [:instance :started-at-beat] 2.0))]
+    (doseq [[reference expected] [[:launch 0.375] [:transport (+ 1/3 0.125)]]]
+      (let [definition (fx/effect :ref {} (fx/intensity (fx/saw {:period {:bars 1} :phase-reference reference :phase 0.125})))
+            scalar (frame (compiler/compile-effect definition) input)
+            typed (frame (batch/compile-effect definition fixtures) input)]
+        (is (close? expected (get-in scalar [:values :left :dimmer])))
+        (is (= (frame-bytes scalar) (frame-bytes typed)))))
+    (is (thrown? clojure.lang.ExceptionInfo (fx/saw {:period {:ms 100} :phase-reference :transport})))
+    (is (thrown? clojure.lang.ExceptionInfo (fx/saw {:clock :absolute :phase-reference :launch})))))
+
 (deftest spatial-wave-and-parameter-shorthand-render-a-colored-pixel-pattern
   (let [definition (fx/breathing-wash :spatial
                                      {:color [1 0 0] :level 0.8

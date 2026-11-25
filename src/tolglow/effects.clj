@@ -4,6 +4,7 @@
   through the ordinary registry and compile it with tolglow.compiler."
   (:require [tolglow.registry :as registry]
             [tolglow.compiler :as compiler]
+            [tolglow.oscillator :as oscillator]
             [afterglow.time :as time]))
 
 (defn- fail! [path message]
@@ -95,20 +96,31 @@
 
 (defn cycles
   "Continuous cycle count for a musical duration, default one bar. :phase is
-  measured in cycles; :clock is :elapsed (since launch) or :absolute (transport).
-  Musical nodes use the instance's captured meter, never BPM-to-ms conversion."
+  measured in cycles. Use :phase-reference :launch for the cue's elapsed beats
+  and captured meter, or :transport for the shared beat and current meter.
+  The older :clock :elapsed/:absolute selects a coordinate on the effect clock."
   ([] (cycles {:bars 1} {}))
   ([period] (cycles period {}))
-  ([period {:keys [clock phase] :or {clock :elapsed phase 0.0}}]
+  ([period {:keys [clock phase phase-reference] :or {clock :elapsed phase 0.0} :as options}]
    (let [problems (time/validate-duration period)]
      (when (seq problems) (throw (ex-info "Invalid oscillator period" {:errors problems}))))
    (when-not (pos? (val (first period))) (fail! [:period] "Oscillator period must be positive"))
-   (when-not (#{:elapsed :absolute} clock) (fail! [:clock] "Clock must be :elapsed or :absolute"))
-   (let [[unit amount] (first period)
-         op ({:beats :beat :bars :bar :phrases :phrase :ms :time} unit)]
-     (add (divide {:op op :clock clock} amount) phase))))
+   (if (contains? options :phase-reference)
+     (do
+       (when-not (oscillator/phase-references phase-reference)
+         (fail! [:phase-reference] "Choose :launch or :transport"))
+       (when (contains? options :clock) (fail! [:clock] "Choose one oscillator clock"))
+       (when-not (oscillator/musical-period? period) (fail! [:period] "A phase reference needs beats, bars or phrases"))
+       (let [oscillator {:op :oscillator-phase :phase-reference phase-reference :period period}]
+         (if (time/finite-number? phase) (assoc oscillator :phase phase)
+             (add oscillator phase))))
+     (do
+       (when-not (#{:elapsed :absolute} clock) (fail! [:clock] "Clock must be :elapsed or :absolute"))
+       (let [[unit amount] (first period)
+             op ({:beats :beat :bars :bar :phrases :phrase :ms :time} unit)]
+         (add (divide {:op op :clock clock} amount) phase))))))
 
-(def ^:private wave-options #{:period :clock :phase :low :high :duty})
+(def ^:private wave-options #{:period :clock :phase-reference :phase :low :high :duty})
 (defn- options! [options allowed]
   (when-not (and (map? options) (every? allowed (keys options)))
     (fail! [] (str "Unknown or invalid options; expected " (pr-str (sort allowed))))) options)
@@ -117,7 +129,7 @@
 
 (defn sine
   "Normalized sine: .5, 1, .5, 0 at successive quarter cycles. Options include
-  :period, :clock, :phase (cycles) and output :low/:high."
+  :period, :phase-reference, :phase (cycles) and output :low/:high."
   ([] (sine {}))
   ([options]
    (options! options wave-options)

@@ -34,7 +34,7 @@
     tolglow.integrations.live-sync-test tolglow.studio.link-pause-test tolglow.studio.sync-host-test tolglow.studio.modulation-host-test
     tolglow.studio.display-test tolglow.integrations.patch-test tolglow.studio.routing-host-test
     tolglow.repl-test tolglow.repl.sessions-test tolglow.studio.repl-host-test
-    tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test
+    tolglow.development.workspace-test tolglow.development-test tolglow.studio.restart-host-test tolglow.cue-timing-host-test
     tolglow.development.terminal-test tolglow.sensors-test tolglow.sensors.osc-test tolglow.sensors.audience-test
     tolglow.studio.sensor-host-test tolglow.output.scheduler-test tolglow.perf.output-deadlines-test
     tolglow.waveforms-test tolglow.development.agents-test tolglow.studio.application-agent-host-test
