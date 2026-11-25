@@ -297,7 +297,7 @@
            (when (and (contains? definition :modulation) (not (map? (:modulation definition))))
              [(error [:modulation] "Modulation must be a portable configuration map")])
            (when (contains? definition :state-migration)
-             (state-migration/errors (:state-migration definition))))
+             (state-migration/errors (:state-migration definition) version)))
           :cues
           (concat
            (when (and (contains? definition :selector) (not (selection/selector? (:selector definition))))

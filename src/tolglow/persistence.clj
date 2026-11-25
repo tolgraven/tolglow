@@ -157,7 +157,7 @@
                  (nonnegative? (:started-at-ms instance))
                  (#{:running :releasing} (:phase instance))
                  (#{:persistent :held :timed :one-shot} (:launch-mode instance))
-                 (control/reload-policies (:reload-policy instance :pinned)))
+                 (control/reload-policies (or (:reload-policy instance) :pinned)))
             path "Invalid captured running instance")
     (check-errors! (registry/validate-definition :effects definition) (conj path :definition))
     (compiler/compile-effect definition)

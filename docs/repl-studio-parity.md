@@ -55,7 +55,7 @@ REPL, publish a revision with a portable `:state-migration`
   @(show/submit! runtime :definition
      {:kind :effects
       :definition (-> effect (update :version inc)
-                      (assoc :state-migration {:steps [{:op :default :path [:phase] :value 0}]}))}))
+                      (assoc :state-migration {:from {(:version effect) [{:op :default :path [:phase] :value 0}]}}))}))
 ```
 
 The `:launch` option opts this one instance in; a cue's own `:reload-policy`
@@ -63,7 +63,7 @@ sets the default for its launches. The snapshot shows `:effect-version` and
 `:reload-policy` for the instance. A failing migration leaves the instance on its last good
 revision with a `:reload-fault` whose `:stage` is `:migrate`. Studio lists it
 in that inspector's diagnostics as `migrate · <message>`, with each cause's
-location, such as `{:path ["state-migration" "steps" 0 "path"]}`.
+location, such as `{:path ["state-migration" "from" 2 0 "path"]}`.
 The REPL reads the identical map from the snapshot or the durable subscription:
 
 ```clojure
