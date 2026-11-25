@@ -245,7 +245,7 @@
                partial (:partial state) bins (:bins state)]
           (if (= index n)
             (assoc state :filters [low upper] :partial partial :bins bins)
-            (let [partial (or partial {:n 0 :min 0.0 :max 0.0 :squares 0.0
+            (let [partial (or partial {:n 0 :min 1.0 :max -1.0 :squares 0.0
                                       :bands {:low 0.0 :mid 0.0 :high 0.0}
                                       :start (+ started-at-ms (* 1000.0 (/ index sample-rate)))})
                   limit (min n (+ index (- size (:n partial))))
