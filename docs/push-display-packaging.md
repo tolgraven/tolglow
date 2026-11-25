@@ -162,3 +162,28 @@ Choose the MIDI input and output of the device’s User port from the port list.
 The offscreen page renders the same CSS parameter widgets, waveform and history views, page grid, simulator and rig controls as Push 2. Bind captured buttons to `:display/parameters`, `:display/pages`, `:display/simulator`, `:display/rig` and `:display/camera` as needed. The bindable actions use the capture’s actual IDs. The display view follows the instance selected by a User Mode or MPE pad. Choosing a different lens or display does not launch a cue. A frame repeatedly sent to USB uses the last packed raster. Only the scheduled display worker asks the browser for new visuals.
 
 The replay uses the production screen encoder and 24 actual Studio simulator captures. Hardware qualification covers colour and edge orientation, Live handoff, continuous audio/MIDI and disconnect. See [Afterglow’s driver, receipts and on-device instructions](https://github.com/tolgraven/afterglow/blob/master/doc/architecture/push-3-display.md).
+
+## Browse saved shows
+
+`tolglow.controllers.content-browser-display/connect-device!` adds a read-only saved-show browser to the shared browser display on Push 2 or tethered Push 3. Supply explicit button captures that fit your layout. The normal cue pads and encoder gestures remain available during browsing.
+
+```clojure
+(require '[tolglow.controllers.content-browser-display :as saved-shows])
+
+(saved-shows/connect-device! runtime :push-2
+  {:session-id "desk-push"
+   :input-index verified-input-index
+   :output-index verified-output-index
+   :display-options {:browser-executable "/usr/bin/chromium"
+                     :url "http://127.0.0.1:8500/push-display"}
+   :catalog-controls (into {:toggle   {:channel 0 :controller 56}
+                           :back     {:channel 0 :controller 55}
+                           :previous {:channel 0 :controller 62}
+                           :next     {:channel 0 :controller 63}}
+                           (map (fn [row] [[:select row] {:channel 0 :controller (+ 20 row)}]))
+                           (range 8))})
+```
+
+This layout uses Repeat to open or close the browser, Octave Up to go back, Page Left and Right to page, and the buttons below the screen to preview the aligned show. Verify these addresses against your controller and port. For Push 3, pass the usual `:user-mode?`, `:expression-mode` and captured `:layout` options, and put the selected `:usb` address in `:display-options`.
+
+The active show’s Working recovery and Latest named checkpoints appear when available. Additional files come from an optional trusted `:catalog-saves` vector in [the host format](../src/tolglow/controllers/content_browser_host.clj). The preview displays checkpoint metadata. Opening, paging, and previewing leave the current show running. On-device restore and its committed result are tracked separately in [#552](https://github.com/tolgraven/tolglow/issues/552).

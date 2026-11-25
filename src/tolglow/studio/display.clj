@@ -218,19 +218,23 @@
 (defn transport
   "Build the asynchronous display session transport from explicit :capture and
   :sink maps. One capture is in flight and one latest pending view is retained.
-  With :project!, the last immutable view is re-projected at the bounded cadence
-  even when model/base controls are unchanged, so live readings stay current.
+  With :project! or :pre-project!, the last immutable view is re-projected at
+  the bounded cadence. :pre-project! runs before :project!, and :presented!
+  receives the final view after the sink renders. All run on the display worker.
   Session :render! only submits a view. Failures are visible through status!;
   resources close on the worker. close! waits at most :shutdown-timeout-ms."
-  [{:keys [capture sink max-fps shutdown-timeout-ms project!]
+  [{:keys [capture sink max-fps shutdown-timeout-ms project! pre-project! presented!]
     :or {max-fps 20 shutdown-timeout-ms 1000}}]
   (when-not (and (map? capture) (every? ifn? (map capture [:open! :capture! :close!]))
                  (map? sink) (every? ifn? (map sink [:open! :render! :close!]))
                  (number? max-fps) (Double/isFinite (double max-fps)) (<= 1 max-fps 60)
-                 (or (nil? project!) (ifn? project!)))
+                 (every? #(or (nil? %) (ifn? %)) [project! pre-project! presented!]))
     (throw (ex-info "Display needs capture/sink operations and max-fps in 1..60" {})))
   (positive-ms! shutdown-timeout-ms :shutdown-timeout-ms)
-  (let [stop-token (Object.)]
+  (let [stop-token (Object.)
+        project-view! (cond
+                        (and project! pre-project!) (comp project! pre-project!)
+                        :else (or project! pre-project!))]
     {:open!
      (fn []
        ;; Startup belongs to explicit device connection, before live input.
@@ -244,7 +248,7 @@
                       (fn []
                         (try
                           (loop [last-at 0 last-entry nil]
-                            (let [first-entry (if (and project! last-entry)
+                            (let [first-entry (if (and project-view! last-entry)
                                                 (or (.poll ^ArrayBlockingQueue (:queue handle)) last-entry)
                                                 (.take ^ArrayBlockingQueue (:queue handle)))]
                               (when-not (identical? stop-token first-entry)
@@ -257,10 +261,11 @@
                                     (change! handle update :dropped inc))
                                   (when-not (or (identical? stop-token entry) (not= :active (:status @(:state handle))))
                                     (let [started (System/nanoTime)
-                                          view (if project! (validate-view! (project! (:view entry))) (:view entry))
+                                          view (if project-view! (validate-view! (project-view! (:view entry))) (:view entry))
                                           frame ((:capture! capture) capture-handle view)]
                                       (when (= :active (:status @(:state handle)))
                                         ((:render! sink) sink-handle frame)
+                                        (when presented! (presented! view))
                                         (change! handle #(-> % (update :captured inc)
                                                             (assoc :last-sequence (:sequence entry)
                                                                    :last-render-ms (/ (- (System/nanoTime) started) 1.0e6)))))
