@@ -58,9 +58,10 @@ For a repeatable unsigned simulator build gate, run `Tests/check_macos.sh`.
 That script runs the package tests, generates the project, and builds both
 simulator schemes; it does not install on hardware or configure signing.
 
-Choose your development team for both targets, change **both** bundle IDs if
-needed, and keep `WKCompanionAppBundleIdentifier` and the Watch bundle-ID prefix
-consistent. Build `TolglowPhone` for the paired physical iPhone and Watch. The
+Choose your development team and provision the `se.tolgraven.tolglow` bundle
+identifiers declared in `project.yml`. The App Clip parent entitlement and
+`WKCompanionAppBundleIdentifier` use the iPhone app’s identifier. Build
+`TolglowPhone` for the paired physical iPhone and Watch. The
 `TolglowWatch` scheme also builds the Watch target. Generated projects, generated
 Info.plists, DerivedData and Swift build caches are ignored. The `project.yml`
 contains the motion/local-network/camera permission strings; it does not include signing

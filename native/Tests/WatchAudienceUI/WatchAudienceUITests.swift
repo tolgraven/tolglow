@@ -57,13 +57,29 @@ final class WatchAudienceUITests: XCTestCase {
         app.launchArguments = ["--preview-audience-reconnection"]
         app.launch()
         let floor = app.buttons["dance-floor"]
-        XCTAssertTrue(floor.waitForExistence(timeout: 12))
+        guard floor.waitForExistence(timeout: 12) else {
+            XCTFail("Dance floor is missing from the Watch home screen")
+            return
+        }
+        let nearbyStage = app.buttons["route-direct"]
         floor.tap()
+        // A cold simulator can drop the first tap. Retry only while the
+        // home-screen link is still visible and can receive the tap.
+        if !nearbyStage.waitForExistence(timeout: 4), floor.isHittable {
+            floor.tap()
+        }
+        guard nearbyStage.waitForExistence(timeout: 5) else {
+            XCTFail("The Watch did not navigate to Dance floor")
+            return
+        }
         let message = app.staticTexts["Reconnecting to West floor · 1 of 3"]
         let cancel = app.buttons["Cancel reconnection"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
         for _ in 0..<3 where !cancel.isHittable { app.swipeUp() }
-        XCTAssertTrue(message.exists)
-        XCTAssertTrue(cancel.isHittable)
+        guard cancel.isHittable else {
+            XCTFail("Cancel reconnection is not available in Dance floor")
+            return
+        }
         capture("04-interrupted-stage", app)
         cancel.tap()
         let find = app.buttons["Find stages"]

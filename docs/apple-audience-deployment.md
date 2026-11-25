@@ -18,7 +18,7 @@ In the packaged Mac app, open **Connections → Stage invitation**. Start the OS
    native/Packaging/audience-association ABCDE12345 > site-root/.well-known/apple-app-site-association
    ```
 
-3. Serve that file from `https://lights.example.org/.well-known/apple-app-site-association` with HTTP 200 and `Content-Type: application/json`. Use the final HTTPS host directly. The template names `org.tolglow.ios.Clip` under `appclips.apps` and gives the parent `org.tolglow.ios` a Universal Link for `/audience/*`. Adjust both identifiers if you change them in `native/project.yml`.
+3. Serve that file from `https://lights.example.org/.well-known/apple-app-site-association` with HTTP 200 and `Content-Type: application/json`. Use the final HTTPS host directly. The template names `se.tolgraven.tolglow.ios.Clip` under `appclips.apps` and gives the parent `se.tolgraven.tolglow.ios` a Universal Link for `/audience/*`. Use profiles registered for these identifiers.
 4. Configure the App Clip experience for the matching audience URL prefix in App Store Connect. Scan a current stage QR with the parent absent, then repeat with the parent installed. Verify the expected stage, participant consent screen and leave action on the actual phone. [Associate your Clip with a website](https://developer.apple.com/documentation/appclip/associating-your-app-clip-with-your-website) · [Associated Domains](https://developer.apple.com/documentation/xcode/supporting-associated-domains) · [Configure the launch experience](https://developer.apple.com/documentation/appclip/configuring-the-launch-experience-of-your-app-clip)
 
 ## Verified simulator build
@@ -32,7 +32,7 @@ The Packaged Apple Studio workflow builds the Release iPhone/iPad companion with
 ```sh
 ditto -x -k Tolglow-Companion-simulator.zip .
 xcrun simctl install booted TolglowPhone.app
-xcrun simctl launch booted org.tolglow.ios
+xcrun simctl launch booted se.tolgraven.tolglow.ios
 ```
 
 The adjacent `simulator-products.json` measures unpacked file bytes inside each bundle and records the platform, device family and Mach-O architectures. The parent size includes the Clip and Watch. Use a signed device archive to measure eligibility for physical QR invocation.

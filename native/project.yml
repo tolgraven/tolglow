@@ -1,6 +1,6 @@
 name: Tolglow
 options:
-  bundleIdPrefix: org.tolglow
+  bundleIdPrefix: se.tolgraven.tolglow
   deploymentTarget:
     iOS: '18.0'
     watchOS: '11.0'
@@ -23,7 +23,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.studio
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.studio
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host an audience stage while its invitation is active.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to lighting equipment configured by the show operator.
@@ -62,7 +62,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.ios
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
       - package: TolglowSensorCore
@@ -88,11 +88,11 @@ targets:
       path: AppClip/TolglowAudienceClip.entitlements
       properties:
         com.apple.developer.associated-domains: ["appclips:$(AUDIENCE_DOMAIN)"]
-        com.apple.developer.parent-application-identifiers: ["$(AppIdentifierPrefix)org.tolglow.ios"]
+        com.apple.developer.parent-application-identifiers: ["$(AppIdentifierPrefix)se.tolgraven.tolglow.ios"]
         com.apple.developer.on-demand-install-capable: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.Clip
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.ios.Clip
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) APPCLIP"
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
@@ -108,7 +108,7 @@ targets:
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Host the audience for this show over nearby Bluetooth.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Offer verified shader work to explicitly enrolled local audience devices.
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.audience-bridge
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.audience-bridge
     dependencies:
       - package: TolglowSensorCore
   TolglowWatch:
@@ -133,11 +133,11 @@ targets:
         NSBluetoothAlwaysUsageDescription: Find and join a nearby lighting stage when you choose to use only your Watch.
         WKRunsIndependentlyOfCompanionApp: true
         WKApplication: true
-        WKCompanionAppBundleIdentifier: org.tolglow.ios
+        WKCompanionAppBundleIdentifier: se.tolgraven.tolglow.ios
         NSMotionUsageDescription: Read wrist motion while you explicitly preview or conduct lights.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.ios.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.ios.watchkitapp
     dependencies:
       - package: TolglowSensorCore
   WatchAudienceUITests:
@@ -150,7 +150,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: TolglowWatch
-        PRODUCT_BUNDLE_IDENTIFIER: org.tolglow.watch-audience-ui-tests
+        PRODUCT_BUNDLE_IDENTIFIER: se.tolgraven.tolglow.watch-audience-ui-tests
 schemes:
   TolglowAudienceClip:
     build:
