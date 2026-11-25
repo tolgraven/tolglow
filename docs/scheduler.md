@@ -99,8 +99,14 @@ place of a top-level timing key.
   committed show. Each frame, the owner samples `(curve progress)` at the frozen
   frame transport. Progress is `(beat − start) / (end − start)`. A parameter
   reaches the effects through the same parameter-overlay middleware that
-  modulation uses. Master and opacity reach the engine and the output stage as
-  frame-only values. A variable reaches the frame's resolved variables. The
+  modulation uses. The stages that read the model directly see a frame-only
+  model with the ramped master, opacity and parameters: spatial cues (their
+  volume opacity and parameters), the engine and the output stage. Committed
+  values are restored after each stage, unless the stage itself changed that
+  location. A variable reaches the frame's resolved variables. Override
+  detection compares committed values numerically, so `1` and `1.0` are the
+  same value. An exact `:instance-id` also addresses scene or show-control
+  instances, such as a spatial cue, which category and cue selectors skip. The
   committed value, backups, saved cue parameters and revision-keyed consumers
   keep the start value until the ramp commits. There are no timers, per-frame
   client commands or extra RNG. Numeric values are constrained to their bounds,

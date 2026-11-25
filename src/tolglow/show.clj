@@ -1789,9 +1789,11 @@
                                           (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command
+                                   ;; Spatial cues read opacity and parameters from the model: give them the frame overlay.
+                                   (spatial/advance (subscribers/with-frame-overlays model ramp-frame)
+                                                    (assoc before :modulation-view control-view) time-ms (reactions runtime) command
                                                     (:spatial-sampling runtime)))
-                           model (or (:model space) model)
+                           model (if (:model space) (subscribers/without-frame-overlays (:model space) model ramp-frame) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))

@@ -10,7 +10,8 @@
             [tolglow.connections :as connections]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.persistence :as files]
-            [tolglow.show :as show]))
+            [tolglow.show :as show]
+            [tolglow.spatial-host-test :as spatial-host]))
 
 (def ^:private effect
   {:id :wash :version 1 :category :light
@@ -467,3 +468,35 @@
               (is (= 3500.0 (- (:end (get by-id "fade")) restored-ms)) "the ms ramp keeps its remaining milliseconds")))
           (finally (show/stop! rt))))
       (finally (.delete file)))))
+
+(deftest a-spatial-cues-opacity-ramp-fades-across-captured-frames
+  (let [rt (spatial-host/runtime false)
+        request {:op :spawn :id :orb :page-id :main :cell [2 1]
+                 :volume {:shape :ball :position [0 1 0] :velocity [0 0 0] :gravity [0 0 0]
+                          :radius 0.5 :restitution 0.75 :selection #{:position}
+                          :falloff {:inner-m 0.5 :outer-m 0.5 :curve :linear}}
+                 :paint {:red 1.0 :blue 0.0}}]
+    (try
+      (spatial-host/submit rt 0 :command {:op :cue/launch :cue-id :blue})
+      (let [id (:instance-id (spatial-host/submit rt 0 :spatial-cue request))
+            full (spatial-host/output rt)
+            _ (spatial-host/submit rt 10 :command {:op :param/ramp :event-id "orb-out" :instance-id id :target :opacity
+                                                   :to 0.0 :over {:ms 1000} :source {:adapter :repl :session-id "fod"}})
+            frames (mapv (fn [t] (spatial-host/tick rt t) [(first (spatial-host/output rt))
+                                                            (get-in @(:state rt) [:model :instances id :system :opacity] 1.0)])
+                         [260 510 760])]
+        (is (= 255 (first full)))
+        (is (apply > (map first frames)) (str "the orb red fades frame by frame: " frames " " (pr-str (:recent (show/schedule rt)))))
+        (is (every? #(< 0 % 255) (map first frames)) (str "no jump to either end mid-ramp: " frames))
+        (is (every? #(== 1.0 %) (map second frames)) "the committed opacity holds until completion")
+        (spatial-host/tick rt 1010)
+        (is (= 0 (first (spatial-host/output rt))))
+        (is (== 0.0 (get-in @(:state rt) [:model :instances id :system :opacity]))))
+      (finally (show/stop! rt)))))
+
+(deftest numeric-recoercion-is-not-an-override
+  (is (subscribers/same-value? 1 1.0))
+  (is (subscribers/same-value? [1 0 0] [1.0 0.0 0.0]))
+  (is (subscribers/same-value? [{:position 0 :color [1 0 0]}] [{:position 0.0 :color [1.0 0.0 0.0]}]))
+  (is (not (subscribers/same-value? 1 1.01)))
+  (is (not (subscribers/same-value? [1 0] [1 0 0]))))

@@ -414,7 +414,8 @@
         ids (when ids (set ids)) categories (when categories (set categories))]
     (->> rows
          (keep (fn [[id cue effect cue-id]]
-                 (when (and (musical-definition? effect) (or (nil? cue) (musical-definition? cue))
+                 (when (and (or (and instances? ids (contains? ids id)) ; an exact running instance ID is explicit
+                                (and (musical-definition? effect) (or (nil? cue) (musical-definition? cue))))
                             (or (nil? by-page) (if cue-id (contains? by-page cue-id) (contains? page-effects (:id effect))))
                             (or (nil? ids) (contains? ids id)
                                 (and instances? (or (contains? ids cue-id) (contains? ids (:id effect)))))
@@ -641,6 +642,17 @@
                 (map? (:source command)) (assoc :source (select-keys (:source command) [:adapter :session-id :device-id]))))))
         (take 64 (rseq (vec (get-in model [:control :history-order] []))))))
 
+(defn same-value?
+  "Committed-value equality for override detection: numbers by ==, so an
+  integer re-coerced to a double (1 vs 1.0) is not a write; vectors and maps
+  (colors, gradient stops) elementwise."
+  [a b]
+  (cond
+    (and (number? a) (number? b)) (== a b)
+    (and (vector? a) (vector? b)) (and (= (count a) (count b)) (every? true? (map same-value? a b)))
+    (and (map? a) (map? b)) (and (= (set (keys a)) (set (keys b))) (every? #(same-value? (get a %) (get b %)) (keys a)))
+    :else (= a b)))
+
 (defn advance-ramps
   "Settle ramp lifecycles on the owner: a committed write to a ramp's
   destination by anyone cancels it with the writer's reason; a finished ramp
@@ -660,7 +672,7 @@
                        (and (= :param (:target destination)) (nil? (schema-of model destination)))))
               (recur (remember model (ramp-entry model ramp :cancelled {:reason :destination-removed})) more kept)
 
-              (not= (current-value model destination) (:base ramp))
+              (not (same-value? (current-value model destination) (:base ramp)))
               (let [by (last-writer model destination)]
                 (recur (remember model (ramp-entry model ramp :cancelled
                                                    {:reason (if (human-source? (:source by)) :human-override :superseded)
@@ -692,28 +704,33 @@
                   :variable (assoc-in out [:variables variable] value))))
             {} (get-in model [:event-subscribers :ramps]))))
 
+(defn- overlay-entries
+  "[path value] for each overlaid model location: master, instance opacity and
+  instance parameters. Variables reach the frame's resolved variables instead."
+  [{:keys [master opacity params]}]
+  (concat (when (some? master) [[[:master] master]])
+          (for [[id v] opacity] [[:instances id :system :opacity] v])
+          (for [[id values] params [k v] values] [[:instances id :params k] v])))
+
 (defn with-frame-overlays
-  "A frame-only model for the engine with ramped master and opacity applied."
-  [model {:keys [master opacity]}]
-  (cond-> model
-    (some? master) (assoc :master master)
-    (seq opacity) (as-> m (reduce-kv (fn [m id v] (if (get-in m [:instances id])
-                                                    (assoc-in m [:instances id :system :opacity] v) m))
-                                     m opacity))))
+  "A frame-only model with ramped master, opacity and parameters applied, for
+  stages that read the model directly (spatial cues, the engine)."
+  [model overlays]
+  (reduce (fn [m [path v]]
+            (if (or (= [:master] path) (get-in m [:instances (second path)])) (assoc-in m path v) m))
+          model (overlay-entries overlays)))
 
 (defn without-frame-overlays
-  "Restore committed master and opacity after the engine evaluated a frame model."
-  [result committed {:keys [master opacity]}]
-  (cond-> result
-    (some? master) (assoc :master (:master committed))
-    (seq opacity)
-    (as-> m (reduce-kv (fn [m id _]
-                         (cond
-                           (nil? (get-in m [:instances id])) m
-                           (contains? (get-in committed [:instances id :system]) :opacity)
-                           (assoc-in m [:instances id :system :opacity] (get-in committed [:instances id :system :opacity]))
-                           :else (update-in m [:instances id :system] dissoc :opacity)))
-                       m opacity))))
+  "Restore committed values after a stage evaluated a frame model. A location
+  the stage itself changed (no longer the overlay value) keeps that change."
+  [result committed overlays]
+  (reduce (fn [m [path v]]
+            (cond
+              (not (or (= [:master] path) (get-in m [:instances (second path)]))) m
+              (not (identical? v (get-in m path))) m
+              (contains? (get-in committed (pop path)) (peek path)) (assoc-in m path (get-in committed path))
+              :else (update-in m (pop path) dissoc (peek path))))
+          result (overlay-entries overlays)))
 
 ;; Playback ----------------------------------------------------------------
 
