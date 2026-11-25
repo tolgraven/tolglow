@@ -48,6 +48,12 @@
 (defn- reorder-pending? [show request]
   (and request (or (nil? (:revision request)) (< (:revision show) (:revision request)))))
 
+(defn- priority-source-id [source [runtime-id epoch running-ids]]
+  (let [[source-runtime source-epoch] (:identity source)
+        id (:id source)]
+    (when (and id (= runtime-id source-runtime) (= epoch source-epoch) (some #{id} running-ids))
+      id)))
+
 (defn- render-priority [instance]
   (get instance :render-priority (get instance :priority 0)))
 
@@ -179,8 +185,9 @@
   (let [serial (inc (:serial s))
         result [:performance/reorder-result (request-token db) serial]
         [effect command] (events/command db op (assoc fields :expected-revision (:revision capture))
-                                         (conj result true))]
-    {:db (store db (assoc s :serial serial :reorder {:open? true :request {:serial serial}}))
+                                         (conj result true))
+        reorder (-> (:reorder s) (assoc :request {:serial serial}) (dissoc :error :message))]
+    {:db (store db (assoc s :serial serial :reorder reorder))
      :fx [[effect (assoc command :on-failure (conj result false))]]}))
 
 (rf/reg-event-fx :performance/reorder-pick
@@ -216,10 +223,10 @@
           fail #(hash-map :db (store db (assoc-in s [:reorder :error] %)))]
       (cond
         (or (not open?) (reorder-pending? show request)) {}
-        (not (and (= identity (:identity source) (:identity capture)) (= id (:id source))))
+        (not (and id (= identity (:identity capture)) (= id (priority-source-id source identity))))
         (fail "Cue order changed. Choose a cue again.")
         :else
-        (try (submit-reorder db s capture "instance/set-priority"
+        (try (submit-reorder db (assoc-in s [:reorder :priority-draft] value) capture "instance/set-priority"
                              {:instance-id id :priority (modulation/number-value value "Layer priority")})
              (catch :default error (fail (events/error-message error))))))))
 
@@ -227,14 +234,15 @@
   (fn [db [_ token serial success? result]]
     (let [s (state db)]
       (if (and (= token (request-token db)) (= serial (get-in s [:reorder :request :serial])))
-        (let [revision (when (and success? (contains? #{"accepted" :accepted} (:status result))) (:revision result))]
-          (store db (assoc s :reorder
-                           (merge {:open? true}
-                                  (cond revision {:request {:revision revision}
-                                                  :message (if (contains? result :render-priority)
-                                                             "Layer priority updated." "Cue order updated.")}
-                                        success? {:error "Reorder is still queued. Check the displayed order before retrying."}
-                                        :else {:error (events/error-message result)})))))
+        (let [revision (when (and success? (contains? #{"accepted" :accepted} (:status result))) (:revision result))
+              reorder (if revision
+                        {:open? true :request {:revision revision}
+                         :message (if (contains? result :render-priority) "Layer priority updated." "Cue order updated.")}
+                        (-> (:reorder s)
+                            (dissoc :request)
+                            (assoc :error (if success? "Reorder is still queued. Check the displayed order before retrying."
+                                                (events/error-message result)))))]
+          (store db (assoc s :reorder reorder)))
         db))))
 
 (defn- value-by-id [m k]
@@ -612,7 +620,8 @@
         {:keys [open? source request error message priority-draft]} (:reorder (state db))
         pending? (reorder-pending? show request)
         source-id (when (= (:identity capture) (:identity source)) (:id source))
-        selected (some #(when (= source-id (:id %)) %) instances)]
+        priority-id (priority-source-id source (:identity capture))
+        selected (some #(when (= priority-id (:id %)) %) instances)]
     [:section.live-board {:aria-label "Running effects"}
      [:div.live-board-heading
       [:h2 "In the mix"] [:span#active-count.count (str (count instances) " active")]
@@ -630,7 +639,7 @@
          [:p.live-reorder-status {:role "status"}
           (cond pending? "Applying cue order…"
                 (and source-id ready?) "Choose where to place the selected launch or set its priority."
-                source-id "Set the priority of the selected launch."
+                selected "Set the priority of the selected launch."
                 (empty? running-ids) "Launch a cue to change its layer priority."
                 source "Cue order changed. Choose a cue again."
                 message message
