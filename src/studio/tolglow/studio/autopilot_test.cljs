@@ -43,6 +43,17 @@
     (is (= {:signals {"a/b" custom}} (autopilot/patch {[:signals "a/b"] {::signal/edn (pr-str custom)}})))
     (is (thrown? js/Error (autopilot/patch {[:seed] "0.4"})))))
 
+(deftest waveform-reference-retains-wall-time-bindings-and-uses-typed-musical-phase
+  (let [wave (signal/starting-spec :waveform autopilot/unit-opts 0.4 {})
+        cue (signal/set-waveform-reference wave :launch)
+        wall (signal/set-waveform-reference (assoc cue :period {:ms 125}) :launch)]
+    (is (= :transport (:phase-reference wave)))
+    (is (= :launch (:phase-reference (signal/parse-spec cue))))
+    (is (= :local (:phase wall)))
+    (is (= :launch (signal/waveform-reference wall)))
+    (is (nil? (:phase-reference wall)))
+    (is (= :transport (:phase-reference (signal/set-waveform-reference (assoc wall :period {:bars 1}) :transport))))))
+
 (deftest stale-waveform-registry-and-settings-writes-stay-in-their-own-show
   (let [loading (transition db [::signal/load-registry])
         token (second (get-in loading [:studio/http :on-success]))

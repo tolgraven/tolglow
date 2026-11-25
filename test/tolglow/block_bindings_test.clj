@@ -5,7 +5,9 @@
             [afterglow.runtime.engine :as engine]
             [afterglow.runtime.events :as events]
             [clojure.test :refer [deftest is]]
+            [tolglow.clock :as clock]
             [tolglow.compiler :as compiler]
+            [tolglow.effects.parameter-sources :as sources]
             [tolglow.effects.variable-blocks :as variable-blocks]
             [tolglow.persistence :as files]
             [tolglow.show :as show]
@@ -92,6 +94,66 @@
         result (first (:assignments ((compiler/compile-effect effect) context)))]
     (is (= {:id :sine :version 1 :channel :slope} (:waveform prefab)))
     (is (< (abs (- (:value result) 0.475)) 1.0e-10))))
+
+(deftest transport-blocks-and-parameter-lfos-share-phase-through-pause-and-seek
+  (let [path [:outputs :dimmer]
+        period {:bars 1}
+        phase {:op :oscillator-phase :phase-reference :transport :period period :phase 0.125}
+        wave (signals/waveform-block (signals/new-registry) :saw
+                                    {:phase-reference :launch :period period :phase 0.125})
+        effect {:id :pool :version 1 :outputs {:dimmer 0.0 :focus 0.0}
+                :params {:level {:type :number :default 0.0 :bounds [0 1]}}
+                :prefabs {:house/saw wave}
+                :blocks {path {:stages [{:block :lfo/saw :inputs {:phase phase}}]}
+                         [:outputs :focus] {:stages [{:block :house/saw}]}}}
+        [model first-id] (launch effect)
+        second-launch (command (assoc model :transport {:beat 1.5 :bpm 120 :playing? true :meter {:beats-per-bar 2}})
+                               :later :cue/launch :cue-id :swim :time-ms 250 :launch {:targets [:far]})
+        second-id (get-in second-launch [:ack :instance-id])
+        binding {:type :lfo :waveform :saw :period period :phase 0.125 :phase-reference :transport :from 0.0 :to 1.0}
+        fresh (reduce (fn [m id] (sources/bind m {:instance-id id :param :level :binding binding}))
+                      (assoc-in (:model second-launch) [:transport :meter :beats-per-bar] 3) [first-id second-id])
+        restored (:model (files/read-string (files/write-string (assoc fresh :rig {:fixtures rig}))))]
+    (is (= :accepted (get-in second-launch [:ack :status])))
+    (is (= (:blocks effect) (get-in restored [:registry :effects :pool :blocks])))
+    (is (= (:prefabs effect) (get-in restored [:registry :effects :pool :prefabs])))
+    (doseq [build [compiler/compile-effect (batch/compiler-for-rig rig)]]
+      (let [tick (fn [m beat t] (engine/advance (assoc-in m [:transport :beat] beat) {:time-ms t :fixtures rig} build))
+            pause (fn [m op token] (:model (command m token op :instance-id first-id :time-ms (:time-ms m))))
+            before (tick restored 3.0 1000.0)
+            waiting (tick (pause (:model before) :instance/pause :pause) 3.75 1375.0)
+            resumed (tick (pause (:model waiting) :instance/resume :resume) 4.0 1500.0)
+            sought (tick (clock/rebase (:model resumed) {:beat 1.25}) 1.25 1510.0)
+            target-pairs [[first-id :near] [second-id :far]]
+            observed (fn [result binding-path [id target]]
+                       (:result (runtime/observe (get-in result [:model :instances id]) [binding-path target])))]
+        (doseq [[result expected-launch] [[before [0.625 0.875]] [waiting [0.625 0.25]]
+                                          [resumed [0.6875 0.375]] [sought [0.6875 0.375]]]]
+          (let [m (:model result)
+                parameter-values (:overrides (sources/sample m {:time-ms (:time-ms m) :transport (:transport m)} {}))
+                packed (:values (frame/resolve-contributions rig (:contributions result)))
+                dimmers (mapv #(observed result path %) target-pairs)]
+            (is (empty? (:fault-events result)))
+            (is (= expected-launch (mapv #(observed result [:outputs :focus] %) target-pairs)))
+            (is (= dimmers (mapv #(get-in parameter-values [% :level]) [first-id second-id])))
+            (is (= (first dimmers) (second dimmers)))
+            (is (= dimmers (mapv #(get-in packed [% :dimmer]) [:near :far])))))))))
+
+(deftest global-oscillator-blocks-use-transport-and-isolate-a-missing-clock
+  (let [path [:variables :dimmer]
+        phase {:op :oscillator-phase :phase-reference :transport :period {:bars 1} :phase 0.25}
+        settings {:bindings {path {:base 0.0 :stages [{:block :lfo/saw :inputs {:phase phase}}]}
+                             [:variables :healthy] {:base 0.5 :stages []}}}
+        plan (variable-blocks/compile-settings settings)
+        model {:transport {:beat 1.0 :meter {:beats-per-bar 2}}}
+        result (variable-blocks/sample plan model 100.0)
+        missing (variable-blocks/sample plan {} 110.0 result)]
+    (is (= 0.75 (get-in result [:values path])))
+    (is (= 0.75 (get-in missing [:values path])))
+    (is (= 0.5 (get-in missing [:values [:variables :healthy]])))
+    (is (:held? (variable-blocks/inspect missing path)))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (variable-blocks/compile-settings (assoc-in settings [:bindings path :stages 0 :inputs :phase :phase-reference] :launch))))))
 
 (deftest global-variable-resolution-and-transit-restart
   (let [[model id] (launch)

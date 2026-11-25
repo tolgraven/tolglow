@@ -6,6 +6,7 @@
             [afterglow.control.codecs.push-2 :as codec]
             [tolglow.demo :as demo]
             [tolglow.bench-show :as bench]
+            [tolglow.effects :as fx]
             [tolglow.lighting-match :as matching]
             [tolglow.show :as show]
             [afterglow.control.devices.session :as session]
@@ -189,6 +190,26 @@
           sample (at hdr-model 750)]
       (is (empty? (pads/present! service :grid sample main)))
       (is (= [1.0 0.0 0.0] (:ember (pads/present! service :grid (assoc sample :preview-hdr {:white-mix 0}) main)))))))
+
+(deftest live-pad-previews-share-the-rendered-phase-reference-during-instance-pause
+  (doseq [[reference result] [[:launch [0.0 0.0 0.0]] [:transport [0.5 0.0 0.0]]]]
+    (let [model (-> (rig)
+                    (assoc-in [:registry :effects :ember :outputs :dimmer]
+                              (fx/saw {:period {:beats 2} :phase-reference reference}))
+                    (bench/command :launch {:op :cue/launch :cue-id :ember}))
+          id (first (keys (:instances model)))
+          runtime (show/create-runtime {:model model :workspace-options nil :batch? false})]
+      (try
+        (show/tick! runtime 0)
+        (let [receipt (show/submit! runtime {:op :instance/pause :instance-id id})]
+          (show/tick! runtime 250)
+          (is (= :accepted (:status @receipt))))
+        (show/tick! runtime 500)
+        (let [snapshot @(:state runtime)
+              preview (pads/present! (:cue-pad-previews runtime) :grid snapshot main)
+              emitted (get-in snapshot [:output :values :head-1 :emitted-color])]
+          (is (= result emitted (:ember preview))))
+        (finally (show/stop! runtime))))))
 
 (deftest cue-targets-constrain-the-representative-head
   (let [service (pads/manager)

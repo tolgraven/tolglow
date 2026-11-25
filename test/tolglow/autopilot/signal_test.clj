@@ -39,6 +39,23 @@
     (is (near? 1/3 (signal/value model local (dissoc opts :instance-id))))
     (is (near? 0.25 (signal/value model {:signal :four} opts)))))
 
+(deftest musical-waveform-references-use-shared-or-captured-meter-and-retain-legacy-data
+  (let [input (-> model
+                  (assoc-in [:transport :meter] {:beats-per-bar 3})
+                  (assoc-in [:instances "two" :timing-meter] {:beats-per-bar 4})
+                  (assoc-in [:instances "two" :system] {:paused? true :paused-clock {:time-ms 4250 :beat 8.5}}))
+        wave {:waveform :saw :period {:bars 1} :offset 0.125}
+        opts {:instance-id "two"}
+        activation {:start-clock {:beat 8.5 :meter {:beats-per-bar 4}}}]
+    (is (signal/valid? (assoc wave :phase-reference :launch)))
+    (is (signal/valid? (assoc wave :phase-reference :transport)))
+    (is (not (signal/valid? (assoc wave :phase-reference :transport :phase :local))))
+    (is (not (signal/valid? (assoc wave :phase-reference :launch :period {:ms 100}))))
+    (is (near? 0.125 (signal/value input (assoc wave :phase-reference :transport) opts)))
+    (is (near? 0.25 (signal/value input (assoc wave :phase-reference :launch) opts)))
+    (is (near? 0.25 (signal/value input (assoc wave :phase-reference :launch) activation)))
+    (is (near? (+ 0.125 1/6) (signal/value input (assoc wave :phase :local) opts)))))
+
 (deftest registered-waveform-and-dynamic-depth-share-the-render-template
   (let [source {:id :pair :version 1 :name "Offset" :range [-1 1]
                 :params {} :expression {:op :subtract

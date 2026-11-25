@@ -6,6 +6,7 @@
             [afterglow.render.ir :as ir]
             [afterglow.time :as time]
             [tolglow.modulation :as modulation]
+            [tolglow.oscillator :as oscillator]
             [tolglow.signals :as signals]))
 
 (def ^:private builtins (delay (signals/new-registry)))
@@ -28,10 +29,9 @@
   (let [{:keys [period phase inputs from to] :as binding}
         (merge {:period {:beats 1} :phase 0.0 :inputs {}} binding)]
     (require! (and waveform (= (:id waveform) (:waveform binding))) "Unknown waveform")
-    (require! (and (map? period) (= 1 (count period)) (#{:beats :bars :phrases} (ffirst period))
-                   (time/finite-number? (val (first period))) (pos? (val (first period))))
+    (require! (oscillator/musical-period? period)
               "A waveform period needs positive beats, bars or phrases")
-    (require! (#{:launch :transport} (:phase-reference binding :launch))
+    (require! (oscillator/phase-references (:phase-reference binding :launch))
               "Waveform phase reference must be :launch or :transport")
     (require! (time/finite-number? phase) "Waveform phase must be finite")
     (require! (and (map? inputs) (empty? (params/validate-values (:params waveform) inputs)))
@@ -79,13 +79,6 @@
                        (modulation/interpolate-value schema (:from binding) (:to binding) weight))))})
     (catch Exception error {:error (.getMessage error)})))
 
-(defn- oscillator-phase [binding instance transport-clock private-clock]
-  (let [[beat meter] (case (:phase-reference binding :launch)
-                      :transport [(:beat transport-clock) (:meter transport-clock)]
-                      :launch [(- (:beat private-clock) (or (:started-at-beat instance) 0.0))
-                               (:timing-meter instance)])]
-    (+ (:phase binding 0.0) (/ beat (time/duration->beats (:period binding) meter)))))
-
 (defn- sample-one [model instance transport-clock private-clock previous result param {:keys [binding]}]
   (let [id (:id instance)
         schema (get-in (modulation/owner-definition model instance) [:params param])
@@ -106,7 +99,9 @@
       (let [result (assoc-in result [:sources id param] source)]
         (if held? result
           (try
-            (let [phase (oscillator-phase binding instance transport-clock private-clock)
+            (let [elapsed (when (= :launch (:phase-reference binding :launch))
+                            (- (:beat private-clock) (or (:started-at-beat instance) 0.0)))
+                  phase (oscillator/phase binding transport-clock elapsed (:timing-meter instance))
                   value ((:evaluate plan) phase)]
               (require! (params/valid-value? schema value) "Waveform produced an invalid parameter value")
               (assoc-in result [:overrides id param] value))

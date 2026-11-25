@@ -168,7 +168,8 @@
 
 (defn waveform-block
   "Capture a registered waveform/version as a portable prefab. Its phase and
-  waveform parameters become stage inputs. Choose :slope, :jagginess or
+  waveform parameters become stage inputs. Supply :phase-reference and a
+  musical :period to set the prefab's phase default. Choose :slope, :jagginess or
   :angular-velocity to drive another effect input from the same signal."
   ([state id] (waveform-block state id {}))
   ([state id options]
@@ -176,10 +177,13 @@
          input #(hash-map :op :input :key %)
          defaults (update-vals (:params definition) :default)
          settings (assoc options :params (into {} (map (fn [key] [key (input key)])) (keys defaults))
-                         :phase (input phase-input))]
+                         :phase (input phase-input))
+         default-phase (if (contains? options :phase-reference)
+                         (fx/cycles (:period options {:beats 1}) (select-keys options [:phase-reference :phase :clock]))
+                         {:op :beat})]
      {:name (:name definition) :mode :replace
       :waveform {:id id :version (:version definition) :channel (:channel options :value)}
-      :inputs (assoc defaults phase-input {:op :beat})
+      :inputs (assoc defaults phase-input default-phase)
       :expression (sample state id settings)})))
 
 (defn- choice-definitions [state choices]
