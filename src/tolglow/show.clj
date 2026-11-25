@@ -1007,6 +1007,13 @@
 (defn- section-clock-session [runtime model]
   (str (:epoch model) "/" (get-in model [:transport :source-selection-epoch]) "/" @(:presentation-clock runtime)))
 
+(defn- section-capture-stream
+  [connection {capture-state :state :keys [run-id timing-valid? closed? config]}]
+  (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
+             (connections/restart-requested? connection :audio))
+    {:source-id (get-in config [:analyzer-options :source-id] :audio-input)
+     :session-id run-id}))
+
 (defn- advance-section-patterns [runtime before next-state reset?]
   (if-let [initial (:section-patterns runtime)]
     (if reset?
@@ -1017,16 +1024,13 @@
             clock-session (section-clock-session runtime model)
             connection (:connections runtime)
             capture-status (audio/status (connections/audio connection))
-            {capture-state :state :keys [run-id timing-valid? closed?]} capture-status
             analyzer-options (get-in capture-status [:config :analyzer-options])
             active-clock? (and (true? playing?) (integer? source-epoch) (number? audio-clock-confidence)
                                (>= audio-clock-confidence (get analyzer-options :beat-clock-confidence-min 0.5)))
-            stream (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
-                              (connections/restart-requested? connection :audio))
-                     {:source-id (get analyzer-options :source-id :audio-input) :session-id run-id})
+            stream (section-capture-stream connection capture-status)
             causal-events (into [] (comp (filter #(= :audio (:category %))) (map :event)
                                          (filter #(and (= :audio/section-change (:type %))
-                                                       (= run-id (:capture-run-id %))
+                                                       (= (:run-id capture-status) (:capture-run-id %))
                                                        (true? (get-in % [:timing :capture-clock-valid?])))))
                                 (staging/pending model))
             boundaries (when (and active-clock? (= clock-session (:section-clock-session before))
@@ -1056,7 +1060,8 @@
       model
       (let [{:keys [playing? source source-epoch]} (:transport model)
             scope {:show-epoch (:epoch model) :clock [(or source :manual) source-epoch (section-clock-session runtime model)]}
-            capture-status (audio/status (connections/audio (:connections runtime)))
+            connection (:connections runtime)
+            capture-status (audio/status (connections/audio connection))
             min-confidence (get-in capture-status [:config :analyzer-options :beat-clock-confidence-min] 0.5)
             active? (and (:section-patterns runtime) (true? playing?) (integer? source-epoch)
                          (number? clock-confidence) (>= clock-confidence min-confidence)
@@ -1064,14 +1069,15 @@
             projection (when active?
                          (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (:epoch model))]
                            (reference-position/snapshot reference-state reference-now-ms)))
-            fence (select-keys projection [:provenance :occurrence :generation])]
+            fence (select-keys projection [:provenance :occurrence :generation])
+            capture-stream (section-capture-stream connection capture-status)]
         (assoc-in model path
                   (filterv (fn [{:keys [event] :as run}]
                              (or (not (section-pattern-run? run))
                                  (let [{:keys [mode reference] :as receipt} (:data event)]
                                    (and active? (= scope (:scope receipt))
                                         (case mode
-                                          :causal true
+                                          :causal (and (some? capture-stream) (= capture-stream (:stream receipt)))
                                           :reference (and (= :locked (:status projection))
                                                           (= fence (:fence receipt))
                                                           (= reference (:reference projection)))

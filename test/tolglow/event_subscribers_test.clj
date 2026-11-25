@@ -214,7 +214,7 @@
                ((juxt :effect-id #(get-in % [:source :adapter])) (first instances)))))
       (finally (show/stop! runtime)))))
 
-(defn- capture-pattern-boundary [policy pause?]
+(defn- capture-pattern-boundary [policy pause? & [after-admission]]
   (let [owner (atom nil) observed (atom []) closed (atom 0) pause-receipt (atom nil)
         open (fn [_]
                (let [source (pcm-test/memory-source (pcm-test/section-pcm-values) 1280 closed)
@@ -235,7 +235,8 @@
         runtime (show/create-runtime (cond-> {:workspace-options nil :audio-options {:open-source! open}}
                                        policy (assoc :section-patterns policy)))
         subscriber {:id :track-patterns :match {:category :music :type :music/section-pattern}
-                    :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}]
+                    :actions [(cond-> {:op :effect/launch :select {:ids [:ember] :pick :first}}
+                                after-admission (assoc :delay {:beats 1}))]}]
     (reset! owner runtime)
     (try
       (show/attach-observer! runtime :patterns
@@ -257,10 +258,23 @@
           (let [reply (show/submit! runtime {:op :transport/set :transport {:playing? true}})]
             (show/tick! runtime 4001)
             (is (= :accepted (:status (deref reply 1000 ::timeout))))))
-        (doseq [time [4001 4100 5000]] (show/tick! runtime time))
+        (when after-admission
+          (is (empty? (:instances (show/snapshot runtime))))
+          (is (= 1 (count (get-in @(:state runtime) [:model :event-subscribers :runs]))))
+          (after-admission runtime))
+        (doseq [time [4001 4100 4500 5000]] (show/tick! runtime time))
         {:events @observed :instances (:instances (show/snapshot runtime))
          :model (:model (show/export-show runtime)) :run-id (:run-id handle) :closed @closed})
       (finally (show/stop! runtime)))))
+
+(deftest stopping-capture-revokes-an-admitted-delayed-causal-pattern
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        healthy (capture-pattern-boundary policy false (constantly nil))
+        stopped (capture-pattern-boundary policy false #(show/audio-action! % :stop {}))]
+    (doseq [{:keys [events]} [healthy stopped]]
+      (is (= 1 (count (filter #(= :music/section-pattern (:type %)) events)))))
+    (is (= [:ember] (mapv :effect-id (:instances healthy))))
+    (is (empty? (:instances stopped)))))
 
 (deftest opted-in-captured-patterns-publish-on-owner-bars-and-respect-a-pause
   (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
