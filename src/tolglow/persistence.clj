@@ -45,6 +45,7 @@
             [tolglow.output.pause-look :as pause-look]
             [tolglow.routing :as routing]
             [tolglow.integrations.audio-return :as audio-return]
+            [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
   (:import [java.io PushbackReader StringReader]
            [com.fasterxml.jackson.core JsonFactory]))
@@ -277,6 +278,8 @@
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
   (lighting-scenes/validate-state! model)
   (lighting/validate! (:settings model))
+  (when (contains? (:settings model) :section-patterns)
+    (section-patterns/override-settings (get-in model [:settings :section-patterns])))
   (prefabs/validate! (get-in model [:settings :prefabs]))
   (variable-blocks/compile-model model)
   (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))

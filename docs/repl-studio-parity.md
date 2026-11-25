@@ -48,6 +48,36 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Suspend automatic section patterns
+
+When the show starts with an enabled section pattern policy, open **Perform**
+and find **Section patterns** above the live controls. On a narrow screen, first
+select **Live**. **Suspend** and **Resume** send the shared show settings
+operation. **Override active** means the show has committed the suspension.
+**Override off** allows automatic patterns when the policy's timing and input
+conditions are met.
+
+After clicking **Suspend**, read the committed setting in the running REPL.
+Clear it there and verify that the open Studio view returns to **Override off**.
+Use `true` in the same command to suspend patterns from the REPL.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(get-in (show/snapshot runtime) [:settings :section-patterns :override?] false)
+
+@(show/submit! runtime :settings
+               {:scope :section-patterns :values {:override? false}})
+```
+
+## Reconnect a local track reference
+
+The REPL audio integration owns reattachment after a player reconnect, show
+restart or restore. The Studio Connections control and alignment status are
+tracked in [#549](https://github.com/tolgraven/tolglow/issues/549). Verify the
+old session's queued forecast is fenced, then reattach from Studio and confirm
+that fresh aligned evidence resumes the same configured pattern.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

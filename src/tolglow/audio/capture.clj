@@ -283,8 +283,12 @@
                             features (when-let [features (:features analyzed)]
                                        (assoc features :capture {:run-id (:run-id run) :timing-valid? timing-valid?
                                                                  :sample-counter (+ cursor n) :received-at-ms arrived}))
-                            events (mapv #(update % :timing assoc :capture-clock-valid? timing-valid?
-                                                 :timestamp-method :sample-counter-start-estimate) (:events analyzed))]
+                            events (mapv (fn [event]
+                                           (cond-> (update event :timing assoc :capture-clock-valid? timing-valid?
+                                                           :timestamp-method :sample-counter-start-estimate)
+                                             (= :audio/section-change (:type event))
+                                             (assoc :capture-run-id (:run-id run))))
+                                         (:events analyzed))]
                         (vreset! last-analyzer state)
                         (vreset! capture-state captured)
                         (update-public! manager run

@@ -9,6 +9,7 @@
             [tolglow.application :as app]
             [tolglow.clock :as clock]
             [tolglow.integrations.analysis-test :as audio-test]
+            [tolglow.integrations.reference-position :as reference-position]
             [tolglow.demo :as demo]
             [tolglow.event-subscribers :as sub]
             [tolglow.events.callbacks :as callbacks]
@@ -173,6 +174,414 @@
           (is (= 3 (count (filter #(= :ember (:effect-id %)) (:instances (show/snapshot runtime))))))
           (is (not (contains? (get-in (show/export-show runtime) [:model :transport]) :confidence)))
           (is (= 1 @closed))))
+      (finally (show/stop! runtime)))))
+
+(deftest captured-section-change-reaches-an-explicit-owner-subscriber-once
+  (let [closed (atom 0) observed (atom [])
+        ;; The in-memory source returns immediately. Start the owner clock
+        ;; at the end of the captured interval and keep its musical origin.
+        model (-> (demo/model)
+                  (assoc :time-ms 5000.0)
+                  (update :transport assoc :time-ms 5000.0 :beat 10.0))
+        runtime (show/create-runtime
+                 {:model model :workspace-options nil
+                  :audio-options {:open-source! (fn [_] (pcm-test/memory-source (pcm-test/section-pcm-values) 719 closed))}})
+        subscriber {:id :sections :match {:type :audio/section-change}
+                    :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]}]
+    (try
+      (is (some #{{:category :audio :type :audio/section-change}} (:events (sub/catalog model))))
+      (show/attach-observer! runtime :section-regression
+        (fn [] {:events! (fn [_ events _ _]
+                          (swap! observed into (filter #(= :audio/section-change (:type %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [receipt (show/register-event-subscriber! runtime subscriber)]
+        (show/tick! runtime 5000)
+        (is (= :accepted (:status (deref receipt 1000 ::timeout)))))
+      (is (empty? (:instances (show/snapshot runtime))))
+      (let [handle (connections/start-audio! (:connections runtime)
+                                             {:default? true :sample-rate 8000.0 :block-frames 640
+                                              :analyzer-options {:sections {:beats-per-window 2}}}
+                                             (show/audio-callbacks runtime))
+            result (deref (:result handle) 5000 ::timeout)]
+        (is (= :completed (:status result)) (pr-str (:error result))))
+      (doseq [time [5001 5002 5020 5050]] (show/tick! runtime time))
+      (let [[event] @observed
+            instances (:instances (show/snapshot runtime))]
+        (is (= 1 @closed (count @observed) (count instances)))
+        (is (= {:boundary-beat 4.0 :confirmed-at-beat 8.0 :clock-source :manual :clock-epoch 0}
+               (select-keys (:data event) [:boundary-beat :confirmed-at-beat :clock-source :clock-epoch])))
+        (is (= [:ember :event-subscriber]
+               ((juxt :effect-id #(get-in % [:source :adapter])) (first instances)))))
+      (finally (show/stop! runtime)))))
+
+(defn- capture-pattern-boundary
+  [policy pause? & [after-admission {:keys [confirmation-tick-ms source-id]
+                                    :or {confirmation-tick-ms 4000}}]]
+  (let [owner (atom nil) observed (atom []) closed (atom 0) pause-receipt (atom nil)
+        open (fn [_]
+               (let [source (pcm-test/memory-source (pcm-test/section-pcm-values) 1280 closed)
+                     reads (atom -1)]
+                 (update source :read!
+                         (fn [read!]
+                           (fn [out offset length]
+                             (let [time-ms (* 80 (swap! reads inc))
+                                   runtime @owner]
+                               ;; Pace the injected capture timestamps independently of owner frame ticks.
+                               (swap! (:clock runtime) assoc :time-ms (+ time-ms 82.0))
+                               (when (#{80 3920 4000} time-ms)
+                                 (when (and pause? (= 4000 time-ms))
+                                   (reset! pause-receipt (show/submit! runtime {:op :transport/set
+                                                                              :transport {:playing? false}})))
+                                 (show/tick! runtime (if (= 4000 time-ms) confirmation-tick-ms time-ms)))
+                               (read! out offset length)))))))
+        runtime (show/create-runtime (cond-> {:workspace-options nil :audio-options {:open-source! open}}
+                                       policy (assoc :section-patterns policy)))
+        subscriber {:id :track-patterns :match {:category :music :type :music/section-pattern}
+                    :actions [(cond-> {:op :effect/launch :select {:ids [:ember] :pick :first}}
+                                after-admission (assoc :delay {:beats 1}))]}]
+    (reset! owner runtime)
+    (try
+      (show/attach-observer! runtime :patterns
+        (fn [] {:events! (fn [_ events _ _]
+                          (swap! observed into (filter #(#{:audio/section-change :clock/bar :music/section-pattern}
+                                                         (:type %)) events)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [reply (show/register-event-subscriber! runtime subscriber)]
+        (show/tick! runtime 0)
+        (is (= :accepted (:status (deref reply 1000 ::timeout)))))
+      (let [handle (connections/start-audio! (:connections runtime)
+                                             {:default? true :sample-rate 8000.0 :block-frames 640
+                                              :analyzer-options (cond-> {:sections {:beats-per-window 2}}
+                                                                  (some? source-id) (assoc :source-id source-id))}
+                                             (show/audio-callbacks runtime))
+            result (deref (:result handle) 5000 ::timeout)]
+        (is (= :completed (:status result)) (pr-str (:error result)))
+        (when pause?
+          (is (= :accepted (:status (deref @pause-receipt 1000 ::timeout))))
+          (let [reply (show/submit! runtime {:op :transport/set :transport {:playing? true}})]
+            (show/tick! runtime 4001)
+            (is (= :accepted (:status (deref reply 1000 ::timeout))))))
+        (when after-admission
+          (is (empty? (:instances (show/snapshot runtime))))
+          (is (= 1 (count (get-in @(:state runtime) [:model :event-subscribers :runs]))))
+          (after-admission runtime))
+        (doseq [time [4001 4100 4500 5000]] (show/tick! runtime time))
+        {:events @observed :instances (:instances (show/snapshot runtime))
+         :model (:model (show/export-show runtime)) :run-id (:run-id handle) :closed @closed})
+      (finally (show/stop! runtime)))))
+
+(deftest stopping-capture-revokes-an-admitted-delayed-causal-pattern
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        healthy (capture-pattern-boundary policy false (constantly nil))
+        stopped (capture-pattern-boundary policy false #(show/audio-action! % :stop {}))]
+    (doseq [{:keys [events]} [healthy stopped]]
+      (is (= 1 (count (filter #(= :music/section-pattern (:type %)) events)))))
+    (is (= [:ember] (mapv :effect-id (:instances healthy))))
+    (is (empty? (:instances stopped)))))
+
+(deftest audio-stop-admission-fences-the-next-owner-frame
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        session-operation! @#'show/session-operation!
+        advance sub/advance
+        stop-admitted (promise)
+        finish-stop (promise)
+        frame-ready (promise)
+        finish-frame (promise)
+        {:keys [instances]}
+        (capture-pattern-boundary policy false
+          (fn [runtime]
+            ;; Start the due frame just after Stop releases the owner lock.
+            ;; Hold the frame before subscriber advancement until Stop returns.
+            (with-redefs-fn {#'show/session-operation!
+                             (fn [owner payload operation!]
+                               (let [work (session-operation! owner payload operation!)]
+                                 (deliver stop-admitted true)
+                                 (deref finish-stop 5000 nil)
+                                 work))
+                             #'sub/advance
+                             (fn [model time-ms results]
+                               (deliver frame-ready true)
+                               (deref finish-frame 5000 nil)
+                               (advance model time-ms results))}
+              (fn []
+                (let [stop-call (future (show/audio-action! runtime :stop {}))
+                      due-frame (future
+                                  (when (deref stop-admitted 5000 nil)
+                                    (show/tick! runtime 4500)
+                                    true))]
+                  (try
+                    (is (true? (deref frame-ready 5000 nil)))
+                    (deliver finish-stop true)
+                    (is (true? (:stopped? (deref stop-call 5000 nil))))
+                    (is (empty? (:instances (show/snapshot runtime))))
+                    (finally
+                      (deliver finish-stop true)
+                      (deliver finish-frame true)
+                      (is (true? (deref due-frame 5000 nil)))
+                      (doseq [worker [stop-call due-frame] :when (not (realized? worker))]
+                        (future-cancel worker)))))))))]
+    (is (empty? instances))))
+
+(deftest opted-in-captured-patterns-publish-on-owner-bars-and-respect-a-pause
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove] :show-seed 514}
+        cases [(capture-pattern-boundary policy false)
+               (capture-pattern-boundary nil false)
+               (capture-pattern-boundary policy true)]
+        [enabled inert paused] cases
+        [intent] (filterv #(= :music/section-pattern (:type %)) (:events enabled))
+        [section] (filterv #(= :audio/section-change (:type %)) (:events enabled))
+        bars (filter #(= :clock/bar (:type %)) (:events enabled))]
+    (is (some #{{:category :music :type :music/section-pattern}} (:events (sub/catalog (demo/model)))))
+    (doseq [{:keys [events run-id model closed]} cases]
+      (let [sections (filterv #(= :audio/section-change (:type %)) events)]
+        (is (= 1 closed (count sections)))
+        (is (= run-id (get-in (first sections) [:data :capture-run-id])))
+        (is (not (contains? model :section-pattern-state)))))
+    (is (= 1 (count (filter #(= :music/section-pattern (:type %)) (:events enabled)))))
+    (is (= [:music :causal :midnight-groove 8.0 4000]
+           [(:category intent) (get-in intent [:data :mode]) (get-in intent [:data :pattern])
+            (get-in intent [:data :show-beat]) (get-in intent [:time :time-ms])]))
+    (is (= (get-in section [:data :clock-session-id]) (get-in intent [:data :scope :clock 2])))
+    (is (some #(= (:time %) (:time intent)) bars))
+    (is (= [[:ember :event-subscriber]]
+           (mapv (juxt :effect-id #(get-in % [:source :adapter])) (:instances enabled))))
+    (doseq [result [inert paused]]
+      (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
+      (is (empty? (:instances result))))))
+
+(deftest capture-ingress-retains-a-confirmation-ahead-of-the-owner-tick
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove]}
+        {:keys [events instances]} (capture-pattern-boundary policy false nil {:confirmation-tick-ms 3999})
+        [section :as sections] (filterv #(= :audio/section-change (:type %)) events)
+        [intent :as intents] (filterv #(= :music/section-pattern (:type %)) events)]
+    (is (= 1 (count sections) (count intents)))
+    (is (== 3999 (get-in section [:time :time-ms])))
+    (is (== 4000 (get-in section [:data :time-ms])))
+    (is (== 4001 (get-in intent [:time :time-ms])))
+    (is (= [:ember] (mapv :effect-id instances)))))
+
+(deftest legacy-empty-capture-source-does-not-interrupt-the-owner
+  (let [policy {:enabled? true :on :bar :patterns [:midnight-groove]}
+        {:keys [events instances model]} (capture-pattern-boundary policy false nil {:source-id ""})]
+    (is (= 5000 (:time-ms model)))
+    (is (some #(and (= :audio/section-change (:type %)) (= "" (get-in % [:data :source :id]))) events))
+    (is (not-any? #(= :music/section-pattern (:type %)) events))
+    (is (empty? instances))))
+
+(defn- play-reference-boundary [pattern interruption & [{:keys [delayed?]}]]
+  (let [clock-ms (atom 27000)
+        provenance {:source-id :local-player :session-id "test-session" :clock-id :physical}
+        reference {:id "bass-arrangement" :version "sections-v1"}
+        profile {:version 1 :reference reference :duration-ms 8000.0
+                 :sections [{:id 0 :start-position-ms 0.0 :end-position-ms 4000.0
+                             :start-beat 0.0 :boundary-confidence 1.0 :boundary-kind :file-start}
+                            {:id 1 :start-position-ms 4000.0 :end-position-ms 8000.0
+                             :start-beat 8.0 :boundary-confidence 0.9 :boundary-kind :confirmed-change
+                             :features {:signature {:bass-notes [40]}}}]}
+        runtime (show/create-runtime {:workspace-options nil :physical-now-ms #(deref clock-ms)
+                                      :section-patterns {:enabled? true :on :bar :show-seed 514
+                                                         :patterns [pattern]}
+                                      :section-reference {:profile profile :provenance provenance}})
+        {:keys [publish! now-ms! state!]} (show/section-reference-callbacks runtime)
+        position (atom (reference-position/new-state provenance))
+        events (atom [])
+        observe (fn [type extra]
+                  (let [now (now-ms!)]
+                    (publish! (swap! position (fn [state]
+                                                (reference-position/advance state now
+                                                  (merge {:type type :provenance provenance :occurrence (:occurrence state)
+                                                          :observed-at-ms now} extra)))))))
+        tick (fn [time-ms]
+               (reset! clock-ms (+ 27000 time-ms))
+               (show/tick! runtime time-ms))
+        effects #(mapv :effect-id (:instances (show/snapshot runtime)))]
+    (try
+      (show/attach-observer! runtime :reference-patterns
+        (fn [] {:events! (fn [_ emitted _ _] (swap! events into emitted))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (let [replies (mapv (fn [[pattern effect]]
+                            (show/register-event-subscriber! runtime
+                              {:id pattern :match {:type :music/section-pattern :pattern pattern}
+                               :actions [(cond-> {:op :effect/launch :select {:ids [effect] :pick :first}}
+                                           delayed? (assoc :delay {:beats 1}))]}))
+                          [[:slow :ember] [:pulse :ice]])
+            unrelated (when delayed?
+                        (show/register-event-subscriber! runtime
+                          (listener [{:op :cue/launch :select {:ids [:ice] :pick :first} :delay {:beats 1}}])))]
+        (show/tick! runtime 0)
+        (is (= [:accepted :accepted] (mapv #(:status (deref % 1000 ::timeout)) replies)))
+        (when unrelated (is (= :accepted (:status (deref unrelated 1000 ::timeout))))))
+      (doseq [position-ms [3700 3750 3800]]
+        (reset! clock-ms (+ 27000 position-ms))
+        (is (observe :match {:match {:reference reference :position-ms position-ms
+                                     :rate 1.0 :score 0.95}})))
+      (is (= :locked (:status (state!))))
+      (tick 3850)
+      (is (= :reference (get-in @(:state runtime) [:section-pattern-state :pending :mode])))
+      (when interruption (reset! clock-ms 30950))
+      (case interruption
+        :seek (let [stale @position]
+                (is (observe :seek {}))
+                (is (nil? (publish! stale)))
+                (is (= :unavailable (:status (state!)))))
+        :override (let [reply (show/submit! runtime :settings
+                                {:scope :section-patterns :values {:override? true}})]
+                    (tick 3950)
+                    (is (= :accepted (:status (deref reply 1000 ::timeout))))
+                    (is (nil? (get-in @(:state runtime) [:section-pattern-state :pending]))))
+        nil)
+      (when delayed?
+        (is (true? ((:events! (show/audio-callbacks runtime)) [{:type :audio/kick}]))))
+      (tick 4000)
+      (when delayed?
+        (is (= {:kicks 9.0 pattern 9.0}
+               (into {} (map (juxt :subscriber :due-beat))
+                     (get-in @(:state runtime) [:model :event-subscribers :runs])))))
+      (when (= :seek-after-admission interruption)
+        (reset! clock-ms 31010)
+        (is (observe :seek {}))
+        (is (= :unavailable (:status (state!))))
+        (doseq [time-ms [4050 4090 4130]]
+          (reset! clock-ms (+ 27000 time-ms))
+          (is (observe :match {:match {:reference reference :position-ms (- time-ms 3000)
+                                       :rate 1.0 :score 0.95}})))
+        (is (= [:locked 1] ((juxt :status :occurrence) (state!)))))
+      (tick (if (= :seek-after-admission interruption) 4130 4100))
+      (let [before-delay (effects)]
+        (when delayed? (tick 4500))
+        {:patterns (filterv #(= :music/section-pattern (:type %)) @events)
+         :bars (filterv #(= :clock/bar (:type %)) @events)
+         :effects-before-delay before-delay :effects (effects)})
+      (finally (show/stop! runtime)))))
+
+(deftest trusted-reference-uses-its-monotonic-clock-and-revokes-a-seeked-forecast
+  (let [first-run (play-reference-boundary :slow nil)
+        repeated (play-reference-boundary :slow nil)
+        different (play-reference-boundary :pulse nil)
+        seeked (play-reference-boundary :slow :seek)
+        overridden (play-reference-boundary :slow :override)
+        [intent] (:patterns first-run)]
+    (is (= 1 (count (:patterns first-run)) (count (:patterns repeated))))
+    (is (= [:reference 8.0 4000 "bass-arrangement"]
+           [(get-in intent [:data :mode]) (get-in intent [:data :show-beat])
+            (get-in intent [:data :time-ms]) (get-in intent [:data :reference :id])]))
+    (is (= (select-keys (:data intent) [:pattern :decision-seed :delivery-id])
+           (select-keys (get-in repeated [:patterns 0 :data]) [:pattern :decision-seed :delivery-id])))
+    (is (some #(= (:time %) (:time intent)) (:bars first-run)))
+    (is (= [:ember] (:effects first-run) (:effects repeated)))
+    (is (= [:ice] (:effects different)))
+    (doseq [suppressed [seeked overridden]]
+      (is (empty? (:patterns suppressed)))
+      (is (empty? (:effects suppressed))))))
+
+(deftest a-seek-revokes-an-admitted-pattern-without-affecting-other-delayed-cues
+  (let [healthy (play-reference-boundary :slow nil {:delayed? true})
+        sought (play-reference-boundary :slow :seek-after-admission {:delayed? true})]
+    (is (= 1 (count (:patterns healthy)) (count (:patterns sought))))
+    (is (empty? (:effects-before-delay healthy)))
+    (is (empty? (:effects-before-delay sought)))
+    (is (= 2 (count (:effects healthy))))
+    (is (= #{:ember :ice} (set (:effects healthy))))
+    (is (= [:ice] (:effects sought)))))
+
+(defn- reference-observer [{:keys [publish! now-ms! provenance alignment-options]}]
+  (let [position (atom (reference-position/new-state provenance alignment-options))]
+    {:position position
+     :observe! (fn [type match]
+                 (let [now (now-ms!)
+                       observation {:type type :provenance provenance :observed-at-ms now
+                                    :occurrence (:occurrence @position) :match match}]
+                   (publish! (swap! position reference-position/advance now observation))))}))
+
+(deftest reattaching-a-section-reference-fences-old-observations-and-forecasts
+  (let [clock-ms (atom 27000)
+        clock-read (atom nil)
+        provenance {:source-id :mpv :session-id :first :clock-id :physical}
+        reference {:id :recording :version 1}
+        profile {:version 1 :reference reference :duration-ms 12000.0
+                 :sections (mapv (fn [id]
+                                   {:id id :start-position-ms (* id 4000.0) :end-position-ms (* (inc id) 4000.0)
+                                    :start-beat (* id 8.0) :boundary-confidence 1.0
+                                    :features {:signature {:bass-notes [(+ 36 id)]}}
+                                    :boundary-kind (if (zero? id) :file-start :confirmed-change)})
+                                 (range 3))}
+        runtime (show/create-runtime {:workspace-options nil
+                                      :physical-now-ms #(do (when-let [before-read @clock-read] (before-read)) @clock-ms)
+                                      :section-patterns {:enabled? true :on :bar :show-seed 514 :patterns [:warm :pulse]}
+                                      :section-reference {:profile profile :provenance provenance
+                                                          :position-options {:max-age-ms 600.0}}})
+        callback (show/section-reference-callbacks runtime)
+        {:keys [position observe!]} (reference-observer callback)
+        events (atom [])
+        at! #(reset! clock-ms (+ 27000 %))
+        tick! (fn [time-ms] (at! time-ms) (show/tick! runtime time-ms))
+        sample! (fn [observe track offset cursors]
+                  (doseq [cursor cursors]
+                    (at! (+ offset cursor))
+                    (is (observe :match {:reference track :position-ms cursor :rate 1.0 :score 1.0}))))]
+    (try
+      (show/attach-observer! runtime :reference-reattach
+        (fn [] {:events! (fn [_ emitted _ _]
+                           (swap! events into (filter #(= :music/section-pattern (:type %)) emitted)))
+                :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
+      (tick! 0)
+      (at! 100)
+      (is (observe! :seek nil))
+      (sample! observe! reference 0 [3700 3750 3800])
+      (tick! 3850)
+      (tick! 4000)
+      (is (= [1] (mapv #(get-in % [:data :section :id]) @events)))
+      (sample! observe! reference 0 [7700 7750 7800])
+      (tick! 7850)
+      (is (= 2 (get-in @(:state runtime) [:section-pattern-state :pending :section :id])))
+      (is (= 1 (:occurrence ((:state! callback)))))
+      (let [entered (promise)
+            release (promise)
+            stale @position]
+        (reset! clock-read (fn [] (deliver entered true) (deref release 3000 nil)))
+        (let [publishing (future ((:publish! callback) stale))
+              _ (is (true? (deref entered 3000 ::timeout)))
+              _ (reset! clock-read nil)
+              replacement (try (show/attach-section-reference! runtime :second)
+                               (finally (deliver release true)))
+              next-observer (:observe! (reference-observer replacement))]
+          (is (nil? (deref publishing 3000 ::timeout)))
+          (is (nil? ((:state! callback))))
+          (is (nil? ((:publish! replacement) stale)))
+          (is (= {:source-id :mpv :session-id :second :clock-id :physical} (:provenance replacement)))
+          (is (= (:alignment-options callback) (:alignment-options replacement)))
+          (is (= [0 0 :unavailable] ((juxt :occurrence :generation :status) ((:state! replacement)))))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already used"
+                                (show/attach-section-reference! runtime :first)))
+          (sample! next-observer {:id :other-recording :version 1} 4200 [3700 3750 3800])
+          (tick! 8000)
+          (is (= 1 (count @events)))
+          (is (nil? (get-in @(:state runtime) [:section-pattern-state :pending])))
+
+          ;; The fresh session can deliver the same verified section again.
+          (sample! next-observer reference 8000 [3700 3750 3800])
+          (tick! 11850)
+          (tick! 12000)
+          (is (= [[1 :first] [1 :second]]
+                 (mapv (fn [event] [(get-in event [:data :section :id])
+                                   (get-in event [:data :fence :provenance :session-id])])
+                       @events)))
+
+          (let [epoch (get-in @(:state runtime) [:model :epoch])
+                receipt (show/submit! runtime :import {:source (show/export-show-source runtime)})]
+            (tick! 12025)
+            (is (= :accepted (:status (deref receipt 2000 ::timeout))))
+            (is (< epoch (get-in @(:state runtime) [:model :epoch])))
+            (is (nil? (show/section-reference-callbacks runtime)))
+            (is (nil? ((:state! replacement))))
+            (at! 12050)
+            (is (nil? (next-observer :unavailable nil)))
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already used"
+                                  (show/attach-section-reference! runtime :second)))
+            (let [restored (show/attach-section-reference! runtime :third)]
+              (is (= :third (get-in restored [:provenance :session-id])))
+              (is (= :unavailable (:status ((:state! restored)))))
+              (is (nil? (next-observer :unavailable nil)))))))
       (finally (show/stop! runtime)))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner

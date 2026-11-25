@@ -71,6 +71,8 @@
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.lighting :as lighting]
             [tolglow.integrations.analysis :as analysis]
+            [tolglow.integrations.reference-position :as reference-position]
+            [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
@@ -147,6 +149,7 @@
                 (preview/brightness-gains fixtures))]
     (merge (select-keys model [:show-id :epoch :revision :time-ms :master :blackout? :transport :rig :settings])
            {:runtime-id (:id runtime)
+            :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
@@ -258,8 +261,18 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         reference (:section-reference options)
+         music (when-let [policy (:section-patterns options)]
+                 (let [planner (section-patterns/new-planner (:profile reference) policy)]
+                   (when (get-in planner [:policy :enabled?]) planner)))
+         initial-position (when reference
+                            (when-not (and music (:profile reference))
+                              (throw (ex-info "A section reference requires an enabled pattern policy and track profile" {})))
+                            (reference-position/new-state (:provenance reference) (:position-options reference)))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (when (contains? (:settings model) :section-patterns)
+             (section-patterns/override-settings (get-in model [:settings :section-patterns])))
          _ (variable-blocks/compile-model model)
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
@@ -337,6 +350,11 @@
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :capacity-plan (volatile! nil) :capacity-audio (volatile! nil)
       :audio-input (atom {:epoch (:epoch model) :events [] :features nil})
+      :section-patterns music
+      :section-reference (when initial-position
+                           {:initial initial-position
+                            :input (atom {:epoch (:epoch model) :position initial-position
+                                          :used-sessions #{(get-in initial-position [:provenance :session-id])}})})
       :sync-input (atom {:epoch (:epoch model) :events []})
       :connections owned :devices (atom {}) :development development
       :rdm (rdm/create (merge (:rdm-options options)
@@ -362,7 +380,11 @@
 (defn create-runtime
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
-  :worker-timeout-ms sets the per-frame effect worker deadline (default 500)."
+  :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  An enabled :section-patterns policy publishes pattern intents from opted-in
+  capture at owner boundaries. :section-reference can supply a versioned
+  :profile, initial source :provenance and :position-options. Reconnect a
+  player with attach-section-reference!. Actions require an event subscriber."
   ([] (create-runtime {}))
   ([options]
    (let [owner (open-compute! options)]
@@ -719,6 +741,7 @@
             _ (when (= scope :variable-blocks)
                 (variable-blocks/compile-settings settings (prefabs/catalog model)))
             _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
+            _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -867,12 +890,13 @@
   (let [epoch (get-in @(:state runtime) [:model :epoch])
         current? #(and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))]
     {:clock! (fn []
-               (let [{:keys [model audio-clock-confidence]} @(:state runtime)
+               (let [{:keys [model audio-clock-confidence section-clock-session]} @(:state runtime)
                      {:keys [source time-ms] :as transport} (:transport model)
                      confidence (if (= :manual source) 1.0 audio-clock-confidence)]
                  (when (and @(:running runtime) (= epoch (:epoch model))
                             (some? time-ms) (some? source) (some? confidence))
-                   (assoc transport :confidence confidence))))
+                   (cond-> (assoc transport :confidence confidence)
+                     section-clock-session (assoc :session-id section-clock-session)))))
      :events! (fn [events]
                 (if-not (current?) false
                   (let [accepted? (volatile! false)]
@@ -912,6 +936,154 @@
             m (:events captured)))
         (seq (:events captured)) (assoc-in [:variables :audio :events] (:events captured))
         (seq (:events captured)) (update-in [:variables :audio :event-count] (fnil + 0) (count (:events captured)))) model)))
+
+(defn section-reference-callbacks
+  "Get callbacks for the attached reference session in the current show epoch.
+  Capture timestamps with :now-ms! and submit reference-position state with
+  :publish!. Construct the adapter with the returned :provenance and
+  :alignment-options. :state! projects the reference lock. After reattach,
+  restart or restore, old callbacks reject publication and return no state."
+  [runtime]
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position] :as attached} @input
+          {:keys [provenance options]} position
+          now-ms! (get-in runtime [:publisher :now-ms])
+          current? (fn [stored]
+                     (and @(:running runtime)
+                          (= epoch (:epoch stored) (get-in @(:state runtime) [:model :epoch]))
+                          (= provenance (get-in stored [:position :provenance]))))]
+      (when (current? attached)
+        {:provenance provenance
+         :alignment-options options
+         :now-ms! now-ms!
+         :state! (fn []
+                   (let [stored @input]
+                     (when (current? stored)
+                       (reference-position/snapshot (:position stored) (now-ms!)))))
+         :publish! (fn [{candidate-time :now-ms :keys [occurrence generation] :as candidate}]
+                     (when (current? @input)
+                       (let [now (now-ms!)]
+                         (locking input
+                           (let [{previous :position :as stored} @input]
+                             (when (and (current? stored)
+                                        (= provenance (:provenance candidate))
+                                        (= options (:options candidate))
+                                        (number? candidate-time) (Double/isFinite (double candidate-time))
+                                        (<= (:now-ms previous candidate-time) candidate-time now)
+                                        (integer? occurrence) (<= (:occurrence previous) occurrence)
+                                        (integer? generation) (<= (:generation previous) generation))
+                               ;; Verify the candidate without storing a projection for future frames.
+                               (reference-position/snapshot candidate now)
+                               (reset! input (assoc stored :position candidate))
+                               true))))))}))))
+
+(defn attach-section-reference!
+  "Replace the attached reference session with a fresh caller-chosen ID and
+  return its callbacks. Source, clock, profile and alignment options stay bound
+  to the running show. Call after a player reconnect, show restart or restore.
+  Session IDs are unique for the lifetime of this show runtime."
+  [runtime session-id]
+  (when-let [{:keys [initial input]} (:section-reference runtime)]
+    (let [position (reference-position/new-state (assoc (:provenance initial) :session-id session-id)
+                                                 (:options initial))]
+      ;; Serialize with frame commits and restore. Old publishers also check
+      ;; the exact session again under input before storing a candidate.
+      (locking (:lock runtime)
+        (when @(:running runtime)
+          (locking input
+            (let [{:keys [used-sessions]} @input]
+              (when (contains? used-sessions session-id)
+                (throw (ex-info "Section reference session was already used" {:session-id session-id})))
+              (reset! input {:epoch (get-in @(:state runtime) [:model :epoch])
+                             :position position :used-sessions (conj used-sessions session-id)})
+              (section-reference-callbacks runtime))))))))
+
+(defn- reference-evidence [runtime show-epoch]
+  (when-let [input (get-in runtime [:section-reference :input])]
+    (let [{:keys [epoch position]} @input]
+      (when (= show-epoch epoch)
+        {:reference-state position
+         :reference-now-ms ((get-in runtime [:publisher :now-ms]))}))))
+
+(defn- section-clock-session [runtime model]
+  (str (:epoch model) "/" (get-in model [:transport :source-selection-epoch]) "/" @(:presentation-clock runtime)))
+
+(defn- section-capture-stream
+  [connection {capture-state :state :keys [run-id timing-valid? closed? config]}]
+  (let [source-id (get-in config [:analyzer-options :source-id] :audio-input)]
+    (when (and run-id timing-valid? (not closed?) (#{:running :completed} capture-state)
+               (not= "" source-id) (connections/restart-requested? connection :audio))
+      {:source-id source-id :session-id run-id})))
+
+(defn- advance-section-patterns [runtime before next-state reset?]
+  (if-let [initial (:section-patterns runtime)]
+    (if reset?
+      (dissoc next-state :section-pattern-state :section-clock-session)
+      (let [{:keys [model audio-clock-confidence]} next-state
+            previous (:model before)
+            {:keys [source source-epoch playing? beat]} (:transport model)
+            clock-session (section-clock-session runtime model)
+            connection (:connections runtime)
+            capture-status (audio/status (connections/audio connection))
+            analyzer-options (get-in capture-status [:config :analyzer-options])
+            active-clock? (and (true? playing?) (integer? source-epoch) (number? audio-clock-confidence)
+                               (>= audio-clock-confidence (get analyzer-options :beat-clock-confidence-min 0.5)))
+            stream (section-capture-stream connection capture-status)
+            causal-events (into [] (comp (filter #(= :audio (:category %))) (map :event)
+                                         (filter #(and (= :audio/section-change (:type %))
+                                                       (= (:run-id capture-status) (:capture-run-id %))
+                                                       (true? (get-in % [:timing :capture-clock-valid?])))))
+                                (staging/pending model))
+            boundaries (when (and active-clock? (= clock-session (:section-clock-session before))
+                                  (true? (get-in previous [:transport :playing?])))
+                         (into #{} (map (comp keyword name :type))
+                               (show-events/emitted {:before previous :after model})))
+            metrics {:now-ms (:time-ms model) :causal-stream stream :causal-events causal-events
+                     :override? (get-in model [:settings :section-patterns :override?] false)
+                     :transport {:show-epoch (:epoch model) :source (or source :manual)
+                                 :source-epoch (or source-epoch 0) :session-id clock-session
+                                 :playing? (boolean active-clock?) :beat beat :boundaries boundaries}}
+            result (section-patterns/advance (or (:section-pattern-state before) initial)
+                                             (merge metrics (reference-evidence runtime (:epoch model))))]
+        (-> next-state
+            (assoc :section-pattern-state (:state result) :section-clock-session clock-session)
+            (update :model staging/collect :music {:kind :music :id :section-patterns} (:events result)))))
+    next-state))
+
+(defn- section-pattern-run? [{:keys [event]}]
+  (and (= :music (:category event)) (= :music/section-pattern (:type event))))
+
+(defn- fence-section-pattern-runs [model runtime clock-confidence]
+  ;; Subscriber actions can be due well after the pattern was admitted.
+  (let [path [:event-subscribers :runs]
+        runs (get-in model path)]
+    (if-not (some section-pattern-run? runs)
+      model
+      (let [{:keys [playing? source source-epoch]} (:transport model)
+            scope {:show-epoch (:epoch model) :clock [(or source :manual) source-epoch (section-clock-session runtime model)]}
+            connection (:connections runtime)
+            capture-status (audio/status (connections/audio connection))
+            min-confidence (get-in capture-status [:config :analyzer-options :beat-clock-confidence-min] 0.5)
+            active? (and (:section-patterns runtime) (true? playing?) (integer? source-epoch)
+                         (number? clock-confidence) (>= clock-confidence min-confidence)
+                         (not (get-in model [:settings :section-patterns :override?])))
+            projection (when active?
+                         (when-let [{:keys [reference-state reference-now-ms]} (reference-evidence runtime (:epoch model))]
+                           (reference-position/snapshot reference-state reference-now-ms)))
+            fence (select-keys projection [:provenance :occurrence :generation])
+            capture-stream (section-capture-stream connection capture-status)]
+        (assoc-in model path
+                  (filterv (fn [{:keys [event] :as run}]
+                             (or (not (section-pattern-run? run))
+                                 (let [{:keys [mode reference] :as receipt} (:data event)]
+                                   (and active? (= scope (:scope receipt))
+                                        (case mode
+                                          :causal (and (some? capture-stream) (= capture-stream (:stream receipt)))
+                                          :reference (and (= :locked (:status projection))
+                                                          (= fence (:fence receipt))
+                                                          (= reference (:reference projection)))
+                                          false)))))
+                           runs))))))
 
 (declare submit!)
 
@@ -1204,6 +1376,7 @@
                       :status {:restored? true :frame-ms 0}})
                    (try
                      (let [model (-> (advance-sensors! runtime model time-ms)
+                                     (fence-section-pattern-runs runtime audio-clock-confidence)
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
@@ -1360,6 +1533,7 @@
                                    (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
+                 next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
                               (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
@@ -1874,9 +2048,9 @@
                                (fn [config]
                                  (connections/start-audio! (:connections runtime) config (audio-callbacks runtime))
                                  (audio/status (connections/audio (:connections runtime)))))
-    :stop (let [generation (session-operation! runtime payload
-                                             (fn [_] (:generation (connections/status (:connections runtime)))))]
-            (connections/stop-audio! (:connections runtime) generation))
+    :stop (let [shutdown! (session-operation! runtime payload
+                             (fn [_] (connections/admit-audio-stop! (:connections runtime))))]
+            (shutdown!))
     (throw (ex-info "Unknown audio operation" {:operation operation}))))
 
 (defn sync-action!
