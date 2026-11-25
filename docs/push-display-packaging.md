@@ -192,3 +192,23 @@ This example uses Repeat to open or close the browser, Octave Up to go back, Pag
 The active show’s Working recovery and Latest named checkpoints appear when available. Additional files come from the optional trusted `:catalog-saves` vector. Open a row, choose a checkpoint, then press Confirm when the display asks to replace the running show. If the checkpoint changes after selection, go back and choose it again. After the owner commits, the initiating Push opens a fresh session and shows **Checkpoint restored**. Use Back to return to the live display. Restore retires the old controller holds and sessions. The initiating connection reopens automatically while it still owns its reconnect request.
 
 From the REPL use `tolglow.controllers.content-browser-host/project` to get the row and exact source, then `preview` with the page's runtime ID, row's selection and chosen source. Pass the returned `:confirmation` to `confirm-load!` and dereference its `:receipt` for the same committed import outcome used by Push. Studio's checkpoint restore uses the same show import owner. [Host functions](../src/tolglow/controllers/content_browser_host.clj) · [#552](https://github.com/tolgraven/tolglow/issues/552)
+
+### Browse registered effects and cues
+
+Bind the optional `:next-kind` action in `:catalog-controls` to a captured,
+unused button. In the catalog list it cycles through Saved shows, Registered
+effects and Registered cues. Page through the list and use its row buttons
+to preview the displayed version. Effect previews show categories and
+registered cue usage. Cue previews show the referenced effect version,
+categories and page usage. Both show the running instance count. Back returns
+to the same page with the row highlighted. These previews are read-only.
+
+The same catalog is available in the REPL. Use `:kind :cue` for the cue list.
+
+```clojure
+(require '[tolglow.controllers.content-browser-host :as catalog])
+
+(let [{:keys [runtime-id items]} (catalog/project runtime [] {:kind :effect :page 0})]
+  (when-let [{:keys [selection]} (first items)]
+    (catalog/preview runtime [] {:runtime-id runtime-id :selection selection})))
+```

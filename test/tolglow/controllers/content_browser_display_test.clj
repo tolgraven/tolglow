@@ -4,7 +4,9 @@
             [clojure.test :refer [deftest is testing]]
             [tolglow.controllers.content-browser :as browser]
             [tolglow.controllers.content-browser-display :as catalog]
+            [tolglow.controllers.content-browser-host :as host]
             [tolglow.demo :as demo]
+            [tolglow.registry :as registry]
             [tolglow.show :as show]
             [tolglow.show.recovery :as recovery]
             [tolglow.studio.display :as display])
@@ -151,6 +153,88 @@
   (assoc controls [:checkpoint :named] {:channel 0 :controller 102}
                   [:checkpoint :recovery] {:channel 0 :controller 103}
                   :confirm {:channel 0 :controller 104}))
+
+(deftest registered-library-switch-retires-an-in-flight-page
+  (let [model (demo/model)
+        effect (assoc (get-in model [:registry :effects :amber]) :version 3)
+        cue (assoc (get-in model [:registry :cues :amber]) :version 5 :effect-version 3)
+        model (update model :registry #(-> %
+                                          (registry/publish :effects effect)
+                                          (registry/publish :cues cue)))
+        runtime (show/create-runtime {:model model :workspace-options nil :workers 1})
+        before @(:state runtime)
+        receive (atom nil)
+        frames (LinkedBlockingQueue.)
+        effect-captured (promise) present-effect (promise)
+        cue-captured (promise) present-cue (promise)
+        submissions (atom [])
+        pane :saved-show-catalog
+        {:keys [midi display]}
+        (catalog/transports
+         {:controls (assoc restore-controls :next-kind {:channel 0 :controller 105})
+          :midi {:open! #(reset! receive %) :send! (fn [& _]) :close! (fn [_])}
+          :project! (partial host/project runtime [])
+          :preview! (partial host/preview runtime [])
+          :confirm! (fn [& args] (swap! submissions conj args))
+          :display! (fn [{:keys [presented!] :as hooks}]
+                      (display/transport
+                       (assoc hooks :max-fps 60
+                              :capture {:open! (constantly :capture) :close! (fn [_])
+                                        :capture! (fn [_ view] view)}
+                              :sink {:open! (constantly :sink) :close! (fn [_])
+                                     :render! (fn [_ view]
+                                                (case (get-in view [pane :kind])
+                                                  :effect (do (deliver effect-captured true) (deref present-effect 2500 nil))
+                                                  :cue (do (deliver cue-captured true) (deref present-cue 2500 nil))
+                                                  nil))}
+                              :presented! (fn [view] (presented! view) (.offer frames view)))))})
+        midi-handle ((:open! midi) (fn [_]))
+        handle ((:open! display))
+        press! (fn [cc] (@receive [0xb0 cc 127]) (@receive [0xb0 cc 0]))
+        expect! (fn [predicate]
+                  (let [view (await-view frames #(when-let [catalog (pane %)] (predicate catalog)))]
+                    (is (some? view))
+                    (pane view)))]
+    (try
+      ((:render! display) handle {:display-mode :parameters})
+      (press! 56)
+      (is (:next-kind? (expect! #(= :show (:kind %)))))
+      (press! 105)
+      (is (true? (deref effect-captured 2500 nil)))
+      (press! 105)
+      (press! 20)
+      (deliver present-effect true)
+      (is (true? (deref cue-captured 2500 nil)))
+      (press! 20)
+      (deliver present-cue true)
+      (let [catalog (expect! #(= :cue (:kind %)))]
+        (is (nil? (:preview catalog)))
+        (is (= {:name "Amber" :version 5 :selected? false} (get-in catalog [:rows 0]))))
+      (press! 20)
+      (is (= {:name "Amber" :version 5 :effect-version 3 :categories [:color :emission :intensity]
+              :usage {:page-count 1 :running-count 0}}
+             (:preview (expect! :preview))))
+      (press! 102)
+      (press! 104)
+      (press! 55)
+      (is (some? (expect! #(and (= :cue (:kind %)) (nil? (:preview %)) (get-in % [:rows 0 :selected?])))))
+      (press! 105)
+      (expect! #(= :show (:kind %)))
+      (press! 105)
+      (expect! #(= :effect (:kind %)))
+      (press! 20)
+      (is (= {:name "Amber" :version 3 :categories [:color :emission :intensity]
+              :usage {:cue-count 1 :running-count 0}}
+             (:preview (expect! #(when (= :effect (:kind %)) (:preview %))))))
+      (is (= before @(:state runtime)))
+      (is (zero? @(:ingress-order runtime)))
+      (is (empty? @submissions))
+      (finally
+        (deliver present-effect true)
+        (deliver present-cue true)
+        ((:close! display) handle)
+        ((:close! midi) midi-handle)
+        (show/stop! runtime)))))
 
 (defn- checkpoint-status [view]
   (get-in view [:saved-show-catalog :checkpoint :status]))

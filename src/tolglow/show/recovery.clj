@@ -214,20 +214,29 @@
   (let [owner (assoc config :open? (atom true) :active? (atom active?)
                             :settled-shows (atom #{}) :status (atom {}))]
     (if enabled?
-      (let [factory (reify ThreadFactory
-                      (newThread [_ task] (doto (Thread. task "tolglow-show-recovery") (.setDaemon true))))
+      (let [worker (volatile! nil)
+            factory (reify ThreadFactory
+                      (newThread [_ task]
+                        (vreset! worker (doto (Thread. task "tolglow-show-recovery") (.setDaemon true)))))
             executor (ScheduledThreadPoolExecutor. 1 factory)]
         (.scheduleWithFixedDelay executor ^Runnable #(autosave! owner capture! publish!)
                                  interval-ms interval-ms TimeUnit/MILLISECONDS)
-        (assoc owner :executor executor))
+        (assoc owner :executor executor :worker worker))
       owner)))
 
 (defn activate! [owner]
   (reset! (:active? owner) true))
 
-(defn close! [{:keys [open? ^ScheduledThreadPoolExecutor executor]}]
-  (when (and open? (compare-and-set! open? true false) executor)
-    (.shutdownNow executor))
+(defn close!
+  "Retire publication and give any running autosave up to one second to clean
+  up its staged files. A callback on the recovery worker may close its owner."
+  [{:keys [open? ^ScheduledThreadPoolExecutor executor worker]}]
+  (let [retired? (and open? (compare-and-set! open? true false))]
+    (when executor
+      (when retired? (.shutdownNow executor))
+      (when-not (identical? (Thread/currentThread) (some-> worker deref))
+        (try (.awaitTermination executor 1000 TimeUnit/MILLISECONDS)
+             (catch InterruptedException _ (.interrupt (Thread/currentThread)))))))
   nil)
 
 (defn status [owner]
