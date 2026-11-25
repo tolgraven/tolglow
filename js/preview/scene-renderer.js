@@ -228,9 +228,15 @@ export class SceneRenderer {
       const spec = (rig.trusses || []).find(t => String(t.id) === entry.id);
       if (spec && updateRigPose(entry.root, spec)) castersChanged = true;
     }
-    this.fog?.setAtmosphere(opticalShow, snapshot.output?.atmosphere);
+    this.updateEmittedOutput(snapshot, receivedAt, castersChanged);
+  }
+  // The scene and its resource bindings have already been applied. These
+  // updates are CPU-side inputs to draws in the same ordered WebGL context.
+  updateEmittedOutput(snapshot, receivedAt, castersChanged = false) {
+    this.snapshot = snapshot;
+    this.fog?.setAtmosphere(this.opticalShow, snapshot.output?.atmosphere);
     this.fog?.setAmount(this.fogAmount);
-    this.lighting.accept(snapshot, rig, receivedAt);
+    this.lighting.accept(snapshot, this.lastRig, receivedAt);
     const selection = snapshot.editor?.selection;
     const selected = selection?.kind === 'fixtures' ? String(selection.id) : null;
     const slots = fixtureSlots(this.beamById, snapshot.output?.values || {}, selected,

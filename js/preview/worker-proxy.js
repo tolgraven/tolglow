@@ -9,6 +9,8 @@ import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
 import {clamp, roomDimensions} from './math.js';
 
+const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes'];
+
 export function workerSupported() {
   return typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined'
     && typeof OffscreenCanvas.prototype.transferToImageBitmap === 'function';
@@ -45,13 +47,19 @@ export class WorkerRoomPreview {
       const createWorker = options.workerFactory || (url => new Worker(url, {type: 'module', name: 'tolglow-room-preview'}));
       this.worker = createWorker(new URL('./preview-worker.js', import.meta.url));
       this.channel = new LatestStateChannel(message => {
-        const snapshot = message.state.snapshot;
-        const changed = snapshot !== this.lastSentSnapshot;
-        const projection = changed && snapshot ? {...snapshot} : null;
-        if (projection && snapshot.rig === this.lastSentSnapshot?.rig) delete projection.rig;
-        for (const key of ['editor', 'sculpt-guide', 'volume-guides', 'glass-meshes', 'glass-volumes'])
-          if (projection && snapshot[key] === this.lastSentSnapshot?.[key]) delete projection[key];
-        this.worker.postMessage({...message, state: {...message.state, snapshot: projection}});
+        const {snapshot, receivedAt: _receivedAt, film, actions, ...controls} = message.state;
+        const previous = this.lastSentSnapshot;
+        const projection = snapshot && snapshot !== previous ? {...snapshot} : null;
+        const controlsKey = controls.paused || actions.length ? null : JSON.stringify({...controls,
+          film: Object.entries(film).filter(([, value]) => Number.isFinite(value))});
+        let outputOnly = controlsKey !== null && !!projection && !!previous &&
+          controlsKey === this.lastSentControls && showIdentity(snapshot) === showIdentity(previous);
+        if (projection) for (const key of sceneFields) {
+          if (snapshot[key] === previous?.[key]) delete projection[key];
+          else outputOnly = false;
+        }
+        this.worker.postMessage({...message, outputOnly, state: {...message.state, snapshot: projection}});
+        this.lastSentControls = controlsKey;
         this.lastSentSnapshot = snapshot;
       });
       this.worker.onmessage = event => this.receive(event.data);
@@ -101,10 +109,10 @@ export class WorkerRoomPreview {
       this.actions = this.actions.filter(action => action.id > message.actionThrough); this.channel.acknowledge(message.id);
     } else if (message.type === 'status') this.setStatus(message.text);
     else if (message.type === 'render-start') {this.rendering = true; this.startedRendering = true;}
-    else if (message.type === 'render-retired') this.rendering = false;
+    else if (message.type === 'render-retired') this.rendering = !!message.rendering;
     else if (message.type === 'error') this.fail(message.message);
     else if (message.type === 'frame') {
-      this.rendering = false;
+      this.rendering = !!message.rendering;
       try {
         if (!this.visible || message.generation !== this.generation) {
           message.bitmap.close(); this.discardedFrames++; return;

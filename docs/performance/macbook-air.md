@@ -84,6 +84,25 @@ The original Auto policy selected a tier capped at 10 Hz. Aligning its pacing to
 
 A separate fixed-Desktop run changed only the fog setting within each scene. The fixed lit room rose from 14.40 presentations/s at fog 0.25 to 21.40 with fog off. The moving scene rose from 14.00 at fog 0.7 to 20.70 with fog off. This comparison measures the cost of enabling fog in that renderer. Even with fog off, the room still rendered well below the observed display cadence.
 
+### Mobile fog sampling with the moving mixed stage
+
+Airie replayed 40 committed show snapshots per second into the production Room worker on Chrome's ANGLE Metal renderer. The test fixed the camera, work light, 1580 × 949 opaque scene and 3634 × 2184 canvas. It used an independent synthetic 60 Hz display clock and counted bitmaps accepted by the hidden canvas. Each measured window lasted about six seconds after warmup. [Mixed-stage profiling issue](https://github.com/tolgraven/tolglow/issues/555)
+
+| Fog raster | Ray steps | Accepted bitmaps/s | p95 presentation gap |
+| --- | ---: | ---: | ---: |
+| 632 × 379 | 32 | 51.27–51.60 | 24.8–25.0 ms |
+| 537 × 322 | 32 | 58.61–59.29 | 22.1–22.5 ms |
+
+The smaller Mobile fog raster used 28% fewer rays. Across matched audience, crossing-beam, close-plume and foreground-edge stills, the 99th-percentile maximum RGB channel difference was at most 3 of 255. The foreground-edge view had a maximum change of 47 at isolated pixels. The comparison uses frozen stills and a moving replay. Visible display cadence and other devices require their own checks.
+
+A separate synthetic 120 Hz pass isolation measured about 53 accepted bitmaps/s with the full scene, 92 when bypassing the volumetric fog pass, 55 with bloom disabled and 120 when replaying the same finished image. The system-wide AGX Device Utilization counter read 100% in all sampled full-scene intervals, with a 19% idle median. The pass comparison uses controlled pass toggles and actual canvas acknowledgements.
+
+### Brightness at beam crossings in fresh fog
+
+The eight-head crossing fixture reproduced a bright local error in the linear fog pass. Controlled pairs remained additive and the half-float stages remained finite through eightfold input gain. The shader now subdivides the ray through dense plume bounds, samples density within each clipped interval and evaluates the optics at its midpoint. It tests beam intersection once per camera ray and marches only the lights that can contribute. [Crossing fixture and results](https://github.com/tolgraven/tolglow/issues/392)
+
+Against matching full-length 192-step references on Apple M4, p95 relative luminance error in the crossing region fell from 10.47% to 2.69% at Mobile and 5.49% to 0.87% at Desktop. The two quality comparisons hold each tier's fog raster and camera fixed. Uniform Desktop haze used 48 intervals, and all boundary-tested rays completed all 48 base intervals within the 72-evaluation cap.
+
 ## Machine and replay
 
 The Air had 10 CPU cores, eight GPU cores and 16 GB of memory. It ran arm64 macOS 27.2.1, JDK 27.0.1.1 and Leiningen 2.12.1-SNAPSHOT. The local wrapper used niceness 10 and gave the JVM an active processor count of one, two compiler threads and one GC thread. These settings describe this capture. The experiment did not measure the machine with unrestricted CPU scheduling or verify a fixed 1.5-core duty limit.

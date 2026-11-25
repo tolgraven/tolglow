@@ -24,9 +24,13 @@ The device-tier budgets and selection order are in `js/preview/README.md`.
 
 Where OffscreenCanvas workers are available, the one scene implementation runs
 in a worker. The main thread owns OrbitControls, visibility and bitmap display.
-Only one state message and one output bitmap may be in flight; intermediate
-snapshots coalesce to the latest projection. A WebGL completion fence resolves
-before bitmap publication; scene mutation waits until that frame is complete.
+Only one state message and one transferred bitmap may await acknowledgement.
+Intermediate snapshots coalesce to the latest projection. The hardware worker
+can retain two frames total, with a fence per submitted draw. It publishes in
+order after GPU completion. When the show identity, scene and controls stay
+the same, new light and haze samples feed the next draw while the previous
+frame's fence is pending. Scene or control changes drain submitted work before
+applying the new state.
 Pacing includes this GPU wait, since transfer/command submission alone can still
 build a compositor backlog and starve the UI. Bitmaps from an old show/epoch are
 closed without display. The DOM canvas is never transferred, allowing startup
@@ -170,8 +174,9 @@ for this decision. The direct renderer samples GPU elapsed-time queries or async
 its configured resolution. The fog field keeps its bounded simulation timestep
 across display rates.
 Workers use display callbacks when supported and an elapsed-time deadline on
-browsers that only provide worker timers. A worker waits for the previous GPU
-frame and bitmap acknowledgement before scheduling another draw.
+browsers that only provide worker timers. Hardware may start the next draw
+while the prior frame is completing or awaiting canvas acknowledgement.
+Software rendering and explicit paused draws keep one frame in flight.
 
 The default **Smooth · one frame delay** blends the two latest consecutive
 committed frames over their timestamp difference, normally 25 ms. Only linear emitted RGB,
@@ -225,9 +230,9 @@ view, hiding its tab, blurring the window or leaving the page stops the camera
 and display callbacks. Resizing or entering fullscreen still respects all four
 conditions. Show output and other Studio controls continue running.
 
-A suspended preview retains the latest show projection. The worker finishes a
-GPU frame already submitted and discards its bitmap if its visibility generation
-has expired. No further preview states, camera messages or frames are sent
+A suspended preview retains the latest show projection. The worker drains
+submitted GPU work and discards bitmaps from the expired visibility generation.
+No further preview states, camera messages or frames are sent
 while suspended. Resume reapplies the current rig, latest fixture values and
 viewport, and resets the elapsed time for fog, camera and interpolation. Unmount
 disconnects viewport observation, event handlers, renderer and outstanding
