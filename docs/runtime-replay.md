@@ -196,3 +196,13 @@ HTTP/UI projections or network timing. Such inputs must become explicit replay
 operations or checkpointed data before claiming complete studio replay. The old
 Afterglow compatibility gates, long-running deadline tests and physical fixture
 verification remain separate work.
+
+## Historical whole-frame comparison
+
+The [offline legacy oracle](../dev/tolglow/legacy_frame_oracle/README.md) replays
+one bounded RGBW moving-head scenario through the original Afterglow frame path
+and the paired functional runtime. It records the old assignment chain values,
+kind resolution and complete universe bytes, then compares the same authored
+inputs with the released scalar and batch compilers. The report records exact
+byte differences for this scenario. The historical JVM runs separately from the
+functional runtime and sends its completed frames to an in-memory capture.
