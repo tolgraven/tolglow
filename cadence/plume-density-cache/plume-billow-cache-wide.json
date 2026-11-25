@@ -1,0 +1,3085 @@
+{
+  "browser": "158.0.8127.88",
+  "results": [
+    {
+      "auto": true,
+      "grid": 80,
+      "wide": true,
+      "dimensions": [
+        80,
+        80,
+        80
+      ],
+      "extent": [
+        12,
+        3.75,
+        10
+      ],
+      "fogRaster": [
+        301,
+        135
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 645236,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 57985,
+        "peak": 11,
+        "noticeable": 1749,
+        "illuminated": 645332,
+        "litPeakChannelRms": 0.4050256701531946,
+        "maxScattering": 0.02105712890625,
+        "maxTransmission": 0.068603515625
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 15.037625
+        },
+        {
+          "cached": true,
+          "ms": 7.314375
+        },
+        {
+          "cached": true,
+          "ms": 10.344416
+        },
+        {
+          "cached": false,
+          "ms": 7.714624
+        },
+        {
+          "cached": false,
+          "ms": 7.923375
+        },
+        {
+          "cached": true,
+          "ms": 10.571624
+        },
+        {
+          "cached": true,
+          "ms": 7.634708
+        },
+        {
+          "cached": false,
+          "ms": 7.403249
+        },
+        {
+          "cached": false,
+          "ms": 5.094458
+        },
+        {
+          "cached": true,
+          "ms": 4.285541
+        },
+        {
+          "cached": true,
+          "ms": 5.3065
+        },
+        {
+          "cached": false,
+          "ms": 3.543124
+        },
+        {
+          "cached": false,
+          "ms": 3.457499
+        },
+        {
+          "cached": true,
+          "ms": 3.059749
+        },
+        {
+          "cached": true,
+          "ms": 3.066041
+        },
+        {
+          "cached": false,
+          "ms": 3.199124
+        },
+        {
+          "cached": false,
+          "ms": 3.20375
+        },
+        {
+          "cached": true,
+          "ms": 3.054625
+        },
+        {
+          "cached": true,
+          "ms": 3.060083
+        },
+        {
+          "cached": false,
+          "ms": 4.043291
+        },
+        {
+          "cached": false,
+          "ms": 3.179374
+        },
+        {
+          "cached": true,
+          "ms": 3.075624
+        },
+        {
+          "cached": true,
+          "ms": 3.075374
+        },
+        {
+          "cached": false,
+          "ms": 3.223458
+        },
+        {
+          "cached": false,
+          "ms": 4.04075
+        },
+        {
+          "cached": true,
+          "ms": 3.164499
+        },
+        {
+          "cached": true,
+          "ms": 3.058166
+        },
+        {
+          "cached": false,
+          "ms": 3.208541
+        },
+        {
+          "cached": false,
+          "ms": 3.186541
+        },
+        {
+          "cached": true,
+          "ms": 3.92925
+        },
+        {
+          "cached": true,
+          "ms": 3.146375
+        },
+        {
+          "cached": false,
+          "ms": 3.192291
+        }
+      ],
+      "evolving": [
+        {
+          "frame": 0,
+          "time": 3.999999999999994,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 63812,
+            "peak": 11,
+            "noticeable": 2220,
+            "illuminated": 642037,
+            "litPeakChannelRms": 0.48221548085464205,
+            "maxScattering": 0.023193359375,
+            "maxTransmission": 0.065185546875
+          },
+          "temporalResidualRms": null,
+          "temporalResidualPeak": null
+        },
+        {
+          "frame": 1,
+          "time": 4.499999999999992,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 65817,
+            "peak": 12,
+            "noticeable": 2994,
+            "illuminated": 613238,
+            "litPeakChannelRms": 0.5298437474949538,
+            "maxScattering": 0.02496337890625,
+            "maxTransmission": 0.045166015625
+          },
+          "temporalResidualRms": 0.40551352796588663,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 2,
+          "time": 4.99999999999999,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 68241,
+            "peak": 15,
+            "noticeable": 3250,
+            "illuminated": 581256,
+            "litPeakChannelRms": 0.5950792849083933,
+            "maxScattering": 0.0296630859375,
+            "maxTransmission": 0.0556640625
+          },
+          "temporalResidualRms": 0.4601979358003556,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 3,
+          "time": 5.4999999999999885,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 72408,
+            "peak": 12,
+            "noticeable": 3455,
+            "illuminated": 544463,
+            "litPeakChannelRms": 0.6181998516815502,
+            "maxScattering": 0.02587890625,
+            "maxTransmission": 0.060791015625
+          },
+          "temporalResidualRms": 0.5010752516956019,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 4,
+          "time": 5.999999999999987,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 66356,
+            "peak": 17,
+            "noticeable": 3457,
+            "illuminated": 517098,
+            "litPeakChannelRms": 0.6940194884373818,
+            "maxScattering": 0.033203125,
+            "maxTransmission": 0.041259765625
+          },
+          "temporalResidualRms": 0.5125577294890943,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 5,
+          "time": 6.499999999999985,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 66720,
+            "peak": 18,
+            "noticeable": 4061,
+            "illuminated": 500996,
+            "litPeakChannelRms": 0.7730082127246102,
+            "maxScattering": 0.03070068359375,
+            "maxTransmission": 0.052001953125
+          },
+          "temporalResidualRms": 0.5284435068620359,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 6,
+          "time": 6.999999999999983,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 66103,
+            "peak": 14,
+            "noticeable": 3565,
+            "illuminated": 489519,
+            "litPeakChannelRms": 0.6624476576141568,
+            "maxScattering": 0.0257568359375,
+            "maxTransmission": 0.0565185546875
+          },
+          "temporalResidualRms": 0.46497976442444416,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 7,
+          "time": 7.499999999999981,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 63199,
+            "peak": 12,
+            "noticeable": 2975,
+            "illuminated": 486733,
+            "litPeakChannelRms": 0.5958028765027897,
+            "maxScattering": 0.02294921875,
+            "maxTransmission": 0.048583984375
+          },
+          "temporalResidualRms": 0.4403989865872606,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 8,
+          "time": 7.99999999999998,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 65515,
+            "peak": 15,
+            "noticeable": 2199,
+            "illuminated": 492023,
+            "litPeakChannelRms": 0.588456081670603,
+            "maxScattering": 0.02630615234375,
+            "maxTransmission": 0.0506591796875
+          },
+          "temporalResidualRms": 0.3676390443241968,
+          "temporalResidualPeak": 12
+        },
+        {
+          "frame": 9,
+          "time": 8.499999999999986,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 70750,
+            "peak": 15,
+            "noticeable": 2548,
+            "illuminated": 502773,
+            "litPeakChannelRms": 0.5974315833140009,
+            "maxScattering": 0.023773193359375,
+            "maxTransmission": 0.0550537109375
+          },
+          "temporalResidualRms": 0.3805074795063774,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 10,
+          "time": 8.999999999999993,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 100519,
+            "peak": 20,
+            "noticeable": 2389,
+            "illuminated": 511206,
+            "litPeakChannelRms": 0.5954819335560966,
+            "maxScattering": 0.02783203125,
+            "maxTransmission": 0.0439453125
+          },
+          "temporalResidualRms": 0.4244250085818029,
+          "temporalResidualPeak": 20
+        },
+        {
+          "frame": 11,
+          "time": 9.5,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 97397,
+            "peak": 10,
+            "noticeable": 1635,
+            "illuminated": 539628,
+            "litPeakChannelRms": 0.5305407935488622,
+            "maxScattering": 0.033447265625,
+            "maxTransmission": 0.04083251953125
+          },
+          "temporalResidualRms": 0.4019522518367636,
+          "temporalResidualPeak": 28
+        },
+        {
+          "frame": 12,
+          "time": 10.000000000000007,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 84306,
+            "peak": 13,
+            "noticeable": 1614,
+            "illuminated": 545735,
+            "litPeakChannelRms": 0.5318137960565253,
+            "maxScattering": 0.033203125,
+            "maxTransmission": 0.04150390625
+          },
+          "temporalResidualRms": 0.38785278304138476,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 13,
+          "time": 10.500000000000014,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 90145,
+            "peak": 12,
+            "noticeable": 1826,
+            "illuminated": 563642,
+            "litPeakChannelRms": 0.5588533243346964,
+            "maxScattering": 0.02703857421875,
+            "maxTransmission": 0.0433349609375
+          },
+          "temporalResidualRms": 0.4004423736085367,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 14,
+          "time": 11.000000000000021,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 98297,
+            "peak": 20,
+            "noticeable": 2194,
+            "illuminated": 579947,
+            "litPeakChannelRms": 0.5989502502141419,
+            "maxScattering": 0.0291748046875,
+            "maxTransmission": 0.041015625
+          },
+          "temporalResidualRms": 0.42466563206247426,
+          "temporalResidualPeak": 25
+        },
+        {
+          "frame": 15,
+          "time": 11.500000000000028,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 110889,
+            "peak": 28,
+            "noticeable": 3539,
+            "illuminated": 599119,
+            "litPeakChannelRms": 0.7840339691431986,
+            "maxScattering": 0.06689453125,
+            "maxTransmission": 0.0380859375
+          },
+          "temporalResidualRms": 0.48052850105748823,
+          "temporalResidualPeak": 21
+        },
+        {
+          "frame": 16,
+          "time": 12.000000000000036,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 164784,
+            "peak": 27,
+            "noticeable": 3638,
+            "illuminated": 606017,
+            "litPeakChannelRms": 0.7534851351434393,
+            "maxScattering": 0.0645751953125,
+            "maxTransmission": 0.042724609375
+          },
+          "temporalResidualRms": 0.5218435037959673,
+          "temporalResidualPeak": 22
+        },
+        {
+          "frame": 17,
+          "time": 12.500000000000043,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 194516,
+            "peak": 27,
+            "noticeable": 4788,
+            "illuminated": 610747,
+            "litPeakChannelRms": 0.8259058177227446,
+            "maxScattering": 0.07373046875,
+            "maxTransmission": 0.0360107421875
+          },
+          "temporalResidualRms": 0.5990952784558773,
+          "temporalResidualPeak": 21
+        },
+        {
+          "frame": 18,
+          "time": 13.00000000000005,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 166680,
+            "peak": 15,
+            "noticeable": 3925,
+            "illuminated": 598058,
+            "litPeakChannelRms": 0.732383849507967,
+            "maxScattering": 0.0355224609375,
+            "maxTransmission": 0.0421142578125
+          },
+          "temporalResidualRms": 0.61306691294445,
+          "temporalResidualPeak": 20
+        },
+        {
+          "frame": 19,
+          "time": 13.500000000000057,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 174196,
+            "peak": 18,
+            "noticeable": 4877,
+            "illuminated": 594326,
+            "litPeakChannelRms": 0.8477358616346937,
+            "maxScattering": 0.03515625,
+            "maxTransmission": 0.046630859375
+          },
+          "temporalResidualRms": 0.5383345863454605,
+          "temporalResidualPeak": 17
+        },
+        {
+          "frame": 20,
+          "time": 14.000000000000064,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 191897,
+            "peak": 18,
+            "noticeable": 4506,
+            "illuminated": 589048,
+            "litPeakChannelRms": 0.8730879282500258,
+            "maxScattering": 0.037109375,
+            "maxTransmission": 0.0428466796875
+          },
+          "temporalResidualRms": 0.503068773644963,
+          "temporalResidualPeak": 18
+        },
+        {
+          "frame": 21,
+          "time": 14.500000000000071,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 178181,
+            "peak": 15,
+            "noticeable": 3897,
+            "illuminated": 578403,
+            "litPeakChannelRms": 0.7701143472464649,
+            "maxScattering": 0.04150390625,
+            "maxTransmission": 0.056640625
+          },
+          "temporalResidualRms": 0.5244405173784098,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 22,
+          "time": 15.000000000000078,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 231629,
+            "peak": 15,
+            "noticeable": 4914,
+            "illuminated": 564995,
+            "litPeakChannelRms": 0.8240128392609524,
+            "maxScattering": 0.0267333984375,
+            "maxTransmission": 0.052001953125
+          },
+          "temporalResidualRms": 0.6452572348624249,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 23,
+          "time": 15.500000000000085,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 230794,
+            "peak": 29,
+            "noticeable": 4431,
+            "illuminated": 543872,
+            "litPeakChannelRms": 0.8703373229833534,
+            "maxScattering": 0.0447998046875,
+            "maxTransmission": 0.045654296875
+          },
+          "temporalResidualRms": 0.6873613946209953,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 24,
+          "time": 16.000000000000092,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 198446,
+            "peak": 11,
+            "noticeable": 2916,
+            "illuminated": 521716,
+            "litPeakChannelRms": 0.7038273662870946,
+            "maxScattering": 0.0263671875,
+            "maxTransmission": 0.055419921875
+          },
+          "temporalResidualRms": 0.6098448511273862,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 25,
+          "time": 16.5000000000001,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 252619,
+            "peak": 32,
+            "noticeable": 5164,
+            "illuminated": 488887,
+            "litPeakChannelRms": 1.2301744819515859,
+            "maxScattering": 0.0189208984375,
+            "maxTransmission": 0.05322265625
+          },
+          "temporalResidualRms": 1.0000186192956337,
+          "temporalResidualPeak": 32
+        },
+        {
+          "frame": 26,
+          "time": 17.000000000000107,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 160318,
+            "peak": 15,
+            "noticeable": 781,
+            "illuminated": 445596,
+            "litPeakChannelRms": 0.6050254535337279,
+            "maxScattering": 0.010498046875,
+            "maxTransmission": 0.0537109375
+          },
+          "temporalResidualRms": 0.7543067596042836,
+          "temporalResidualPeak": 26
+        },
+        {
+          "frame": 27,
+          "time": 17.500000000000114,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 146232,
+            "peak": 29,
+            "noticeable": 792,
+            "illuminated": 425535,
+            "litPeakChannelRms": 0.5873658559703624,
+            "maxScattering": 0.0089111328125,
+            "maxTransmission": 0.05126953125
+          },
+          "temporalResidualRms": 0.5104831871144444,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 28,
+          "time": 18.00000000000012,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 139313,
+            "peak": 15,
+            "noticeable": 465,
+            "illuminated": 403872,
+            "litPeakChannelRms": 0.5769748935019258,
+            "maxScattering": 0.0076904296875,
+            "maxTransmission": 0.04736328125
+          },
+          "temporalResidualRms": 0.5118408097557389,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 29,
+          "time": 18.500000000000128,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 130566,
+            "peak": 10,
+            "noticeable": 247,
+            "illuminated": 385380,
+            "litPeakChannelRms": 0.5567885533805154,
+            "maxScattering": 0.005615234375,
+            "maxTransmission": 0.0521240234375
+          },
+          "temporalResidualRms": 0.46957895885747186,
+          "temporalResidualPeak": 15
+        }
+      ]
+    },
+    {
+      "auto": true,
+      "grid": 96,
+      "wide": true,
+      "dimensions": [
+        96,
+        96,
+        96
+      ],
+      "extent": [
+        12,
+        3.75,
+        10
+      ],
+      "fogRaster": [
+        301,
+        135
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 645236,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 47663,
+        "peak": 5,
+        "noticeable": 553,
+        "illuminated": 645258,
+        "litPeakChannelRms": 0.30724493408763726,
+        "maxScattering": 0.0089111328125,
+        "maxTransmission": 0.0498046875
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 4.44925
+        },
+        {
+          "cached": true,
+          "ms": 3.167083
+        },
+        {
+          "cached": true,
+          "ms": 3.164124
+        },
+        {
+          "cached": false,
+          "ms": 3.212125
+        },
+        {
+          "cached": false,
+          "ms": 3.205874
+        },
+        {
+          "cached": true,
+          "ms": 3.2805
+        },
+        {
+          "cached": true,
+          "ms": 3.156249
+        },
+        {
+          "cached": false,
+          "ms": 3.203791
+        },
+        {
+          "cached": false,
+          "ms": 3.194874
+        },
+        {
+          "cached": true,
+          "ms": 4.037583
+        },
+        {
+          "cached": true,
+          "ms": 3.258
+        },
+        {
+          "cached": false,
+          "ms": 3.201166
+        },
+        {
+          "cached": false,
+          "ms": 3.196833
+        },
+        {
+          "cached": true,
+          "ms": 3.172208
+        },
+        {
+          "cached": true,
+          "ms": 4.01175
+        },
+        {
+          "cached": false,
+          "ms": 3.185874
+        },
+        {
+          "cached": false,
+          "ms": 3.187
+        },
+        {
+          "cached": true,
+          "ms": 3.214625
+        },
+        {
+          "cached": true,
+          "ms": 3.201041
+        },
+        {
+          "cached": false,
+          "ms": 4.471249
+        },
+        {
+          "cached": false,
+          "ms": 3.1825
+        },
+        {
+          "cached": true,
+          "ms": 3.173208
+        },
+        {
+          "cached": true,
+          "ms": 3.185874
+        },
+        {
+          "cached": false,
+          "ms": 3.216208
+        },
+        {
+          "cached": false,
+          "ms": 3.214
+        },
+        {
+          "cached": true,
+          "ms": 3.182916
+        },
+        {
+          "cached": true,
+          "ms": 3.179333
+        },
+        {
+          "cached": false,
+          "ms": 3.197541
+        },
+        {
+          "cached": false,
+          "ms": 4.052625
+        },
+        {
+          "cached": true,
+          "ms": 3.277999
+        },
+        {
+          "cached": true,
+          "ms": 3.178208
+        },
+        {
+          "cached": false,
+          "ms": 3.213458
+        }
+      ],
+      "evolving": [
+        {
+          "frame": 0,
+          "time": 3.999999999999994,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 54032,
+            "peak": 7,
+            "noticeable": 1149,
+            "illuminated": 642087,
+            "litPeakChannelRms": 0.36723108773622015,
+            "maxScattering": 0.01177978515625,
+            "maxTransmission": 0.0499267578125
+          },
+          "temporalResidualRms": null,
+          "temporalResidualPeak": null
+        },
+        {
+          "frame": 1,
+          "time": 4.499999999999992,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 56654,
+            "peak": 9,
+            "noticeable": 1621,
+            "illuminated": 613225,
+            "litPeakChannelRms": 0.4170839092090824,
+            "maxScattering": 0.01690673828125,
+            "maxTransmission": 0.041748046875
+          },
+          "temporalResidualRms": 0.33239367168628897,
+          "temporalResidualPeak": 7
+        },
+        {
+          "frame": 2,
+          "time": 4.99999999999999,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 56445,
+            "peak": 11,
+            "noticeable": 2123,
+            "illuminated": 581150,
+            "litPeakChannelRms": 0.4871364299684348,
+            "maxScattering": 0.02203369140625,
+            "maxTransmission": 0.03662109375
+          },
+          "temporalResidualRms": 0.4047651374526931,
+          "temporalResidualPeak": 9
+        },
+        {
+          "frame": 3,
+          "time": 5.4999999999999885,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 59796,
+            "peak": 9,
+            "noticeable": 2070,
+            "illuminated": 544445,
+            "litPeakChannelRms": 0.48655574513721184,
+            "maxScattering": 0.02069091796875,
+            "maxTransmission": 0.037353515625
+          },
+          "temporalResidualRms": 0.39878369830374805,
+          "temporalResidualPeak": 11
+        },
+        {
+          "frame": 4,
+          "time": 5.999999999999987,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 57403,
+            "peak": 14,
+            "noticeable": 2591,
+            "illuminated": 517069,
+            "litPeakChannelRms": 0.5376142890331779,
+            "maxScattering": 0.0205078125,
+            "maxTransmission": 0.050048828125
+          },
+          "temporalResidualRms": 0.4001450750024214,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 5,
+          "time": 6.499999999999985,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 56700,
+            "peak": 12,
+            "noticeable": 2214,
+            "illuminated": 500959,
+            "litPeakChannelRms": 0.5273978679854552,
+            "maxScattering": 0.018798828125,
+            "maxTransmission": 0.0419921875
+          },
+          "temporalResidualRms": 0.4327371283108536,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 6,
+          "time": 6.999999999999983,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 54790,
+            "peak": 11,
+            "noticeable": 2416,
+            "illuminated": 489505,
+            "litPeakChannelRms": 0.5538987380507178,
+            "maxScattering": 0.02032470703125,
+            "maxTransmission": 0.030517578125
+          },
+          "temporalResidualRms": 0.3994862069467454,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 7,
+          "time": 7.499999999999981,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 54837,
+            "peak": 14,
+            "noticeable": 2013,
+            "illuminated": 486713,
+            "litPeakChannelRms": 0.5336937765213033,
+            "maxScattering": 0.02410888671875,
+            "maxTransmission": 0.031982421875
+          },
+          "temporalResidualRms": 0.3205327635472591,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 8,
+          "time": 7.99999999999998,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 56838,
+            "peak": 12,
+            "noticeable": 1623,
+            "illuminated": 492003,
+            "litPeakChannelRms": 0.4751793042278209,
+            "maxScattering": 0.021728515625,
+            "maxTransmission": 0.036865234375
+          },
+          "temporalResidualRms": 0.35436579404722146,
+          "temporalResidualPeak": 12
+        },
+        {
+          "frame": 9,
+          "time": 8.499999999999986,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 57755,
+            "peak": 11,
+            "noticeable": 1528,
+            "illuminated": 502737,
+            "litPeakChannelRms": 0.4709816735971839,
+            "maxScattering": 0.02880859375,
+            "maxTransmission": 0.04638671875
+          },
+          "temporalResidualRms": 0.34135149852520047,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 10,
+          "time": 8.999999999999993,
+          "bounds": [
+            12,
+            4.583333333333333,
+            10
+          ],
+          "pixels": {
+            "changed": 84937,
+            "peak": 12,
+            "noticeable": 1732,
+            "illuminated": 511103,
+            "litPeakChannelRms": 0.5254921416624484,
+            "maxScattering": 0.029052734375,
+            "maxTransmission": 0.038330078125
+          },
+          "temporalResidualRms": 0.35932919981190425,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 11,
+          "time": 9.5,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 76976,
+            "peak": 8,
+            "noticeable": 978,
+            "illuminated": 539526,
+            "litPeakChannelRms": 0.4483948769732037,
+            "maxScattering": 0.02197265625,
+            "maxTransmission": 0.03082275390625
+          },
+          "temporalResidualRms": 0.3628269777825369,
+          "temporalResidualPeak": 15
+        },
+        {
+          "frame": 12,
+          "time": 10.000000000000007,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 78517,
+            "peak": 13,
+            "noticeable": 676,
+            "illuminated": 545713,
+            "litPeakChannelRms": 0.43343740250227075,
+            "maxScattering": 0.0191650390625,
+            "maxTransmission": 0.0340576171875
+          },
+          "temporalResidualRms": 0.3331510656559248,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 13,
+          "time": 10.500000000000014,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 77164,
+            "peak": 12,
+            "noticeable": 970,
+            "illuminated": 563579,
+            "litPeakChannelRms": 0.4878637079870584,
+            "maxScattering": 0.0286865234375,
+            "maxTransmission": 0.0311279296875
+          },
+          "temporalResidualRms": 0.3609339485619281,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 14,
+          "time": 11.000000000000021,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 83701,
+            "peak": 21,
+            "noticeable": 1486,
+            "illuminated": 579958,
+            "litPeakChannelRms": 0.5169659907794512,
+            "maxScattering": 0.027801513671875,
+            "maxTransmission": 0.025390625
+          },
+          "temporalResidualRms": 0.37656324699960997,
+          "temporalResidualPeak": 22
+        },
+        {
+          "frame": 15,
+          "time": 11.500000000000028,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 93790,
+            "peak": 17,
+            "noticeable": 1845,
+            "illuminated": 599105,
+            "litPeakChannelRms": 0.5704460839517802,
+            "maxScattering": 0.0439453125,
+            "maxTransmission": 0.028564453125
+          },
+          "temporalResidualRms": 0.3868312074732072,
+          "temporalResidualPeak": 15
+        },
+        {
+          "frame": 16,
+          "time": 12.000000000000036,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 139080,
+            "peak": 15,
+            "noticeable": 2396,
+            "illuminated": 605846,
+            "litPeakChannelRms": 0.5898517188754282,
+            "maxScattering": 0.0413818359375,
+            "maxTransmission": 0.02783203125
+          },
+          "temporalResidualRms": 0.45664125293909485,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 17,
+          "time": 12.500000000000043,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 146592,
+            "peak": 14,
+            "noticeable": 1970,
+            "illuminated": 610100,
+            "litPeakChannelRms": 0.574713001071882,
+            "maxScattering": 0.02880859375,
+            "maxTransmission": 0.029541015625
+          },
+          "temporalResidualRms": 0.46903138461459204,
+          "temporalResidualPeak": 12
+        },
+        {
+          "frame": 18,
+          "time": 13.00000000000005,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 138272,
+            "peak": 14,
+            "noticeable": 2666,
+            "illuminated": 597977,
+            "litPeakChannelRms": 0.6285515636616873,
+            "maxScattering": 0.0333251953125,
+            "maxTransmission": 0.0264892578125
+          },
+          "temporalResidualRms": 0.4665526707106541,
+          "temporalResidualPeak": 11
+        },
+        {
+          "frame": 19,
+          "time": 13.500000000000057,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 141331,
+            "peak": 18,
+            "noticeable": 3227,
+            "illuminated": 594219,
+            "litPeakChannelRms": 0.6807669296757575,
+            "maxScattering": 0.0302734375,
+            "maxTransmission": 0.032470703125
+          },
+          "temporalResidualRms": 0.43891330306863197,
+          "temporalResidualPeak": 18
+        },
+        {
+          "frame": 20,
+          "time": 14.000000000000064,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 144756,
+            "peak": 16,
+            "noticeable": 2811,
+            "illuminated": 588605,
+            "litPeakChannelRms": 0.6643675864863905,
+            "maxScattering": 0.035888671875,
+            "maxTransmission": 0.032958984375
+          },
+          "temporalResidualRms": 0.43870851070222333,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 21,
+          "time": 14.500000000000071,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 150788,
+            "peak": 13,
+            "noticeable": 2263,
+            "illuminated": 578148,
+            "litPeakChannelRms": 0.6221248305723572,
+            "maxScattering": 0.0335693359375,
+            "maxTransmission": 0.037109375
+          },
+          "temporalResidualRms": 0.45637350711677843,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 22,
+          "time": 15.000000000000078,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 203492,
+            "peak": 11,
+            "noticeable": 3343,
+            "illuminated": 564842,
+            "litPeakChannelRms": 0.7410298523697284,
+            "maxScattering": 0.018798828125,
+            "maxTransmission": 0.041015625
+          },
+          "temporalResidualRms": 0.6201455562973716,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 23,
+          "time": 15.500000000000085,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 155683,
+            "peak": 29,
+            "noticeable": 1506,
+            "illuminated": 541895,
+            "litPeakChannelRms": 0.5876955834298694,
+            "maxScattering": 0.0361328125,
+            "maxTransmission": 0.038330078125
+          },
+          "temporalResidualRms": 0.5664646952686108,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 24,
+          "time": 16.000000000000092,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 164066,
+            "peak": 8,
+            "noticeable": 608,
+            "illuminated": 521309,
+            "litPeakChannelRms": 0.5646979810431335,
+            "maxScattering": 0.019287109375,
+            "maxTransmission": 0.04443359375
+          },
+          "temporalResidualRms": 0.4779042730046375,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 25,
+          "time": 16.5000000000001,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 204153,
+            "peak": 26,
+            "noticeable": 3236,
+            "illuminated": 487883,
+            "litPeakChannelRms": 0.9310969118868825,
+            "maxScattering": 0.0111083984375,
+            "maxTransmission": 0.038818359375
+          },
+          "temporalResidualRms": 0.7479502367652927,
+          "temporalResidualPeak": 26
+        },
+        {
+          "frame": 26,
+          "time": 17.000000000000107,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 130978,
+            "peak": 15,
+            "noticeable": 190,
+            "illuminated": 445456,
+            "litPeakChannelRms": 0.5159144331277653,
+            "maxScattering": 0.0091552734375,
+            "maxTransmission": 0.038330078125
+          },
+          "temporalResidualRms": 0.5881930308139696,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 27,
+          "time": 17.500000000000114,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 121294,
+            "peak": 29,
+            "noticeable": 197,
+            "illuminated": 425266,
+            "litPeakChannelRms": 0.5158869163441766,
+            "maxScattering": 0.005615234375,
+            "maxTransmission": 0.0343017578125
+          },
+          "temporalResidualRms": 0.4656851390864799,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 28,
+          "time": 18.00000000000012,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 112253,
+            "peak": 6,
+            "noticeable": 292,
+            "illuminated": 403536,
+            "litPeakChannelRms": 0.5047256952419332,
+            "maxScattering": 0.0067138671875,
+            "maxTransmission": 0.040283203125
+          },
+          "temporalResidualRms": 0.4537502202127387,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 29,
+          "time": 18.500000000000128,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 103774,
+            "peak": 10,
+            "noticeable": 126,
+            "illuminated": 385049,
+            "litPeakChannelRms": 0.4828932658562755,
+            "maxScattering": 0.00469970703125,
+            "maxTransmission": 0.037353515625
+          },
+          "temporalResidualRms": 0.4233266668446074,
+          "temporalResidualPeak": 10
+        }
+      ]
+    },
+    {
+      "auto": false,
+      "grid": 80,
+      "wide": true,
+      "dimensions": [
+        80,
+        80,
+        80
+      ],
+      "extent": [
+        12,
+        3.888888888888889,
+        9.375
+      ],
+      "fogRaster": [
+        480,
+        270
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 120153,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 11073,
+        "peak": 14,
+        "noticeable": 372,
+        "illuminated": 120169,
+        "litPeakChannelRms": 0.4513366619624525,
+        "maxScattering": 0.03521728515625,
+        "maxTransmission": 0.091552734375
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 7.699708
+        },
+        {
+          "cached": true,
+          "ms": 7.938958
+        },
+        {
+          "cached": true,
+          "ms": 7.100874
+        },
+        {
+          "cached": false,
+          "ms": 7.764416
+        },
+        {
+          "cached": false,
+          "ms": 7.725041
+        },
+        {
+          "cached": true,
+          "ms": 6.978666
+        },
+        {
+          "cached": true,
+          "ms": 7.8985
+        },
+        {
+          "cached": false,
+          "ms": 7.715166
+        },
+        {
+          "cached": false,
+          "ms": 7.735833
+        },
+        {
+          "cached": true,
+          "ms": 12.671208
+        },
+        {
+          "cached": true,
+          "ms": 6.985499
+        },
+        {
+          "cached": false,
+          "ms": 8.924875
+        },
+        {
+          "cached": false,
+          "ms": 7.711749
+        },
+        {
+          "cached": true,
+          "ms": 6.992375
+        },
+        {
+          "cached": true,
+          "ms": 7.921874
+        },
+        {
+          "cached": false,
+          "ms": 7.734
+        },
+        {
+          "cached": false,
+          "ms": 7.681875
+        },
+        {
+          "cached": true,
+          "ms": 10.44125
+        },
+        {
+          "cached": true,
+          "ms": 7.041083
+        },
+        {
+          "cached": false,
+          "ms": 7.76925
+        },
+        {
+          "cached": false,
+          "ms": 7.697249
+        },
+        {
+          "cached": true,
+          "ms": 6.99675
+        },
+        {
+          "cached": true,
+          "ms": 9.60575
+        },
+        {
+          "cached": false,
+          "ms": 7.747124
+        },
+        {
+          "cached": false,
+          "ms": 7.703874
+        },
+        {
+          "cached": true,
+          "ms": 7.0225
+        },
+        {
+          "cached": true,
+          "ms": 7.004875
+        },
+        {
+          "cached": false,
+          "ms": 8.559333
+        },
+        {
+          "cached": false,
+          "ms": 7.711875
+        },
+        {
+          "cached": true,
+          "ms": 7.017999
+        },
+        {
+          "cached": true,
+          "ms": 12.409624
+        },
+        {
+          "cached": false,
+          "ms": 8.900333
+        }
+      ],
+      "evolving": [
+        {
+          "frame": 0,
+          "time": 3.999999999999994,
+          "bounds": [
+            12,
+            3.888888888888889,
+            9.375
+          ],
+          "pixels": {
+            "changed": 12194,
+            "peak": 16,
+            "noticeable": 553,
+            "illuminated": 119734,
+            "litPeakChannelRms": 0.5277711963839449,
+            "maxScattering": 0.0479736328125,
+            "maxTransmission": 0.0826416015625
+          },
+          "temporalResidualRms": null,
+          "temporalResidualPeak": null
+        },
+        {
+          "frame": 1,
+          "time": 4.499999999999992,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 13070,
+            "peak": 15,
+            "noticeable": 695,
+            "illuminated": 112589,
+            "litPeakChannelRms": 0.6311861339254762,
+            "maxScattering": 0.04620361328125,
+            "maxTransmission": 0.0606689453125
+          },
+          "temporalResidualRms": 0.521406686547159,
+          "temporalResidualPeak": 13
+        },
+        {
+          "frame": 2,
+          "time": 4.99999999999999,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 13845,
+            "peak": 24,
+            "noticeable": 852,
+            "illuminated": 107076,
+            "litPeakChannelRms": 0.7010782429076453,
+            "maxScattering": 0.04669189453125,
+            "maxTransmission": 0.064208984375
+          },
+          "temporalResidualRms": 0.5531019951701663,
+          "temporalResidualPeak": 24
+        },
+        {
+          "frame": 3,
+          "time": 5.4999999999999885,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 13386,
+            "peak": 18,
+            "noticeable": 840,
+            "illuminated": 100557,
+            "litPeakChannelRms": 0.7255602950674016,
+            "maxScattering": 0.05029296875,
+            "maxTransmission": 0.061279296875
+          },
+          "temporalResidualRms": 0.6281328771558113,
+          "temporalResidualPeak": 24
+        },
+        {
+          "frame": 4,
+          "time": 5.999999999999987,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 13117,
+            "peak": 19,
+            "noticeable": 760,
+            "illuminated": 94533,
+            "litPeakChannelRms": 0.7631235048339522,
+            "maxScattering": 0.05206298828125,
+            "maxTransmission": 0.047607421875
+          },
+          "temporalResidualRms": 0.6078587136137048,
+          "temporalResidualPeak": 23
+        },
+        {
+          "frame": 5,
+          "time": 6.499999999999985,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 12982,
+            "peak": 22,
+            "noticeable": 842,
+            "illuminated": 91192,
+            "litPeakChannelRms": 0.8830347766103097,
+            "maxScattering": 0.046875,
+            "maxTransmission": 0.05615234375
+          },
+          "temporalResidualRms": 0.6137205785934766,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 6,
+          "time": 6.999999999999983,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 12996,
+            "peak": 26,
+            "noticeable": 807,
+            "illuminated": 89847,
+            "litPeakChannelRms": 0.8084966228111411,
+            "maxScattering": 0.053375244140625,
+            "maxTransmission": 0.0634765625
+          },
+          "temporalResidualRms": 0.5420607463919878,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 7,
+          "time": 7.499999999999981,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 12801,
+            "peak": 23,
+            "noticeable": 782,
+            "illuminated": 89103,
+            "litPeakChannelRms": 0.7271503483794043,
+            "maxScattering": 0.048370361328125,
+            "maxTransmission": 0.05517578125
+          },
+          "temporalResidualRms": 0.49301802278361606,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 8,
+          "time": 7.99999999999998,
+          "bounds": [
+            12,
+            4.444444444444445,
+            10
+          ],
+          "pixels": {
+            "changed": 13444,
+            "peak": 30,
+            "noticeable": 756,
+            "illuminated": 88938,
+            "litPeakChannelRms": 0.7542484258484986,
+            "maxScattering": 0.0380859375,
+            "maxTransmission": 0.0587158203125
+          },
+          "temporalResidualRms": 0.4545229246850202,
+          "temporalResidualPeak": 31
+        },
+        {
+          "frame": 9,
+          "time": 8.499999999999986,
+          "bounds": [
+            12,
+            4.444444444444445,
+            10
+          ],
+          "pixels": {
+            "changed": 19232,
+            "peak": 19,
+            "noticeable": 647,
+            "illuminated": 90856,
+            "litPeakChannelRms": 0.7706535159171674,
+            "maxScattering": 0.057861328125,
+            "maxTransmission": 0.06005859375
+          },
+          "temporalResidualRms": 0.47835021076442846,
+          "temporalResidualPeak": 26
+        },
+        {
+          "frame": 10,
+          "time": 8.999999999999993,
+          "bounds": [
+            12,
+            4.722222222222222,
+            10
+          ],
+          "pixels": {
+            "changed": 20114,
+            "peak": 13,
+            "noticeable": 498,
+            "illuminated": 93247,
+            "litPeakChannelRms": 0.6557176033171671,
+            "maxScattering": 0.0439453125,
+            "maxTransmission": 0.049072265625
+          },
+          "temporalResidualRms": 0.517495808604848,
+          "temporalResidualPeak": 16
+        },
+        {
+          "frame": 11,
+          "time": 9.5,
+          "bounds": [
+            12,
+            4.722222222222222,
+            10
+          ],
+          "pixels": {
+            "changed": 19405,
+            "peak": 33,
+            "noticeable": 448,
+            "illuminated": 96241,
+            "litPeakChannelRms": 0.6174638649051345,
+            "maxScattering": 0.045166015625,
+            "maxTransmission": 0.04290771484375
+          },
+          "temporalResidualRms": 0.5013051967436449,
+          "temporalResidualPeak": 33
+        },
+        {
+          "frame": 12,
+          "time": 10.000000000000007,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 19637,
+            "peak": 27,
+            "noticeable": 496,
+            "illuminated": 97915,
+            "litPeakChannelRms": 0.621985658535621,
+            "maxScattering": 0.0283203125,
+            "maxTransmission": 0.0545654296875
+          },
+          "temporalResidualRms": 0.5275104302648235,
+          "temporalResidualPeak": 28
+        },
+        {
+          "frame": 13,
+          "time": 10.500000000000014,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 18000,
+            "peak": 20,
+            "noticeable": 630,
+            "illuminated": 102950,
+            "litPeakChannelRms": 0.6370921068404071,
+            "maxScattering": 0.03369140625,
+            "maxTransmission": 0.046142578125
+          },
+          "temporalResidualRms": 0.5134570333524338,
+          "temporalResidualPeak": 22
+        },
+        {
+          "frame": 14,
+          "time": 11.000000000000021,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 19596,
+            "peak": 18,
+            "noticeable": 745,
+            "illuminated": 106483,
+            "litPeakChannelRms": 0.6879379639361245,
+            "maxScattering": 0.04278564453125,
+            "maxTransmission": 0.0489501953125
+          },
+          "temporalResidualRms": 0.5333347097944392,
+          "temporalResidualPeak": 21
+        },
+        {
+          "frame": 15,
+          "time": 11.500000000000028,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 28937,
+            "peak": 39,
+            "noticeable": 1061,
+            "illuminated": 109158,
+            "litPeakChannelRms": 0.8344913992911729,
+            "maxScattering": 0.0623779296875,
+            "maxTransmission": 0.046142578125
+          },
+          "temporalResidualRms": 0.6177568551332809,
+          "temporalResidualPeak": 39
+        },
+        {
+          "frame": 16,
+          "time": 12.000000000000036,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 29424,
+            "peak": 27,
+            "noticeable": 973,
+            "illuminated": 110847,
+            "litPeakChannelRms": 0.8303830604826326,
+            "maxScattering": 0.054931640625,
+            "maxTransmission": 0.0513916015625
+          },
+          "temporalResidualRms": 0.6020015148184628,
+          "temporalResidualPeak": 27
+        },
+        {
+          "frame": 17,
+          "time": 12.500000000000043,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 28892,
+            "peak": 22,
+            "noticeable": 934,
+            "illuminated": 111389,
+            "litPeakChannelRms": 0.8354181547842665,
+            "maxScattering": 0.05615234375,
+            "maxTransmission": 0.040771484375
+          },
+          "temporalResidualRms": 0.5713158257449378,
+          "temporalResidualPeak": 25
+        },
+        {
+          "frame": 18,
+          "time": 13.00000000000005,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 39845,
+            "peak": 34,
+            "noticeable": 1110,
+            "illuminated": 108962,
+            "litPeakChannelRms": 0.9730590186728645,
+            "maxScattering": 0.062255859375,
+            "maxTransmission": 0.0560302734375
+          },
+          "temporalResidualRms": 0.6368548884248574,
+          "temporalResidualPeak": 35
+        },
+        {
+          "frame": 19,
+          "time": 13.500000000000057,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 40585,
+            "peak": 24,
+            "noticeable": 1258,
+            "illuminated": 108119,
+            "litPeakChannelRms": 1.0025218158291545,
+            "maxScattering": 0.0927734375,
+            "maxTransmission": 0.04931640625
+          },
+          "temporalResidualRms": 0.66776814237691,
+          "temporalResidualPeak": 33
+        },
+        {
+          "frame": 20,
+          "time": 14.000000000000064,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 41484,
+            "peak": 19,
+            "noticeable": 1336,
+            "illuminated": 106362,
+            "litPeakChannelRms": 1.0457781161166066,
+            "maxScattering": 0.107421875,
+            "maxTransmission": 0.04638671875
+          },
+          "temporalResidualRms": 0.6116195346010735,
+          "temporalResidualPeak": 18
+        },
+        {
+          "frame": 21,
+          "time": 14.500000000000071,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 42401,
+            "peak": 30,
+            "noticeable": 1596,
+            "illuminated": 103642,
+            "litPeakChannelRms": 1.0623133612752185,
+            "maxScattering": 0.070556640625,
+            "maxTransmission": 0.05810546875
+          },
+          "temporalResidualRms": 0.7659371476610445,
+          "temporalResidualPeak": 30
+        },
+        {
+          "frame": 22,
+          "time": 15.000000000000078,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 49361,
+            "peak": 24,
+            "noticeable": 1523,
+            "illuminated": 100325,
+            "litPeakChannelRms": 1.014870741267177,
+            "maxScattering": 0.058837890625,
+            "maxTransmission": 0.048828125
+          },
+          "temporalResidualRms": 0.7624944214419189,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 23,
+          "time": 15.500000000000085,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 53762,
+            "peak": 25,
+            "noticeable": 1775,
+            "illuminated": 94340,
+            "litPeakChannelRms": 1.2076710504613974,
+            "maxScattering": 0.085205078125,
+            "maxTransmission": 0.0504150390625
+          },
+          "temporalResidualRms": 0.8240505858709252,
+          "temporalResidualPeak": 24
+        },
+        {
+          "frame": 24,
+          "time": 16.000000000000092,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 36148,
+            "peak": 22,
+            "noticeable": 1152,
+            "illuminated": 91402,
+            "litPeakChannelRms": 0.9458258569718807,
+            "maxScattering": 0.0634765625,
+            "maxTransmission": 0.0615234375
+          },
+          "temporalResidualRms": 0.7702039748036938,
+          "temporalResidualPeak": 26
+        },
+        {
+          "frame": 25,
+          "time": 16.5000000000001,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 34843,
+            "peak": 29,
+            "noticeable": 931,
+            "illuminated": 88936,
+            "litPeakChannelRms": 0.8456881518156889,
+            "maxScattering": 0.0341796875,
+            "maxTransmission": 0.0682373046875
+          },
+          "temporalResidualRms": 0.6973802299952832,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 26,
+          "time": 17.000000000000107,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 39173,
+            "peak": 28,
+            "noticeable": 535,
+            "illuminated": 84940,
+            "litPeakChannelRms": 0.8193992412449872,
+            "maxScattering": 0.02825927734375,
+            "maxTransmission": 0.060546875
+          },
+          "temporalResidualRms": 0.6911808023917873,
+          "temporalResidualPeak": 31
+        },
+        {
+          "frame": 27,
+          "time": 17.500000000000114,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 30720,
+            "peak": 26,
+            "noticeable": 400,
+            "illuminated": 77635,
+            "litPeakChannelRms": 0.7523775671872605,
+            "maxScattering": 0.02288818359375,
+            "maxTransmission": 0.048828125
+          },
+          "temporalResidualRms": 0.6525990310686277,
+          "temporalResidualPeak": 26
+        },
+        {
+          "frame": 28,
+          "time": 18.00000000000012,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 29036,
+            "peak": 19,
+            "noticeable": 282,
+            "illuminated": 74160,
+            "litPeakChannelRms": 0.729178802488006,
+            "maxScattering": 0.01544189453125,
+            "maxTransmission": 0.057373046875
+          },
+          "temporalResidualRms": 0.6156873978361679,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 29,
+          "time": 18.500000000000128,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 27448,
+            "peak": 34,
+            "noticeable": 170,
+            "illuminated": 70169,
+            "litPeakChannelRms": 0.7112013834559578,
+            "maxScattering": 0.00921630859375,
+            "maxTransmission": 0.060302734375
+          },
+          "temporalResidualRms": 0.6020643267262292,
+          "temporalResidualPeak": 34
+        }
+      ]
+    },
+    {
+      "auto": false,
+      "grid": 96,
+      "wide": true,
+      "dimensions": [
+        96,
+        96,
+        96
+      ],
+      "extent": [
+        12,
+        3.888888888888889,
+        9.375
+      ],
+      "fogRaster": [
+        480,
+        270
+      ],
+      "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+      "repeat": {
+        "changed": 0,
+        "peak": 0,
+        "noticeable": 0,
+        "illuminated": 120153,
+        "litPeakChannelRms": 0,
+        "maxScattering": 0,
+        "maxTransmission": 0
+      },
+      "candidate": {
+        "changed": 9517,
+        "peak": 13,
+        "noticeable": 148,
+        "illuminated": 120163,
+        "litPeakChannelRms": 0.3568291571988543,
+        "maxScattering": 0.03900146484375,
+        "maxTransmission": 0.0587158203125
+      },
+      "elapsed": [
+        {
+          "cached": false,
+          "ms": 12.193416
+        },
+        {
+          "cached": true,
+          "ms": 9.234083
+        },
+        {
+          "cached": true,
+          "ms": 10.306666
+        },
+        {
+          "cached": false,
+          "ms": 9.477791
+        },
+        {
+          "cached": false,
+          "ms": 10.154083
+        },
+        {
+          "cached": true,
+          "ms": 7.866541
+        },
+        {
+          "cached": true,
+          "ms": 7.67875
+        },
+        {
+          "cached": false,
+          "ms": 10.187916
+        },
+        {
+          "cached": false,
+          "ms": 7.723999
+        },
+        {
+          "cached": true,
+          "ms": 7.118916
+        },
+        {
+          "cached": true,
+          "ms": 7.150624
+        },
+        {
+          "cached": false,
+          "ms": 7.73075
+        },
+        {
+          "cached": false,
+          "ms": 9.047958
+        },
+        {
+          "cached": true,
+          "ms": 7.144625
+        },
+        {
+          "cached": true,
+          "ms": 7.1215
+        },
+        {
+          "cached": false,
+          "ms": 9.439624
+        },
+        {
+          "cached": false,
+          "ms": 8.2845
+        },
+        {
+          "cached": true,
+          "ms": 8.260375
+        },
+        {
+          "cached": true,
+          "ms": 7.162624
+        },
+        {
+          "cached": false,
+          "ms": 7.717333
+        },
+        {
+          "cached": false,
+          "ms": 8.109166
+        },
+        {
+          "cached": true,
+          "ms": 7.190625
+        },
+        {
+          "cached": true,
+          "ms": 7.137458
+        },
+        {
+          "cached": false,
+          "ms": 11.858041
+        },
+        {
+          "cached": false,
+          "ms": 7.670374
+        },
+        {
+          "cached": true,
+          "ms": 7.168458
+        },
+        {
+          "cached": true,
+          "ms": 11.885374
+        },
+        {
+          "cached": false,
+          "ms": 7.707291
+        },
+        {
+          "cached": false,
+          "ms": 8.559166
+        },
+        {
+          "cached": true,
+          "ms": 7.115
+        },
+        {
+          "cached": true,
+          "ms": 7.137125
+        },
+        {
+          "cached": false,
+          "ms": 8.256458
+        }
+      ],
+      "evolving": [
+        {
+          "frame": 0,
+          "time": 3.999999999999994,
+          "bounds": [
+            12,
+            3.888888888888889,
+            9.375
+          ],
+          "pixels": {
+            "changed": 10499,
+            "peak": 13,
+            "noticeable": 338,
+            "illuminated": 119748,
+            "litPeakChannelRms": 0.4370940488451258,
+            "maxScattering": 0.0458984375,
+            "maxTransmission": 0.0587158203125
+          },
+          "temporalResidualRms": null,
+          "temporalResidualPeak": null
+        },
+        {
+          "frame": 1,
+          "time": 4.499999999999992,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11126,
+            "peak": 12,
+            "noticeable": 361,
+            "illuminated": 112577,
+            "litPeakChannelRms": 0.4846159198612784,
+            "maxScattering": 0.030029296875,
+            "maxTransmission": 0.0548095703125
+          },
+          "temporalResidualRms": 0.41035395211455605,
+          "temporalResidualPeak": 10
+        },
+        {
+          "frame": 2,
+          "time": 4.99999999999999,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11799,
+            "peak": 24,
+            "noticeable": 448,
+            "illuminated": 107056,
+            "litPeakChannelRms": 0.5410495758717853,
+            "maxScattering": 0.037353515625,
+            "maxTransmission": 0.044189453125
+          },
+          "temporalResidualRms": 0.4831415369317806,
+          "temporalResidualPeak": 24
+        },
+        {
+          "frame": 3,
+          "time": 5.4999999999999885,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11483,
+            "peak": 14,
+            "noticeable": 616,
+            "illuminated": 100544,
+            "litPeakChannelRms": 0.6125510669939005,
+            "maxScattering": 0.0458984375,
+            "maxTransmission": 0.04248046875
+          },
+          "temporalResidualRms": 0.5031196143208148,
+          "temporalResidualPeak": 24
+        },
+        {
+          "frame": 4,
+          "time": 5.999999999999987,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11476,
+            "peak": 16,
+            "noticeable": 492,
+            "illuminated": 94527,
+            "litPeakChannelRms": 0.6396092912783932,
+            "maxScattering": 0.037841796875,
+            "maxTransmission": 0.05224609375
+          },
+          "temporalResidualRms": 0.5055466498898348,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 5,
+          "time": 6.499999999999985,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11010,
+            "peak": 24,
+            "noticeable": 417,
+            "illuminated": 91184,
+            "litPeakChannelRms": 0.6003358567517957,
+            "maxScattering": 0.0477294921875,
+            "maxTransmission": 0.043701171875
+          },
+          "temporalResidualRms": 0.5181595041641168,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 6,
+          "time": 6.999999999999983,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 10781,
+            "peak": 16,
+            "noticeable": 508,
+            "illuminated": 89847,
+            "litPeakChannelRms": 0.599165409138121,
+            "maxScattering": 0.037200927734375,
+            "maxTransmission": 0.034912109375
+          },
+          "temporalResidualRms": 0.45285114397210474,
+          "temporalResidualPeak": 19
+        },
+        {
+          "frame": 7,
+          "time": 7.499999999999981,
+          "bounds": [
+            12,
+            4.166666666666667,
+            10
+          ],
+          "pixels": {
+            "changed": 11006,
+            "peak": 17,
+            "noticeable": 477,
+            "illuminated": 89102,
+            "litPeakChannelRms": 0.6115081549081034,
+            "maxScattering": 0.0384521484375,
+            "maxTransmission": 0.0400390625
+          },
+          "temporalResidualRms": 0.37126555741902156,
+          "temporalResidualPeak": 14
+        },
+        {
+          "frame": 8,
+          "time": 7.99999999999998,
+          "bounds": [
+            12,
+            4.444444444444445,
+            10
+          ],
+          "pixels": {
+            "changed": 11623,
+            "peak": 31,
+            "noticeable": 316,
+            "illuminated": 88931,
+            "litPeakChannelRms": 0.5710181943095705,
+            "maxScattering": 0.037689208984375,
+            "maxTransmission": 0.04150390625
+          },
+          "temporalResidualRms": 0.4124748450468426,
+          "temporalResidualPeak": 31
+        },
+        {
+          "frame": 9,
+          "time": 8.499999999999986,
+          "bounds": [
+            12,
+            4.444444444444445,
+            10
+          ],
+          "pixels": {
+            "changed": 13917,
+            "peak": 12,
+            "noticeable": 340,
+            "illuminated": 90781,
+            "litPeakChannelRms": 0.543429019260524,
+            "maxScattering": 0.047119140625,
+            "maxTransmission": 0.049560546875
+          },
+          "temporalResidualRms": 0.4053450911632773,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 10,
+          "time": 8.999999999999993,
+          "bounds": [
+            12,
+            4.722222222222222,
+            10
+          ],
+          "pixels": {
+            "changed": 17103,
+            "peak": 15,
+            "noticeable": 335,
+            "illuminated": 93230,
+            "litPeakChannelRms": 0.5455838128818404,
+            "maxScattering": 0.027587890625,
+            "maxTransmission": 0.04443359375
+          },
+          "temporalResidualRms": 0.4205442657569266,
+          "temporalResidualPeak": 15
+        },
+        {
+          "frame": 11,
+          "time": 9.5,
+          "bounds": [
+            12,
+            4.722222222222222,
+            10
+          ],
+          "pixels": {
+            "changed": 15974,
+            "peak": 35,
+            "noticeable": 240,
+            "illuminated": 96220,
+            "litPeakChannelRms": 0.5090227267560735,
+            "maxScattering": 0.032958984375,
+            "maxTransmission": 0.0322265625
+          },
+          "temporalResidualRms": 0.41886539669486217,
+          "temporalResidualPeak": 32
+        },
+        {
+          "frame": 12,
+          "time": 10.000000000000007,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 18163,
+            "peak": 14,
+            "noticeable": 283,
+            "illuminated": 97944,
+            "litPeakChannelRms": 0.5149683046702935,
+            "maxScattering": 0.02093505859375,
+            "maxTransmission": 0.045166015625
+          },
+          "temporalResidualRms": 0.42239221157760715,
+          "temporalResidualPeak": 15
+        },
+        {
+          "frame": 13,
+          "time": 10.500000000000014,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 15246,
+            "peak": 17,
+            "noticeable": 451,
+            "illuminated": 102942,
+            "litPeakChannelRms": 0.5504858931702012,
+            "maxScattering": 0.0302734375,
+            "maxTransmission": 0.0369873046875
+          },
+          "temporalResidualRms": 0.44087353349281705,
+          "temporalResidualPeak": 17
+        },
+        {
+          "frame": 14,
+          "time": 11.000000000000021,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 16573,
+            "peak": 17,
+            "noticeable": 492,
+            "illuminated": 106483,
+            "litPeakChannelRms": 0.571420689499037,
+            "maxScattering": 0.037353515625,
+            "maxTransmission": 0.03125
+          },
+          "temporalResidualRms": 0.44351092227053507,
+          "temporalResidualPeak": 20
+        },
+        {
+          "frame": 15,
+          "time": 11.500000000000028,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 26158,
+            "peak": 28,
+            "noticeable": 660,
+            "illuminated": 109152,
+            "litPeakChannelRms": 0.6924303833781928,
+            "maxScattering": 0.0535888671875,
+            "maxTransmission": 0.0390625
+          },
+          "temporalResidualRms": 0.517908403924727,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 16,
+          "time": 12.000000000000036,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 24534,
+            "peak": 28,
+            "noticeable": 601,
+            "illuminated": 110815,
+            "litPeakChannelRms": 0.6645509299188326,
+            "maxScattering": 0.0406494140625,
+            "maxTransmission": 0.03271484375
+          },
+          "temporalResidualRms": 0.5243060788796208,
+          "temporalResidualPeak": 28
+        },
+        {
+          "frame": 17,
+          "time": 12.500000000000043,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 24201,
+            "peak": 17,
+            "noticeable": 527,
+            "illuminated": 111352,
+            "litPeakChannelRms": 0.665522163404074,
+            "maxScattering": 0.04443359375,
+            "maxTransmission": 0.029296875
+          },
+          "temporalResidualRms": 0.4975408131292296,
+          "temporalResidualPeak": 28
+        },
+        {
+          "frame": 18,
+          "time": 13.00000000000005,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 36106,
+            "peak": 33,
+            "noticeable": 836,
+            "illuminated": 108981,
+            "litPeakChannelRms": 0.7897383729319775,
+            "maxScattering": 0.0433349609375,
+            "maxTransmission": 0.036865234375
+          },
+          "temporalResidualRms": 0.5983564248031317,
+          "temporalResidualPeak": 34
+        },
+        {
+          "frame": 19,
+          "time": 13.500000000000057,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 37251,
+            "peak": 40,
+            "noticeable": 882,
+            "illuminated": 108131,
+            "litPeakChannelRms": 0.828212836742767,
+            "maxScattering": 0.060791015625,
+            "maxTransmission": 0.0303955078125
+          },
+          "temporalResidualRms": 0.5610442376831676,
+          "temporalResidualPeak": 41
+        },
+        {
+          "frame": 20,
+          "time": 14.000000000000064,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 32025,
+            "peak": 18,
+            "noticeable": 698,
+            "illuminated": 106215,
+            "litPeakChannelRms": 0.762641581232278,
+            "maxScattering": 0.0869140625,
+            "maxTransmission": 0.034423828125
+          },
+          "temporalResidualRms": 0.5771961416629986,
+          "temporalResidualPeak": 41
+        },
+        {
+          "frame": 21,
+          "time": 14.500000000000071,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 37263,
+            "peak": 30,
+            "noticeable": 1005,
+            "illuminated": 103618,
+            "litPeakChannelRms": 0.8586867488759167,
+            "maxScattering": 0.057861328125,
+            "maxTransmission": 0.042236328125
+          },
+          "temporalResidualRms": 0.6826388390015685,
+          "temporalResidualPeak": 30
+        },
+        {
+          "frame": 22,
+          "time": 15.000000000000078,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 34557,
+            "peak": 24,
+            "noticeable": 900,
+            "illuminated": 100100,
+            "litPeakChannelRms": 0.8112902120645905,
+            "maxScattering": 0.0418701171875,
+            "maxTransmission": 0.038818359375
+          },
+          "temporalResidualRms": 0.6922514895514664,
+          "temporalResidualPeak": 31
+        },
+        {
+          "frame": 23,
+          "time": 15.500000000000085,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 43709,
+            "peak": 24,
+            "noticeable": 1043,
+            "illuminated": 94128,
+            "litPeakChannelRms": 0.9222724301919124,
+            "maxScattering": 0.0699462890625,
+            "maxTransmission": 0.038330078125
+          },
+          "temporalResidualRms": 0.6957826802832526,
+          "temporalResidualPeak": 25
+        },
+        {
+          "frame": 24,
+          "time": 16.000000000000092,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 30452,
+            "peak": 28,
+            "noticeable": 531,
+            "illuminated": 91344,
+            "litPeakChannelRms": 0.7064639743086488,
+            "maxScattering": 0.039306640625,
+            "maxTransmission": 0.04638671875
+          },
+          "temporalResidualRms": 0.6540738490619704,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 25,
+          "time": 16.5000000000001,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 29409,
+            "peak": 29,
+            "noticeable": 512,
+            "illuminated": 88865,
+            "litPeakChannelRms": 0.7096603746134209,
+            "maxScattering": 0.0262451171875,
+            "maxTransmission": 0.0445556640625
+          },
+          "temporalResidualRms": 0.5778908070320149,
+          "temporalResidualPeak": 29
+        },
+        {
+          "frame": 26,
+          "time": 17.000000000000107,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 30017,
+            "peak": 8,
+            "noticeable": 272,
+            "illuminated": 84839,
+            "litPeakChannelRms": 0.6414711871087145,
+            "maxScattering": 0.0218505859375,
+            "maxTransmission": 0.041259765625
+          },
+          "temporalResidualRms": 0.572668189042764,
+          "temporalResidualPeak": 30
+        },
+        {
+          "frame": 27,
+          "time": 17.500000000000114,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 25462,
+            "peak": 25,
+            "noticeable": 189,
+            "illuminated": 77576,
+            "litPeakChannelRms": 0.6113190178035587,
+            "maxScattering": 0.01123046875,
+            "maxTransmission": 0.04443359375
+          },
+          "temporalResidualRms": 0.5657010094445702,
+          "temporalResidualPeak": 25
+        },
+        {
+          "frame": 28,
+          "time": 18.00000000000012,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 23961,
+            "peak": 17,
+            "noticeable": 143,
+            "illuminated": 74078,
+            "litPeakChannelRms": 0.6163358393741633,
+            "maxScattering": 0.01104736328125,
+            "maxTransmission": 0.0458984375
+          },
+          "temporalResidualRms": 0.5126347125474768,
+          "temporalResidualPeak": 17
+        },
+        {
+          "frame": 29,
+          "time": 18.500000000000128,
+          "bounds": [
+            12,
+            5,
+            10
+          ],
+          "pixels": {
+            "changed": 22327,
+            "peak": 28,
+            "noticeable": 84,
+            "illuminated": 70112,
+            "litPeakChannelRms": 0.5811217885176164,
+            "maxScattering": 0.00750732421875,
+            "maxTransmission": 0.0408935546875
+          },
+          "temporalResidualRms": 0.509203913279654,
+          "temporalResidualPeak": 30
+        }
+      ]
+    }
+  ]
+}
