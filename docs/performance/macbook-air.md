@@ -35,16 +35,32 @@ For the eight-head show used in the room preview, a separate run started the pro
 
 ### JVM pauses with the moving mixed stage
 
-The mixed-stage show drove the 40 Hz scheduler and a local two-universe ArtDMX capture sink. A separate hidden Chrome target replayed the committed moving show in two interleaved phases at a 790 × 475 scene raster and 3271 × 1966 output. All four runs used JDK 27 and reported one JVM processor. The show was configured with two render workers. The table covers the central 9.5 seconds of each of five 12-second phases. The maximum JVM pause covers the full recording. [Mixed-stage reproduction](https://github.com/tolgraven/tolglow/issues/555)
+The mixed-stage show drove the 40 Hz scheduler and a local two-universe ArtDMX capture sink. A separate hidden Chrome target replayed the committed moving show in two interleaved phases at a 790 × 475 scene raster and 3271 × 1966 output. These runs used JDK 27, two show render workers and one GC worker. The table covers the central 9.5 seconds of each of five 12-second phases. The maximum JVM pause covers the full recording. [Mixed-stage reproduction](https://github.com/tolgraven/tolglow/issues/555)
 
-| Collector | Maximum heap | Captured output cadence | Longest gap | Skipped slots between sends | Longest recorded GC pause |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| G1 | 1 GiB | 39.79–39.90 Hz | 56.21 ms | 6 | 45.18 ms |
-| ZGC | 1 GiB | 39.998–40.001 Hz | 29.06 ms | 0 | 0.014 ms |
-| G1 | 4 GiB | 39.78–40.00 Hz | 83.62 ms | 6 | 73.16 ms |
-| ZGC | 4 GiB | 39.996–39.999 Hz | 29.24 ms | 0 | 0.023 ms |
+| Collector | Maximum heap | JVM processors | Captured output cadence | Longest gap | Skipped slots between sends | Longest recorded GC pause |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| G1 | 1 GiB | 1 | 39.79–39.90 Hz | 56.21 ms | 6 | 45.18 ms |
+| ZGC | 1 GiB | 1 | 39.998–40.001 Hz | 29.06 ms | 0 | 0.014 ms |
+| G1 | 4 GiB | 1 | 39.78–40.00 Hz | 83.62 ms | 6 | 73.16 ms |
+| ZGC | 4 GiB | 1 | 39.996–39.999 Hz | 29.24 ms | 0 | 0.023 ms |
+| ZGC | 4 GiB | 9 | 39.896–40.008 Hz | 47.13 ms | 1 | 0.011 ms |
 
-Every G1 gap longer than 37.5 ms overlapped a recorded garbage collection pause. The larger heap reduced G1 pauses from 11 to four across the full recording. Its longest pauses grew, and the analyzed windows still missed six output slots. Neither ZGC run recorded a gap longer than 37.5 ms. A moving phase at each heap size still used a source frame up to 25 ms old at the p95. The capture measures the interval between sends at the local sink. Physical-network timing and visible Studio frame delivery have separate acceptance checks. [JVM startup and heap configuration](../application-startup.md)
+Every G1 gap longer than 37.5 ms overlapped a recorded garbage collection pause. The larger heap reduced G1 pauses from 11 to four across the full recording. Its longest pauses grew, and the analyzed windows still missed six output slots. The nine-processor ZGC run missed one slot in the first show-only phase. Its two gaps longer than 37.5 ms had no recorded GC pause, allocation stall or safepoint in that interval. Both concurrent replay phases missed zero slots. The capture measures the interval between sends at the local sink. Physical-network timing and visible Studio frame delivery have separate acceptance checks. [JVM startup and heap configuration](../application-startup.md)
+
+For Airie live-show captures, set the show JVM's processor count to the host's
+online logical CPU count minus one, with a minimum of one. This gives HotSpot a
+processor count for sizing its work. macOS still schedules those threads.
+
+```sh
+online_cpus=$(getconf _NPROCESSORS_ONLN)
+show_cpus=$((online_cpus > 1 ? online_cpus - 1 : 1))
+JVM_OPTS="-Xmx4g -XX:ActiveProcessorCount=$show_cpus -Xlog:gc+init=info" lein trampoline run
+```
+
+The running JVM reported 9 available processors and a 4,294,967,296-byte
+maximum heap. Leiningen passes `JVM_OPTS` on the show JVM's command line,
+after the agent launcher's `JAVA_TOOL_OPTIONS`. The JVM initialization log
+prints the effective values.
 
 ## Studio room on the Air
 
