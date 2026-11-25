@@ -40,37 +40,73 @@
       (is (= binding (source/binding-config (assoc form :period "1/2"))))))
   (doseq [[schema base endpoints] [[{:type :boolean} true [false true]]
                                   [{:type :integer :bounds [0 255]} 64 [0 255]]
+                                  [{:type :integer :bounds [1.2 4.8]} 2 [2 4]]
                                   [{:type :color} [1 0 0] [[0 0 0] [1 1 1]]]
+                                  [{:type :color :bounds [-1 0.8]} [0 0.2 0.4] [[0 0 0] [0.8 0.8 0.8]]]
+                                  [{:type :color :bounds [0.2 2]} [0.2 0.4 0.6] [[0.2 0.2 0.2] [1 1 1]]]
                                   [{:type :vector :size 3 :bounds [-1 1]} [0 0 0] [[-1 -1 -1] [1 1 1]]]]]
     (is (= endpoints ((juxt :from :to) (source/draft schema base nil)))))
   (is (thrown? js/Error (source/binding-config (assoc (source/draft {} 0 nil) :period "0")))))
 
 (deftest a-binding-request-retains-its-show-and-locks-only-its-own-control
   (let [db {:show {:runtime-id "studio" :epoch 2}}
-        result (source/request db "bind" "2:1" :level {:type :lfo})]
-    (is (= {:runtime-id "studio" :expected-epoch 2 :instance-id "2:1" :param :level :binding {:type :lfo}}
+        result (source/request db "bind" "2:1" :level {:type :lfo} "attach")]
+    (is (= {:runtime-id "studio" :expected-epoch 2 :instance-id "2:1" :param :level :binding {:type :lfo} :request-id "attach"}
            (get-in result [:studio/http :body])))
     (is (true? (get-in result [:studio/http :typed?])))
-    (is (empty? (source/request (:db result) "unbind" "2:1" :level nil)))
-    (is (seq (source/request (:db result) "unbind" "2:2" :level nil)))
-    (is (seq (source/request (assoc-in (:db result) [:show :epoch] 3) "unbind" "2:1" :level nil)))))
+    (is (empty? (source/request (:db result) "unbind" "2:1" :level nil "detach")))
+    (is (seq (source/request (:db result) "unbind" "2:2" :level nil "detach")))
+    (is (seq (source/request (assoc-in (:db result) [:show :epoch] 3) "unbind" "2:1" :level nil "detach")))))
 
 (deftest a-destination-move-sends-one-typed-binding-request
   (let [db {:show {:runtime-id "studio" :epoch 2}}
         endpoints {:from :step/one :to "step/two"}
-        result (source/request db "bind" "2:1" :cue/step endpoints :cue/level)]
+        expected [[2 12] :wash 4 1]
+        move {:from-param :cue/level :owner ["studio" 2] :expected-source expected}
+        result (source/request db "bind" "2:1" :cue/step endpoints "move" move)]
     (is (= "/api/modulation/bind" (get-in result [:studio/http :path])))
     (is (true? (get-in result [:studio/http :typed?])))
     (is (= {:runtime-id "studio" :expected-epoch 2 :instance-id "2:1"
-            :from-param :cue/level :param :cue/step :binding endpoints}
+            :from-param :cue/level :param :cue/step :binding endpoints :expected-source expected :request-id "move"}
            (get-in result [:studio/http :body])))
-    (is (empty? (source/request (:db result) "unbind" "2:1" :cue/level nil))))
+    (is (empty? (source/request (:db result) "unbind" "2:1" :cue/level nil "other")))
+    (is (empty? (source/request (:db result) "bind" "2:1" :cue/step {:type :lfo} "other")))
+    (is (empty? (source/request (assoc-in db [:show :runtime-id] "replaced") "bind" "2:1" :cue/step endpoints "move" move))))
   (let [hue {:type :number :bounds [0 360]}
         step {:type :enum :values [:step/one "step/two"]}
         instance {:definition {:params {:cue/level {} :cue/hue hue :cue/step step :occupied {}}}
                   :parameter-sources {:occupied {:sources [{:type :lfo :held? true}]}
                                       :cue/step {:sources [{:type :random}]}}}]
     (is (= [[:cue/hue hue] [:cue/step step]] (source/destination-options instance :cue/level)))))
+
+(deftest source-controls-wait-for-their-committed-revision-and-correlate-queued-results
+  (let [view {:runtime-id "studio" :epoch 2 :revision 12}
+        db {:show view :server-projection {:view view}}
+        move {:from-param :level :owner ["studio" 2] :expected-source [[2 11] :wash 4 1]}
+        pending (:db (source/request db "bind" "2:1" :step {:from 1 :to 5} "move" move))
+        key [["studio" 2] "2:1" :level]
+        response #(source/record-reply %1 key "move" %2)
+        status #(source/request-state % "2:1" :level)
+        accepted (response pending {:status :accepted :revision 14})
+        waiting (response pending {:status :pending})
+        failed (assoc-in waiting [:server-projection :view :parameter-source-outcomes]
+                         [{:request-id "move" :epoch 2 :status :rejected :message "Source changed"}])
+        succeeded (assoc-in waiting [:server-projection :view :parameter-source-outcomes]
+                            [{:request-id "move" :epoch 2 :status :accepted :revision 14}
+                             {:request-id "later" :epoch 2 :status :accepted :revision 15}])
+        expired (response pending {:status :expired})
+        retry (:db (source/request expired "bind" "2:1" :step {:from 1 :to 5} "retry" move))]
+    (is (:pending? (status accepted)))
+    (is (nil? (status (assoc-in accepted [:server-projection :view :revision] 14))))
+    (is (= {:pending? true :waiting? true} (status waiting)))
+    (is (= {:error "Source changed"} (status failed)))
+    (is (nil? (status succeeded)))
+    (is (not (:pending? (status expired))))
+    (is (string? (:error (status expired))))
+    (is (= retry (response retry {:status :accepted :revision 14})))
+    (let [stale (assoc-in pending [:show :runtime-id] "replaced")]
+      (is (nil? (status stale)))
+      (is (= stale (response stale {:status :rejected :message "Late response"}))))))
 
 (deftest fixture-blocks-observe-real-members-of-a-restricted-rig
   (let [rig (mapv #(hash-map :id % :position [1 2 3]) [:a :b :c])]
