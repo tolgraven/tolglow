@@ -2,18 +2,74 @@
   (:require [cljs.test :refer-macros [deftest is]]
             [tolglow.studio.param-visualization :as visual]
             [tolglow.studio.push-display :as display]
-            [tolglow.studio.parameter-widgets :as widgets]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.visualization.parameter-views :as views]))
 
 (deftest spatial-defaults-follow-the-value-domain
   (is (= :spatial (visual/selected-mode {:type "vector" :size 3} nil)))
   (is (= :orientation (visual/spatial-kind {:type :vector :size 3 :semantic/type "orientation"})))
-  (is (= :spatial (visual/selected-mode {:type "color"} "auto")))
+  (is (= :color (visual/selected-mode {:type "color"} "auto")))
+  (is (nil? (visual/spatial-kind {:type :color})))
   (is (= :history (visual/selected-mode {:type :number :visualization :history} :auto)))
   (is (= :controls (visual/selected-mode {:type :vector :size 4} :auto)))
   (is (= :controls (visual/selected-mode {:type :enum} :history)))
   (is (nil? (visual/components {:type :vector} [0 js/NaN 0])))
   (is (nil? (visual/components {:type :color} nil)))
   (is (= [0 0.5 1] (visual/components {:type :color} [0 0.5 1]))))
+
+(deftest colour-parameters-draw-the-colour-widget-on-push-and-studio
+  (let [schemas [{:type "color"} {:type :color} {:type :vector :size 3 :semantic/type :rgb :bounds [0 1]}]
+        value [1 0.42 0.12]]
+    (doseq [schema schemas
+            preference [nil "auto" "spatial" "controls" "history"]
+            state [nil "active" "held" "pending"]
+            :let [parameter {:id "tint" :param "tint" :schema schema :value value :source-state state
+                             :component 0 :component-label "hue"}
+                  view {:parameter-view preference :parameter-observations {"tint" [{:beat 0 :values value}]}}
+                  [component & args] (visual/push view parameter)
+                  [touched] (visual/push view parameter true)
+                  history? (and (= "history" preference) (= "active" state))]]
+      (is (not= visual/space component) (str "Push " (pr-str schema) " " preference " " state))
+      (is (not= visual/space touched))
+      (if history?
+        (is (= visual/history-chart component))
+        (do (is (= widgets/color-view component))
+            (is (= [value {:selected "hue"}] args)))))
+    (doseq [schema schemas]
+      (is (= :color (visual/monitor-kind schema)))
+      (is (= [:color :history] (views/studio-choices schema)))
+      (doseq [choice [:auto :spatial :controls]]
+        (let [mode (views/studio-view schema choice)]
+          (is (= :color mode))
+          (is (= [widgets/color-view value] (visual/observed-view mode schema value {} (atom nil) 4)))))
+      (is (= :history (views/studio-view schema :history))))
+    (is (= visual/space (first (visual/push {} {:schema {:type :vector :size 3 :bounds [-1 1]} :value [0 0 0]}))))
+    (is (= [:spatial :history] (views/studio-choices {:type :vector :size 3})))))
+
+(deftest colour-tracks-follow-the-component-a-control-edits
+  (let [orange [1 0.5 0]
+        rgb (widgets/color-tracks orange "g")
+        hsv (widgets/color-tracks orange "saturation")
+        near? (fn [a b] (< (js/Math.abs (- a b)) 1e-9))]
+    (is (= [:red :green :blue] (mapv :id rgb)))
+    (is (= [false true false] (mapv :selected? rgb)))
+    (is (= [1 0.5 0] (mapv :amount rgb)))
+    (is (= "linear-gradient(90deg,rgb(255,0,0),rgb(255,255,0))" (:gradient (second rgb))))
+    (is (= [:hue :saturation :brightness] (mapv :id hsv)))
+    (is (near? (/ 30 360) (:amount (first hsv))))
+    (is (= [1 1] (mapv :amount (rest hsv))))
+    (is (= "linear-gradient(90deg,rgb(255,255,255),rgb(255,128,0))" (:gradient (second hsv))))
+    (is (every? true? (map near? orange (widgets/hsv-rgb (widgets/hsv orange)))))
+    (is (near? 1 (widgets/component-amount orange "saturation" 0)))
+    (is (= 0.5 (widgets/component-amount orange "g" 1)))
+    (is (= 0 (widgets/component-amount orange nil 2)))
+    (is (nil? (widgets/component-amount [1 js/NaN 0] "hue" 0)))
+    (is (= :div.parameter-color (first (widgets/color-view orange))))
+    (is (= :span.parameter-no-sample (first (widgets/color-view nil))))
+    (is (= "linear-gradient(90deg,rgb(255,0,0) 0%,rgb(0,0,255) 100%)"
+           (widgets/gradient-stops-css [{:position 0 :color [1 0 0]} {:position 1 :color [0 0 1]}])))
+    (is (= :div.parameter-color.gradient
+           (first (widgets/color-view [{:position 0 :color [1 0 0]} {:position 1 :color [0 0 1]}]))))))
 
 (deftest observed-captions-retain-destination-precision
   (doseq [[bits value expected] [[8 (/ 127 255) "0.498"]

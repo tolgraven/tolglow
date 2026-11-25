@@ -184,11 +184,14 @@
                         (if-let [id (compound-key parameter)] [:compound id] [:encoder index]))
                       slots)))
 
-(defn- axis-reading [{:keys [schema component effective-value value]}]
-  (let [values (visualization/components schema (if (some? effective-value) effective-value value))]
-    (when-let [shown (get values component)]
+(defn- axis-reading [{:keys [schema component component-label effective-value value]}]
+  (let [values (visualization/components schema (if (some? effective-value) effective-value value))
+        color? (= :color (widgets/parameter-kind schema))]
+    (when-let [shown (if color?
+                       (widgets/component-amount values component-label component)
+                       (get values component))]
       [:output.push-axis-reading
-       (widgets/number-label (get (:component-schemas schema) component schema) shown)])))
+       (widgets/number-label (get (:component-schemas schema) component (if color? {:bounds [0 1]} schema)) shown)])))
 
 (defn- parameters [view compact?]
   (let [slots (encoder-slots view)

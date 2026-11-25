@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [reagent.core :as r]
             [tolglow.studio.numeric-display :as numeric]
+            [tolglow.visualization.parameter-views :as views]
             [thi.ng.color.core :as color]))
 
 (defn label [value]
@@ -69,9 +70,7 @@
                                                                     (get colors (keyword (str category))) "#a8b99a"))}}
       (label category)])])
 
-(defn parameter-kind [schema]
-  (cond (seq (:choices schema)) :choice
-        :else (keyword (or (:type schema) :number))))
+(def parameter-kind views/parameter-kind)
 
 (defn unit-label [schema]
   (when-let [unit (or (:unit schema) (:units schema))] (label unit)))
@@ -216,6 +215,107 @@
     [:i {:style {:width (str (* 100 (or (proportion schema value) 0)) "%")}}]]
    [:output (number-label schema value)]])
 
+(defn- unit [value] (if (finite? value) (max 0 (min 1 value)) 0))
+
+(defn hsv
+  "Hue, saturation and brightness of RGB components, each in [0,1]. These are
+  the components a Push encoder edits on a colour."
+  [[r g b]]
+  (let [hi (max r g b) lo (min r g b) delta (- hi lo)
+        hue (cond (zero? delta) 0
+                  (= hi r) (mod (/ (- g b) delta) 6)
+                  (= hi g) (+ 2 (/ (- b r) delta))
+                  :else (+ 4 (/ (- r g) delta)))]
+    [(/ hue 6) (if (zero? hi) 0 (/ delta hi)) hi]))
+
+(defn hsv-rgb [[h s v]]
+  (let [sector (* 6 (- h (js/Math.floor h)))
+        channel (fn [n] (let [k (mod (+ n sector) 6)]
+                          (- v (* v s (max 0 (min k (- 4 k) 1))))))]
+    [(channel 5) (channel 3) (channel 1)]))
+
+(def ^:private color-spaces
+  {:rgb [[:red "R"] [:green "G"] [:blue "B"]]
+   :hsv [[:hue "H"] [:saturation "S"] [:brightness "V"]]})
+
+(def ^:private component-names
+  {"r" :red "g" :green "b" :blue "red" :red "green" :green "blue" :blue
+   "h" :hue "s" :saturation "v" :brightness "hue" :hue "saturation" :saturation "brightness" :brightness})
+
+(defn color-component
+  "The colour component a control names, such as a Push encoder's `hue`."
+  [id]
+  (when (or (keyword? id) (string? id)) (get component-names (str/lower-case (name id)))))
+
+(defn- gradient-css [stops]
+  (str "linear-gradient(90deg," (str/join "," (map color-css stops)) ")"))
+
+(defn color-tracks
+  "Three component tracks for RGB components. Each gradient shows the colours
+  that component alone would produce, with the current amount marked. A hue,
+  saturation or brightness selection switches the tracks to that space."
+  [components selected]
+  (let [rgb (mapv unit (take 3 components))
+        [h s v :as polar] (hsv rgb)
+        component (color-component selected)
+        space (if (some #(= component (first %)) (:hsv color-spaces)) :hsv :rgb)
+        amounts (if (= :hsv space) polar rgb)
+        stops (fn [index]
+                (if (= :hsv space)
+                  (case index
+                    0 (mapv #(hsv-rgb [(/ % 6) (max s 0.6) (max v 0.6)]) (range 7))
+                    1 [(hsv-rgb [h 0 v]) (hsv-rgb [h 1 v])]
+                    [(hsv-rgb [h s 0]) (hsv-rgb [h s 1])])
+                  [(assoc rgb index 0) (assoc rgb index 1)]))]
+    (mapv (fn [index [id label]]
+            {:id id :label label :amount (nth amounts index) :selected? (= id component)
+             :gradient (gradient-css (stops index))})
+          (range) (get color-spaces space))))
+
+(defn component-amount
+  "The amount of the colour component a control names, else the indexed RGB one."
+  [components selected index]
+  (when (and (<= 3 (count components)) (every? finite? (take 3 components)))
+    (or (some #(when (:selected? %) (:amount %)) (color-tracks components selected))
+        (get components index))))
+
+(defn gradient-stops-css
+  "CSS for authored gradient stops, or nil when the value is not a gradient."
+  [value]
+  (when (and (sequential? value) (seq value) (every? #(and (map? %) (finite? (:position %))) value))
+    (if (= 1 (count value))
+      (color-css (:color (first value)))
+      (str "linear-gradient(90deg,"
+           (str/join "," (map #(str (color-css (:color %)) " " (* 100 (unit (:position %))) "%") value)) ")"))))
+
+(defn color-view
+  "The colour widget shared by Studio and Push: a swatch of the value and one
+  gradient track per component. Authored gradient stops draw as one ramp."
+  [value & [{:keys [selected]}]]
+  (if-let [ramp (gradient-stops-css value)]
+    [:div.parameter-color.gradient {:role "img" :aria-label (str "Gradient with " (count value) " stops")}
+     [:div.color-swatch {:style {:background ramp}}]
+     [:div.color-readout (str (count value) (if (= 1 (count value)) " stop" " stops"))]]
+    (let [components (vec (take 4 (color-components value)))]
+      (if-not (and (<= 3 (count components)) (every? finite? components))
+        [:span.parameter-no-sample {:role "status"} "Awaiting value"]
+        (let [tracks (color-tracks components selected)
+              readout (str/join " · " (map #(number-label {:bounds [0 1]} %) (take 3 components)))]
+          [:div.parameter-color {:role "img" :aria-label (str "Colour, red green blue " readout)
+                                 :data-space (if (#{:hue :saturation :brightness} (:id (first tracks))) "hsv" "rgb")}
+           [:div.color-swatch {:style {:background (color-css components)}}
+            (when (and (= 4 (count components)) (not= 1 (nth components 3)))
+              [:small (str "α " (number-label (nth components 3)))])]
+           [:div.color-channels
+            (for [{:keys [id label amount gradient selected?]} tracks]
+              ^{:key id}
+              [:div.color-channel {:class (when selected? "selected") :data-component (name id)}
+               [:span.color-channel-name label]
+               [:div.color-track {:style {:background gradient}}
+                [:i {:style {:left (str (* 100 (unit amount)) "%")}}]]
+               [:output (number-label {:bounds [0 1]} amount)]])]
+           [:div.color-readout [:b "RGB"] readout]])))))
+
 (defn- choice-view [schema value]
   (let [choices (vec (or (:choices schema) (map #(hash-map :value % :label (label %)) (or (:values schema) (:options schema)))))
         selected (first (keep-indexed #(when (= value (:value %2)) %1) choices))
@@ -229,7 +329,7 @@
                       (or (:label choice) (label (:id choice)) (label (:value choice)))])]
      [:span.typed-choice-position (str (if (some? selected) (inc selected) "—") " / " count-choices)]]))
 
-(defn typed-display [{:keys [schema value preview-samples base-value effective-value]}]
+(defn typed-display [{:keys [schema value preview-samples base-value effective-value component-label]}]
   (let [kind (parameter-kind schema) shown (if (some? effective-value) effective-value value)]
     [:div.typed-parameter {:data-type (name kind)}
      (case kind
@@ -237,11 +337,7 @@
        (:choice :enum) [choice-view schema shown]
        :boolean [:div.typed-boolean [:div.typed-switch {:class (when shown "on")} [:i]]
                  [:strong (if shown "On" "Off")] [:span "toggle"]]
-       :color [:div.typed-color
-               [:div.typed-color-swatch {:style {:background (color-css shown)}}]
-               (for [[index component] (map-indexed vector (take 4 (color-components shown)))]
-                 ^{:key index} [component-track (get ["R" "G" "B" "A"] index) {:bounds [0 1]} component
-                                (get ["#d99188" "#9fc699" "#90b9db" "#d5d3cc"] index)])]
+       (:color :gradient) [color-view shown {:selected component-label}]
        :range (let [[low high] shown a (proportion schema low) b (proportion schema high)]
                 [:div.typed-range
                  [:strong (str (number-label low) " — " (number-label high))]

@@ -1,11 +1,13 @@
 (ns tolglow.studio.param-visualization
   "Passive visualizations of published parameter values. Geometry uses normalized
-  coordinates only for display. History keeps the observed beat and components."
+  coordinates only for display. History keeps the observed beat and components.
+  The shared parameter-views projection chooses the widget for each type."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.parameter-widgets :as widgets]
-            [tolglow.studio.visibility :refer [watch-visibility]]))
+            [tolglow.studio.visibility :refer [watch-visibility]]
+            [tolglow.visualization.parameter-views :as views]))
 
 (def zooms [0.5 1 2 4 8 16])
 
@@ -14,33 +16,19 @@
 (defn- tag [id] (when (or (keyword? id) (string? id)) (keyword id)))
 
 (defn components [schema value]
-  (let [value (if (= :color (widgets/parameter-kind schema)) (widgets/color-components value) value)]
+  (let [value (if (= :color (views/color-kind schema)) (widgets/color-components value) value)]
     (cond
       (widgets/finite? value) [value]
       (and (sequential? value) (<= 1 (count value) 4) (every? widgets/finite? value)) (vec value))))
 
-(defn spatial-kind [schema]
-  (case (widgets/parameter-kind schema)
-    :color :color
-    :vector (when (= 3 (:size schema))
-              (case (tag (:semantic/type schema))
-                (:orientation :rotation) :orientation
-                :direction :direction
-                :position))
-    nil))
+(def spatial-kind views/spatial-kind)
 
-(defn view-kind [schema preference]
-  (let [mode (or (tag preference) :auto)]
-    (cond
-      (#{:choice :enum :boolean} (widgets/parameter-kind schema)) :controls
-      (= mode :history) :history
-      (= mode :controls) :controls
-      (spatial-kind schema) :spatial
-      :else :controls)))
+(def monitor-kind views/monitor-view)
+
+(def view-kind views/view-kind)
 
 (defn- bounds [schema values]
-  (or (when (= :color (spatial-kind schema)) [0 1])
-      (widgets/numeric-range schema)
+  (or (widgets/numeric-range schema)
       (let [extent (max 1 (reduce max 0 (map abs values)))
             scale (js/Math.pow 2 (js/Math.ceil (js/Math.log2 extent)))]
         [(- scale) scale])))
@@ -126,8 +114,7 @@
     (str (widgets/number-label display low) " … " (widgets/number-label display high))))
 
 (defn component-label [{:keys [schema component component-label]}]
-  (if (and (#{:position :direction :orientation} (spatial-kind schema))
-           (int? component) (<= 0 component 2))
+  (if (and (spatial-kind schema) (int? component) (<= 0 component 2))
     (get (or (:component-labels schema) ["X" "Y" "Z"]) component)
     component-label))
 
@@ -135,15 +122,14 @@
   (let [actual (components schema value)
         xyz (some->> plotted (take 3) vec)
         kind (spatial-kind schema)
-        color? (= :color kind)
-        labels (or (:component-labels schema) (if color? ["R" "G" "B"] ["X" "Y" "Z"]))]
+        labels (or (:component-labels schema) ["X" "Y" "Z"])]
     (if-not (and kind (= 3 (count xyz)))
       [:span.parameter-no-sample {:role "status"} "Awaiting value"]
       (let [domain (bounds schema xyz)
             point (mapv #(- (* 2 (unit-value domain %)) 1) xyz)
             [x _ z] point
             [px py] (screen point)
-            tint (if color? (widgets/color-css xyz) "var(--push-accent, #bdd49f)")
+            tint "var(--push-accent, #bdd49f)"
             caption (domain-label schema domain)]
         [:figure.parameter-space {:aria-label (str (name kind) " in three dimensions")
                                   :data-dmx-bits (:dmx-bits schema)}
@@ -156,7 +142,7 @@
           (if (= kind :orientation)
             [orientation schema xyz]
             [:<> [segment [x -1 z] point {:class "space-drop"}]
-             [segment (if color? [-1 -1 -1] (mapv #(- (* 2 (unit-value domain %)) 1) [0 0 0]))
+             [segment (mapv #(- (* 2 (unit-value domain %)) 1) [0 0 0])
               point {:stroke tint :stroke-width 1.9}]
              [:circle {:cx px :cy py :r 4 :fill tint :stroke "#e8eee0" :stroke-width 1}]])
           (for [[i [tx ty]] (map-indexed vector [[92 36] [55 8] [14 36]])]
@@ -201,7 +187,7 @@
         all (mapcat :values values)]
     (when (seq all)
       (let [[low high] (or (widgets/numeric-range schema)
-                           (when (= :color (widgets/parameter-kind schema)) [0 1])
+                           (when (= :color (views/color-kind schema)) [0 1])
                            [(apply min all) (apply max all)])
             row (fn [axis]
                   (reduce (fn [[path pen?] {:keys [beat values]}]
@@ -217,7 +203,7 @@
         values (:values (peek history))
         labels (when (> (count paths) 1)
                  (or (:component-labels schema)
-                     (if (= :color (widgets/parameter-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])))]
+                     (if (= :color (views/color-kind schema)) ["R" "G" "B" "A"] ["X" "Y" "Z" "W"])))]
     [:figure.parameter-history {:aria-label "Observed parameter history" :data-dmx-bits (:dmx-bits schema)}
      [:div.history-reading {:class (when push? "push-reading") :data-components (count values)}
       (for [[i v] (map-indexed vector values)]
@@ -263,15 +249,9 @@
       [history-chart schema history window attach beats])
     (finally (when-let [active @animation] (.cancel active)))))
 
-(defn selected-mode [schema preference]
-  (view-kind schema (if (#{:auto nil} (tag preference)) (:visualization schema) preference)))
+(def selected-mode views/selected-mode)
 
-(defn- push-mode [parameter preference]
-  (let [schema (:schema parameter)
-        mode (selected-mode schema preference)]
-    (if (and (= :history mode) (not= :active (tag (:source-state parameter))))
-      (if (spatial-kind schema) :spatial :controls)
-      mode)))
+(def ^:private push-mode views/push-view)
 
 (defn- observe-parameter [previous clock preference {:keys [schema effective-value value param id] :as parameter}]
   (when (= :active (tag (:source-state parameter)))
@@ -302,6 +282,7 @@
 (defn push [view {:keys [schema effective-value value param id preview-samples] :as parameter} & [touched?]]
   (let [shown (if (some? effective-value) effective-value value)]
     (case (push-mode parameter (:parameter-view view))
+      :color [widgets/color-view shown {:selected (:component-label parameter)}]
       :spatial [space schema shown
                 (if-let [keyframe (get-in view [:parameter-observations (or param id)])]
                   (spatial-value schema keyframe (get-in view [:visualization-clock :time-ms]))
@@ -327,20 +308,27 @@
 (defn- record! [this]
   (let [[_ mode schema value clock observed] (r/argv this)
         values (components schema value)]
-    (if (= mode :spatial)
-      (swap! observed spatial-keyframe clock values)
+    (case mode
+      :spatial (swap! observed spatial-keyframe clock values)
+      ;; A colour shows the committed value itself and keeps no samples.
+      :color nil
       ;; The browser already has these committed samples. The cue-pad sampling
       ;; governor governs additional host work, including Push snapshots.
       (swap! observed append-sample clock values 0 1024))))
+
+(defn observed-view
+  "The mounted Studio scope for one committed sample of a parameter."
+  [mode schema value clock observed window]
+  (case mode
+    :spatial [space schema value (spatial-value schema @observed (:time-ms clock))]
+    :color [widgets/color-view value]
+    [scrolling-history schema @observed window]))
 
 (def observed-visual
   (r/create-class
    {:component-did-mount record!
     :component-did-update (fn [this _] (record! this))
-    :reagent-render (fn [mode schema value clock observed window]
-                      (if (= mode :spatial)
-                        [space schema value (spatial-value schema @observed (:time-ms clock))]
-                        [scrolling-history schema @observed window]))}))
+    :reagent-render observed-view}))
 
 (defn- visible-visual [mode schema value window]
   (r/with-let [observed (r/atom (when (= mode :history) []))]
@@ -353,28 +341,33 @@
   "A single visible scope per performance strip. Sampling starts only when the
   scope intersects the viewport and stops when it leaves."
   [schema value]
-  (let [mode (if (spatial-kind schema) :spatial :history)]
+  (let [mode (views/monitor-view schema)]
     [watch-visibility
      (fn [visible?]
        (when visible?
          ^{:key mode} [visible-visual mode schema value 4]))]))
 
-(defn history-toggle [schema preference]
-  (if (= :history (selected-mode schema preference)) :controls :history))
+(def history-toggle views/history-toggle)
+
+(def ^:private view-titles {:spatial "3D" :color "Colour" :history "History"})
 
 (defn studio [schema value]
   (r/with-let [choice (r/atom :auto) window (r/atom 4)]
-    (let [mode (selected-mode schema @choice)]
+    (let [mode (views/studio-view schema @choice)]
       [:div.parameter-visualizer
        [:div.parameter-views
-        (when (spatial-kind schema)
-          [:button {:type "button" :aria-pressed (= mode :spatial) :on-click #(reset! choice :spatial)} "3D"])
-        [:button {:type "button" :aria-pressed (= mode :history) :on-click #(swap! choice (partial history-toggle schema))} "History"]
+        (for [view (views/studio-choices schema)]
+          ^{:key view}
+          [:button {:type "button" :aria-pressed (= mode view)
+                    :on-click (if (= :history view)
+                                #(swap! choice (partial history-toggle schema))
+                                #(reset! choice view))}
+           (view-titles view)])
         (when (= mode :history)
           [:label "Window " [:select {:value @window :aria-label "Parameter history beat window"
                                      :on-change #(reset! window (js/Number (.. % -target -value)))}
                             (for [zoom zooms] ^{:key zoom} [:option {:value zoom} (str zoom " beats")])]])]
-       (when (#{:spatial :history} mode)
+       (when (#{:spatial :color :history} mode)
          [watch-visibility
           (fn [visible?] (when visible?
                            ^{:key mode} [visible-visual mode schema value @window]))])])))
