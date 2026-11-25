@@ -538,9 +538,14 @@
       :on-click #(rf/dispatch [:performance/reorder-pick capture id])}
      label]))
 
-(defn- layer-priority-form [capture source instance draft]
-  (let [value (or draft (pr-str (render-priority instance)))
-        title (or (:name instance) (widgets/label (:cue-id instance)))]
+(defn- instance-cue [show instance]
+  (some #(when (= (wire (:id %)) (wire (:cue-id instance))) %) (:cues show)))
+
+(defn- instance-title [cue instance]
+  (or (:name cue) (:name instance) (widgets/label (:cue-id instance))))
+
+(defn- layer-priority-form [capture source instance title draft]
+  (let [value (or draft (pr-str (render-priority instance)))]
     [:form.live-priority-form
      {:on-submit (fn [event]
                    (.preventDefault event)
@@ -557,9 +562,9 @@
         definition (card-definition show instance)
         faults @(rf/subscribe [:inspect/faults])
         faulted? (seq (inspect/faults-for faults instance))
-        cue (some #(when (= (wire (:id %)) (wire (:cue-id instance))) %) (:cues show))
+        cue (instance-cue show instance)
         {:keys [controls monitor]} @(r/track resolve-controls definition (:ui/layout cue))
-        title (or (:name cue) (:name instance) (widgets/label (:cue-id instance)))
+        title (instance-title cue instance)
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
         editing @(rf/subscribe [::sources/selection id])
@@ -646,7 +651,7 @@
                 message message
                 :else "Choose a cue to move.")]))
      (when (and open? selected (not pending?))
-       [layer-priority-form capture source selected priority-draft])
+       [layer-priority-form capture source selected (instance-title (instance-cue show selected) selected) priority-draft])
      [inspect/unassigned-faults show @(rf/subscribe [:inspect/faults])]
      (if (seq instances)
        [:<> [group-panel selection-view rows]
