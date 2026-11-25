@@ -32,9 +32,21 @@ import SwiftUI
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            WatchRoot(motion: model.motion, relay: model.relay, workout: model.workout)
-                .onChange(of: scenePhase) { _, phase in model.sceneChanged(phase) }
+            #if DEBUG && targetEnvironment(simulator)
+            if WatchFloorLink.interruptedStageFixture {
+                NavigationStack { DanceAudienceView(workout: model.workout) }
+            } else {
+                liveRoot
+            }
+            #else
+            liveRoot
+            #endif
         }
+    }
+
+    @MainActor private var liveRoot: some View {
+        WatchRoot(motion: model.motion, relay: model.relay, workout: model.workout)
+            .onChange(of: scenePhase) { _, phase in model.sceneChanged(phase) }
     }
 }
 

@@ -28,7 +28,7 @@
 (def audio-defaults {:input "" :sample-rate "48000" :channels "1" :input-channel ""
                      :block-frames "480" :buffer-blocks "8" :big-endian? false :analyzer-options {}})
 
-(def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil
+(def defaults {:visible? false :generation 0 :pending #{} :errors {} :sync nil :audio nil :section-reference nil
                :ports [] :inputs [] :sync-form sync-defaults :audio-form audio-defaults
                :sync-dirty? false :audio-dirty? false :notes [] :parameters []})
 
@@ -166,7 +166,7 @@
      :studio/connections-interest true}))
 (rf/reg-event-fx :connections/close
   (fn [{:keys [db]} _]
-    {:db (update db :connections #(-> (merge defaults %) (assoc :visible? false :pending #{} :sync nil :audio nil)
+    {:db (update db :connections #(-> (merge defaults %) (assoc :visible? false :pending #{} :sync nil :audio nil :section-reference nil)
                                       (update :generation inc)))
      :studio/connections-interest false}))
 (rf/reg-event-db :connections/runtime-change
@@ -186,7 +186,7 @@
 (rf/reg-event-fx :connections/pushed
   (fn [{:keys [db]} _]
     (let [s (state db)
-          {:keys [sync audio]} (get-in db [:show :connection-status])
+          {:keys [sync audio section-reference]} (get-in db [:show :connection-status])
           config (:config sync)
           initialize-sync? (and config (not (:sync-dirty? s))
                                 (or (not (:sync-form-loaded? s)) (not= config (get-in s [:sync :config]))))
@@ -195,7 +195,7 @@
           enumerate? (and sync (not (:devices-requested? s)))]
       (when (:visible? s)
         (cond-> {:db (update db :connections
-                       #(cond-> (assoc % :sync sync :audio audio)
+                       #(cond-> (assoc % :sync sync :audio audio :section-reference section-reference)
                           initialize-sync?
                           (merge {:sync-form-loaded? true
                                   :sync-form (reduce (fn [out k] (update out k (partial merge (get sync-defaults k))))
@@ -245,6 +245,9 @@
                         :arrange ["/api/sync/arrange" {:request-id (str (random-uuid)) :song-beat (js/Number value)}]
                         :source ["/api/sync/source" {:source-id value}]
                         :handoff ["/api/sync/handoff" {:mode value}]
+                        :reference-reconnect ["/api/section-reference/reconnect"
+                                              {:runtime-id (get-in db [:show :runtime-id])
+                                               :expected-epoch (get-in db [:show :epoch])}]
                         :audio-stop ["/api/audio/stop" {}])]
       {:db (-> db (update-in [:connections :pending] (fnil conj #{}) operation)
                 (cond-> (= operation :source) (assoc-in [:connections :sync-form :selected-source] value))
@@ -474,6 +477,30 @@
                                   :on-change #(edit! path (.. % -target -checked))}] title])
 
 (defn- status-chip [active? title] [:span.connection-chip {:class (when active? "active")} [:i] title])
+
+(defn- section-reference-panel [s]
+  (let [{:keys [status reason configured? override?]} (:section-reference s)
+        pending? (contains? (:pending s) :reference-reconnect)
+        title (get {"unavailable" "Unavailable" "acquiring" "Acquiring"
+                    "aligned" "Aligned" "ambiguous" "Ambiguous" "stale" "Stale"}
+                   status "Loading")
+        message (case reason
+                  "not-configured" "No local mpv reference is configured."
+                  "not-attached" "Connect to the configured local mpv player."
+                  "show-changed" "Reconnect for this show session."
+                  "session-replaced" "The reference session changed."
+                  "expired" "The last matching observation expired."
+                  "error" "The configured mpv connection is unavailable."
+                  (some-> reason name (str/replace "-" " ")))]
+    [:section.panel {:aria-label "Track reference"}
+     [:div.panel-top [:span.section-label "TRACK REFERENCE"] [status-chip (= "aligned" status) title]]
+     [:div.form-body
+      (when message [:p.small.muted message])
+      (when override? [:p.small.muted "Patterns suspended"])
+      [:div.button-row
+       [:button#reference-reconnect.button {:type "button" :disabled (or (not configured?) pending?)
+                                            :on-click #(rf/dispatch [:connections/action :reference-reconnect])}
+        (if pending? "Reconnecting…" "Reconnect mpv")]]]]))
 
 (defn- clock-panel [s transport]
   (let [status (:sync s) clock-projection (:clock status)
@@ -724,7 +751,8 @@
                                           :on-click #(rf/dispatch [:connections/configure true])} "Connect enabled adapters"]
        [:button#sync-stop.button {:type "button" :disabled (or (not active?) pending?) :on-click #(rf/dispatch [:connections/action :stop])} "Disconnect"]]]
      [:div.connections-layout [midi-panel s disabled?] [beat-link-panel s disabled?] [link-panel s disabled?]
-      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
+      [live-panel s (get-in db [:show :cues]) disabled?] [audio-panel s] [section-reference-panel s]
+      [capacity/panel (contains? (:pending s) :lighting-capacity)] [fog-control/panel (contains? (:pending s) :fog-control)] [output-panel db s] [pause-panel (contains? (:pending s) :pause)]]
      [compute-client/panel]
      [sensors/panel db]
      [patchbay/panel db]]))
