@@ -16,7 +16,7 @@ python3 - "$framework" "$platform" <<'PY'
 import plistlib, sys
 from pathlib import Path
 directory, platform = sys.argv[1:]
-info = {"CFBundleExecutable": "TolglowRuntime", "CFBundleIdentifier": "org.tolglow.runtime",
+info = {"CFBundleExecutable": "TolglowRuntime", "CFBundleIdentifier": "se.tolgraven.tolglow.runtime",
         "CFBundlePackageType": "FMWK", "CFBundleName": "TolglowRuntime",
         "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1", "MinimumOSVersion": "18.0",
         "CFBundleSupportedPlatforms": [platform]}

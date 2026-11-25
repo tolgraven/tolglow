@@ -12,7 +12,7 @@ def main():
     prefix = parser.parse_args().app_id_prefix
     if not re.fullmatch(r"[A-Z0-9]{10}", prefix):
         parser.error("expected the 10-character app identifier prefix from your signing team")
-    phone = f"{prefix}.org.tolglow.ios"
+    phone = f"{prefix}.se.tolgraven.tolglow.ios"
     print(json.dumps({
         "appclips": {"apps": [f"{phone}.Clip"]},
         "applinks": {"details": [{

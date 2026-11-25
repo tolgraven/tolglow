@@ -28,7 +28,7 @@ xcodebuild -project native/Tolglow.xcodeproj -scheme TolglowPhone -destination "
 mkdir -p build/ipad-media/attachments
 xcrun xcresulttool export attachments --path run-ui.xcresult --output-path build/ipad-media/attachments
 if ((status != 0)); then
-  data="$(xcrun simctl get_app_container "$udid" org.tolglow.ios data)"
+  data="$(xcrun simctl get_app_container "$udid" se.tolgraven.tolglow.ios data)"
   diagnostic="$data/Library/Application Support/Local Studio/last-start-error.log"
   if [[ -f "$diagnostic" ]]; then
     cp "$diagnostic" build/ipad-media/last-start-error.log
