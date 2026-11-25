@@ -69,6 +69,32 @@ submit the same operation. Watch **In the mix** update in Studio.
                             :epoch epoch :runtime-id runtime-id})))
 ```
 
+## Solo or mute running effects
+
+In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
+**Muted** and **Excluded by Solo** show why the owner has gated a card's
+contribution. The action buttons show which controls are selected. A mixed
+button means some of the selected category or layer members have that flag.
+
+Use **Add once** before an action or hold Shift while clicking to use additive mode. The
+**Defaults** control sets the normal mode for Solo and Mute independently.
+Choose a category or **All running** to act on that group. Expand **Layers**
+when a native composition is playing to act on a particular layer.
+
+Read the committed selection in the REPL, then submit a change and watch the
+open cards update. The same selector supports categories and native layer IDs.
+
+```clojure
+(let [{:keys [effect-selection]} (show/snapshot runtime)]
+  (when-let [instance-id (first (:included-instance-ids effect-selection))]
+    @(show/submit! runtime {:op :effect-selection/toggle :control :mute
+                            :selector {:instance-ids [instance-id]}
+                            :additive? true})))
+```
+
+See [Effect Solo and Mute](effect-selection.md) for the shared policy and
+examples for configuring the default modes.
+
 ## Suspend automatic section patterns
 
 When the show starts with an enabled section pattern policy, open **Perform**
