@@ -56,7 +56,35 @@
     (is (= [[:params :gradient 0 :position]]
            (mapv :path (registry/validate-params {:gradient schema}
                                                  {:gradient [(assoc red :position -0.1) blue]})))
-        "override values report the same stop path as authored defaults")))
+        "override values report the same stop path as authored defaults")
+    (is (= [[:params :wash :default 0]] (paths [[1]])))
+    (is (= [[:params :wash :default 1]] (paths [red [1] blue]))
+        "a non-map stop names its index")
+    (is (= [[:params :wash :default 1]] (paths [red (assoc red :alpha 1)]))
+        "a malformed stop does not also produce an ordering error")
+    (is (= [[:params :gradient 1 :position]]
+           (mapv :path (registry/validate-params {:gradient schema}
+                                                 {:gradient [red (assoc blue :position ##NaN)]}))))
+    (is (= [[:params :wash :default 1 :position] [:params :wash]]
+           (paths [red (assoc blue :position ##NaN)]))
+        "a NaN default names its stop and is also nonportable schema data")
+    (is (= [[:params :wash :default 1 :position]] (paths [red (assoc blue :position 4/3)])))
+    (is (empty? (paths [red (assoc blue :position 1/2)])) "ratio positions within [0,1] are valid")))
+
+(deftest gradient-schemas-reject-numeric-metadata-and-randomization
+  (let [schema {:type :gradient :default [{:position 0 :color [1 0 0]} {:position 1 :color [0 0 1]}]}
+        paths #(mapv :path (registry/validate-parameter % [:params :wash]))]
+    (is (empty? (paths schema)))
+    (is (= [[:params :wash :size]] (paths (assoc schema :size 2))))
+    (is (= [[:params :wash :bounds]] (paths (assoc schema :bounds [0 1]))))
+    (is (= [[:params :wash :recommended]] (paths (assoc schema :recommended [0 1]))))
+    (is (= [[:params :wash :random :enabled?]] (paths (assoc schema :random {:enabled? true}))))
+    (is (empty? (paths (assoc schema :random {:enabled? false}))))
+    (is (= [[:params :level :size]]
+           (mapv :path (registry/validate-parameter {:type :number :default 0 :size 1} [:params :level])))
+        "only vectors declare a size")
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (registry/publish {} :effects (assoc-in effect [:params :wash] (assoc schema :size 2)))))))
 
 (deftest malformed-schemas-have-diagnostics
   (doseq [schema [nil [] {:type :enum :values 5 :default :a}

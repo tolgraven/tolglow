@@ -71,6 +71,28 @@
       db)))
 
 (rf/reg-sub ::waveforms (fn [db _] (get-in db [:server-projection :view :parameter-waveforms])))
+(defn priority-destination
+  "The show's layer priority destination with its parameter as a keyword. The
+  projection carries keyword values as text, as the request must send a keyword."
+  [show]
+  (when-let [destination (:layer-priority-destination show)]
+    (update destination :param #(if (keyword? %) % (keyword (events/wire-id %))))))
+
+(rf/reg-sub ::priority-destination
+  (fn [db _] (or (priority-destination (:show db))
+                 (priority-destination (get-in db [:server-projection :view])))))
+
+(defn priority-param?
+  "Is param the show's reserved layer priority destination?"
+  [destination param]
+  (and (some? param) (= (:param destination) param)))
+
+(defn destination-schema
+  "Typed schema for a waveform destination: an effect parameter or layer priority."
+  [instance destination param]
+  (if (priority-param? destination param)
+    (:schema destination)
+    (get-in instance [:definition :params param])))
 (rf/reg-sub ::raw-instance
   (fn [db [_ id]]
     (some #(when (= id (:id %)) %) (get-in db [:server-projection :view :instances]))))
@@ -267,13 +289,22 @@
      :from (get binding :from lo) :to (get binding :to hi)
      :inputs (or (:inputs binding) {})}))
 
+(defn- priority-schema? [schema] (= :priority (keyword (:category schema))))
+
 (defn binding-config [form]
   (let [period (motion/number-value (:period form) "Period")]
     (when-not (pos? period) (throw (js/Error. "Period must be positive.")))
-    {:type :lfo :waveform (:waveform form) :period {(:unit form) period}
-     :phase-reference (:phase-reference form) :phase (motion/number-value (:phase form) "Phase")
-     :from (:from form) :to (:to form)
-     :inputs (:inputs form)}))
+    (cond-> {:type :lfo :waveform (:waveform form) :period {(:unit form) period}
+             :phase-reference (:phase-reference form) :phase (motion/number-value (:phase form) "Phase")
+             :from (:from form) :to (:to form)
+             :inputs (:inputs form)}
+      (contains? form :band)
+      (assoc :hysteresis
+             (let [band (motion/number-value (:band form) "Hysteresis band")
+                   dwell (if (str/blank? (str (:dwell form))) 0 (motion/number-value (:dwell form) "Minimum dwell"))]
+               (when (neg? band) (throw (js/Error. "Hysteresis band cannot be negative.")))
+               (when (neg? dwell) (throw (js/Error. "Minimum dwell cannot be negative.")))
+               (cond-> {:band band} (pos? dwell) (assoc :dwell {(keyword (:dwell-unit form :beats)) dwell})))))))
 
 (defn- number-field [label value change! schema]
   (let [[low high] (numeric-bounds schema (:bounds schema))]
@@ -301,26 +332,40 @@
     :else [number-field label value change! schema]))
 
 (defn editor-draft [schema base binding catalog]
-  (let [form (draft schema base binding)]
+  (let [form (cond-> (draft schema base binding)
+               ;; Layer priority quantizes with hysteresis; a quarter tier is the show default.
+               (priority-schema? schema)
+               (assoc :band (str (get-in binding [:hysteresis :band] 0.25))
+                      ;; Keep the authored musical unit; a bar dwell stays in bars.
+                      :dwell (str (or (second (first (get-in binding [:hysteresis :dwell]))) 0))
+                      :dwell-unit (keyword (or (ffirst (get-in binding [:hysteresis :dwell])) :beats)))
+               ;; A whole-range sweep of every tier is rarely meant; start one tier either side.
+               (and (priority-schema? schema) (nil? binding)) (assoc :from -1 :to 1))]
     (if (or binding (some #(= :sine (:id %)) catalog)) form
       (assoc form :waveform (:id (first catalog))))))
 
-(defn destination-options [instance param]
-  (->> (get-in instance [:definition :params])
-       (remove (fn [[target _]]
-                 (or (= param target) (source-of (reading instance target) :lfo))))
-       (sort-by (comp str first))))
+(defn destination-options
+  "Destinations on the same activation that can take the waveform: unbound effect
+  parameters, then the show's layer priority destination when it is free."
+  [instance param & [priority]]
+  (let [free? (fn [target] (not (or (= param target) (source-of (reading instance target) :lfo))))]
+    (cond-> (->> (get-in instance [:definition :params])
+                 (filter (comp free? first))
+                 (sort-by (comp str first))
+                 vec)
+      (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
 (defn- lfo-editor [id param schema base source catalog instance]
   (let [lfo (source-of source :lfo)]
     (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
                  move (r/atom nil) error (r/atom nil)]
-      (let [{:keys [waveform period unit phase-reference phase inputs]} @form
+      (let [{:keys [waveform period unit phase-reference phase inputs band dwell dwell-unit]} @form
             in-flight @(rf/subscribe [::request id param])
             owner @(rf/subscribe [::context])
-            destinations (when lfo (destination-options instance param))
+            priority @(rf/subscribe [::priority-destination])
+            destinations (when lfo (destination-options instance param priority))
             destination (:param @move)
-            target-schema (get-in instance [:definition :params destination])
+            target-schema (destination-schema instance priority destination)
             {:keys [from to]} (or @move @form)
             wave (if (some? waveform)
                    (some #(when (= waveform (:id %)) %) catalog)
@@ -355,13 +400,23 @@
                         :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
                [:option {:value "launch"} "Cue launch"]
                [:option {:value "transport"} "Show transport"]]]
-             [number-field "Phase (cycles)" phase #(update! :phase %) {}]])
+             [number-field "Phase (cycles)" phase #(update! :phase %) {}]
+             (when (priority-schema? schema)
+               [:<>
+                [number-field "Hysteresis band (tiers)" band #(update! :band %) {:bounds [0 8]}]
+                [number-field "Minimum dwell" dwell #(update! :dwell %) {:bounds [0 nil]}]
+                [:label.source-field [:span "Dwell unit"]
+                 [:select {:aria-label "Minimum dwell unit" :value (name (or dwell-unit :beats))
+                           :on-change #(update! :dwell-unit (keyword (.. % -target -value)))}
+                  (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]])])
           (when (or destination (seq destinations))
             [:label.source-field [:span "Destination"]
              [:select {:aria-label "Destination" :value (pr-str (or destination param)) :disabled (:pending? in-flight)
                        :on-change #(let [value (.. % -target -value)
                                          [target spec] (some (fn [[key :as entry]] (when (= value (pr-str key)) entry)) destinations)
-                                         [lo hi] (bounds spec (get-in instance [:params target] (:default spec)))]
+                                         [lo hi] (if (priority-param? priority target)
+                                                   [-1 1]
+                                                   (bounds spec (get-in instance [:params target] (:default spec))))]
                                      (reset! move (when target {:param target :from lo :to hi
                                                                 :source {:owner owner :from-param param
                                                                          :expected-source (:identity lfo)}})))}
@@ -406,9 +461,13 @@
         params (editor-parameters param components)
         owner (first params)
         raw @(rf/subscribe [::raw-instance id])
-        typed (get-in raw [:definition :params param] schema)
+        priority @(rf/subscribe [::priority-destination])
+        priority? (priority-param? priority param)
+        typed (if priority? (:schema priority) (get-in raw [:definition :params param] schema))
         source (or (reading raw param) (reading instance param)) catalog @(rf/subscribe [::waveforms])
-        base (get-in raw [:params param] (get-in instance [:params param] (:default schema)))]
+        base (if priority?
+               (:base-value (or (reading raw param) (reading instance param)) 0)
+               (get-in raw [:params param] (get-in instance [:params param] (:default schema))))]
     [:section.live-source-editor {:id (editor-id id owner) :aria-labelledby (heading-id id owner)
                                  :on-key-down #(when (= "Escape" (.-key %)) (.stopPropagation %) (close! id params))}
      [:header [:h4 {:id (heading-id id owner) :tab-index -1} (str title " source")]
@@ -427,4 +486,4 @@
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
      ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
-     [motion/parameter-widget id param schema base]]))
+     (when-not priority? [motion/parameter-widget id param schema base])]))

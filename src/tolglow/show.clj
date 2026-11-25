@@ -74,6 +74,7 @@
             [afterglow.output.scheduler :as output-scheduler]
             [tolglow.output.pause-look :as pause-look]
             [tolglow.effects.faults :as effect-faults]
+            [tolglow.effects.state-migration :as state-migration]
             [tolglow.show.preview :as preview]
             [tolglow.show.push-scene :as push-scene]
             [tolglow.show.recovery :as recovery]
@@ -195,6 +196,10 @@
             :cues (vec (sort-by (comp str :id) (vals (get-in model [:registry :cues]))))
             :groups (categories/group-view model)
             :active-instance-order (mapv :id (instance-order/ordered model))
+            :effective-instance-order (mapv :id (instance-order/ordered-with-priorities
+                                                 model (:priority-overrides parameter-samples)))
+            :layer-priority-destination {:param parameter-sources/priority-param
+                                         :schema parameter-sources/priority-schema}
             :instances (mapv #(-> % (dissoc :state :parameter-bindings)
                                   (assoc :definition (get definitions [(:definition %) (:targets %)])
                                          :parameter-sources (parameter-sources/project % (get sources (:id %)) resolve-inputs responses?)
@@ -206,6 +211,7 @@
             :effect-selection (effect-selection/projection model)
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
+            :schedule (subscribers/schedule-view model)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -454,6 +460,7 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      :state-migrations (atom {})
       :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
       :patch (atom {:fixtures fixtures :compiled patch :retirement (retirement/plan nil nil patch)
@@ -517,8 +524,25 @@
   [runtime]
   (group-channels/projection (:model @(:state runtime))))
 
-(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
-  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+(def ^:private manual-priority-ops
+  "Operator commands that set a running layer's priority or position."
+  #{:instance/set-priority :instance/move-after})
+
+(defn- hold-manual-priority
+  "A manual priority or reorder command takes precedence over a waveform bound
+  to that launch's layer priority, as a parameter edit does over its source.
+  The hold records why, and the operator resumes the waveform explicitly."
+  [model result {:keys [op instance-id]}]
+  (if (and (manual-priority-ops op)
+           (get-in model [:instances instance-id :parameter-bindings parameter-sources/priority-param]))
+    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+               {:instance-id instance-id :params [parameter-sources/priority-param] :until-beat nil
+                :reason :manual-priority})
+    result))
+
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id] :as payload} authority]
+  (let [result (hold-manual-priority model result payload)
+        owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
                 [(:operator-id authority) control-id gesture-id])]
     (cond
       (#{:gesture/end :gesture/cancel} op)
@@ -541,6 +565,36 @@
               result (:events result))
 
       :else result)))
+
+(def ^:private gesture-ops #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel})
+
+(defn- override-ramps
+  "A committed write outside the scheduler cancels running ramps on the same
+  destination. Gestures and human surfaces record :human-override; other
+  sources (agents, reactive actions) record :superseded. Writers that bypass
+  this path are caught by subscribers/advance-ramps from the committed value."
+  [result {:keys [op source instance-id param command-id action]} authority]
+  (if-not (seq (get-in result [:model :event-subscribers :ramps]))
+    result
+    (let [;; A group action reports every system change; only its opacity actions write opacity.
+          system-op (if (= :group/apply op) (:op action) op)
+          destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
+                                            (case type
+                                              :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
+                                              :master/changed {:target :master}
+                                              :variable/changed {:target :variable :variable (:variable event)}
+                                              :instance/system-changed
+                                              (when (#{:instance/opacity-set :instance/opacity-toggle} system-op)
+                                                {:target :opacity :instance-id (:instance-id event)})
+                                              nil))
+                                          (:events result)))
+                         (= :gesture/begin op) (conj {:target :param :instance-id instance-id :param param}))
+          human? (or (some? authority) (gesture-ops op) (subscribers/human-source? source))]
+      (if (seq destinations)
+        (update result :model subscribers/override destinations (if human? :human-override :superseded)
+                (cond-> {:op op :command-id command-id}
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+        result))))
 
 (defn- committed-values
   "ID -> row lookup into the last committed frame, rich or compact. Rows are
@@ -576,11 +630,27 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
-         result (cond
-                  variation? (variations/apply-command model envelope)
-                  (group-channels/operation? operation)
-                  (control/apply-domain-command model envelope group-channels/apply-operation)
-                  :else (spatial/apply-command model envelope authority))
+         admit (fn [model]
+                 (cond
+                   variation? (variations/apply-command model envelope)
+                   (group-channels/operation? operation)
+                   (control/apply-domain-command model envelope group-channels/apply-operation)
+                   (subscribers/operations operation)
+                   (control/apply-domain-command model envelope subscribers/apply-operation)
+                   :else (spatial/apply-command model envelope authority)))
+         ;; A gesture takes over a ramped parameter from the ramp's current frame
+         ;; value. Its begin writes nothing, so without this the parameter would
+         ;; return to the ramp's start value until the first sample.
+         held (if (and (= :gesture/begin operation) (nil? previous)
+                       (seq (get-in model [:event-subscribers :ramps])))
+                (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
+                                  time-ms)
+                model)
+         result (let [result (admit held)]
+                  ;; A refused gesture leaves the ramp and its destination untouched.
+                  (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
+                    result
+                    (admit model)))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
@@ -595,7 +665,9 @@
                                             {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
                                             (:events result))))))
 
-       (and accepted? (not variation?)) (hold-manual-params model result payload authority)
+       (and accepted? (not variation?))
+       (-> (hold-manual-params model result payload authority)
+           (override-ramps envelope authority))
        :else result))))
 
 (defn- apply-sensor-result [result time-ms]
@@ -697,6 +769,9 @@
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
+    (subscribers/schedulable? payload)
+    (command model (subscribers/as-post payload) time-ms authority)
+
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
@@ -1737,22 +1812,29 @@
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
-                                     (routing/advance time-ms command))
+                                     (routing/advance time-ms command)
+                                     ;; Macro, automation and routing writes above can override a ramp this frame.
+                                     (subscribers/advance-ramps time-ms))
+                           ;; Ramp values are a frame overlay; committed values move only when a ramp commits.
+                           ramp-frame (subscribers/frame-overlays model time-ms)
+                           frame-master (get ramp-frame :master (:master model))
                            parameter-samples (parameter-sources/sample model {:time-ms time-ms :transport (:transport model)}
-                                                                      (get-in before [:parameter-samples :plans]))
+                                                                      (:parameter-samples before))
                            control-view (if (seq (:overrides parameter-samples))
                                           (update (:modulation-view before) :overrides
                                                   #(merge-with merge % (:overrides parameter-samples)))
                                           (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command
+                                   ;; Spatial cues read opacity and parameters from the model: give them the frame overlay.
+                                   (spatial/advance (subscribers/with-frame-overlays model ramp-frame)
+                                                    (assoc before :modulation-view control-view) time-ms (reactions runtime) command
                                                     (:spatial-sampling runtime)))
-                           model (or (:model space) model)
+                           model (if (:model space) (subscribers/without-frame-overlays (:model space) model ramp-frame) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
-                           hard-off? (or (pause-look/blackout? model) (zero? (:master model)))
+                           hard-off? (or (pause-look/blackout? model) (zero? frame-master))
                            suspended? (or bypass? hard-off?)
                            meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
                            resolve-frame (compute/frame-renderer (:compute runtime) frame-start-ns)
@@ -1773,7 +1855,8 @@
                            modulation-result (modulation/advance (:modulation model) model
                                                                   {:time-ms time-ms :transport (:transport model)})
                            model (assoc model :modulation (:state modulation-result))
-                           input-overrides (merge-with merge (:overrides modulation-result) (:overrides parameter-samples)
+                           ;; Active modulation and waveform bindings take precedence over a ramp overlay.
+                           input-overrides (merge-with merge (:params ramp-frame) (:overrides modulation-result) (:overrides parameter-samples)
                                                        (get-in space [:fields :overrides]))
                            modulation-middleware (modulation/middleware input-overrides)
                            _ (prepare-compiler! runtime (get-in model [:rig :fixtures]))
@@ -1806,6 +1889,12 @@
                                            group-levels)
                            frame-input (cond-> frame-input
                                          variables (assoc :resolved-variables variable-inputs)
+                                         (seq (:variables ramp-frame))
+                                         (update :resolved-variables #(merge (or % (:variables model)) (:variables ramp-frame)))
+                                         ;; Modulated layer priority is resolved once here and
+                                         ;; orders only this frame; the model keeps its own tiers.
+                                         (seq (:priority-overrides parameter-samples))
+                                         (assoc ::engine/priority-overrides (:priority-overrides parameter-samples))
                                          response-frame (assoc ::waveforms/response-frame response-frame)
                                          engine-levels (assoc ::engine/opacity-factors engine-levels))
                            response (response-middleware! runtime (:responses model []))
@@ -1818,9 +1907,13 @@
                                           (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
                                             ;; Certified literals have no parameter schemas, and
                                             ;; these transforms touch only declared parameters.
-                                            (keyframes/with-inputs step inputs {:preserve-time-invariance? true})))
-                           result (engine/advance model frame-input compile-step
-                                                  (executor/mapper (:executor runtime)))
+                                            ;; :migrate reloads call this pure transform once, at takeover.
+                                            ;; Its compiled form is cached per declaration and version.
+                                            (state-migration/attach (:state-migrations runtime) definition
+                                                                    (keyframes/with-inputs step inputs {:preserve-time-invariance? true}))))
+                           result (update (engine/advance (subscribers/with-frame-overlays model ramp-frame) frame-input compile-step
+                                                          (executor/mapper (:executor runtime)))
+                                          :model subscribers/without-frame-overlays model ramp-frame)
                            manual-aim (surface-aim/contribution model patch)
                            pause-layer (pause-layer! runtime model)
                            meter-opts (get-in model [:settings :lighting-capacity])
@@ -1834,11 +1927,11 @@
                            observation (if (get-in model [:settings :fog-control :enabled?])
                                          (fog-control/with-forecast (:plan @(:venue-fog runtime)) observation) observation)
                            previous-control (get-in before [:output :fog-control])
-                           fog-bypass? (or bypass? (zero? (:master model)) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
+                           fog-bypass? (or bypass? (zero? frame-master) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
                            limit (when plan
                                    (capacity/control (merge capacity/defaults meter-opts)
                                      previous
-                                     (:master model) time-ms (when (= (:epoch model) (:epoch audio)) audio)
+                                     frame-master time-ms (when (= (:epoch model) (:epoch audio)) audio)
                                      bypass?))
                            fog (when (and plan (or (:fog? meter-opts) (:fog previous)))
                                  (capacity/fog-policy meter-opts plan (:fog previous) time-ms limit fog-bypass?
@@ -1857,7 +1950,7 @@
                                           (:music setpoint) (conj (:music setpoint))
                                           (:block photo-session) (conj (:block photo-session))
                                           pause-layer (conj pause-layer))
-                           render-options (cond-> {:master (get limit :effective-master (:master model))
+                           render-options (cond-> {:master (get limit :effective-master frame-master)
                                                    :blackout? (pause-look/blackout? model)
                                                    :include-values? (not (:batch? runtime)) :compact-values? (:batch? runtime)
                                                    :edge-tracking (when (seq (get-in model [:rig :edge-tracking]))
@@ -1877,13 +1970,13 @@
                                       (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
                                         (lighting/contributions standby (:contributions result) extra-blocks) time-ms
                                         calibrating? hard-off?
-                                        (get limit :effective-master (:master model))))
+                                        (get limit :effective-master frame-master)))
                            delivered (or (:frame finished) (:output resolved))
                            frame (cond-> delivered
                                    setpoint (assoc :fog-control (:status setpoint) :fog-demands (:leases setpoint))
                                    plan (assoc :lighting-capacity
                                                (merge limit (capacity/measure plan (:universes delivered))
-                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? (:master model))) []
+                                                      (cond-> {:writers (if (or (pause-look/blackout? model) (zero? frame-master)) []
                                                                           (capacity/writers plan (into (:contributions result) extra-blocks)))}
                                                         fog (assoc :fog (:state fog))))))]
                        (let [observation (when (:plan prepared)
@@ -2105,6 +2198,30 @@
   [runtime command-id]
   (cue-timing/receipt (:model @(:state runtime)) command-id))
 
+(defn schedule
+  "Read the beat-clock schedule Studio shows: upcoming events (scheduled and
+  subscriber steps), active ramps and recent outcomes. Pass :compact for the
+  low-token agent form. See docs/scheduler.md."
+  ([runtime] (subscribers/schedule-view (:model @(:state runtime))))
+  ([runtime form]
+   (case form
+     :compact (subscribers/compact-view (:model @(:state runtime)))
+     :full (schedule runtime))))
+
+(defn post-events!
+  "Validate and enqueue a batch of beat-clock events atomically. Returns the
+  receipt promise from submit!, whose :event-ids lists the scheduled events."
+  ([runtime events] (post-events! runtime events {}))
+  ([runtime events envelope]
+   (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} envelope
+                           {:op :schedule/post :events (vec events)}))))
+
+(defn cancel-events!
+  "Cancel scheduled events and running ramps by :event-ids, :posted-by (a
+  source submap), :label or :destination. A cancelled ramp holds its current value."
+  [runtime selection]
+  (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} selection {:op :schedule/cancel})))
+
 (defn register-event-subscriber!
   "Register show data from the REPL. A raw :middleware function is bound to its
   callback identity in this runtime. Use a Var or source for portable code."
@@ -2230,6 +2347,11 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
+          "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
+                                              (when (:mine? arguments) {:posted-by (:source envelope)})
+                                              {:op :schedule/cancel})]
+          "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
@@ -2238,6 +2360,7 @@
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
       :inspect (agent-inspection runtime state #(project-snapshot runtime state))
+      :inspect-schedule (agent-inspection runtime state #(subscribers/compact-view model))
       :inspect-lighting (agent-inspection runtime state
                           (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))

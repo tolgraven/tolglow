@@ -28,11 +28,18 @@ Registration returns a command receipt. All three optional match fields intersec
 | `:instance/end` | Active instances, with their normal release behavior |
 | `:instance/kill` | Active instances removed immediately |
 | `:instance/opacity` | Active instances, with `:value` from 0 to 1 |
+| `:param/set`, `:param/ramp` | A parameter on selected instances, or `:target :opacity`, `:master` or `:variable` |
+| `:master/set`, `:blackout/set`, `:variable/set` | The show master, blackout or a show variable |
+| `:macro/run`, `:macro/stop` | A saved macro or sequence by `:macro-id` |
 | `:callback` | The specified middleware function |
+
+Scheduled agent and REPL events use the same actions and queue. A
+`:param/ramp` moves a value to `:to` over a musical `:over` duration with an
+easing `:curve`. See [beat-clock scheduling and ramps](scheduler.md).
 
 Use `:select {:pick :random}`, `:first` or `:all`. The default is seeded random selection. Candidates have a stable order independent of map iteration. Optional `:page-id`, `:ids` and `:categories` constrain the selection. Empty ID/category lists select nothing. Instance selectors accept instance, cue or effect IDs. A page limits direct effect launches to effects referenced by eligible cues on that page. A cue or effect marked with `:role :show-control`, `:kind :code-cue`, a corresponding tag, `:code-cue?` or `:show-control?` is excluded. The catalogue exposes eligible IDs for each picker. A one-shot defaults to one beat and can supply its own duration or parameter overrides.
 
-Each step's optional `:delay` is relative to the preceding scheduled step and accepts beats, bars or phrases. Pausing transport freezes musical waits, and clock rebasing preserves remaining time on a seek. A registration edit or removal cancels its pending sequences. Restart clears pending runs. A full show save retains queued musical steps, selection RNG and paused progress. Restoring a run remaps references to active instances. Sequences waiting on an external callback at the instant of save are retired to avoid replaying work of uncertain completion.
+Each step's optional `:delay` is relative to the preceding scheduled step and accepts beats, bars or phrases. A step can use one of three alternatives. `:in` counts from the triggering event. `:at {:bar n}` names an absolute, zero-based transport position. `:grid {:bars 1}` waits for the next boundary. Pausing transport freezes musical waits, and clock rebasing preserves remaining time on a seek. After a seek past a waiting `:at` or `:grid` step, the step is recorded as missed and its sequence stops there, so nothing fires twice. Pending steps appear in the snapshot's `:schedule :upcoming` list. A registration edit or removal cancels its pending sequences. Restart clears pending runs. A full show save retains queued musical steps, selection RNG and paused progress. Restoring a run remaps references to active instances. Sequences waiting on an external callback at the instant of save are retired to avoid replaying work of uncertain completion.
 
 ## Middleware
 

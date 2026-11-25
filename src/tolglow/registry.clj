@@ -12,7 +12,8 @@
             [afterglow.control.categories :as categories]
             [afterglow.control.params :as params]
             [afterglow.control.system :as system]
-            [afterglow.control.targets :as selection]))
+            [afterglow.control.targets :as selection]
+            [tolglow.effects.state-migration :as state-migration]))
 
 (defn valid-public-query-ids?
   "Show-configured subscriptions exposed to Studio are an explicit collection of names."
@@ -79,13 +80,14 @@
     (not (vector? value)) [(error path "Gradient must be a vector of stops")]
     (empty? value) [(error path "Gradient needs at least one stop")]
     :else
-    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))]
+    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))
+          shape-ok? #(and (map? %) (= #{:position :color} (set (keys %))))]
       (vec
        (concat
         (mapcat (fn [index stop]
                   (let [stop-path (conj path index)]
                     (cond
-                      (not (and (map? stop) (= #{:position :color} (set (keys stop)))))
+                      (not (shape-ok? stop))
                       [(error stop-path "Gradient stop must be a map with only :position and :color")]
                       :else
                       (concat
@@ -95,8 +97,8 @@
                          [(error (conj stop-path :color) "Gradient stop color must be three linear RGB components within [0,1]")])))))
                 (range) value)
         (keep (fn [[index [previous stop]]]
-                (let [a (when (map? previous) (:position previous))
-                      b (when (map? stop) (:position stop))]
+                (let [a (when (shape-ok? previous) (:position previous))
+                      b (when (shape-ok? stop) (:position stop))]
                   (when (and (position-ok? a) (position-ok? b) (<= b a))
                     (error (conj path index :position)
                            "Gradient stop positions must strictly increase; duplicate positions are not allowed"))))
@@ -131,6 +133,8 @@
            [(error (conj path :values) "Enum needs distinct portable values")])
          (when (and (= type :vector) (not (and (integer? size) (pos? size))))
            [(error (conj path :size) "Vector needs a positive integer size")])
+         (when (and (not= type :vector) (some? (:size schema)))
+           [(error (conj path :size) "Only vector parameters declare a size")])
          (when (and (contains? schema :default)
                     (not (valid-value? schema (:default schema))))
            (value-errors schema (:default schema) (conj path :default)
@@ -145,6 +149,8 @@
                     (not (and (finite-number? (:max-change random))
                               (not (neg? (:max-change random))))))
            [(error (conj path :random :max-change) "Maximum change must be finite and nonnegative")])
+         (when (and (= type :gradient) (map? random) (true? (:enabled? random)))
+           [(error (conj path :random :enabled?) "Gradient parameters do not support randomization")])
          (when-not (data? schema)
            [(error path "Parameter schema must contain portable data only")])))))))
 
@@ -337,7 +343,9 @@
                         (= [] (:outputs definition))))
              [] (validate-outputs (:outputs definition)))
            (when (and (contains? definition :modulation) (not (map? (:modulation definition))))
-             [(error [:modulation] "Modulation must be a portable configuration map")]))
+             [(error [:modulation] "Modulation must be a portable configuration map")])
+           (when (contains? definition :state-migration)
+             (state-migration/errors (:state-migration definition) version)))
           :cues
           (concat
            (when (and (contains? definition :selector) (not (selection/selector? (:selector definition))))
@@ -346,7 +354,9 @@
            (when-not (or (nil? params) (map? params)) [(error [:params] "Cue parameter values must be a map")])
            (when (and (contains? definition :saved-params) (not (map? (:saved-params definition))))
              [(error [:saved-params] "Saved cue parameter values must be a map")])
-           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")]))
+           (when (and (some? priority) (not (finite-number? priority))) [(error [:priority] "Priority must be finite")])
+           (when (contains? definition :reload-policy)
+             (state-migration/reload-policy-errors (:reload-policy definition))))
           :fixtures
           (let [channels (:channels definition)]
             (concat

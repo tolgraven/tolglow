@@ -657,3 +657,24 @@
         instance (first (vals (:instances result)))]
     (is (= (:ui/layout effect) (get-in instance [:definition :ui/layout])))
     (is (= (:ui/layout cue) (get-in result [:registry :cues :breathe :ui/layout])))))
+
+(deftest gradient-definitions-survive-a-show-roundtrip
+  (let [base (demo/model)
+        wash [{:position 0 :color [1 0 0]} {:position 1/2 :color [0 1 0]} {:position 1.0 :color [0 0 1]}]
+        effect (-> (get-in base [:registry :effects :breathe])
+                   (assoc :version 2)
+                   (assoc-in [:params :wash] {:type :gradient :default wash}))
+        published (:model (command base :effect {:op :registry/publish :kind :effects :definition effect}))
+        running (command published :launch {:op :cue/launch :cue-id :breathe
+                                            :launch {:params {:wash [(first wash)]}}})
+        result (files/thaw base (files/read-string (files/write-string (:model running))))
+        instance (first (vals (:instances result)))]
+    (is (= (:params effect) (get-in result [:registry :effects :breathe :params])))
+    (is (= wash (get-in result [:registry :effects :breathe :params :wash :default])))
+    (is (= [(first wash)] (get-in instance [:params :wash])))
+    (let [document (-> (files/freeze published)
+                       (assoc-in [:model :registry :effects :breathe :params :wash :default] [(last wash) (first wash)])
+                       (assoc-in [:model :registry :versions [:effects :breathe 2] :params :wash :default]
+                                 [(last wash) (first wash)]))]
+      (is (thrown? clojure.lang.ExceptionInfo (files/thaw base document))
+          "an out-of-order saved gradient is rejected on open"))))
