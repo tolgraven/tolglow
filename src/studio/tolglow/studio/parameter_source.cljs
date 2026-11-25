@@ -80,17 +80,22 @@
 (defn- request-key [db id param] [(context db) id param])
 (rf/reg-sub ::request (fn [db [_ id param]] (get-in db [:ui :source-requests (request-key db id param)])))
 
-(defn request [db path id param binding]
-  (let [[runtime epoch] (context db)
-        key (request-key db id param)]
-    (if (get-in db [:ui :source-requests key :pending?]) {}
-      {:db (assoc-in db [:ui :source-requests key] {:pending? true})
-       :studio/http {:path (str "/api/modulation/" path) :typed? true
-                     :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param}
-                             binding (assoc :binding binding))
-                     :on-success [::complete key] :on-failure [::failed key]}})))
+(defn request
+  ([db path id param binding] (request db path id param binding nil))
+  ([db path id param binding from-param]
+   (let [[runtime epoch] (context db)
+         key (request-key db id (or from-param param))]
+     (if (get-in db [:ui :source-requests key :pending?]) {}
+       {:db (assoc-in db [:ui :source-requests key] {:pending? true})
+        :studio/http {:path (str "/api/modulation/" path) :typed? true
+                      :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param}
+                              binding (assoc :binding binding)
+                              from-param (assoc :from-param from-param))
+                      :on-success [::complete key] :on-failure [::failed key]}}))))
 (rf/reg-event-fx ::bind (fn [{:keys [db]} [_ id param binding]] (request db "bind" id param binding)))
 (rf/reg-event-fx ::unbind (fn [{:keys [db]} [_ id param]] (request db "unbind" id param nil)))
+(rf/reg-event-fx ::move (fn [{:keys [db]} [_ id from-param param endpoints]]
+                         (request db "bind" id param endpoints from-param)))
 (rf/reg-event-db ::complete (fn [db [_ key]] (update-in db [:ui :source-requests] dissoc key)))
 (rf/reg-event-db ::failed
   (fn [db [_ [owner :as key] error]]
@@ -243,50 +248,80 @@
     (if (or binding (some #(= :sine (:id %)) catalog)) form
       (assoc form :waveform (:id (first catalog))))))
 
-(defn- lfo-editor [id param schema base source catalog]
+(defn destination-options [instance param]
+  (->> (get-in instance [:definition :params])
+       (remove (fn [[target _]]
+                 (or (= param target) (source-of (reading instance target) :lfo))))
+       (sort-by (comp str first))))
+
+(defn- lfo-editor [id param schema base source catalog instance]
   (let [lfo (source-of source :lfo)]
-    (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog)) error (r/atom nil)]
-      (let [{:keys [waveform period unit phase-reference phase from to inputs]} @form
+    (r/with-let [form (r/atom (editor-draft schema base (:binding lfo) catalog))
+                 move (r/atom nil) error (r/atom nil)]
+      (let [{:keys [waveform period unit phase-reference phase inputs]} @form
             in-flight @(rf/subscribe [::request id param])
+            destinations (when lfo (destination-options instance param))
+            destination (:param @move)
+            target-schema (get-in instance [:definition :params destination])
+            {:keys [from to]} (or @move @form)
             wave (if (some? waveform)
                    (some #(when (= waveform (:id %)) %) catalog)
                    (first catalog))
             update! (fn [key value] (swap! form assoc key value))
+            update-endpoint! (fn [key value] (swap! (if destination move form) assoc key value))
             apply! (fn [e]
                      (.preventDefault e)
-                     (try (let [config (binding-config (assoc @form :waveform (:id wave)))] (reset! error nil) (rf/dispatch [::bind id param config]))
+                     (reset! error nil)
+                     (try (if destination
+                            (rf/dispatch [::move id param destination {:from from :to to}])
+                            (rf/dispatch [::bind id param (binding-config (assoc @form :waveform (:id wave)))]))
                           (catch :default problem (reset! error (events/error-message problem)))))]
         [:form.live-source-form {:on-submit apply!}
          [:div.source-fields
-          [:label.source-field [:span "Waveform"]
-           [:select {:aria-label "Waveform source" :value (pr-str (:id wave))
-                     :on-change #(let [selected (.. % -target -value)
-                                       id (:id (some (fn [item] (when (= selected (pr-str (:id item))) item)) catalog))]
-                                   (swap! form assoc :waveform id :inputs {}))}
-            (for [{:keys [id name]} catalog] ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (widgets/label id))])]]
-          [:label.source-field [:span "Period"]
-           [:input {:type "text" :aria-label "Source period" :value period :required true
-                    :on-change #(update! :period (.. % -target -value))}]]
-          [:label.source-field [:span "Unit"]
-           [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
-            (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
-          [:label.source-field [:span "Phase reference"]
-           [:select {:value (name phase-reference)
-                     :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
-            [:option {:value "launch"} "Cue launch"]
-            [:option {:value "transport"} "Show transport"]]]
-          [number-field "Phase (cycles)" phase #(update! :phase %) {}]
-          [endpoint "From" schema from #(update! :from %)]
-          [endpoint "To" schema to #(update! :to %)]]
-         (when (seq (:params wave))
+          (when-not destination
+            [:<>
+             [:label.source-field [:span "Waveform"]
+              [:select {:aria-label "Waveform source" :value (pr-str (:id wave))
+                        :on-change #(let [selected (.. % -target -value)
+                                          id (:id (some (fn [item] (when (= selected (pr-str (:id item))) item)) catalog))]
+                                      (swap! form assoc :waveform id :inputs {}))}
+               (for [{:keys [id name]} catalog] ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (widgets/label id))])]]
+             [:label.source-field [:span "Period"]
+              [:input {:type "text" :aria-label "Source period" :value period :required true
+                       :on-change #(update! :period (.. % -target -value))}]]
+             [:label.source-field [:span "Unit"]
+              [:select {:aria-label "Source period unit" :value (name unit) :on-change #(update! :unit (keyword (.. % -target -value)))}
+               (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]
+             [:label.source-field [:span "Phase reference"]
+              [:select {:value (name phase-reference)
+                        :on-change #(update! :phase-reference (keyword (.. % -target -value)))}
+               [:option {:value "launch"} "Cue launch"]
+               [:option {:value "transport"} "Show transport"]]]
+             [number-field "Phase (cycles)" phase #(update! :phase %) {}]])
+          (when (or destination (seq destinations))
+            [:label.source-field [:span "Destination"]
+             [:select {:value (pr-str (or destination param)) :disabled (:pending? in-flight)
+                       :on-change #(let [value (.. % -target -value)
+                                         [target spec] (some (fn [[key :as entry]] (when (= value (pr-str key)) entry)) destinations)
+                                         [lo hi] (bounds spec (get-in instance [:params target] (:default spec)))]
+                                     (reset! move (when target {:param target :from lo :to hi})))}
+              [:option {:value (pr-str param)} (or (:name schema) (widgets/label param))]
+              (when (and destination (not-any? #(= destination (first %)) destinations))
+                [:option {:value (pr-str destination) :disabled true} (or (:name target-schema) (widgets/label destination))])
+              (for [[key spec] destinations] ^{:key (pr-str key)}
+                [:option {:value (pr-str key)} (or (:name spec) (widgets/label key))])]])
+          [endpoint "From" (or target-schema schema) from #(update-endpoint! :from %)]
+          [endpoint "To" (or target-schema schema) to #(update-endpoint! :to %)]]
+         (when (and (not destination) (seq (:params wave)))
            [:div.source-fields
             (for [[key input] (:params wave)] ^{:key key}
               [number-field (or (:name input) (widgets/label key)) (get inputs key (:default input))
                #(swap! form assoc-in [:inputs key] %) input])])
          (when-let [message (or @error (:error in-flight))] [:p.performance-error {:role "alert"} message])
          [:div.source-actions
-          [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))} (if lfo "Update LFO" "Attach LFO")]
-          (when lfo
+          [:button.button.primary {:type "submit" :disabled (or (:pending? in-flight) (not wave))}
+           (cond destination "Move LFO" lfo "Update LFO" :else "Attach LFO")]
+          (when (and lfo (not destination))
             [:<>
              [:button.button {:type "button" :on-click #(rf/dispatch [(if (:held? lfo) :modulation/resume :modulation/hold) id param])}
               (if (:held? lfo) "Resume LFO" "Use base value")]
@@ -328,5 +363,5 @@
         (for [[i input] (map-indexed vector (:sources source))]
           ^{:key i} [:span (source-label input)
                      (cond (:held? input) " · using base" (:pending? input) " · awaiting sample") (when-let [error (:error input)] [:span.performance-error {:role "alert"} error])])])
-     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog]
+     ^{:key [id param (:binding (source-of source :lfo))]} [lfo-editor id param typed base source catalog raw]
      [motion/parameter-widget id param schema base]]))
