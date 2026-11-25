@@ -1,0 +1,333 @@
+{
+  "sha256": {
+    "proxy": "ba8aaf0afecce88f75a4db92eff81456982443ede6e4c33a0ec10342d4bb70e8",
+    "oldWorker": "eca6f24515b4c52196262b45a2ccd47654acc465cce3469c45b54e0c4fef0804",
+    "oldProxy": "df39cf24121fb982422230e2abc0620b8a9a2a85f0eea2570ed9017de4b72e87",
+    "newWorker": "ae63239f3e5466af0e06dc088b037e6bc0bf1e9b54c694fcd84dba424fdb1ead",
+    "draftWorker": "749eb824b2622d18743881c1680c7c455315e8954fd8ddc0bdae4d2a87372554",
+    "draftProxy": "2fb525eac747dc24eaf28dedb65efc378e9c07b0dbf0c29047a796b92308c3cd",
+    "replay": "e288b430bab9a5b3b32e96a0a3bcee156fd41d5cd27991ba091ed7fcdf44b41e"
+  },
+  "lanes": [
+    {
+      "variant": "new",
+      "camera": "audience",
+      "hz": 120,
+      "duration": 5.996099999999627,
+      "frames": 365,
+      "fps": 60.87290071880434,
+      "gapP50": 16.5,
+      "gapP95": 21,
+      "uniqueStates": 240,
+      "peakUnpublished": 1,
+      "freshness": {
+        "host": 240,
+        "inputToPresentationP50": 40.09999999962747,
+        "inputToPresentationP95": 51.19999999925494,
+        "ageFramesP50": 1,
+        "ageFramesP95": 2,
+        "applyMsP50": 0.2999999988824129,
+        "applyMsP95": 0.5,
+        "applied": 240
+      },
+      "pulses": 720,
+      "css": [
+        1817,
+        1092
+      ],
+      "backing": [
+        3634,
+        2184
+      ],
+      "telemetry": {
+        "lightingMode": "interpolate",
+        "targetRefreshHz": 120,
+        "tierMaxHz": 120,
+        "displayHz": 120,
+        "ready": true,
+        "failed": null,
+        "renderer": "Three.js r187",
+        "quality": "mobile",
+        "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "softwareRenderer": false,
+        "pixels": [
+          1580,
+          949
+        ],
+        "displayPixels": [
+          3634,
+          2184
+        ],
+        "sceneSamples": 4,
+        "edgeFilter": "FXAA",
+        "displayRange": "sdr",
+        "film": {
+          "bloom": 0.28,
+          "exposure": 0.85,
+          "grain": 0.0015
+        },
+        "renderScale": 1,
+        "frameCPUms": 1.5,
+        "frameIntervalMs": 8.333333333333334,
+        "idleBudgetMs": 0,
+        "frames": 637,
+        "geometryCount": 346,
+        "textureCount": 29,
+        "programCount": 24,
+        "activeLights": 14,
+        "reflectedPatches": [],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8",
+          "wash-1",
+          "wash-2",
+          "wash-3",
+          "wash-4",
+          "wash-5",
+          "wash-6",
+          "stage-hazer"
+        ],
+        "fixtureCount": 55,
+        "visibleFixtures": 15,
+        "lightCap": 16,
+        "shadowCount": 2,
+        "workLight": 0,
+        "fogAmount": 1,
+        "camera": [
+          1.08,
+          2.4000000000000012,
+          7.599999999999998
+        ],
+        "target": [
+          0,
+          1.9000000000000001,
+          -2.8000000000000007
+        ],
+        "fog": {
+          "quality": "mobile",
+          "targetSize": [
+            537,
+            322
+          ],
+          "raySteps": 32,
+          "lightCount": 14,
+          "shadowCount": 2,
+          "cpuUpdateMs": 0.2999999988824129,
+          "uploads": 422,
+          "atmosphere": {
+            "sampleTimeMs": 18550,
+            "mixedDensity": 0.08158249743310143,
+            "extinctionPerM": 1.25,
+            "referencePathM": 1,
+            "fogLevel": 0.096950691446077,
+            "mixedVolumeM3": 48.94949845986086,
+            "roomVolumeM3": 600,
+            "localVolumeM3": 3.2244206822323593,
+            "foggerCount": 1
+          },
+          "cells": 8064,
+          "steps": 419,
+          "time": 18.5677998046875,
+          "droppedSeconds": 0,
+          "meanDensity": 0.08695652849033535,
+          "maximumDensity": 1.5059930086135864,
+          "heat": 0,
+          "activeSources": 0,
+          "massEstimate": 52.17391709420121
+        },
+        "visible": true,
+        "hidden": true,
+        "lost": false,
+        "epoch": 0,
+        "revision": 41,
+        "frameNumber": 743,
+        "workerFrameMs": 24.700000001117587,
+        "rafDeliveryMs": 0.10009765625,
+        "readyForFrameMs": 25.79990234412253,
+        "gpuCompletionWaitMs": 23.200000001117587,
+        "bitmapTransferMs": 0,
+        "thread": "worker",
+        "rendering": true,
+        "pendingState": false,
+        "inFlightState": null,
+        "coalescedStates": 5,
+        "discardedFrames": 0,
+        "paused": false,
+        "navigation": {
+          "mode": "orbit",
+          "speed": 2,
+          "interacting": false,
+          "reduced-motion": false,
+          "tour-fixture": null,
+          "tour-waiting": false
+        }
+      }
+    },
+    {
+      "variant": "new",
+      "camera": "audience",
+      "hz": 120,
+      "duration": 5.9965,
+      "frames": 366,
+      "fps": 61.03560410239306,
+      "gapP50": 16.399999998509884,
+      "gapP95": 20.800000000745058,
+      "uniqueStates": 240,
+      "peakUnpublished": 1,
+      "freshness": {
+        "host": 240,
+        "inputToPresentationP50": 40,
+        "inputToPresentationP95": 51.29999999888241,
+        "ageFramesP50": 1,
+        "ageFramesP95": 2,
+        "applyMsP50": 0.2999999988824129,
+        "applyMsP95": 0.5,
+        "applied": 240
+      },
+      "pulses": 720,
+      "css": [
+        1817,
+        1092
+      ],
+      "backing": [
+        3634,
+        2184
+      ],
+      "telemetry": {
+        "lightingMode": "interpolate",
+        "targetRefreshHz": 120,
+        "tierMaxHz": 120,
+        "displayHz": 120,
+        "ready": true,
+        "failed": null,
+        "renderer": "Three.js r187",
+        "quality": "mobile",
+        "deviceRenderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+        "softwareRenderer": false,
+        "pixels": [
+          1580,
+          949
+        ],
+        "displayPixels": [
+          3634,
+          2184
+        ],
+        "sceneSamples": 4,
+        "edgeFilter": "FXAA",
+        "displayRange": "sdr",
+        "film": {
+          "bloom": 0.28,
+          "exposure": 0.85,
+          "grain": 0.0015
+        },
+        "renderScale": 1,
+        "frameCPUms": 1.299999998882413,
+        "frameIntervalMs": 8.333333333333334,
+        "idleBudgetMs": 0,
+        "frames": 640,
+        "geometryCount": 346,
+        "textureCount": 29,
+        "programCount": 24,
+        "activeLights": 14,
+        "reflectedPatches": [],
+        "lightIds": [
+          "head-1",
+          "head-2",
+          "head-3",
+          "head-4",
+          "head-5",
+          "head-6",
+          "head-7",
+          "head-8",
+          "wash-1",
+          "wash-2",
+          "wash-3",
+          "wash-4",
+          "wash-5",
+          "wash-6",
+          "stage-hazer"
+        ],
+        "fixtureCount": 55,
+        "visibleFixtures": 15,
+        "lightCap": 16,
+        "shadowCount": 2,
+        "workLight": 0,
+        "fogAmount": 1,
+        "camera": [
+          1.08,
+          2.4000000000000012,
+          7.599999999999998
+        ],
+        "target": [
+          0,
+          1.9000000000000001,
+          -2.8000000000000007
+        ],
+        "fog": {
+          "quality": "mobile",
+          "targetSize": [
+            537,
+            322
+          ],
+          "raySteps": 32,
+          "lightCount": 14,
+          "shadowCount": 2,
+          "cpuUpdateMs": 0,
+          "uploads": 420,
+          "atmosphere": {
+            "sampleTimeMs": 18525,
+            "mixedDensity": 0.08155196463627988,
+            "extinctionPerM": 1.25,
+            "referencePathM": 1,
+            "fogLevel": 0.09691622501203591,
+            "mixedVolumeM3": 48.931178781767926,
+            "roomVolumeM3": 600,
+            "localVolumeM3": 3.2243112991037832,
+            "foggerCount": 1
+          },
+          "cells": 8064,
+          "steps": 417,
+          "time": 18.532400146484374,
+          "droppedSeconds": 0,
+          "meanDensity": 0.08692581375731924,
+          "maximumDensity": 1.5749620199203491,
+          "heat": 0,
+          "activeSources": 0,
+          "massEstimate": 52.15548825439155
+        },
+        "visible": true,
+        "hidden": true,
+        "lost": false,
+        "epoch": 0,
+        "revision": 41,
+        "frameNumber": 742,
+        "workerFrameMs": 38.09999999962747,
+        "rafDeliveryMs": -0.0002929680049419403,
+        "readyForFrameMs": 35.39970703236759,
+        "gpuCompletionWaitMs": 36.80000000074506,
+        "bitmapTransferMs": 0,
+        "thread": "worker",
+        "rendering": true,
+        "pendingState": false,
+        "inFlightState": null,
+        "coalescedStates": 3,
+        "discardedFrames": 0,
+        "paused": false,
+        "navigation": {
+          "mode": "orbit",
+          "speed": 2,
+          "interacting": false,
+          "reduced-motion": false,
+          "tour-fixture": null,
+          "tour-waiting": false
+        }
+      }
+    }
+  ]
+}
