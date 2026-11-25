@@ -1,6 +1,37 @@
 // Actual Neovim WASM interop engine. Application state and publishing live in re-frame.
 const namedKeys = { Backspace: 'BS', Enter: 'CR', Escape: 'Esc', Tab: 'Tab', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Delete: 'Del', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown' };
 const color = value => `#${Math.max(0, value).toString(16).padStart(6, '0')}`;
+const observePinnedBuffer = `
+  local buf = ...
+  local api = vim.api
+  local namespace = api.nvim_create_namespace('tolglow-cue-draft')
+  local function changed(_, _, tick)
+    vim.schedule(function()
+      if api.nvim_buf_is_loaded(buf) then
+        if vim.b[buf].tolglow_diagnostic_tick ~= api.nvim_buf_get_changedtick(buf) then
+          vim.diagnostic.reset(namespace, buf)
+        end
+        vim.rpcnotify(1, 'tolglow_changed', buf, tick)
+      end
+    end)
+  end
+  return api.nvim_buf_attach(buf, false, {on_lines=changed, on_changedtick=changed})
+`;
+const readPinnedBuffer = `
+  local buf = ...
+  local api = vim.api
+  if not api.nvim_buf_is_loaded(buf) then error('The cue buffer is closed.') end
+  return {lines=api.nvim_buf_get_lines(buf, 0, -1, true), changedtick=api.nvim_buf_get_changedtick(buf)}
+`;
+const applyDraftDiagnostics = `
+  local buf, tick, diagnostics = ...
+  local api = vim.api
+  if not api.nvim_buf_is_loaded(buf) or api.nvim_buf_get_changedtick(buf) ~= tick then return false end
+  local namespace = api.nvim_create_namespace('tolglow-cue-draft')
+  vim.diagnostic.set(namespace, buf, diagnostics)
+  vim.b[buf].tolglow_diagnostic_tick = tick
+  return true
+`;
 let codecPromise;
 function loadCodec() {
   if (!codecPromise) codecPromise = new Promise((resolve, reject) => {
@@ -11,6 +42,8 @@ function loadCodec() {
 export class NeovimEngine {
   constructor(host, options = {}) {
     this.fileName = options.fileName || '/home/user/definition.edn'; this.fileType = typeof options.fileType === 'string' && /^[a-zA-Z0-9_.-]{1,40}$/.test(options.fileType) ? options.fileType : 'clojure'; this.host = host; this.onChange = options.onChange || (() => {}); this.onStatus = options.onStatus || (() => {}); this.onError = options.onError || (() => {}); this.stopped = false;
+    this.pinBuffer = options.pinBuffer === true;
+    this.changeSequence = 0;
   }
   async start(source) {
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer !== 'function') throw new Error('Neovim requires localhost or HTTPS and COOP/COEP isolation. The accessible editor remains available.');
@@ -21,19 +54,37 @@ export class NeovimEngine {
     this.nvim = start('/studio/vendor/neovim/studio-worker.js', events => this.redraw(events), text => { if (!this.ready) this.onStatus(text); }, code => this.onError(`Neovim exited (${code}).`), error => this.onError(error));
     await this.nvim.ready;
     const info = await this.nvim.request('nvim_get_api_info', []); this.nvim.registerTypes(info[1].types);
-    await this.nvim.request('nvim_exec_lua', [`vim.opt.swapfile=false; vim.opt.backup=false; vim.opt.writebackup=false; vim.opt.number=true; vim.opt.mouse='a'; vim.opt.termguicolors=true; vim.opt.background='dark'; vim.opt.laststatus=2; vim.opt.signcolumn='no'; vim.opt.showmode=true; vim.opt.tabstop=2; vim.opt.shiftwidth=2; vim.opt.expandtab=true; vim.opt.wrap=true; vim.g.bruvbox_number_column='bg0_h'; vim.g.bruvbox_sign_column='bg0_h2'; vim.g.bruvbox_color_column='bg0_h2'; vim.g.bruvbox_fold_column='bg0_h2'; vim.g.bruvbox_vert_split='bg3'; vim.g.bruvbox_cursorline_bg='bg0_m'; vim.g.bruvbox_italic=1; vim.g.bruvbox_invert_selection=1; vim.g.bruvbox_underline_cursorline=0; vim.opt.runtimepath:prepend('/home/user/.config/nvim/wasm/bruvbox'); vim.cmd('syntax enable'); vim.cmd('colorscheme bruvbox'); vim.api.nvim_create_autocmd({'TextChanged','TextChangedI'}, {callback=function() vim.rpcnotify(1,'tolglow_changed') end})`, []]);
+    await this.nvim.request('nvim_exec_lua', [`vim.opt.swapfile=false; vim.opt.backup=false; vim.opt.writebackup=false; vim.opt.number=true; vim.opt.mouse='a'; vim.opt.termguicolors=true; vim.opt.background='dark'; vim.opt.laststatus=2; vim.opt.signcolumn='no'; vim.opt.showmode=true; vim.opt.tabstop=2; vim.opt.shiftwidth=2; vim.opt.expandtab=true; vim.opt.wrap=true; vim.g.bruvbox_number_column='bg0_h'; vim.g.bruvbox_sign_column='bg0_h2'; vim.g.bruvbox_color_column='bg0_h2'; vim.g.bruvbox_fold_column='bg0_h2'; vim.g.bruvbox_vert_split='bg3'; vim.g.bruvbox_cursorline_bg='bg0_m'; vim.g.bruvbox_italic=1; vim.g.bruvbox_invert_selection=1; vim.g.bruvbox_underline_cursorline=0; vim.opt.runtimepath:prepend('/home/user/.config/nvim/wasm/bruvbox'); vim.cmd('syntax enable'); vim.cmd('colorscheme bruvbox'); if not (...) then vim.api.nvim_create_autocmd({'TextChanged','TextChangedI'}, {callback=function() vim.rpcnotify(1,'tolglow_changed') end}) end`, [this.pinBuffer]]);
     const theme = await this.nvim.request('nvim_exec_lua', ["local normal=vim.api.nvim_get_hl(0,{name='Normal',link=false}); return {name=vim.g.colors_name,fg=normal.fg,bg=normal.bg}", []]);
     if (theme.name !== 'bruvbox' || theme.fg !== 0xf0e3ba || theme.bg !== 0x262525) {
       this.stop();
       throw new Error('The native Bruvbox colorscheme did not load correctly.');
     }
-    await this.nvim.request('nvim_buf_set_name', [0, this.fileName]);
-    await this.nvim.request('nvim_set_option_value', ['filetype', this.fileType, { buf: 0 }]);
-    await this.nvim.request('nvim_buf_set_lines', [0, 0, -1, true, source.split('\n')]);
+    const bufferId = this.pinBuffer ? await this.nvim.request('nvim_get_current_buf', []) : 0;
+    if (this.pinBuffer) {
+      if (!Number.isSafeInteger(bufferId) || bufferId <= 0) throw new Error('Could not pin the cue buffer.');
+      this.pinnedBuffer = { sessionId: crypto.randomUUID(), bufferId };
+    }
+    await this.nvim.request('nvim_buf_set_name', [bufferId, this.fileName]);
+    await this.nvim.request('nvim_set_option_value', ['filetype', this.fileType, { buf: bufferId }]);
+    await this.nvim.request('nvim_buf_set_lines', [bufferId, 0, -1, true, source.split('\n')]);
+    if (this.pinBuffer && !await this.nvim.request('nvim_exec_lua', [observePinnedBuffer, [bufferId]])) {
+      throw new Error('Could not observe the cue buffer.');
+    }
     await this.nvim.request('nvim_ui_attach', [this.cols, this.rows, { rgb: true, ext_linegrid: true }]);
-    this.nvim.listen('tolglow_changed', () => {
+    const nvim = this.nvim;
+    nvim.listen('tolglow_changed', ([changedBuffer]) => {
+      if (this.pinnedBuffer && changedBuffer !== this.pinnedBuffer.bufferId) return;
+      const sequence = ++this.changeSequence;
       clearTimeout(this.changeTimer);
-      this.changeTimer = setTimeout(() => this.text().then(text => this.onChange(text)).catch(error => this.onError(error.message)), 200);
+      this.changeTimer = setTimeout(async () => {
+        try {
+          const args = this.pinnedBuffer ? await this.draft().then(draft => [draft.source, draft]) : [await this.text()];
+          if (nvim === this.nvim && sequence === this.changeSequence) this.onChange(...args);
+        } catch (error) {
+          if (nvim === this.nvim && sequence === this.changeSequence) this.onError(error.message);
+        }
+      }, 200);
     });
     if (this.stopped) return;
     this.ready = true; this.resize(); this.input.focus();
@@ -41,11 +92,36 @@ export class NeovimEngine {
   }
   async text() {
     if (!this.ready) throw new Error('Wait for Neovim to finish loading.');
+    if (this.pinnedBuffer) {
+      const { lines } = await this.nvim.request('nvim_exec_lua', [readPinnedBuffer, [this.pinnedBuffer.bufferId]]);
+      return lines.join('\n');
+    }
     return (await this.nvim.request('nvim_buf_get_lines', [0, 0, -1, true])).join('\n');
+  }
+  // Pinned drafts carry a single native snapshot and the exact UTF-8 digest.
+  // The caller also fences replies against its current cue and definition version.
+  async draft() {
+    if (!this.ready || !this.pinnedBuffer) throw new Error('Open a pinned cue buffer first.');
+    const nvim = this.nvim, pinned = this.pinnedBuffer;
+    const { lines, changedtick } = await nvim.request('nvim_exec_lua', [readPinnedBuffer, [pinned.bufferId]]);
+    const source = lines.join('\n');
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+    if (nvim !== this.nvim) throw new Error('The cue buffer is closed.');
+    const sourceSha256 = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { ...pinned, changedtick, sourceSha256, source };
+  }
+  // Findings use Neovim's zero-based line and UTF-8 byte columns. Passing []
+  // clears this draft's findings without disturbing other diagnostic namespaces.
+  async setDraftDiagnostics(identity, findings) {
+    const nvim = this.nvim, pinned = this.pinnedBuffer;
+    if (!this.ready || !pinned || identity?.sessionId !== pinned.sessionId || identity.bufferId !== pinned.bufferId) return false;
+    const draft = await this.draft();
+    if (identity.changedtick !== draft.changedtick || identity.sourceSha256 !== draft.sourceSha256) return false;
+    return nvim.request('nvim_exec_lua', [applyDraftDiagnostics, [pinned.bufferId, draft.changedtick, findings]]);
   }
   async selection() {
     if (!this.ready) throw new Error('Wait for Neovim to finish loading.');
-    const snapshot = await this.nvim.request('nvim_exec_lua', ["return {lines=vim.api.nvim_buf_get_lines(0,0,-1,true),cursor=vim.api.nvim_win_get_cursor(0),mode=vim.api.nvim_get_mode().mode,anchor=vim.fn.getpos('v')}", []]);
+    const snapshot = await this.nvim.request('nvim_exec_lua', ["local buf=...; if buf~=0 and vim.api.nvim_get_current_buf()~=buf then error('Focus the cue buffer before reading a selection.') end; return {lines=vim.api.nvim_buf_get_lines(buf,0,-1,true),cursor=vim.api.nvim_win_get_cursor(0),mode=vim.api.nvim_get_mode().mode,anchor=vim.fn.getpos('v')}", [this.pinnedBuffer?.bufferId ?? 0]]);
     const { lines, cursor, mode } = snapshot;
     const byteOffset = (line, byte) => { let chars = 0, bytes = 0; for (const character of line) { const length = new TextEncoder().encode(character).length; if (bytes + length > byte) break; bytes += length; chars += character.length; } return chars; };
     const offset = (row, column) => lines.slice(0, row - 1).reduce((n, line) => n + line.length + 1, 0) + byteOffset(lines[row - 1] || '', column);
@@ -61,6 +137,15 @@ export class NeovimEngine {
   }
   async setText(text, cursor) {
     if (!this.ready) return;
+    if (this.pinnedBuffer) {
+      const prefix = Number.isInteger(cursor) ? text.slice(0, Math.max(0, cursor)).split('\n') : [''];
+      const position = [prefix.length, new TextEncoder().encode(prefix.at(-1)).length];
+      await this.nvim.request('nvim_exec_lua', [
+        "local buf, lines, pos=...; local api=vim.api; if not api.nvim_buf_is_loaded(buf) then error('The cue buffer is closed.') end; api.nvim_buf_set_lines(buf,0,-1,true,lines); if api.nvim_get_current_buf()==buf then api.nvim_win_set_cursor(0,pos) end",
+        [this.pinnedBuffer.bufferId, text.split('\n'), position],
+      ]);
+      return;
+    }
     await this.nvim.request('nvim_buf_set_lines', [0, 0, -1, true, text.split('\n')]);
     if (Number.isInteger(cursor)) { const prefix = text.slice(0, Math.max(0, cursor)).split('\n'); await this.nvim.request('nvim_win_set_cursor', [0, [prefix.length, new TextEncoder().encode(prefix.at(-1)).length]]); }
     else await this.nvim.request('nvim_command', ['normal! gg']);
