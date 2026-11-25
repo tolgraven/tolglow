@@ -2,6 +2,7 @@
   (:require [afterglow.control.model :as control]
             [afterglow.control.params :as params]
             [afterglow.control.system :as system]
+            [afterglow.output.artnet :as artnet]
             [clojure.test :refer [deftest is testing]]
             [tolglow.clock :as clock]
             [tolglow.effects.parameter-sources :as sources]
@@ -17,6 +18,71 @@
 
 (defn- bind-to [model param binding]
   (sources/bind model {:instance-id "0:1" :param param :binding binding}))
+
+(def pulse (assoc saw :waveform :pulse :phase-reference :transport))
+
+(defn- without-cycle-replay [run]
+  (with-redefs-fn {#'sources/pulse-cycle (constantly nil)} run))
+
+(deftest pulse-cycle-replays-the-exact-phase-boundaries
+  (let [sample (fn [model period]
+                 (let [points [(- Double/MAX_VALUE) -3 -9/8 -1 (- Double/MIN_VALUE) -0.0
+                               0 1/8 3/8 (Math/nextDown 0.5) 0.5 (Math/nextUp 0.5)
+                               (Math/nextDown 1.0) 1 9/8 3 Double/MAX_VALUE]
+                       step (fn [out phase]
+                              (let [result (sources/sample model {:beat (* period phase) :time-ms 0} (:plans out))
+                                    value (get-in result [:overrides "0:1" :level])]
+                                {:plans (:plans result)
+                                 :observations (conj (:observations out)
+                                                     [(some-> value double Double/doubleToLongBits)
+                                                      (:sources result)])}))]
+                   (reduce step {:observations []} points)))]
+    (doseq [duty [nil 0.0 Double/MIN_VALUE 3/8 0.5 (Math/nextDown 1.0) 1.0]
+            period [1 1/2]]
+      (let [binding (cond-> (assoc pulse :period {:beats period} :phase 0 :from 0.19 :to 0.83)
+                      duty (assoc :inputs {:duty duty}))
+            bound (bind-to (fixture/model) :level binding)
+            replay (sample bound period)
+            reference (without-cycle-replay #(sample bound period))]
+        (is (= [:pulse] (mapv :cycle (vals (:plans replay)))))
+        (is (= (:observations reference) (:observations replay)) (pr-str [duty period]))))))
+
+(deftest pulse-cycle-reuses-only-captured-source-inputs
+  (let [model (bind-to (fixture/model) :level pulse)
+        frame (fixture/frame 1/4)
+        first-sample (sources/sample model frame {})
+        sample #(sources/sample %1 %2 (:plans first-sample))
+        plan #(first (vals (:plans %)))
+        value #(get-in % [:overrides "0:1" :level])
+        seek (assoc frame :beat 3/4)
+        changed (bind-to model :level (assoc pulse :inputs {:duty 0.1} :phase 1/8))
+        builtin (some #(when (= :pulse (:id %)) %) (signals/builtin-waveforms))
+        altered-template (assoc builtin :version 2 :expression {:op :const :value 0.37})
+        replaced (assoc model :waveforms (signals/publish (signals/new-registry) altered-template))]
+    (is (= 1.0 (value first-sample)))
+    (is (= 0.0 (value (sample model seek))))
+    (is (= (value first-sample) (value (sample model (assoc frame :time-ms 9000 :bpm 90)))))
+    (is (identical? (plan first-sample) (plan (sample model seek))))
+    (is (= 0.0 (value (sample changed frame))))
+    (is (= 0.37 (value (sample replaced seek))))
+    (is (nil? (:cycle (plan (sample replaced seek)))))
+    (doseq [updated [(update model :epoch inc)
+                     (assoc-in model [:instances "0:1" :definition :version] 2)
+                     changed replaced]]
+      (is (not (identical? (plan first-sample) (plan (sample updated frame))))))
+    ;; The plan supplies a typed parameter before targeting or fixture addressing.
+    (let [repatch (assoc-in model [:rig :fixtures] [{:id :new :universe 2 :address 44}])]
+      (is (identical? (plan first-sample) (plan (sample repatch frame))))
+      (is (= (value first-sample) (value (sample repatch frame)))))))
+
+(deftest wide-pulse-output-uses-the-direct-evaluator
+  (let [from (vec (repeat 65 0.2))
+        to (vec (repeat 65 0.7))
+        effect (assoc-in fixture/effect [:params :level] {:type :vector :size 65 :default from})
+        bound (bind-to (fixture/model effect) :level (assoc pulse :from from :to to))
+        results (mapv #(sources/sample bound (fixture/frame %) {}) [1/4 3/4])]
+    (is (every? #(nil? (:cycle %)) (mapcat (comp vals :plans) results)))
+    (is (= [to from] (mapv #(get-in % [:overrides "0:1" :level]) results)))))
 
 (deftest phase-reference-aligns-separate-launches-on-the-shared-clock
   (let [old (assoc (fixture/instance "0:1" fixture/effect) :started-at-beat 5/2)
@@ -116,6 +182,61 @@
                 :cues {:wash {:id :wash :effect-id :wash :version 1}}}
      :rig {:fixtures (mapv (fn [id address] {:id id :universe 1 :address address :channels {:dimmer 1}})
                            [:left :right] [1 2])}}))
+
+(deftest pulse-cycle-and-direct-sampling-publish-identical-show-frames
+  (let [run (fn []
+              (let [packet (volatile! nil)
+                    sink {:send! (fn [universes _]
+                                   (vreset! packet (into {} (map (fn [[u bytes]]
+                                                                   [u (vec (artnet/artdmx-packet u 1 bytes))])
+                                                                 universes))))}
+                    rt (show/create-runtime {:model (live-model) :sink sink})
+                    submit! (fn [time type body]
+                              (let [receipt (show/submit! rt type body)]
+                                (show/tick! rt time)
+                                (select-keys @receipt [:status :instance-id])))
+                    timeline (fn [times]
+                               (mapv (fn [now]
+                                       (show/tick! rt now)
+                                       [@packet (mapv #(get-in % [:parameter-sources :level :effective-value])
+                                                      (:instances (show/snapshot rt)))])
+                                     times))
+                    launch! (fn [now target]
+                              (submit! now :command {:op :cue/launch :cue-id :wash :launch {:targets [target]}}))
+                    bind! (fn [now id binding]
+                            (submit! now :modulation-bind {:instance-id id :param :level :binding binding}))]
+                (try
+                  (let [left (launch! 0 :left)
+                        right (launch! 0 :right)
+                        binding (assoc pulse :period {:beats 3/2} :from 0.2 :to 0.8)
+                        bound (bind! 0 (:instance-id left) binding)
+                        initial (timeline (range 25 1001 25))
+                        tempo (submit! 1000 :command {:op :transport/set :transport {:bpm 79}})
+                        changing (timeline (range 1025 1501 25))
+                        edit (bind! 1500 (:instance-id left) (assoc binding :inputs {:duty 1/4} :phase 1/8))
+                        fade (submit! 1500 :command {:op :master/set :value 0.6})
+                        faded (timeline (range 1525 2001 25))
+                        repatch (submit! 2000 :rig (assoc-in (:rig (show/snapshot rt)) [:fixtures 0 :address] 6))
+                        moved (timeline [2025])
+                        blackout (submit! 2025 :command {:op :blackout/set :value true})
+                        dark (timeline [2050])
+                        reset (submit! 2075 :command {:op :show/restart})
+                        lit (submit! 2075 :command {:op :blackout/set :value false})
+                        relaunched (launch! 2075 :left)
+                        rebound (bind! 2075 (:instance-id relaunched) (assoc binding :phase-reference :launch))
+                        restarted (timeline (range 2100 2601 25))]
+                    {:receipts [left right bound tempo edit fade repatch blackout reset lit relaunched rebound]
+                     :frames [initial changing faded moved dark restarted]})
+                  (finally (show/stop! rt)))))
+        replay (run)
+        reference (without-cycle-replay run)]
+    (is (every? #(= :accepted (:status %)) (:receipts replay)) (pr-str (:receipts replay)))
+    (is (every? (comp seq first) (mapcat identity (:frames replay))))
+    (is (= #{0.2 0.8} (set (keep first (map second (first (:frames replay)))))))
+    (let [packet (get-in replay [:frames 3 0 0 1])]
+      (is (zero? (nth packet 18)))
+      (is (pos? (bit-and 255 (nth packet 23)))))
+    (is (= replay reference))))
 
 (deftest ring-through-render-two-instances-base-hold-and-transit-restore
   (let [packet (atom nil) t (atom 0)
