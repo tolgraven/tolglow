@@ -184,6 +184,7 @@
                                              (assoc :observation-count (count (:observations scan))
                                                     :receipt-count (count (:receipts scan)))))})
             :submit! #(show/submit! runtime %1 %2)
+            :submit-history! #(show/submit! runtime :command %1 %2)
             :heartbeat! #(show/heartbeat! runtime %)
             :provider-get! #(agents/public-config (show/agent-manager runtime))
             :provider-put! #(agents/configure! (show/agent-manager runtime) %)

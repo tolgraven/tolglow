@@ -1,9 +1,11 @@
 (ns tolglow.studio.web
   "Portable Ring application. Services are explicit callbacks; the HTTP adapter
   does not own the show clock, registry, provider credentials, or effect state."
-  (:require [tolglow.studio.origin :as origin]
+  (:require [tolglow.studio.access :as access]
+            [tolglow.studio.origin :as origin]
             [clojure.data.json :as json]
             [tolglow.data :as data]
+            [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -222,6 +224,9 @@
         unavailable-message (constantly (data-response 503 {:message unavailable-message}))
         :else not-found))
 
+(defn- await-acknowledgement [reply]
+  (acknowledgement (deref reply 5000 {:status :pending :message "Command remains queued"})))
+
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
@@ -230,9 +235,46 @@
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
                     (and (= operation :definition) (contains? json-params :source))
-                    (assoc :definition (data/read-edn (:source json-params))))
-          receipt (deref (submit! operation payload) 5000 {:status :pending :message "Command remains queued"})]
-      (acknowledgement receipt))))
+                    (assoc :definition (data/read-edn (:source json-params))))]
+      (await-acknowledgement (submit! operation payload)))))
+
+(def ^:private history-operations #{:history/undo :history/redo :history/select})
+
+(def ^:private history-ack-timeout-ms 5000)
+
+(defn- history-handler [submit-history!]
+  (fn [{:keys [json-params] :as request}]
+    (let [authority (access/operator-authority request)
+          {:keys [op command-id runtime-id expected-epoch expected-cursor expected-history-position node-id]} json-params
+          undo? (= :history/undo op)
+          reject (fn [code message]
+                   (acknowledgement (cond-> {:status :rejected :code code :message message}
+                                      command-id (assoc :command-id command-id))))]
+      (cond
+        (nil? authority)
+        (reject :operator-required "Edit history requires a trusted operator")
+
+        (not (and (string? runtime-id) (nat-int? expected-epoch) (nat-int? expected-cursor)
+                  (nat-int? expected-history-position)
+                  (or undo? (nat-int? node-id))))
+        (reject :invalid-history-command "Edit history requires a runtime, epoch, cursor, position and a node for redo or select")
+
+        :else
+        (let [command-id (if (contains? json-params :command-id) command-id (str (random-uuid)))
+              payload (cond-> (assoc (select-keys json-params [:op :runtime-id :expected-epoch
+                                                             :expected-cursor :expected-history-position])
+                                     :command-id command-id)
+                        (not undo?) (assoc :node-id node-id))
+              reply (submit-history! payload (assoc authority ::operator-history/stream-outcome? true))
+              result (merge {:command-id command-id :epoch expected-epoch}
+                            (deref reply history-ack-timeout-ms {:status :pending :message "Command remains queued"}))]
+          (if (= :pending (:status result)) (data-response 202 result) (acknowledgement result)))))))
+
+(defn- command-handler [submit! heartbeat! submit-history!]
+  (let [submit (submit-handler submit! heartbeat! :command)
+        history (available submit-history! "Operator history unavailable" (history-handler submit-history!))]
+    (fn [request]
+      (if (history-operations (get-in request [:json-params :op])) (history request) (submit request)))))
 
 (defn- query-fields [request defaults]
   (reduce-kv (fn [result k v] (assoc result k (get (:query-params request) (name k) v)))
@@ -312,11 +354,14 @@
              [(str prefix suffix)
               (available service unavailable-message #(respond (service operation (:json-params %))))])))
 
-(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! heartbeat! provider-put! chat! chat-select! app-agent! checkpoint!
+(defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
+                             app-agent! checkpoint!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!]
                      :or {material-preview! materials/preview}}]
   (merge
-   (into {} (for [[path op] operations] [path (submit-handler submit! heartbeat! op)]))
+   (into {} (for [[path op] operations]
+              [path (if (= :command op) (command-handler submit! heartbeat! submit-history!)
+                                      (submit-handler submit! heartbeat! op))]))
    (post-actions "/api/application-agents/" app-agent! ok
                  {"configure" :configure "start" :start "cancel" :cancel} "Application agents unavailable")
    (post-actions "/api/show/checkpoints/" checkpoint! acknowledgement

@@ -4,6 +4,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.page-routes :as pages]
             [tolglow.studio.state-socket]
@@ -77,7 +78,7 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http! [{:keys [path body typed? raw-response? on-success on-failure timeout-ms]}]
+(defn http! [{:keys [path body typed? raw-response? on-success on-failure on-uncertain timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -91,29 +92,37 @@
                  (-> (.text response)
                      (.then (fn [text]
                               (let [type (or (.get (.-headers response) "content-type") "")
+                                    status (.-status response)
                                     data (cond
                                            (str/includes? type "application/transit+json")
                                            (let [v (transit/decode text)] (if raw-response? v (projection/presentation v)))
                                            (str/includes? type "application/json")
                                            (js->clj (js/JSON.parse text) :keywordize-keys true)
-                                           :else {:message text})]
-                                (if (or (not (.-ok response)) (contains? #{:rejected "rejected"} (:status data)) (:error data))
-                                  (throw (js/Error. (str (error-message data))))
+                                           :else {:message text})
+                                    rejected? (contains? #{:rejected "rejected"} (:status data))]
+                                (if (or (not (.-ok response)) rejected? (:error data))
+                                  (throw (if (and on-uncertain (or rejected? (and (<= 400 status 499) (not= 408 status))))
+                                           (ex-info (str (error-message data)) {::definite-http-failure true})
+                                           (js/Error. (str (error-message data)))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
-        (.catch #(dispatch-result (or on-failure [:studio/failure]) (error-message %)))
+        (.catch (fn [error]
+                  (if (and on-uncertain (not (::definite-http-failure (ex-data error))))
+                    (rf/dispatch on-uncertain)
+                    (dispatch-result (or on-failure [:studio/failure]) (error-message error)))))
         (.finally #(js/clearTimeout timeout)))))
 (rf/reg-fx :studio/http http!)
 (rf/reg-fx :studio/scroll-top (fn [_] (.scrollTo js/window #js {:top 0 :behavior "auto"})))
 (rf/reg-fx :studio/send-command
-  (fn [{:keys [op fields epoch session runtime-id on-success on-failure beacon?]}]
+  (fn [{:keys [op fields epoch session runtime-id on-success on-failure on-uncertain timeout-ms beacon?]}]
     (let [payload (merge {:op op :epoch epoch :command-id (str (random-uuid))
                           :source {:adapter "web" :session-id session}} fields
                          (when runtime-id {:runtime-id runtime-id}))]
       (if (and beacon? (.-sendBeacon js/navigator))
         (.sendBeacon js/navigator "/api/command"
                      (js/Blob. #js [(js/JSON.stringify (clj->js payload))] #js {:type "application/json"}))
-        (http! {:path "/api/command" :body payload :on-success on-success :on-failure on-failure})))))
+        (http! {:path "/api/command" :body payload :on-success on-success :on-failure on-failure
+                :on-uncertain on-uncertain :timeout-ms timeout-ms})))))
 (rf/reg-fx :studio/download
   (fn [_]
     (-> (js/fetch "/api/export")
@@ -186,6 +195,117 @@
 (defn draft [db key op fields]
   (assoc-in db [:drafts key] {:op op :fields fields :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])}))
 
+(def ^:private history-path [:ui :operator-history])
+
+(def ^:private history-http-timeout-ms 7000)
+
+(def ^:private history-confirmation-ms 30000)
+
+(def ^:private history-waiting-message "Waiting for the live show to confirm the history command.")
+
+(defn history-inspector [db]
+  (let [projection (get-in db [:server-projection :view :operator-history])
+        state (get-in db history-path)]
+    {:open? (:open? state)
+     :projection projection
+     :view-state state
+     :apply-status (cond-> {:pending? (boolean (:pending state))
+                           :message (:message state) :error? (:error? state) :conflict (:conflict state)}
+                     (or (:awaiting-full? db) (not (get-in db [:connection :connected?])))
+                     (assoc :connection-message "Waiting for the live show to reconnect."))}))
+
+(defn- fail-history [{:keys [pending preview] :as state} message]
+  (cond-> (-> state (dissoc :pending) (assoc :message message :error? true))
+    (and (= :history/select (:op pending)) (= (:preview pending) preview))
+    (assoc :conflict message)))
+
+(defn- settle-history [db]
+  (let [{:keys [operator-history revision epoch history-command-outcomes]} (get-in db [:server-projection :view])
+        {:keys [identity open? pending preview] :as state} (get-in db history-path)]
+    (cond
+      (nil? state) db
+      (not= identity (:identity operator-history))
+      (assoc-in db history-path {:identity (:identity operator-history) :open? open?})
+      (nil? pending) db
+      :else
+      (let [receipt (or (some #(when (and (= (:id pending) (:command-id %)) (= epoch (:epoch %))) %)
+                              (rseq (or history-command-outcomes [])))
+                        (:receipt pending))]
+        (case (:status receipt)
+          (:rejected "rejected")
+          (update-in db history-path fail-history (or (:message receipt) "The live show rejected the history command."))
+
+          (:accepted "accepted")
+          (if (and (integer? (:revision receipt)) (>= revision (:revision receipt)))
+            (let [current (:current-id operator-history)]
+              (update-in db history-path
+                         #(cond-> (-> %
+                                      (dissoc :pending :conflict :error?)
+                                      (assoc :message (if (and (= current (:history-cursor receipt))
+                                                              (= (:position operator-history) (:history-position receipt)))
+                                                        "History step applied."
+                                                        "History applied. The current step has since changed.")))
+                            (= (:preview pending) preview) (-> (dissoc :preview) (assoc :focus-id current)))))
+            db)
+
+          db)))))
+
+(rf/reg-event-db :operator-history/open
+  (fn [db _] (-> db (assoc-in (conj history-path :open?) true) settle-history)))
+(rf/reg-event-db :operator-history/close
+  (fn [db _]
+    (update-in db history-path #(-> % (assoc :open? false) (dissoc :preview :focus-id :message :conflict :error?)))))
+(rf/reg-event-db :operator-history/inspect
+  (fn [db [_ interaction]]
+    (let [{:keys [open? projection view-state]} (history-inspector db)]
+      (if (and open? projection)
+        (assoc-in db history-path (history/update-interaction view-state projection interaction))
+        db))))
+
+(rf/reg-event-fx :operator-history/navigate
+  (fn [{:keys [db]} [_ op request]]
+    (let [{:keys [open? projection view-state apply-status]} (history-inspector db)]
+      (when (and open? request (not (:pending? apply-status)))
+        (if (= request (get (history/commands projection view-state apply-status) op))
+          (let [{[runtime-id _ epoch] :identity :keys [expected-cursor expected-history-position target-id]} request
+                command-id (str (random-uuid))
+                fields (cond-> {:expected-epoch epoch :expected-cursor expected-cursor :command-id command-id
+                                :expected-history-position expected-history-position}
+                         (#{:history/redo :history/select} op) (assoc :node-id target-id))
+                [effect payload] (command db op fields [:operator-history/received command-id] epoch false runtime-id)]
+            {:db (update-in db history-path #(-> % (dissoc :message :conflict :error?)
+                                                 (assoc :pending {:id command-id :op op :preview (:preview view-state)})))
+             :dispatch-later [{:ms history-confirmation-ms :dispatch [:operator-history/unconfirmed command-id]}]
+             :fx [[effect (assoc payload :on-failure [:operator-history/rejected command-id]
+                                        :on-uncertain [:operator-history/uncertain command-id]
+                                        :timeout-ms history-http-timeout-ms)]]})
+          {:db (assoc-in db (conj history-path :message) "The live history changed. Review the current step.")})))))
+
+(rf/reg-event-db :operator-history/received
+  (fn [db [_ command-id receipt]]
+    (if (and (= command-id (:command-id receipt) (get-in db (into history-path [:pending :id])))
+             (= (:epoch receipt) (get-in db [:server-projection :view :epoch])))
+      (case (:status receipt)
+        (:pending "pending") (assoc-in db (conj history-path :message) history-waiting-message)
+        (:accepted "accepted") (-> db (assoc-in (into history-path [:pending :receipt]) receipt) settle-history)
+        db)
+      db)))
+(rf/reg-event-db :operator-history/uncertain
+  (fn [db [_ command-id]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (assoc-in db (conj history-path :message) history-waiting-message)
+      db)))
+(rf/reg-event-db :operator-history/rejected
+  (fn [db [_ command-id message]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (update-in db history-path fail-history message)
+      db)))
+(rf/reg-event-db :operator-history/unconfirmed
+  (fn [db [_ command-id]]
+    (if (= command-id (get-in db (into history-path [:pending :id])))
+      (update-in db history-path fail-history "The result could not be confirmed. Review the current step before trying again.")
+      db)))
+
 (rf/reg-event-fx :studio/initialize
   (fn [_ [_ session]] {:db (initial-db session) :studio/open-stream session}))
 
@@ -248,6 +368,7 @@
                                                 (projection/identity-of (get-in db [:server-projection :view])))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
+                    settle-history
                     spatial-drafts/settle
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))

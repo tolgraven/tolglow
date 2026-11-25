@@ -76,6 +76,7 @@
             [tolglow.integrations.reference-position :as reference-position]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.persistence :as persistence]
+            [tolglow.operator-history :as operator-history]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
@@ -126,12 +127,12 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
-(defn- checkpoint-results [before receipts]
-  (let [finished (keep (fn [[_ ack _ checkpoint-request]]
+(defn- checkpoint-results [before message-receipts]
+  (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
                          (when checkpoint-request
                            (cond-> (merge checkpoint-request (select-keys ack [:status :epoch]))
                              (contains? (:details ack) :received-epoch) (assoc :reason :stale-show-session))))
-                       receipts)]
+                       message-receipts)]
     (if (seq finished)
       (vec (take-last 32 (concat (:checkpoint-results before) finished)))
       (:checkpoint-results before))))
@@ -194,6 +195,8 @@
                              (sort-by :order (vals (:instances model))))
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
+            :operator-history (operator-history/project (:id runtime) model)
+            :history-command-outcomes (:history-command-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
                                            #(mapv (fn [[[x y] cue]] {:x x :y y :cue-id cue})
                                                   (sort-by key %)))) (sort-by (comp str :id) (vals (:pages model))))
@@ -204,7 +207,7 @@
             :patch (routing/snapshot model)
             :modulation {:controllers (mapv #(select-keys % [:id :config :ticks :next-beat :owner-instance-id])
                                              (get-in model [:modulation :controllers]))
-                         :holds (get-in model [:modulation :holds] {})
+                         :holds (modulation/portable-holds (get-in model [:modulation :holds] {}))
                          :overrides (:overrides modulation-view {})
                          :diagnostics (:diagnostics modulation-view [])}
             :compositions (mapv #(assoc % :running? (contains? (:composition-runs model) (:id %))
@@ -228,6 +231,11 @@
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(defn operator-history
+  "Read the same committed operator history shown in Studio."
+  [runtime]
+  (operator-history/project (:id runtime) (:model @(:state runtime))))
 
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
@@ -354,6 +362,7 @@
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
+      :push-gesture-ends (volatile! {})
       :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
@@ -440,40 +449,65 @@
                                                  [id (-> source (assoc :armed-intent? false)
                                                          (update :state (fn [state] (:state (sensor-core/set-armed state false)))))])) %)))))
 
-(defn- command [model payload time-ms]
-  (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
-        payload (prefabs/prepare-command model payload)
-        ;; Declarative code may use string identities (generated pages do).
-        ;; JSON keyword normalization must still address those existing objects.
-        payload (reduce (fn [p [field entries]]
-                          (let [id (get p field) s (when (keyword? id) (subs (str id) 1))]
-                            (if (and s (not (contains? entries id)) (contains? entries s))
-                              (assoc p field s) p))) payload
-                        [[:cue-id (get-in model [:registry :cues])]
-                         [:page-id (:pages model)]])]
-    (let [result (spatial/apply-command model
-                          (merge {:command-id (str (UUID/randomUUID))
-                                 :show-id (:show-id model) :epoch (:epoch model)
-                                 :source {:adapter :studio :session-id "studio"}}
-                                 payload {:time-ms time-ms}))
-          result (if (and (= :accepted (get-in result [:ack :status]))
-                          (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
-                   (update result :model
-                           (fn [next-model]
-                             (cond-> (restart-model next-model time-ms)
-                               (contains? model ::staging/pending)
-                               (as-> m (staging/collect (staging/begin m) :control
-                                                        {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
-                                                        (:events result))))))
-                   result)]
-      (if (and (= :accepted (get-in result [:ack :status])) (= :param/set (:op payload))
-               (or (seq (get-in model [:modulation :controllers]))
-                   (get-in model [:instances (:instance-id payload) :parameter-bindings (:param payload)]))
-               (not= :patch (get-in payload [:source :type]))
-               (not= :live-playback (get-in payload [:source :origin])))
-        (update result :model update :modulation (fnil modulation/hold (modulation/new-state))
-                {:instance-id (:instance-id payload) :params [(:param payload)] :until-beat nil})
-        result))))
+(defn- hold-manual-params [model result {:keys [op source instance-id param control-id gesture-id]} authority]
+  (let [owner (when (#{:gesture/sample :gesture/end :gesture/cancel} op)
+                [(:operator-id authority) control-id gesture-id])]
+    (cond
+      (#{:gesture/end :gesture/cancel} op)
+      (if (get-in result [:model :modulation])
+        (update-in result [:model :modulation] modulation/settle-gesture-hold instance-id param owner
+                   (= :gesture/end op))
+        result)
+
+      (or authority (and (not= :patch (:type source)) (not= :live-playback (:origin source))))
+      (reduce (fn [result {:keys [type instance-id param]}]
+                (if (and (= :param/changed type)
+                         (or (seq (get-in model [:modulation :controllers]))
+                             (get-in model [:instances instance-id :parameter-bindings param])))
+                  (if owner
+                    (update-in result [:model :modulation] (fnil modulation/hold-gesture-param (modulation/new-state))
+                               instance-id param owner)
+                    (update-in result [:model :modulation] (fnil modulation/hold (modulation/new-state))
+                               {:instance-id instance-id :params [param] :until-beat nil}))
+                  result))
+              result (:events result))
+
+      :else result)))
+
+(defn- command
+  ([model payload time-ms] (command model payload time-ms nil))
+  ([model payload time-ms authority]
+   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
+         payload (prefabs/prepare-command model payload)
+         ;; Declarative code may use string identities (generated pages do).
+         ;; JSON keyword normalization must still address those existing objects.
+         payload (reduce (fn [p [field entries]]
+                           (let [id (get p field) s (when (keyword? id) (subs (str id) 1))]
+                             (if (and s (not (contains? entries id)) (contains? entries s))
+                               (assoc p field s) p))) payload
+                         [[:cue-id (get-in model [:registry :cues])]
+                          [:page-id (:pages model)]])
+         envelope (merge {:command-id (str (UUID/randomUUID))
+                          :show-id (:show-id model) :epoch (:epoch model)
+                          :source {:adapter :studio :session-id "studio"}}
+                         payload {:time-ms time-ms})
+         result (spatial/apply-command model envelope authority)
+         accepted? (= :accepted (get-in result [:ack :status]))]
+     (cond
+       (and accepted? (= (:revision model) (get-in result [:model :revision])))
+       (assoc result :replayed? true)
+
+       (and accepted? (= :show/restart (:op payload)) (not= (:epoch model) (get-in result [:model :epoch])))
+       (update result :model
+               (fn [next-model]
+                 (cond-> (restart-model next-model time-ms)
+                   (contains? model ::staging/pending)
+                   (as-> m (staging/collect (staging/begin m) :control
+                                            {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
+                                            (:events result))))))
+
+       accepted? (hold-manual-params model result payload authority)
+       :else result))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -519,7 +553,19 @@
   [show-id epoch (:source transport) (:source-epoch transport)
    (:source-selection-epoch transport) @(:presentation-clock runtime)])
 
-(defn- dispatch-owner-command [runtime model payload time-ms]
+(defn- push-gesture-end? [payload {::keys [push-session-id]}]
+  (and (= :gesture/end (:op payload)) push-session-id
+       (= {:adapter :push-2 :session-id push-session-id} (:source payload))))
+
+(defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
+  [[:instance-param instance-id param] operator-id control-id gesture-id])
+
+(defn- open-push-gesture [model [target actor control-id gesture-id]]
+  (let [gesture (get-in model [:control :edit-history :open target])]
+    (when (and gesture (= [actor control-id gesture-id] ((juxt :actor :control-id :gesture-id) gesture)))
+      gesture)))
+
+(defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
@@ -532,14 +578,18 @@
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
-    :else (command model payload time-ms)))
+    (push-gesture-end? payload authority)
+    (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
+      (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
 
-(defn- apply-message [model {:keys [type payload expected-epoch]} time-ms & [runtime]]
+    :else (command model payload time-ms authority)))
+
+(defn- apply-message [model {:keys [type payload expected-epoch authority]} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
     (throw (ex-info "Operation belongs to a previous show session" {:expected-epoch (:epoch model)
                                                                     :received-epoch expected-epoch})))
   (case type
-    :command (dispatch-owner-command runtime model payload time-ms)
+    :command (dispatch-owner-command runtime model payload time-ms authority)
     :cue-schedule (cue-timing/schedule model (cue-clock-identity runtime model) time-ms payload command)
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
@@ -1406,7 +1456,11 @@
                  inline-registrations (volatile! {})
                  ordinary-count (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
                  release-count (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
-                 _ (when (and (pos? ordinary-count) (pos? release-count))
+                 gesture-ends (vals @(:push-gesture-ends runtime))
+                 _ (when gesture-ends
+                     (vreset! (:push-gesture-ends runtime) {})
+                     (doseq [message gesture-ends] (.add messages message)))
+                 _ (when (or gesture-ends (and (pos? ordinary-count) (pos? release-count)))
                      (.sort messages ingress-order))
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
@@ -1421,7 +1475,7 @@
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  [model receipts restored? restored-output]
                  (reduce
-                  (fn [[model receipts restored? restored-output] {:keys [reply] ::keys [checkpoint-request] :as message}]
+                  (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
                     (try
                       (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)]
                         (when-let [candidate (:candidate result)]
@@ -1434,11 +1488,12 @@
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
-                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message)) checkpoint-request])
+                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))
+                                                         (:replayed? result)])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
                       (catch Exception error
-                        [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message)) checkpoint-request])
+                        [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
                          restored? restored-output])))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
@@ -1639,20 +1694,28 @@
                               :output (if (or (pause-look/blackout? model) (zero? (:master model)))
                                         (render/resolve-frame (patch! runtime (get-in model [:rig :fixtures])) [] {:blackout? true})
                                         (:output before))))))
-                 operations (map (fn [message [_ ack]]
-                                   {:operation (:type message) :command (get-in message [:payload :op])
-                                    :ack ack :emitter-id (get-in message [:payload :source :adapter])})
-                                 messages receipts)
+                 message-receipts (map vector messages receipts)
+                 operations (keep (fn [[message [_ ack _ replayed?]]]
+                                    (when-not replayed?
+                                      {:operation (:type message) :command (get-in message [:payload :op])
+                                       :ack ack :emitter-id (or (get-in message [:authority :operator-id])
+                                                              (get-in message [:payload :source :adapter]))}))
+                                  message-receipts)
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state
-                                   :checkpoint-results (checkpoint-results before receipts)
+                                   :checkpoint-results (checkpoint-results before message-receipts)
                                    :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
                  committed (show-events/commit (:event-admit runtime) (:model before) next-state operations)
                  next-state (venue-fog/commit! runtime (:state committed)
-                              (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)]
+                              (patch! runtime (get-in next-state [:model :rig :fixtures])) restored?)
+                 epoch (get-in next-state [:model :epoch])
+                 previous-outcomes (if (= epoch (get-in before [:model :epoch]))
+                                     (:history-command-outcomes before []) [])
+                 next-state (assoc next-state :history-command-outcomes
+                                   (operator-history/committed-outcomes previous-outcomes epoch message-receipts))]
              (when (or (seq (get-in next-state [:output :fog-demands])) @(:fog-deadlines runtime))
                (swap! (:fog-deadlines runtime) fog-deadline/remember
                       (or (:frame-id presentation-token) (get-in next-state [:model :frame-number] 0))
@@ -1722,7 +1785,26 @@
     (:cue-release-queue runtime)
     (:queue runtime)))
 
-(defn- enqueue! [runtime type payload checkpoint-request]
+(defn- enqueue-push-gesture-end! [runtime {:keys [payload authority reply expected-epoch] :as message}]
+  ;; Under the owner lock, each open gesture or queued begin can reserve only
+  ;; one end. Both sources are bounded and drained in the same owner cycle.
+  (let [ends (:push-gesture-ends runtime)
+        key (push-gesture-key payload authority)
+        queued-begin? (fn [queued]
+                        (and (= :command (:type queued)) (= :gesture/begin (get-in queued [:payload :op]))
+                             (= expected-epoch (:expected-epoch queued)) (= authority (:authority queued))
+                             (= key (push-gesture-key (:payload queued) (:authority queued)))))]
+    (cond
+      (contains? @ends key)
+      (deliver reply {:status :rejected :code :gesture-end-queued :command-id (:command-id payload)})
+
+      (or (open-push-gesture (:model @(:state runtime)) key)
+          (some queued-begin? (iterator-seq (.iterator ^LinkedBlockingQueue (:queue runtime)))))
+      (vswap! ends assoc key message)
+
+      :else (deliver reply {:status :rejected :code :unknown-gesture :command-id (:command-id payload)}))))
+
+(defn- enqueue! [runtime type payload authority checkpoint-request]
    (let [reply (promise) candidate (volatile! nil)]
      (try
        (let [before (:model @(:state runtime))
@@ -1763,10 +1845,13 @@
                queue (ingress-queue runtime type payload)
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
-                                (.offer ^LinkedBlockingQueue queue
-                                        (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
-                                                 :ingress-order (vswap! (:ingress-order runtime) inc)}
-                                          checkpoint-request (assoc ::checkpoint-request checkpoint-request)))))]
+                                (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
+                                                       :ingress-order (vswap! (:ingress-order runtime) inc)}
+                                                (and (= :command type) authority) (assoc :authority authority)
+                                                checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
+                                  (if (and (= :command type) (push-gesture-end? payload authority))
+                                    (do (enqueue-push-gesture-end! runtime message) true)
+                                    (.offer ^LinkedBlockingQueue queue message)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
@@ -1778,9 +1863,12 @@
 (defn submit!
   "Enqueue an operation. Full restores are validated and resource-prepared off
   the frame-owner lock, then committed atomically by the next owner cycle.
-  Use :cue-schedule and :cue-cancel for explicit musical launch timing."
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
+  Host adapters pass authenticated operator authority as a separate argument.
+  Serialized payloads cannot confer operator privileges."
   ([runtime payload] (submit! runtime :command payload))
-  ([runtime type payload] (enqueue! runtime type payload nil)))
+  ([runtime type payload] (submit! runtime type payload nil))
+  ([runtime type payload authority] (enqueue! runtime type payload authority nil)))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -1832,6 +1920,9 @@
                           (vswap! candidates conj candidate))
                         (deliver (:reply message) {:status :rejected :message "Show stopped"})
                         (recur))))
+                  (doseq [message (vals @(:push-gesture-ends runtime))]
+                    (deliver (:reply message) {:status :rejected :message "Show stopped"}))
+                  (vreset! (:push-gesture-ends runtime) {})
                   true))]
     ;; No cleanup waits while holding the owner lock: a closing device or agent
     ;; may synchronously dispatch, and must receive its stopped receipt promptly.
@@ -1977,19 +2068,24 @@
       {:project! (fn [view]
                    (project-parameters @(:state runtime) view nil))})))
 
+(def ^:private device-command-wait-ms 5000)
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
-  Push 2 accepts :native-display? true for the Wayang parameter display. An
-  explicit :display transport takes precedence."
+  Push 2 accepts :native-display? true for the Wayang parameter display and
+  :operator-gestures? true to record held scalar encoder edits. An explicit
+  :display transport takes precedence."
   [runtime kind options]
   (let [id (:session-id options) epoch (get-in @(:state runtime) [:model :epoch])]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
+      (let [operator-id (when (and (= :push-2 kind) (true? (:operator-gestures? options)))
+                          (str "push-2/" id "/" (UUID/randomUUID)))
+            open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch devices/open-x-touch!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -2006,12 +2102,20 @@
                                           :now-ms! #(now-ms runtime)
                                           :dispatch! (fn [command]
                                                        (heartbeat! runtime id)
-                                                       (let [reply (submit! runtime (assoc command :expected-epoch epoch))
+                                                       (let [payload (assoc command :expected-epoch epoch)
+                                                             gesture? (and operator-id (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel}
+                                                                                         (:op command)))
                                                              quantized? (or (= :cue/cancel-launch (:op command))
                                                                             (and (= :cue/launch (:op command))
-                                                                                 (contains? command :grid)))]
-                                                         (deref reply (if quantized? 0 5000)
-                                                                {:status :pending :command-id (:command-id command)})))}))]
+                                                                                 (contains? command :grid)))
+                                                             reply (if gesture?
+                                                                     (submit! runtime :command
+                                                                              (update payload :command-id #(str operator-id "/" %))
+                                                                              {:operator-id operator-id ::push-session-id id})
+                                                                     (submit! runtime payload))]
+                                                         (deref reply (if quantized? 0 device-command-wait-ms)
+                                                                (cond-> {:status :pending :command-id (:command-id command)}
+                                                                  gesture? (assoc :completion reply)))))}))]
         (if (locking (:lock runtime)
               (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch])))
                 (swap! (:devices runtime) assoc id device)
@@ -2101,17 +2205,7 @@
       (recovery/remember-manual! owner show-id saved))
     saved))
 
-(defn- read-checkpoint-source [path]
-  (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
-    (let [buffer (char-array 8192) source (StringBuilder.)]
-      (loop []
-        (let [n (.read reader buffer)]
-          (when (pos? n)
-            (when (> (+ (.length source) n) persistence/max-document-characters)
-              (throw (ex-info "Show file exceeds the document character limit" {})))
-            (.append source buffer 0 n)
-            (recur))))
-      (str source))))
+(defn- read-checkpoint-source [path] (recovery/read-source path))
 
 (defn load-show!
   "Read a bounded full show file and enqueue its atomic restore; returns a receipt."
@@ -2140,6 +2234,7 @@
      (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
      (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
                                 :expected-source-show-id show-id :source source}
+               nil
                (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))))
 
 (defn discard-prior-recovery!

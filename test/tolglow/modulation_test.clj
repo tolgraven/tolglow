@@ -308,6 +308,23 @@
     (is (contains? (:overrides resumed) "4:9"))
     (is (= (first (random/next-random (:seed (controller initial)))) (:seed (controller resumed))))))
 
+(deftest gesture-holds-rebase-the-displaced-deadline-and-commit-as-permanent
+  (let [initial (:state (modulation/advance (start) (model) (frame 0)))
+        target {:instance-id "0:1" :params [:level] :until-beat 2}
+        owner [:operator :encoder :gesture]
+        held (-> initial
+                 (modulation/hold target)
+                 (modulation/hold-gesture-param "0:1" :level owner))
+        rebased (modulation/rebase-clock held {:beat 10})
+        canceled (modulation/settle-gesture-hold rebased "0:1" :level owner false)
+        committed (modulation/settle-gesture-hold rebased "0:1" :level owner true)
+        restored (modulation/restore-state held {:show-id :modulation-test :epoch 1 :instance-ids {"0:1" "1:1"}})
+        path [:holds "0:1" :level]]
+    (is (= {:until-beat 12} (get-in canceled path)))
+    (is (= {:until-beat nil} (get-in committed path)))
+    (is (= {:until-beat nil} (get-in restored [:holds "1:1" :level])))
+    (is (= (:controllers rebased) (:controllers canceled) (:controllers committed)))))
+
 (deftest explicit-loop-and-forward-seek-rebase-preserve-glide-phase-and-rng
   (let [show (model (assoc-in effect [:params :other] {:type :number :default 0.4 :bounds [0.0 1.0]}))
         initial (modulation/advance (start {:mode :glide}) show (frame 0))
