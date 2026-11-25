@@ -174,6 +174,7 @@
            {:runtime-id (:id runtime)
             :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
+            :transport-generation (:transport-generation snapshot 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
@@ -590,6 +591,19 @@
     (when (and gesture (= [actor control-id gesture-id] ((juxt :actor :control-id :gesture-id) gesture)))
       gesture)))
 
+(defn- dispatch-ratio-pad-sample [runtime model payload time-ms {:keys [operator-id] ::keys [push-source] :as authority}]
+  (let [session-id (:session-id push-source)
+        trusted? (and (= :push-3 (:adapter push-source)) (= push-source (:source payload))
+                      operator-id (= operator-id (get-in @(:devices runtime) [session-id ::ratio-pad-operator])))
+        cached (get-in model [:control :history (:command-id payload)])
+        failure (cond
+                  (not trusted?) [:operator-required "A ratio pad sample needs its connected Push 3 session"]
+                  (and (nil? cached) (not (push-variations/admissible-ratio-pad-sample? model payload)))
+                  [:stale-ratio-pad "The shown ratio pad no longer matches the current cue"])]
+    (if-let [[code message] failure]
+      {:model model :events [] :ack {:status :rejected :command-id (:command-id payload) :code code :message message}}
+      (command model payload time-ms authority))))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
@@ -602,6 +616,9 @@
 
     (= :cue/cancel-launch (:op payload))
     (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
+
+    (and (= :gesture/sample (:op payload)) (contains? payload :sample-context))
+    (dispatch-ratio-pad-sample runtime model payload time-ms authority)
 
     (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
@@ -1787,6 +1804,7 @@
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state
                                    :checkpoint-results (checkpoint-results before message-receipts)
+                                   :transport-generation @(:presentation-clock runtime)
                                    :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
@@ -2263,7 +2281,9 @@
                                                          (deref reply (if quantized? 0 device-command-wait-ms)
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
-            device (cond-> device restore-lease (assoc ::restore-lease restore-lease))]
+            device (cond-> device
+                     push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
+                     restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
               (when (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                          (or (nil? reconnect-lease)

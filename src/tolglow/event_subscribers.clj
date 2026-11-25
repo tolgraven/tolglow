@@ -252,9 +252,13 @@
     :instance/opacity {:op :instance/opacity-set :instance-id id :value (:value action)}))
 
 (defn error-details [^Throwable error]
-  (when-not (faults/recoverable? error) (throw error))
-  {:class (.getName (class error))
-   :stacktrace (mapv str (take 24 (.getStackTrace error)))})
+  (let [causes (->> (:causes (faults/diagnostic nil nil nil :handler error))
+                    (filter (comp seq :location))
+                    (mapv #(select-keys % [:class :message :location])))]
+    ;; Studio can display these locations with the existing callback stack.
+    (cond-> {:class (.getName (class error))
+             :stacktrace (mapv str (take 24 (.getStackTrace error)))}
+      (seq causes) (assoc :causes causes))))
 
 (defn- report
   ([model run message] (report model run message nil))

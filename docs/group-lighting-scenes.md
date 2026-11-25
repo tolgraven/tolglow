@@ -60,7 +60,11 @@ In this example, up to four sources can run above standby, including up to two i
 - **What happens to the others?** `:standby-level` sets a fraction of emitter drive. The default `:standby-mode :shed` preserves the tint of sources reduced to standby and leaves unused heads dark. Choose `:standby-mode :all` for a low-priority standby look across the scope. Authored black, zero master and blackout still take effect. If the standby look alone would exceed the watt budget, its level falls too.
 - **What did the show actually use?** Read `(get-in (show/variables runtime) [:lighting/budget :global])` for the active and shed counts, requested watts and delivered watts. The same fields are available under `[:lighting/budget :groups group-id]`. A powered lamp behind a closed shutter consumes estimated watts and leaves its visible-source slot free.
 
-To steer the show toward a rolling brightness and activity target, enable the [energy autopilot](energy-autopilot.md).
+To operate the limit from a cue pad or device mapping, set its value to
+`{:cue-id :stage-energy :param :cap :default 1.0}`. The allocator reads the
+latest running instance of that cue and falls back to the supplied value on
+release. The same show-control cue can carry the [energy autopilot](energy-autopilot.md)
+brightness and activity targets.
 
 ## Shape visual activity
 

@@ -72,25 +72,25 @@
   "Keep the selected lamps at their authored level where possible. Spend above
   authored white only when every source together would otherwise fall short."
   [sources order desired extra total {:keys [standby-level max-gain]}]
-  (let [low (fn [s] (min standby-level (:level s)))
-        floor (reduce (fn [sum s] (+ sum (* (low s) (:capacity s)))) 0.0 sources)
+  (let [floor (reduce (fn [sum {:keys [level capacity]}]
+                        (+ sum (* (min standby-level level) capacity))) 0.0 sources)
         desired (* total (clamp 0.0 1.0 desired))
         slack (* total extra)
         floor-scale (if (pos? floor) (min 1.0 (/ desired floor)) 1.0)
         boost? (> desired (reduce (fn [sum s] (+ sum (* (:level s) (:capacity s)))) 0.0 sources))
         ;; Scale all the way to physical full white where max-gain permits it.
         limit (if boost? max-gain 1.0)]
-    (loop [remaining order left (max 0.0 (- desired floor)) gains (transient {})]
-      (if-let [id (:id (first remaining))]
-        (let [{:keys [capacity level] :as s} (first remaining)
-              base (* floor-scale (low s))
-              cost (* capacity (max 0.0 (- (min 1.0 (* level limit)) base)))
-              grant (if (and (pos? left) (<= cost (+ left slack))) cost (min left cost))
-              gain (if (and (pos? level) (pos? capacity)) (/ (+ base (/ grant capacity)) level)
-                       ;; An unselected lamp stays within standby if its LFO rises between decisions.
-                       standby-level)]
-          (recur (next remaining) (max 0.0 (- left grant)) (assoc! gains id (clamp 0.0 max-gain gain))))
-        (persistent! gains)))))
+    (loop [i 0 left (max 0.0 (- desired floor)) gains (transient {})]
+      (let [{:keys [id capacity level]} (get order i)]
+        (if id
+          (let [base (* floor-scale (min standby-level level))
+                cost (* capacity (max 0.0 (- (min 1.0 (* level limit)) base)))
+                grant (if (and (pos? left) (<= cost (+ left slack))) cost (min left cost))
+                gain (if (and (pos? level) (pos? capacity)) (/ (+ base (/ grant capacity)) level)
+                         ;; An unselected lamp stays within standby if its LFO rises between decisions.
+                         standby-level)]
+            (recur (inc i) (max 0.0 (- left grant)) (assoc! gains id (clamp 0.0 max-gain gain))))
+          (persistent! gains))))))
 
 (defn- pending-at [pending clock coverage]
   (into [] (keep (fn [{:keys [timer] :as correction}]
@@ -127,26 +127,41 @@
       (and (= 2 (count requests)) (every? create? requests)) [(first requests)]
       :else (vec requests))))
 
-(defn- active-ids [sources gains floor]
-  (into #{} (comp (filter #(> (level % (get gains (:id %) 1.0)) (+ floor 1e-9))) (map :id)) sources))
+(defn- gain-summary [sources gains total floor]
+  ;; Keep the rig order for both the brightness sum and the list of lit IDs.
+  (let [threshold (+ floor 1e-9)
+        zero-total? (zero? total)
+        n (count sources)]
+    (loop [i 0 sum 0.0 lit (transient []) active (transient #{})]
+      (if (< i n)
+        (let [{:keys [id capacity] :as source} (nth sources i)
+              emitted (level source (gains id))]
+          (recur (inc i) (if zero-total? sum (double (+ sum (* capacity emitted))))
+                 (if (pos? emitted) (conj! lit id) lit)
+                 (if (> emitted threshold) (conj! active id) active)))
+        {:delivered (if zero-total? 0.0 (/ sum total))
+         :lit (persistent! lit) :active (persistent! active)}))))
 
 (defn- allocate-order [sources state order wanted slack total opts]
   (let [gains (allocate sources order wanted slack total opts)
-        active (active-ids sources gains (:standby-level opts))
+        floor (:standby-level opts)
+        summary (gain-summary sources gains total floor)
+        active (:active summary)
         previous (:active state)]
     ;; A shuffled prefix can contain exactly the same lamps. Give one waiting,
     ;; emitting source first pick when another selection is physically possible.
     (if-let [next-source (when (and (:rotate? opts) (seq active) (= previous active))
                           (some (fn [{:keys [id level] :as source}]
-                                  (when (and (not (active id)) (> level (:standby-level opts))) source))
+                                  (when (and (not (active id)) (> level floor)) source))
                                 order))]
       (let [order (into [next-source] (remove #(= (:id next-source) (:id %))) order)
             gains (allocate sources order wanted slack total opts)]
-        [(mapv :id order) gains (active-ids sources gains (:standby-level opts))])
-      [(mapv :id order) gains active])))
+        [(mapv :id order) gains (gain-summary sources gains total floor)])
+      [(mapv :id order) gains summary])))
 
 (defn- light-plan [state sources brightness target opts]
-  (let [ids (mapv :id sources)
+  (let [sources (vec sources)
+        ids (mapv :id sources)
         total (reduce + 0.0 (map :capacity sources))
         seed (if (= (:initial-seed state) (:seed opts)) (:seed state) (:seed opts))
         [seed order] (shuffled sources (:order state) seed (:rotate? opts))
@@ -157,18 +172,19 @@
         duty (if (and (pos? now) (pos? brightness)) (min 1.0 (/ brightness now)) 1.0)
         wanted (if (and (zero? target) (= :instant (:strategy opts))) 0.0
                    (clamp 0.0 1.0 (+ now (/ delta duty))))
-        [order gains active] (cond
-                               (and (= :gradual (:strategy opts)) (zero? (:step opts)))
-                               (let [gains (into {} (map (fn [id] [id (get (:gains state) id 1.0)])) ids)]
-                                 [(:order state ids) gains (active-ids sources gains (:standby-level opts))])
-                               (some #(pos? (:level %)) sources)
-                               (allocate-order sources state order wanted (/ (:overshoot opts) duty) total opts)
-                               :else
-                               ;; An unlit sample can be the trough of a dimmer LFO.
-                               ;; Keep selected gains ready to respond to its next rise.
-                               [(mapv :id order) (into {} (map (fn [id] [id (if (zero? target) 0.0
-                                                                        (get (:gains state) id 1.0))])) ids) #{}])
-        delivered (weighted sources gains total)
+        [order gains {:keys [active lit delivered]}]
+        (cond
+          (and (= :gradual (:strategy opts)) (zero? (:step opts)))
+          (let [gains (into {} (map (fn [id] [id (get (:gains state) id 1.0)])) ids)]
+            [(:order state ids) gains (gain-summary sources gains total (:standby-level opts))])
+          (some #(pos? (:level %)) sources)
+          (allocate-order sources state order wanted (/ (:overshoot opts) duty) total opts)
+          :else
+          ;; An unlit sample can be the trough of a dimmer LFO.
+          ;; Keep selected gains ready to respond to its next rise.
+          (let [gains (into {} (map (fn [id] [id (if (zero? target) 0.0
+                                                   (get (:gains state) id 1.0))])) ids)]
+            [(mapv :id order) gains (gain-summary sources gains total (:standby-level opts))]))
         achieved (* duty (- delivered now))
         residual (- delta achieved)
         residual (if (= (pos? residual) (pos? delta)) residual 0.0)
@@ -176,8 +192,7 @@
                       (> (abs residual) (:tolerance opts)) residual
                       (not= :parameters (:preference opts)) delta
                       :else 0.0)]
-    {:ids ids :gains gains :active active :order order :seed seed :before now
-     :lit (into [] (comp (filter #(pos? (level % (gains (:id %))))) (map :id)) sources)
+    {:ids ids :gains gains :active active :order order :seed seed :before now :lit lit
      :achieved achieved :residual residual :request request
      :raw (weighted sources {} total) :wanted wanted :delivered delivered}))
 

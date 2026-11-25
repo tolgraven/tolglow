@@ -1,5 +1,6 @@
 (ns tolglow.lighting-budget.allocation
-  "Allocate normalized source drives against simultaneous fixture and watt limits.")
+  "Allocate normalized source drives against simultaneous fixture and watt limits."
+  (:require [tolglow.autopilot.signal :as signal]))
 
 (def scope-defaults {:limit 1.0 :standby-level 0.0 :standby-mode :shed :max-active nil :strategy :proportional :fixture-order []})
 
@@ -9,12 +10,16 @@
 
 (defn- unit? [x] (and (finite? x) (<= 0 x 1)))
 
+(defn- limit? [x]
+  (or (unit? x)
+      (and (map? x) (:cue-id x) (unit? (:default x)) (signal/valid? x))))
+
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (.isBlank ^String x)))))
 
 (defn- validate-scope [rule]
   (let [{:keys [limit standby-level standby-mode max-active strategy fixture-order] :as normalized} (merge scope-defaults rule)]
     (when-not (and (map? rule) (every? (set (keys scope-defaults)) (keys rule))
-                   (unit? limit) (unit? standby-level) (#{:shed :all} standby-mode) (or (nil? max-active) (nat-int? max-active))
+                   (limit? limit) (unit? standby-level) (#{:shed :all} standby-mode) (or (nil? max-active) (nat-int? max-active))
                    (#{:proportional :priority} strategy) (vector? fixture-order)
                    (every? id? fixture-order) (= (count fixture-order) (count (distinct fixture-order))))
       (throw (ex-info "Invalid lighting budget rule" {:rule rule})))

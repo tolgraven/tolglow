@@ -15,6 +15,7 @@ uniform sampler2D sceneDepth;
 uniform sampler3D densityTexture;
 uniform mat4 inverseProjection, cameraWorld;
 uniform vec3 eye, room;
+uniform vec3 detailMin, detailMax;
 uniform float amount, time, mixedDensity, extinctionPerM;
 uniform int raySteps, lightCount;
 uniform vec3 lightPosition[16], lightDirection[16], lightColor[16];
@@ -32,11 +33,13 @@ float hash(vec3 p){p=fract(p*0.3183099+vec3(.11,.23,.37));p*=17.;return fract(p.
 float noise(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
 return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
  mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);}
-vec2 roomHit(vec3 ro,vec3 rd){
- vec3 lower=vec3(-room.x*.5,0.,-room.z*.5),upper=vec3(room.x*.5,room.y,room.z*.5);
+vec2 boxHit(vec3 ro,vec3 rd,vec3 lower,vec3 upper){
  vec3 safe=vec3(abs(rd.x)<1e-7?(rd.x<0.?-1e-7:1e-7):rd.x,abs(rd.y)<1e-7?(rd.y<0.?-1e-7:1e-7):rd.y,abs(rd.z)<1e-7?(rd.z<0.?-1e-7:1e-7):rd.z);
  vec3 a=(lower-ro)/safe,b=(upper-ro)/safe,lo=min(a,b),hi=max(a,b);
  return vec2(max(max(lo.x,lo.y),lo.z),min(min(hi.x,hi.y),hi.z));
+}
+vec2 roomHit(vec3 ro,vec3 rd){
+ return boxHit(ro,rd,vec3(-room.x*.5,0.,-room.z*.5),vec3(room.x*.5,room.y,room.z*.5));
 }
 float shadowCompare(int slot,vec2 uv,float depth){
  if(slot==0)return texture(shadow0,vec3(uv,depth));
@@ -82,6 +85,14 @@ vec3 incident(int i,vec3 position,float density,bool halo){
   vec3 shadowPoint=position;
   float axial=dot(delta,lightDirection[i]);
   float path=max(0.,axial-lightStart[i]);
+  if(!halo && lightStart[i]>0.){
+   // The lens fills its clear aperture. Develop the angular penumbra
+   // downstream instead of shaping the illuminated disk at the glass.
+   float radius=lightStart[i]*lightProfile[i].y;
+   float radial=length(delta-axial*lightDirection[i]);
+   float disk=1.-smoothstep(.88*radius,radius,radial);
+   spot=mix(disk,spot,smoothstep(0.,2.*radius,path));
+  }
   if(halo){
    // Forward scattering can illuminate the room just outside the optical
    // field. The additional width starts at zero at the actual lens.
@@ -89,8 +100,10 @@ vec3 incident(int i,vec3 position,float density,bool halo){
    float coreRadius=axial*lightProfile[i].y;
    float width=path*lightProfile[i].z;
    float radial=length(lateral), outside=radial-coreRadius;
-   if(width<=0.||outside>=width)return vec3(0.);
-   spot=.26*(1.-fogTransmission(extinctionPerM,density,path))*(1.-smoothstep(0.,width,outside));
+   // The optical core already contributes here. Start the halo continuously
+   // outside the core so it cannot count the same light twice at intersections.
+   if(width<=0.||outside<=0.||outside>=width)return vec3(0.);
+   spot=smoothstep(0.,width*.15,outside)*.26*(1.-fogTransmission(extinctionPerM,density,path))*(1.-smoothstep(0.,width,outside));
    // Sample the shadow on the illuminated edge that feeds this halo.
    shadowPoint=lightPosition[i]+axial*lightDirection[i]+lateral*min(1.,.98*coreRadius/max(radial,.001));
   }
@@ -133,20 +146,48 @@ void integrateFog(out vec4 volumeOutput){
  vec3 surfaceWorld=(cameraWorld*surfaceView).xyz;
  vec2 interval=roomHit(eye,ray);float start=max(0.,interval.x),finish=min(interval.y,length(surfaceWorld-eye));
  if(finish<=start){volumeOutput=vec4(0.,0.,0.,1.);return;}
- vec4 lightIntervals[16];
+ vec4 lightIntervals[16];int rayLights[16];int rayLightCount=0;
  for(int i=0;i<16;i++){
   if(i>=lightCount)break;
-  lightIntervals[i]=vec4(1.,0.,1.,0.);
-  if(dot(lightColor[i],lightColor[i])>.000001 && lightShape[i].y>0.)
-   lightIntervals[i]=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
-                          coneHit(i,lightProfile[i].w,eye,ray,start,finish));
+  if(dot(lightColor[i],lightColor[i])<=.000001 || lightShape[i].y<=0.)continue;
+  vec4 spans=vec4(coneHit(i,lightShape[i].x,eye,ray,start,finish),
+                  coneHit(i,lightProfile[i].w,eye,ray,start,finish));
+  // Most screen rays cross very few beams. Cull once, before marching, while
+  // retaining each exact clipped interval (including sub-step narrow shafts).
+  if(spans.y<=spans.x && spans.w<=spans.z)continue;
+  lightIntervals[rayLightCount]=spans;rayLights[rayLightCount]=i;rayLightCount++;
  }
- float stepSize=(finish-start)/float(raySteps);
- float jitter=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+ float baseStep=(finish-start)/float(raySteps);
+ vec2 detailSpan=vec2(1.,0.);
+ if(all(lessThan(detailMin,detailMax)))detailSpan=boxHit(eye,ray,detailMin,detailMax);
+ // Desktop has fewer spare evaluations than dense base intervals can occupy.
+ // Distribute those subdivisions along the whole plume instead of refining
+ // only its near end. Integer differences keep the total at most 72.
+ bool hasDetail=detailSpan.y>detailSpan.x;
+ int detailFirst=hasDetail?int(clamp(floor((detailSpan.x-start)/baseStep),0.,float(raySteps))):0;
+ int detailLast=hasDetail?int(clamp(ceil((detailSpan.y-start)/baseStep),0.,float(raySteps))):0;
+ int detailCount=max(0,detailLast-detailFirst);
+ int regularExtra=max(0,72/raySteps-1);
+ int extraLimit=max(0,72-raySteps);
+ int distribute=raySteps>36?min(extraLimit,detailCount):regularExtra*detailCount;
+ // Keep density offsets local to each interval, with the optics sampled at
+ // its midpoint. This avoids locking the lit plume texture to march planes.
+ float jitter=mix(.25,.75,hash(vec3(gl_FragCoord.xy,13.)));
  vec3 radiance=vec3(0.);float transmission=1.;
+ int baseIndex=0,subdivision=0,subdivisions=1;
+ float stepSize=baseStep;
  for(int n=0;n<72;n++){
-  if(n>=raySteps||transmission<.002)break;
-  float begin=start+float(n)*stepSize;
+  if(baseIndex>=raySteps||transmission<.002)break;
+  float baseBegin=start+float(baseIndex)*baseStep;
+  if(subdivision==0){
+   int local=baseIndex-detailFirst;
+   subdivisions=1;
+   if(local>=0 && local<detailCount && distribute>0){
+    subdivisions+=regularExtra>0?regularExtra:(local+1)*distribute/detailCount-local*distribute/detailCount;
+   }
+   stepSize=baseStep/float(subdivisions);
+  }
+  float begin=baseBegin+float(subdivision)*stepSize;
   float distance=begin+(.2+.6*jitter)*stepSize;vec3 position=eye+ray*distance;
   float density=densityAt(position);
   float segment=fogTransmission(extinctionPerM,density,stepSize);
@@ -167,15 +208,16 @@ void integrateFog(out vec4 volumeOutput){
    ambient*=.78+.22*fogTransmission(extinctionPerM,canopy*amount,.56);
   }
   radiance+=transmission*(1.-segment)*.92*ambient;
-  for(int i=0;i<16;i++){
-   if(i>=lightCount)break;
+  for(int light=0;light<16;light++){
+   if(light>=rayLightCount)break;
+   int i=rayLights[light];
    for(int layer=0;layer<2;layer++){
     bool halo=layer==1;
-    vec2 span=halo?lightIntervals[i].zw:lightIntervals[i].xy;
+    vec2 span=halo?lightIntervals[light].zw:lightIntervals[light].xy;
     float lo=max(begin,span.x),hi=min(begin+stepSize,span.y);
     if(hi<=lo)continue;
     vec3 samplePosition=eye+ray*((lo+hi)*.5);
-    float localDensity=densityAt(samplePosition);
+    float localDensity=densityAt(eye+ray*(lo+(.2+.6*jitter)*(hi-lo)));
     if(localDensity<=0.)continue;
     float foreground=fogTransmission(extinctionPerM,density,lo-begin);
     radiance+=transmission*foreground*(1.-fogTransmission(extinctionPerM,localDensity,hi-lo))*.92*
@@ -183,6 +225,8 @@ void integrateFog(out vec4 volumeOutput){
    }
   }
   transmission*=segment;
+  subdivision++;
+  if(subdivision>=subdivisions){baseIndex++;subdivision=0;}
  }
  volumeOutput=vec4(radiance,transmission);
 }`;
@@ -224,15 +268,19 @@ const emptyShadow = () => {
   texture.needsUpdate = true; return texture;
 };
 
+function densityTexture(field) {
+  const texture = new THREE.Data3DTexture(new Uint16Array(field.data.length), ...field.grid);
+  return Object.assign(texture, {format: THREE.RedFormat, type: THREE.HalfFloatType, internalFormat: 'R16F',
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, unpackAlignment: 1});
+}
+
 export class VolumetricFog {
   constructor(renderer, { quality = 'desktop' } = {}) {
     if (!FOG_QUALITY[quality]) throw new Error('Unknown fog quality');
     this.renderer = renderer; this.quality = quality; this.budget = FOG_QUALITY[quality]; this.disposed = false;
     this.field = new FogField({ grid: this.budget.grid }); this.field.burst(); this.amount = 0.5;
-    this.packed = new Uint16Array(this.field.data.length);
-    this.density = new THREE.Data3DTexture(this.packed, ...this.budget.grid);
-    Object.assign(this.density, { format: THREE.RedFormat, type: THREE.HalfFloatType, internalFormat: 'R16F',
-      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, unpackAlignment: 1 });
+    this.density = densityTexture(this.field);
+    this.packed = this.density.image.data;
     this.dummyShadow = emptyShadow();
     this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, format: THREE.RGBAFormat,
       depthBuffer: false, stencilBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -241,6 +289,7 @@ export class VolumetricFog {
     this.uniforms = {
       sceneDepth: { value: null }, densityTexture: { value: this.density }, inverseProjection: { value: new THREE.Matrix4() },
       cameraWorld: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3() }, room: { value: new THREE.Vector3(...this.field.room) },
+      detailMin: {value: new THREE.Vector3()}, detailMax: {value: new THREE.Vector3()},
       amount: { value: this.amount }, time: { value: 0 }, mixedDensity:{value:0}, extinctionPerM:{value:DEFAULT_EXTINCTION_PER_M}, raySteps: { value: this.budget.steps }, lightCount: { value: 0 },
       lightPosition: { value: vectors(16) }, lightDirection: { value: vectors(16) }, lightColor: { value: vectors(16) },
       lightShape: { value: vectors(16) }, lightShadow: { value: new Int32Array(16).fill(-1) },
@@ -263,8 +312,46 @@ export class VolumetricFog {
   }
 
   upload() {
-    for (let i = 0; i < this.packed.length; i++) this.packed[i] = THREE.DataUtils.toHalfFloat(Math.min(65504,this.field.data[i]));
+    const [nx, ny, nz] = this.field.grid, [rx, ry, rz] = this.field.room;
+    const mixed = this.showAtmosphere ? this.showAtmosphere.sample?.['mixed-density'] || 0 : this.field.initialHaze;
+    // Positive half-floats retain numeric order. Comparing packed values also
+    // conservatively includes cells rounded onto the detail threshold.
+    const threshold = THREE.DataUtils.toHalfFloat(mixed + .22);
+    let x0 = nx, y0 = ny, z0 = nz, x1 = -1, y1 = -1, z1 = -1;
+    for (let i = 0; i < this.packed.length; i++) {
+      const packed = THREE.DataUtils.toHalfFloat(Math.min(65504,this.field.data[i]));
+      this.packed[i] = packed;
+      if (packed < threshold) continue;
+      const x = i % nx, y = Math.floor(i / nx) % ny, z = Math.floor(i / (nx * ny));
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); z0 = Math.min(z0, z);
+      x1 = Math.max(x1, x); y1 = Math.max(y1, y); z1 = Math.max(z1, z);
+    }
+    // One whole cell of padding exceeds the trilinear filter's half-cell
+    // support beyond a cell boundary. Empty bounds disable subdivision.
+    const lower = this.uniforms.detailMin.value, upper = this.uniforms.detailMax.value;
+    if (x1 < 0) { lower.set(1, 1, 1); upper.set(-1, -1, -1); }
+    else {
+      lower.set((Math.max(0, x0 - 1) / nx - .5) * rx, Math.max(0, y0 - 1) / ny * ry,
+        (Math.max(0, z0 - 1) / nz - .5) * rz);
+      upper.set((Math.min(nx, x1 + 2) / nx - .5) * rx, Math.min(ny, y1 + 2) / ny * ry,
+        (Math.min(nz, z1 + 2) / nz - .5) * rz);
+    }
     this.density.needsUpdate = true; this.uploads++;
+  }
+  setQuality(quality) {
+    const budget = FOG_QUALITY[quality];
+    if (!budget) throw new Error('Unknown fog quality');
+    if (this.disposed || this.quality === quality) return;
+    const field = new FogField({grid: budget.grid});
+    field.copyFrom(this.field);
+    const density = densityTexture(field);
+    this.density.dispose();
+    this.field = field; this.density = density; this.packed = density.image.data;
+    this.quality = quality; this.budget = budget;
+    // The linked programs use uniform step counts and texture bindings.
+    this.uniforms.densityTexture.value = density;
+    this.uniforms.raySteps.value = budget.steps;
+    this.upload();
   }
   setRoom(room) {
     if (!this.field.setRoom(room)) return;

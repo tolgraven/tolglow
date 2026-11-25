@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [afterglow.runtime :as runtime]
             [clojure.data.json :as json]
+            [tolglow.clock :as clock]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.waveforms :as waveforms]
@@ -21,19 +22,21 @@
 
 (defn near? [a b] (< (Math/abs (double (- a b))) 1.0e-8))
 
-(defn fixture []
-  (let [registered (signals/new-registry)
-        schema (signals/selector-schema registered [{:id :pulse :params {:duty (fx/param :width)}} :sine])
-        effect (fx/effect :shape {:params {:waveform schema :width (fx/parameter 0.25 {:bounds [0 1]})}}
-                          (fx/intensity (signals/select-waveform registered (fx/param :waveform) (:choices schema)
-                                                                 {:phase (fx/cycles {:beats 1})})))
-        instance {:id "0:1" :effect-id :shape :effect-version 1 :definition effect :cue-id :shape
-                  :phase :running :params {:waveform 0.0 :width 0.25} :state {:ticks 3} :started-at-ms 0
-                  :started-at-beat 0 :system {:last-clock {:time-ms 250 :beat 0.5}}}]
-    {:model {:epoch 0 :time-ms 250 :transport {:bpm 120 :beat 0.5 :playing? true}
-             :waveforms registered :instances {"0:1" instance}
-             :registry {:effects {:shape effect} :cues {:shape {:id :shape :effect-id :shape}}}}
-     :modulation-view {:overrides {}}}))
+(defn fixture
+  ([] (fixture 1))
+  ([period]
+   (let [registered (signals/new-registry)
+         schema (signals/selector-schema registered [{:id :pulse :params {:duty (fx/param :width)}} :sine])
+         effect (fx/effect :shape {:params {:waveform schema :width (fx/parameter 0.25 {:bounds [0 1]})}}
+                           (fx/intensity (signals/select-waveform registered (fx/param :waveform) (:choices schema)
+                                                                  {:phase (fx/cycles {:beats period})})))
+         instance {:id "0:1" :effect-id :shape :effect-version 1 :definition effect :cue-id :shape
+                   :phase :running :params {:waveform 0.0 :width 0.25} :state {:ticks 3} :started-at-ms 0
+                   :started-at-beat 0 :system {:last-clock {:time-ms 250 :beat 0.5}}}]
+     {:model {:epoch 0 :time-ms 250 :transport {:bpm 120 :beat 0.5 :playing? true}
+              :waveforms registered :instances {"0:1" instance}
+              :registry {:effects {:shape effect} :cues {:shape {:id :shape :effect-id :shape}}}}
+      :modulation-view {:overrides {}}})))
 
 (deftest live-waveform-uses-captured-parameters-and-the-real-effect-ir
   (let [snapshot (fixture) request {:instance-id "0:1" :parameter "waveform" :options {:samples 9}}
@@ -50,6 +53,85 @@
            (:preview-samples (waveforms/preview (assoc-in snapshot [:modulation-view :overrides "0:1" :width] 0.75) request))))
     (is (thrown? clojure.lang.ExceptionInfo (waveforms/preview snapshot (assoc request :parameter :width))))
     (is (thrown? clojure.lang.ExceptionInfo (waveforms/preview snapshot (assoc request :instance-id "stale"))))))
+
+(deftest compact-timeline-retains-short-pulses-and-follows-the-committed-beat
+  (let [snapshot (-> (fixture) (assoc :transport-generation 18)
+                     (assoc-in [:model :transport :meter] {:beats-per-bar 3.5 :bars-per-phrase 4})
+                     (assoc-in [:model :instances "0:1" :params :width] 0.002))
+        request {:instance-id "0:1" :parameter :waveform :options {:samples 9 :live-timing? true}}
+        project #(get (waveforms/preview % request) :timeline)
+        first (project snapshot)
+        rebase (project (-> snapshot (assoc :transport-generation 19)
+                            (update :model clock/rebase {:beat 25.25 :source :link :source-epoch 2})))
+        static (project (assoc-in snapshot [:model :instances "0:1" :params :width] 0.0))
+        narrow-edge? (fn [[a b]]
+                       (and (not= (:value a) (:value b)) (< (- (:phase b) (:phase a)) 0.000001)))]
+    (is (= 0.5 (:beat first)))
+    (is (zero? (:now-value first)))
+    (is (= [0.0 1.0] (sort (distinct (map :value (:samples first))))))
+    (is (<= 12 (count (filter narrow-edge? (partition 2 1 (:samples first))))))
+    (is (= #{:beat :bar :phrase} (set (map :kind (:ticks first)))))
+    (is (some #(and (= :bar (:kind %)) (near? (/ 3.0 3.5) (:position %))) (:ticks first)))
+    (is (= 25.25 (:beat rebase)))
+    (is (= :link (get-in rebase [:transport :source])))
+    (is (= 2 (get-in rebase [:transport :source-epoch])))
+    (is (= [18 19] (mapv :transport-generation [first rebase])))
+    (is (= (:samples first) (:samples rebase)))
+    (is (not= (:ticks first) (:ticks rebase)))
+    (is (= #{0.0} (into #{} (map :value) (:samples static))))
+    (is (nil? (project (assoc-in snapshot [:model :instances "0:1" :definition :outputs] {:dimmer 0.5}))))
+    (is (nil? (:timeline (waveforms/preview snapshot {:id :pulse :options {:live-timing? true}}))))))
+
+(deftest compact-timeline-keeps-refreshing-through-a-flat-part-of-a-long-cycle
+  (let [snapshot (fixture 16)
+        request {:instance-id "0:1" :parameter :waveform :options {:live-timing? true}}
+        sample (fn [beat]
+                 (let [time-ms (* beat 500)]
+                   (:timeline (waveforms/preview
+                               (-> snapshot
+                                   (assoc-in [:model :transport :beat] beat)
+                                   (assoc-in [:model :instances "0:1" :system :last-clock]
+                                             {:time-ms time-ms :beat beat}))
+                               request))))
+        middle (sample 9)
+        next-pulse (sample 14)]
+    (is (= 9 (:beat middle)))
+    (is (= #{0.0} (into #{} (map :value) (:samples middle))))
+    (is (= 14 (:beat next-pulse)))
+    (is (= #{0.0 1.0} (into #{} (map :value) (:samples next-pulse))))))
+
+(deftest transport-timeline-samples-the-composed-registry-wave-at-the-emitted-phase
+  (let [base (fixture)
+        waves (get-in base [:model :waveforms])
+        phase-input (fx/param signals/phase-input)
+        composition {:id :layered :name "Layered square and sine" :category :composite :version 1
+                     :range [0 1] :params {}
+                     :expression (fx/mix (signals/sample waves :pulse {:phase phase-input :params {:duty 0.25}})
+                                         (signals/sample waves :sine {:phase (fx/add phase-input 0.25)}) 0.35)
+                     :discontinuities [{:channel :value :phase 0} {:channel :value :phase 0.25}]}
+        waves (signals/publish waves composition)
+        selector (signals/selector-schema waves [:layered])
+        definition (fx/effect :shape {:params {:waveform selector}}
+                              (fx/intensity (signals/select-waveform waves (fx/param :waveform) (:choices selector)
+                                                                    {:phase (fx/cycles {:beats 2} {:phase-reference :transport
+                                                                                                   :phase 0.125})})))
+        snapshot (-> base (assoc-in [:model :waveforms] waves)
+                     (assoc-in [:model :instances "0:1" :definition] definition)
+                     (update-in [:model :instances "0:1" :params] dissoc :width))
+        request {:instance-id "0:1" :parameter :waveform :options {:live-timing? true}}
+        step (compiler/compile-effect definition)
+        current (fn [snapshot]
+                  (let [beat (get-in snapshot [:model :transport :beat])
+                        instance (get-in snapshot [:model :instances "0:1"])
+                        context (-> (recipes/context beat) (assoc :instance instance)
+                                    (assoc-in [:frame :transport-clock] {:beat beat}))]
+                    (get-in (recipes/frame step context) [:values :left :dimmer])))
+        first (get (waveforms/preview snapshot request) :timeline)
+        later-snapshot (update snapshot :model clock/rebase {:beat 7.125 :source :link :source-epoch 2})
+        later (get (waveforms/preview later-snapshot request) :timeline)]
+    (is (near? (current snapshot) (:now-value first)))
+    (is (near? (current later-snapshot) (:now-value later)))
+    (is (not= (:samples first) (:samples later)))))
 
 (deftest pure-response-and-paused-clock-match-frame-parameter-transform
   (let [snapshot (-> (fixture)

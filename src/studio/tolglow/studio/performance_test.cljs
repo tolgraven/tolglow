@@ -7,7 +7,7 @@
             [tolglow.studio.effect-selection :as selection]
             [tolglow.studio.effect-inspector :as inspect]
             [tolglow.studio.events :as events]
-            [tolglow.studio.parameter-visualization :as visual]
+            [tolglow.studio.param-visualization :as visual]
             [tolglow.studio.performance :as performance]))
 
 (def base
@@ -227,6 +227,53 @@
     (is (= "Cue order changed. Choose a cue again." (get-in stale [:db :ui :performance :reorder :error])))
     (is (= "Show revision changed" (get-in rejected [:db :ui :performance :reorder :error])))
     (is (= 8 (get-in ack [:db :ui :performance :reorder :request :revision])))))
+
+(deftest setting-layer-priority-submits-the-selected-launch-with-current-show-identity
+  (let [db (assoc-in base [:show :instances] [(get-in base [:show :instances 0])])
+        opened (:db (transition db [:performance/reorder-toggle]))
+        capture {:identity ["runtime-a" 4 ["4:1"]] :revision 7}
+        selected (:db (transition opened [:performance/reorder-pick capture "4:1"]))
+        path [:ui :performance :reorder]
+        source (get-in selected (conj path :source))
+        drafted (:db (transition selected [:performance/reorder-priority-edit source "-3.5"]))
+        invalid (transition drafted [:performance/reorder-priority-set capture "4:1" ""])
+        stale (transition drafted [:performance/reorder-priority-set (assoc-in capture [:identity 0] "old") "4:1" "-3.5"])
+        sent (transition drafted [:performance/reorder-priority-set capture "4:1" "-3.5"])
+        payload (command sent)
+        ack (transition (:db sent) (conj (:on-success payload) {:status "accepted" :revision 8 :render-priority -3.5}))]
+    (is (= "-3.5" (get-in drafted (conj path :priority-draft))))
+    (is (empty? (:fx invalid)))
+    (is (re-find #"finite number" (get-in (:db invalid) (conj path :error))))
+    (is (empty? (:fx stale)))
+    (is (= "instance/set-priority" (:op payload)))
+    (is (= {:instance-id "4:1" :priority -3.5 :expected-revision 7} (:fields payload)))
+    (is (= ["runtime-a" 4] ((juxt :runtime-id :epoch) payload)))
+    (is (= "Layer priority updated." (get-in (:db ack) (conj path :message))))
+    (is (= 8 (get-in (:db ack) (conj path :request :revision))))
+    (is (= (:show db) (get-in ack [:db :show])))))
+
+(deftest rejected-layer-priority-keeps-the-draft-for-the-same-running-launch
+  (let [db (assoc-in base [:show :active-instance-order] ["4:1" "4:2" "4:3"])
+        opened (:db (transition db [:performance/reorder-toggle]))
+        capture {:identity ["runtime-a" 4 ["4:1" "4:2" "4:3"]] :revision 7}
+        selected (:db (transition opened [:performance/reorder-pick capture "4:1"]))
+        sent (transition selected [:performance/reorder-priority-set capture "4:1" "-3.5"])
+        payload (command sent)
+        received-db (-> (:db sent)
+                        (assoc-in [:show :revision] 8)
+                        (assoc-in [:show :active-instance-order] ["4:2" "4:1" "4:3"]))
+        rejected (:db (transition received-db (conj (:on-failure payload) "Show revision changed")))
+        path [:ui :performance :reorder]
+        next-capture {:identity ["runtime-a" 4 ["4:2" "4:1" "4:3"]] :revision 8}
+        retried (transition rejected [:performance/reorder-priority-set next-capture "4:1" (get-in rejected (conj path :priority-draft))])
+        replaced (assoc-in rejected [:show :epoch] 5)
+        next-epoch (assoc-in next-capture [:identity 1] 5)]
+    (is (= "-3.5" (get-in (:db sent) (conj path :priority-draft))))
+    (is (= "-3.5" (get-in rejected (conj path :priority-draft))))
+    (is (= "Show revision changed" (get-in rejected (conj path :error))))
+    (is (nil? (get-in rejected (conj path :request))))
+    (is (= {:instance-id "4:1" :priority -3.5 :expected-revision 8} (:fields (command retried))))
+    (is (empty? (:fx (transition replaced [:performance/reorder-priority-set next-epoch "4:1" "-3.5"]))))))
 
 (deftest grouped-xyz-keeps-editable-base-and-plots-effective-components
   (let [components [[:x {:default 1}] [:y {:default 2}] [:z {:default 3}]]

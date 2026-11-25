@@ -1,6 +1,6 @@
-(ns tolglow.studio.parameter-visualization-test
+(ns tolglow.studio.param-visualization-test
   (:require [cljs.test :refer-macros [deftest is]]
-            [tolglow.studio.parameter-visualization :as visual]
+            [tolglow.studio.param-visualization :as visual]
             [tolglow.studio.push-display :as display]
             [tolglow.studio.parameter-widgets :as widgets]))
 
@@ -85,6 +85,17 @@
     (is (= [0] (:values (peek held))))
     (is (= result (visual/append-sample result {:beat 100} [3])))
     (is (= 1 (count (feed held 0))))))
+
+(deftest studio-can-retain-each-committed-sample-and-scroll-it-at-display-speed
+  (let [clock (fn [n] {:time-ms (* 25 n) :beat (/ n 16) :source :show :sample-period-ms 400})
+        history (reduce #(visual/append-sample %1 (clock %2) [(mod %2 2)] 0 1024) [] (range 4))
+        schema {:type :number :bounds [0 1]}]
+    (is (= [0 25 50 75] (mapv :t history)))
+    (is (= {:beats 0.0625 :duration 25 :offset 1.5625} (visual/history-motion history 4)))
+    (is (= ["M-100,41L0,3L100,41"]
+           (:paths (visual/chart-paths (subvec history 0 3) 0.0625 schema 0.0625))))
+    (is (nil? (visual/history-motion (assoc-in history [3 :source] :new-show) 4)))
+    (is (nil? (visual/history-motion (assoc-in history [3 :beat] 0) 4)))))
 
 (deftest missing-components-create-gaps-at-their-own-timestamps
   (let [samples [{:beat 0 :values [0]} {:beat 1 :values nil} {:beat 2 :values [1]}]
