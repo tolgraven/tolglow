@@ -152,3 +152,14 @@
                               (catch clojure.lang.ExceptionInfo exception (ex-data exception)))]
               (is (= :timeout (:provider/error result))))
             (finally (.countDown finish))))))))
+
+(deftest a-peer-disconnect-is-a-transport-error
+  (with-http-server
+    (fn [exchange] (.close exchange))
+    (fn [url]
+      (let [request (providers/request {:provider :self-hosted :endpoint url :model "local"} messages nil)
+            failure (try
+                      (providers/http-transport! request (fn [_]) {:timeout-ms 5000})
+                      nil
+                      (catch clojure.lang.ExceptionInfo exception exception))]
+        (is (= :transport (:provider/error (ex-data failure))))))))
