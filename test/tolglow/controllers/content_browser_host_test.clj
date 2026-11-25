@@ -94,6 +94,41 @@
                                  :receipt (deref 5000 {}) :status))))
           (finally (show/stop! runtime)))))))
 
+(deftest full-configured-catalog-allows-both-owner-checkpoints
+  (with-directory
+    (fn [directory]
+      (let [runtime (show/start! {:workspace-options nil :workers 1 :frame-rate 4
+                                  :recovery {:interval-ms 40 :directory directory}}
+                                 (constantly nil))
+            file (io/file directory "named.transit")
+            saves (mapv (fn [i] {:show-id (str "Archive " i) :source-kind :named :handle :archive})
+                        (range 128))
+            oversized (conj saves {:show-id :main :source-kind :named :handle :shadowed})]
+        (try
+          (show/save-show! runtime file)
+          (is (some? (await-checkpoint runtime)))
+          (recovery/close! @(:recovery runtime))
+          (let [page (host/project runtime saves {:kind :show})
+                active (row page [:show :main])
+                request (assoc (selection page active) :source (get-in active [:sources :named]))
+                preview (host/preview runtime saves request)
+                confirmation (:confirmation preview)]
+            (is (= 129 (:total page)))
+            (is (= 128 (:total (host/project runtime saves {:kind :show :query "archive"}))))
+            (is (= #{:named :recovery} (set (keys (:sources active)))))
+            (is (= :preview (:status preview)))
+            (is (not (str/includes? (pr-str [page preview]) (str directory))))
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bounded vector of configured save sources"
+                                  (host/project runtime oversized {:kind :show})))
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bounded vector of configured save sources"
+                                  (host/preview runtime oversized request)))
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"bounded vector of configured save sources"
+                                  (host/confirm-load! runtime oversized confirmation)))
+            (let [result (host/confirm-load! runtime saves confirmation)]
+              (is (= :submitted (:status result)))
+              (is (= :accepted (:status (deref (:receipt result) 5000 {}))))))
+          (finally (show/stop! runtime)))))))
+
 (deftest named-confirmation-checks-the-exact-file-and-its-bytes
   (with-directory
     (fn [directory]
@@ -148,7 +183,7 @@
                                         :model (assoc (demo/model) :show-id :tour :master 0.45)})
             file (io/file directory "tour.transit")
             other-file (io/file directory "other.transit")
-            saves [{:show-id :tour :name "Tour" :source-kind :named :handle "tour-save" :path file}]]
+            saves [{:show-id :tour :name "Tour" :source-kind :named :handle "tour-save" :path file :checkpoint? true}]]
         (try
           (show/save-show! saved file)
           (recovery/write-source! other-file (slurp file))
@@ -156,6 +191,8 @@
                 confirmation (:confirmation preview)
                 before (control-state runtime)]
             (is (= :preview (:status preview)))
+            (is (= {:source-kind :named :handle "tour-save"}
+                   (get-in preview [:entry :sources :named])))
             (is (not (str/includes? (pr-str preview) (str directory))))
             (is (= {:status :rejected :reason :confirmation-required}
                    (host/confirm-load! runtime saves (dissoc confirmation :token))))

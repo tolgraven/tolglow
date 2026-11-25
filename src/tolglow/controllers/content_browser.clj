@@ -12,6 +12,8 @@
 
 (def ^:private max-save-sources 128)
 
+(def ^:private max-owner-checkpoints 2)
+
 (def ^:private max-query-length 64)
 
 (def ^:private builtin-waveforms (delay (signals/new-registry)))
@@ -31,9 +33,16 @@
       (and (part? (name value)) (or (nil? (namespace value)) (part? (namespace value))))
       (part? value))))
 
+(defn- validate-save-limit! [saves limit label]
+  (when-not (and (vector? saves) (<= (count saves) limit))
+    (throw (ex-info (str "Expected a bounded vector of " label) {:limit limit}))))
+
+(defn validate-configured-save-limit!
+  "Check configured capacity before reading or merging owner checkpoints."
+  [saves]
+  (validate-save-limit! saves max-save-sources "configured save sources"))
+
 (defn- save-groups [saves]
-  (when-not (and (vector? saves) (<= (count saves) max-save-sources))
-    (throw (ex-info "Expected a bounded vector of configured save sources" {:limit max-save-sources})))
   (reduce (fn [groups {:keys [show-id source-kind handle revision] :as save}]
             (when-not (and (or (keyword? show-id) (named? show-id))
                            (#{:named :recovery} source-kind) (token? handle)
@@ -42,6 +51,15 @@
               (throw (ex-info "Invalid or duplicate configured save source" {:source-kind source-kind})))
             (assoc-in groups [show-id source-kind] save))
           {} saves))
+
+(defn- show-save-groups [saves checkpoints]
+  (validate-configured-save-limit! saves)
+  (validate-save-limit! checkpoints max-owner-checkpoints "owner checkpoints")
+  (let [owned (save-groups checkpoints)
+        configured (remove (fn [{:keys [show-id source-kind]}]
+                             (contains? (get owned show-id) source-kind))
+                           saves)]
+    (merge-with merge (save-groups configured) owned)))
 
 (defn- type-tags [definition]
   (let [{:keys [categories category tags]} definition]
@@ -68,9 +86,9 @@
                                            {:keys [binding]} (vals (:parameter-bindings instance))]
                                        (:waveform binding)))}))
 
-(defn- entry-source [model saves kind]
+(defn- entry-source [model saves checkpoints kind]
   (case kind
-    :show (save-groups saves)
+    :show (show-save-groups saves checkpoints)
     :effect (get-in model [:registry :effects])
     :cue (get-in model [:registry :cues])
     :waveform (:waveforms (or (:waveforms model) @builtin-waveforms))))
@@ -108,14 +126,16 @@
   Saves provide :show-id, :source-kind (:named or :recovery), :handle, optional
   :name and :revision. Supply at most one latest descriptor per kind and show.
   The host persists or reconstructs the handle-to-full-show-file mapping after
-  restart. A handle without a revision must identify an immutable save. The
-  catalog contains only presentation fields and exact identities."
-  [model saves]
-  (let [usage (indexes model)]
-    {:entries (into {}
-                    (for [kind kinds]
-                      [kind (into {} (map (fn [[id item]] [id (content-entry model usage kind id item)]))
-                                  (entry-source model saves kind))]))}))
+  restart. A handle without a revision must identify an immutable save. Owner
+  checkpoints have their own capacity and take precedence for the same show
+  and source kind. The catalog contains only presentation fields and exact identities."
+  ([model saves] (catalog model saves []))
+  ([model saves checkpoints]
+   (let [usage (indexes model)]
+     {:entries (into {}
+                     (for [kind kinds]
+                       [kind (into {} (map (fn [[id item]] [id (content-entry model usage kind id item)]))
+                                   (entry-source model saves checkpoints kind))]))})))
 
 (defn- content-key? [key]
   (and (vector? key) (= 2 (count key)) (some #{(first key)} kinds)
@@ -191,20 +211,22 @@
   committed model and save descriptors. :preview returns metadata. :load needs
   one exact projected :source. :launch needs a cue or effect. :attach needs a
   waveform, :instance-id, :param and the Studio LFO :binding-options (period,
-  endpoints, phase and inputs). This function only produces data. A future
-  dispatcher must plan with the current state at owner admission."
-  [model saves {:keys [op selection source] :as request}]
-  (if-not (and (map? selection)
-               (= (select-keys model [:show-id :epoch]) (select-keys selection [:show-id :epoch])))
-    (reject :stale-session)
-    (let [[kind id :as key] (when (content-key? (:key selection)) (:key selection))
-          item (when key (get (entry-source model saves kind) id))
-          usage (when (and item (= :preview op)) (indexes model))
-          entry (when item (content-entry model usage kind id item))]
-      (cond
-        (or (nil? entry) (not= (:selection entry) selection)) (reject :stale-selection)
-        (= :preview op) {:status :preview :entry entry}
-        (and (= :load op) (= :show kind)) (plan-load entry source)
-        (and (= :launch op) (#{:cue :effect} kind)) (plan-launch entry)
-        (and (= :attach op) (= :waveform kind)) (plan-attach model entry request)
-        :else (reject :action-unavailable)))))
+  endpoints, phase and inputs). Optional owner checkpoints follow the same
+  capacity and precedence as catalog. This function only produces data. A
+  future dispatcher must plan with the current state at owner admission."
+  ([model saves request] (plan model saves [] request))
+  ([model saves checkpoints {:keys [op selection source] :as request}]
+   (if-not (and (map? selection)
+                (= (select-keys model [:show-id :epoch]) (select-keys selection [:show-id :epoch])))
+     (reject :stale-session)
+     (let [[kind id :as key] (when (content-key? (:key selection)) (:key selection))
+           item (when key (get (entry-source model saves checkpoints kind) id))
+           usage (when (and item (= :preview op)) (indexes model))
+           entry (when item (content-entry model usage kind id item))]
+       (cond
+         (or (nil? entry) (not= (:selection entry) selection)) (reject :stale-selection)
+         (= :preview op) {:status :preview :entry entry}
+         (and (= :load op) (= :show kind)) (plan-load entry source)
+         (and (= :launch op) (#{:cue :effect} kind)) (plan-launch entry)
+         (and (= :attach op) (= :waveform kind)) (plan-attach model entry request)
+         :else (reject :action-unavailable))))))
