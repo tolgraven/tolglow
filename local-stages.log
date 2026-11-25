@@ -1,0 +1,7 @@
+WARNING: bean already refers to: #'clojure.core/bean in namespace: user, being replaced by: #'user/bean
+Execution error (AssertionError) at tolglow.bench-autopilot/check-frame! (bench_autopilot.clj:68).
+Assert failed: {:message "Frame worker deadline exceeded", :details {:type :afterglow.runtime.executor/timeout, :timeout-ms 500}}
+(nil? (:error status))
+
+Full report at:
+/tmp/clojure-9207227379071660985.edn

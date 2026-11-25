@@ -1,0 +1,11 @@
+
+lein test tolglow.lighting-activity-test
+
+lein test tolglow.autopilot-host-test
+
+lein test tolglow.autopilot.controller-test
+
+lein test tolglow.autopilot.statistics-test
+
+Ran 36 tests containing 575 assertions.
+0 failures, 0 errors.

@@ -1,0 +1,12 @@
+baseline 0 13514 {G1 Young Generation {:collections 2, :ms 144}, G1 Concurrent GC {:collections 2, :ms 291}, G1 Old Generation {:collections 0, :ms 0}}
+  ordinary n 144 late 141 wall [79.252079 285.663957] owner [15.959824 48.305005] bytes [4440176 4451144] meter [1.652871 5.058781] prepare [0.323147 1.145321] controller [nil nil]
+  decision n 16 late 16 wall [130.412666 526.633149] owner [30.539719 109.90226] bytes [8766744 8804160] meter [1.774439 8.679425] prepare [15.409644 45.020566] controller [10.166296 32.141117]
+candidate 1 1414 {G1 Young Generation {:collections 2, :ms 148}, G1 Concurrent GC {:collections 2, :ms 86}, G1 Old Generation {:collections 0, :ms 0}}
+  ordinary n 144 late 142 wall [77.469254 141.824416] owner [14.999692 20.586543] bytes [3712336 3723336] meter [1.170741 1.87123] prepare [0.316408 0.787055] controller [nil nil]
+  decision n 16 late 16 wall [139.152321 294.704998] owner [29.660722 64.501685] bytes [8038320 8076512] meter [1.101051 1.7169] prepare [15.367336 49.702978] controller [9.326405 44.447001]
+candidate 2 1453 {G1 Young Generation {:collections 2, :ms 115}, G1 Concurrent GC {:collections 2, :ms 35}, G1 Old Generation {:collections 0, :ms 0}}
+  ordinary n 144 late 116 wall [38.361687 98.039057] owner [12.479993 38.96931] bytes [3712336 3722992] meter [0.984517 2.556738] prepare [0.239842 0.838644] controller [nil nil]
+  decision n 16 late 16 wall [77.547799 253.913211] owner [24.649857 82.068442] bytes [8035848 8075232] meter [1.022046 1.99949] prepare [12.283665 36.619908] controller [6.77568 29.491983]
+baseline 3 1403 {G1 Young Generation {:collections 3, :ms 237}, G1 Concurrent GC {:collections 0, :ms 0}, G1 Old Generation {:collections 0, :ms 0}}
+  ordinary n 144 late 140 wall [70.126119 385.696554] owner [15.734969 82.760525] bytes [4437712 4448128] meter [1.75762 10.203292] prepare [0.307444 2.330709] controller [nil nil]
+  decision n 16 late 16 wall [110.173948 214.435557] owner [27.680216 75.463705] bytes [8761152 8800280] meter [1.692019 4.382355] prepare [12.889878 31.560199] controller [7.556498 22.199394]
