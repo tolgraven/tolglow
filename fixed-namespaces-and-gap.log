@@ -1,0 +1,17 @@
+
+Testing tolglow.studio.modulation-host-test
+
+Testing tolglow.visualization.cue-pads-test
+
+Ran 27 tests containing 445 assertions.
+0 failures, 0 errors.
+:exercise captured-push-encoder-updates-become-one-operator-edit :gap-ms 1600
+:packet [:palette 0] :device {:status :active, :failure nil, :palettes 1, :ready? false, :palette-start-ms 0, :selected-instance nil, :last-ack nil, :errors []}
+:packet [:palette 127] :device {:status :active, :failure nil, :palettes 128, :ready? true, :palette-start-ms 0, :selected-instance nil, :last-ack nil, :errors []}
+:packet [144 36 127] :device {:status :active, :failure nil, :palettes 128, :ready? true, :palette-start-ms 0, :selected-instance 0:1, :last-ack {:command-id history-push:1:268, :show-id :main, :epoch 0, :revision 1, :status :accepted, :instance-id 0:1}, :errors []}
+:counts {:test 1, :pass 13, :fail 0, :error 0}
+:exercise push-entry-point-selects-the-recent-page-without-sampling-it :gap-ms 1600
+:packet [:palette 0] :device {:status :active, :failure nil, :palettes 1, :ready? false, :palette-start-ms 0, :selected-instance nil, :last-ack nil, :errors []}
+:packet [:palette 127] :device {:status :active, :failure nil, :palettes 128, :ready? true, :palette-start-ms 0, :selected-instance nil, :last-ack nil, :errors []}
+:packet [144 92 127] :device {:status :active, :failure nil, :palettes 128, :ready? true, :palette-start-ms 0, :selected-instance 0:2, :last-ack {:command-id recent-push:1:288, :show-id :main, :epoch 0, :revision 3, :status :accepted, :instance-id 0:2}, :errors []}
+:counts {:test 1, :pass 10, :fail 0, :error 0}
