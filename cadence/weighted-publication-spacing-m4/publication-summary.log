@@ -1,0 +1,7 @@
+Waiting for one of two shared agent build slots…
+Build slot wait: 0.000s
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=1 -XX:CICompilerCount=2 -XX:ParallelGCThreads=1 -XX:ConcGCThreads=1 -Xmx512m
+{:report "target/weighted-product-optical-reader-long/reverse-1-baseline.edn", :missing-publisher-slots 2, :matched 2, :causes {:minimum-handoff-spacing 2}, :on-wire-late 0}
+{:report "target/weighted-product-optical-reader-long/reverse-2-candidate.edn", :missing-publisher-slots 4, :matched 4, :causes {:minimum-handoff-spacing 3, :previous-wake-or-send-overran 1}, :on-wire-late 1}
+{:report "target/weighted-product-optical-reader-long/reverse-3-candidate.edn", :missing-publisher-slots 4, :matched 4, :causes {:minimum-handoff-spacing 4}, :on-wire-late 0}
+{:report "target/weighted-product-optical-reader-long/reverse-4-baseline.edn", :missing-publisher-slots 4, :matched 4, :causes {:minimum-handoff-spacing 4}, :on-wire-late 0}
