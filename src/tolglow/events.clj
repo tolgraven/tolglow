@@ -33,12 +33,14 @@
                      (or (:effect-id source) (:instance-id source) :engine)
                      (or (:effect-id intent) (:effect-id instance) id :engine))
         data (if source
-               ;; Keep launch detail while reading identity from the intent or its origin.
-               (let [nested (:instance intent)
-                     intent (if (map? nested)
-                              (merge (select-keys nested [:launch-mode]) (dissoc intent :instance))
-                              intent)]
-                 (merge (select-keys source [:instance-id :effect-id :effect-version :cue-id]) intent))
+               (let [target (:instance intent)
+                     origin (select-keys source [:instance-id :effect-id :effect-version :cue-id])]
+                 (if (map? target)
+                   (merge origin
+                          (cond-> (select-keys target [:cue-id :effect-id :effect-version :launch-mode])
+                            (contains? target :id) (assoc :instance-id (:id target)))
+                          (dissoc intent :instance))
+                   (merge origin intent)))
                intent)]
     {:category :effect :emitter {:kind :effect :id emitter-id}
      :event (assoc data :cause-adapter (if source (:adapter source) (get-in instance [:source :adapter])))}))

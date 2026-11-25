@@ -3,6 +3,7 @@
             [ring.adapter.jetty :as jetty]
             [afterglow.reactive :as reactive]
             [tolglow.demo :as demo]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.effects.faults-test :as fault-fixtures]
@@ -211,19 +212,35 @@
 (deftest intent-payload-ids-and-originating-effect-attribution
   (let [source {:instance-id "origin" :effect-id :actual :effect-version 2
                 :cue-id :actual-cue :adapter :event-subscriber}
-        nested {:id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue :launch-mode :held}
+        nested {:id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue
+                :launch-mode :held :source {:adapter :studio}}
         explicit {:instance-id "other" :effect-id :target :effect-version 7 :cue-id :target-cue}
-        intents [{:type :test/inspect :instance nested}
+        intents [{:type :test/inspect :instance nested :cause-adapter :studio}
                  (merge explicit {:type :test/inspect :instance nested :cause-adapter :studio})
+                 {:type :test/inspect :instance {:cue-id :partial-cue}}
                  {:type :test/inspect :instance {}}]
-        model {:show-id :main :epoch 1 :frame-number 2 :time-ms 18 :transport {:beat 0}}
+        model (subscribers/configure (demo/model)
+                                    {:op :save :subscriber {:id :inspect
+                                                            :match {:category :effect :type :test/inspect :emitter-id :actual}
+                                                            :actions [{:op :cue/launch :select {:ids [:ember] :pick :first}}]}})
         state {:model model :status {:last-intents intents}
                ::show-events/intent-emissions (mapv #(hash-map :intent % :source source) intents)}
-        result (show-events/commit nil model state [])
+        result (show-events/commit subscribers/admit model state [])
+        manual (show-events/commit subscribers/admit model
+                                    (update state ::show-events/intent-emissions
+                                            #(mapv (fn [emission] (assoc-in emission [:source :adapter] :repl)) %))
+                                    [])
         origin (-> source (dissoc :adapter) (assoc :cause-adapter :event-subscriber))]
-    (is (= (repeat 3 {:kind :effect :id :actual}) (map :emitter (:events result))))
-    (is (= [(assoc origin :launch-mode :held) (merge origin explicit {:launch-mode :held}) origin]
+    (is (= (repeat 4 {:kind :effect :id :actual}) (map :emitter (:events result))))
+    (is (= [{:instance-id "foreign" :effect-id :foreign :effect-version 12 :cue-id :foreign-cue
+             :launch-mode :held :cause-adapter :event-subscriber}
+            (merge origin explicit {:launch-mode :held})
+            (assoc origin :cue-id :partial-cue)
+            origin]
            (mapv :data (:events result))))
+    (is (empty? (:deliveries result)))
+    (is (= {0 [:inspect] 1 [:inspect] 2 [:inspect] 3 [:inspect]} (:deliveries manual)))
+    (is (every? #(= :repl (get-in % [:data :cause-adapter])) (:events manual)))
     (is (= (dissoc state ::show-events/intent-emissions) (:state result)))))
 
 (deftest a-blocked-encoder-cannot-stall-the-frame-owner
