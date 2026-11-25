@@ -61,11 +61,10 @@
         (throw (ex-info "Invalid slot parameter values"
                         {:errors (mapv #(update % :path (fn [path] (into [:slots index] path))) errors)}))))))
 
-(defn save
-  "Validate and save a macro or sequence. New sequences default to one-beat slots.
-  :duration maps support beats, bars, phrases and explicit milliseconds. Slot overrides and
-  cue references validate before a new model is returned. Running executions
-  retain their captured definition; restart explicitly to use an edited one."
+(defn prepare-definition
+  "Validate and normalize a macro or sequence against the supplied model.
+  New sequences default to one-beat slots. :duration maps support beats,
+  bars, phrases and explicit milliseconds. Return the definition alone."
   [model definition]
   (when-not (and (map? definition) (registry/data? definition)
                  (identifier? (:id definition)) (#{:macro :sequence} (:mode definition))
@@ -90,6 +89,13 @@
       (let [errors (sequence/validate-sequence (sequence-spec definition))]
         (when (seq errors) (throw (ex-info "Invalid sequence" {:errors errors}))))
       (macro/launch-plan (:id definition) slots))
+    definition))
+
+(defn save
+  "Validate and save a macro or sequence. Running executions retain their
+  captured definition until explicitly restarted."
+  [model definition]
+  (let [definition (prepare-definition model definition)]
     (-> model (assoc-in [:compositions (:id definition)] definition) (update :revision inc))))
 
 (defn- time! [time-ms]
