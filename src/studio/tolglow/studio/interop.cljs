@@ -36,6 +36,16 @@
         :navigation-speed (when (fn? (aget engine "setNavigationSpeed")) (js-invoke engine "setNavigationSpeed" value))
         :navigation-move (when (fn? (aget engine "moveCamera")) (js-invoke engine "moveCamera" (first value) (second value)))
         nil))))
+(rf/reg-fx :studio/preview-layout
+  (fn [expanded?]
+    (r/after-render
+      (fn []
+        (when-let [panel (.getElementById js/document "preview-panel")]
+          (when (= expanded? (.contains (.-classList panel) "expanded"))
+            (when-let [canvas (.querySelector panel "#preview")]
+              (.scrollIntoView canvas #js {:block "nearest" :inline "nearest"}))
+            (when-let [engine (preview-engine @engines :perform)]
+              (js-invoke engine "resize"))))))))
 (rf/reg-fx :studio/preview-fullscreen
   (fn [_]
     (when-let [panel (.getElementById js/document "preview-panel")]
