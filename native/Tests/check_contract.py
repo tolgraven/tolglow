@@ -53,8 +53,23 @@ class Contract(unittest.TestCase):
         phone, other_targets = manifest.split("  TolglowAudienceClip:", 1)
         self.assertIn("UIBackgroundModes: [bluetooth-central]", phone)
         self.assertNotIn("UIBackgroundModes", other_targets)
-        self.assertIn("WKCompanionAppBundleIdentifier: org.tolglow.ios", manifest)
         self.assertTrue((ROOT / "Core/Package.swift").exists())
+
+    def test_apple_bundle_identifiers_share_tolgraven_prefix(self):
+        manifest = (ROOT / "project.yml").read_text()
+        prefix = "se.tolgraven.tolglow"
+        bundle_ids = re.findall(r"^ +PRODUCT_BUNDLE_IDENTIFIER: (\S+)$", manifest, re.M)
+        self.assertIn(f"bundleIdPrefix: {prefix}", manifest)
+        self.assertTrue(bundle_ids)
+        self.assertEqual(len(bundle_ids), len(set(bundle_ids)))
+        for identifier in bundle_ids:
+            self.assertTrue(identifier == prefix or identifier.startswith(prefix + "."), identifier)
+        phone = f"{prefix}.ios"
+        self.assertIn(phone, bundle_ids)
+        self.assertIn(f"{phone}.Clip", bundle_ids)
+        self.assertIn(f"{phone}.watchkitapp", bundle_ids)
+        self.assertIn(f'com.apple.developer.parent-application-identifiers: ["$(AppIdentifierPrefix){phone}"]', manifest)
+        self.assertIn(f"WKCompanionAppBundleIdentifier: {phone}", manifest)
 
     def test_optional_watch_workout_discards_health_data(self):
         manifest = (ROOT / "project.yml").read_text()

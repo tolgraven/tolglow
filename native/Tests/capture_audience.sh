@@ -15,7 +15,7 @@ xcrun simctl io "$device" recordVideo "$output_dir/audience-clip.mp4" >/dev/null
 recorder=$!
 trap 'kill -INT "$recorder" 2>/dev/null || true' EXIT
 sleep 1
-xcrun simctl launch "$device" org.tolglow.ios.Clip
+xcrun simctl launch "$device" se.tolgraven.tolglow.ios.Clip
 sleep 3
 xcrun simctl io "$device" screenshot "$output_dir/audience-clip.png"
 kill -INT "$recorder"

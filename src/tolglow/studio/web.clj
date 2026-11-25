@@ -70,12 +70,32 @@
             (recur))))
       (str text))))
 
+(defn- normalize-expressive-keys [value]
+  (walk/postwalk
+    (fn [node]
+      (if (and (map? node) (not (record? node)))
+        (reduce-kv (fn [fields key setting]
+                     (let [key (if (string? key) (keyword key) key)]
+                       (when (contains? fields key)
+                         (throw (ex-info "Duplicate expressive setting key" {:key key})))
+                       (assoc fields key setting)))
+                   {} node)
+        node))
+    value))
+
 (defn- normalize-form [uri data]
   ;; Layout IDs, authored metadata and wire-index keys are typed author input.
   ;; Geometry interprets textual enums itself, at the same boundary as the REPL.
   (if (and (= uri "/api/rig") (contains? data :pixel-layouts))
     (assoc (data/normalize-json (dissoc data :pixel-layouts)) :pixel-layouts (:pixel-layouts data))
-    (let [data (data/normalize-json data)]
+    (let [data (data/normalize-json
+                 ;; Studio writes policy map keys as text to preserve ID namespaces.
+                 (cond-> data
+                   (and (= uri "/api/expressive/preview") (contains? data :policy))
+                   (update :policy normalize-expressive-keys)
+                   (and (= uri "/api/settings") (#{:expressive "expressive"} (:scope data))
+                        (contains? data :values))
+                   (update :values normalize-expressive-keys)))]
       (cond-> data
         (and (= uri "/api/command") (= :cue/launch (:op data)) (= "off" (:grid data)))
         (assoc :grid :off)

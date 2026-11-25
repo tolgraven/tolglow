@@ -25,10 +25,10 @@ def report(app):
     return {
         "configuration": "Release",
         "measurement": "Unpacked simulator files. Parent includes both embedded products.",
-        "phoneAndTablet": product(app, "org.tolglow.ios", "iPhoneSimulator", [1, 2]),
-        "embeddedClip": product(app / "AppClips/TolglowAudienceClip.app", "org.tolglow.ios.Clip",
+        "phoneAndTablet": product(app, "se.tolgraven.tolglow.ios", "iPhoneSimulator", [1, 2]),
+        "embeddedClip": product(app / "AppClips/TolglowAudienceClip.app", "se.tolgraven.tolglow.ios.Clip",
                                 "iPhoneSimulator", [1, 2]),
-        "embeddedWatch": product(app / "Watch/TolglowWatch.app", "org.tolglow.ios.watchkitapp",
+        "embeddedWatch": product(app / "Watch/TolglowWatch.app", "se.tolgraven.tolglow.ios.watchkitapp",
                                  "WatchSimulator", [4]),
     }
 

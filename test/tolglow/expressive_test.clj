@@ -9,12 +9,19 @@
             [tolglow.demo :as demo]
             [tolglow.expressive :as expressive]
             [tolglow.persistence :as files]
-            [tolglow.studio.web :as web])
+            [tolglow.studio.web :as web]
+            [tolglow.transit :as transit])
   (:import [java.io ByteArrayInputStream]))
 
 (defn request [uri data]
   {:request-method :post :uri uri :headers {"host" "localhost"}
    :body (ByteArrayInputStream. (.getBytes (json/write-str (web/json-data data)) "UTF-8"))})
+(defn- transit-request [uri data studio-form?]
+  {:request-method :post :uri uri
+   :headers (cond-> {"host" "localhost" "content-type" "application/transit+json"
+                     "accept" "application/transit+json"}
+              studio-form? (assoc "x-tolglow-form" "studio-v1"))
+   :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})
 (defn result [response] (json/read-str (:body response) :key-fn keyword))
 (def config
   {:devices {"push-main" {:enabled? true :auto? true :disabled-axes #{:glide}
@@ -69,7 +76,7 @@
         (is (empty? @(:devices runtime)) "Preview never opens hardware"))
       (finally (show/stop! runtime)))))
 
-(deftest json-settings-save-and-full-show-roundtrip-restore-policy-only
+(deftest settings-save-and-full-show-roundtrip-restore-policy-only
   (let [runtime (show/create-runtime {:workspace-options nil})]
     (try
       (let [app (web/app {:heartbeat! (fn [_])
@@ -99,7 +106,16 @@
           (is (= 200 (:status (app (request "/api/settings" {:scope :expressive :device-id id :values {:enabled? false}}))))))
         (let [policies (get-in @(:state runtime) [:model :settings :expressive :devices])]
           (is (= {:enabled? false} (get policies :stage/a) (get policies :stage/b)))
-          (is (= (:devices stored) (dissoc policies :stage/a :stage/b)))))
+          (is (= (:devices stored) (dissoc policies :stage/a :stage/b))))
+        (let [save (fn [values]
+                     (app (transit-request "/api/settings"
+                            {:scope "expressive" :device-id "stage/a" :values values} true)))
+              values {"cues" {"stage/ember" {"params" {"light/level" {"axis" "lift" "range" [0.2 0.6]}}}}}]
+          (is (= 200 (:status (save values))))
+          (is (= {:axis :lift :range [0.2 0.6]}
+                 (get-in @(:state runtime) [:model :settings :expressive :devices :stage/a
+                                            :cues :stage/ember :params :light/level])))
+          (is (= 422 (:status (save (assoc-in values ["cues" "stage/ember" "params" "light/level" "range"] [0.2 "0.6"])))))))
       (finally (show/stop! runtime)))))
 
 (deftest invalid-imported-policy-is-rejected-before-restoring-state
@@ -134,7 +150,7 @@
                     (let [receipt (show/submit! runtime type payload)]
                       (show/tick! runtime 0) @receipt))
         device (seaboard/connect!
-                {:session-id "roli-session" :mapping-id "roli-policy"
+                {:session-id "roli-session" :mapping-id "roli/policy"
                  :zone {:manager-channel 0 :member-channels [1 2]} :cue-id :ember
                  :param-mappings {:level :lift}
                  :model! #(get @(:state runtime) :model) :now-ms! (constantly 0)
@@ -144,23 +160,48 @@
     (try
       (swap! (:devices runtime) assoc "roli-session" device)
       (let [app (studio/handler runtime)
-            preview #(result (app (request "/api/expressive/preview"
-                                           {:device-id "roli-policy" :cue-id :ember})))
-            configured (preview)]
-        (is (= "connected" (:profile-source configured)))
-        (is (= "lift" (get-in configured [:mappings 0 :axis])))
+            payload {:device-id :roli/policy :cue-id :ember :device-kind :push-3}
+            preview (fn [payload]
+                      (let [response (app (assoc-in (request "/api/expressive/preview" payload)
+                                                    [:headers "accept"] "application/transit+json"))
+                            headless (show/expressive-preview runtime payload)]
+                        (is (= 200 (:status response)))
+                        (is (= headless (transit/decode (:body response))))
+                        headless))
+            configured (preview payload)]
+        (is (= :connected (:profile-source configured)))
+        (is (= :seaboard-m (:device-kind configured)))
+        (is (= #{:strike :pressure :glide :slide :lift} (set (keys (:axes configured)))))
+        (is (= :lift (get-in configured [:mappings 0 :axis])))
+        (is (empty? (:mappings (preview (assoc payload :policy {:params {:level nil}})))))
+        (let [policy {:cues {:ember {:params {:level {:axis :lift :curve :ease-in :range [0.2 0.6]}}}}}
+              expected (show/expressive-preview runtime (assoc payload :policy policy))
+              studio-policy (web/json-data policy)
+              submit (fn [policy studio-form?]
+                       (app (transit-request "/api/expressive/preview" (assoc payload :policy policy) studio-form?)))]
+          (doseq [[body studio-form?] [[studio-policy true] [policy false]]
+                  :let [response (submit body studio-form?)]]
+            (is (= 200 (:status response)))
+            (is (= expected (transit/decode (:body response)))))
+          (is (= :connected (:profile-source expected)))
+          (is (= [0.2 0.6] (get-in expected [:mappings 0 :range])))
+          (is (= 400 (:status (submit (assoc-in studio-policy ["cues" "ember" "params" "level" "range"] [0.2 "0.6"]) true))))
+          (let [ambiguous (submit (assoc-in studio-policy ["cues" "ember" "params" "level" :axis] :slide) true)]
+            (is (= 400 (:status ambiguous)))
+            (is (= {:key :axis} (:details (transit/decode (:body ambiguous)))))))
+        (is (= configured (show/expressive-preview runtime payload)))
         (is (= :accepted (:status (dispatch! :settings {:scope :expressive
-                                                       :values {:devices {"roli-policy" {:params {:level :slide}}}}}))))
+                                                       :values {:devices {"roli/policy" {:params {:level :slide}}}}}))))
         (@receive [0x91 60 127])
         (let [id (get-in (session/snapshot device) [:local :selected-instance])]
           (@receive [0xb1 74 127])
-          (is (= (get-in (preview) [:samples 4 :values :level])
+          (is (= (get-in (preview payload) [:samples 4 :values :level])
                  (get-in @(:state runtime) [:model :instances id :params :level])))
           (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
-          (dispatch! :settings {:scope :expressive :values {:devices {"roli-policy" {:enabled? false}}}})
+          (dispatch! :settings {:scope :expressive :values {:devices {"roli/policy" {:enabled? false}}}})
           (@receive [0xb1 74 0])
           (is (= 1.0 (get-in @(:state runtime) [:model :instances id :params :level])))
-          (is (empty? (:mappings (preview))))
+          (is (empty? (:mappings (preview payload))))
           (@receive [0x81 60 0])
           (is (= :releasing (get-in @(:state runtime) [:model :instances id :phase])))))
       (finally (session/close! device) (reset! (:devices runtime) {}) (show/stop! runtime)))))

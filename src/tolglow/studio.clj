@@ -23,7 +23,6 @@
             [tolglow.development.workspace :as workspace]
             [tolglow.development.agents :as app-agents]
             [tolglow.development.terminal :as terminal]
-            [tolglow.expressive :as expressive]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.studio.projection :as projection]
             [tolglow.sensors.osc :as sensor-osc]
@@ -161,18 +160,7 @@
             :rdm! #(show/rdm-action! runtime %1 %2)
             :sync! #(show/sync-action! runtime %1 %2)
             :waveform! #(show/waveform-action! runtime %1 %2)
-            :expressive! (fn [payload]
-                           (let [wire-id #(if (keyword? %) (subs (str %) 1) %)
-                                 options (some (fn [[id device]]
-                                                 (let [options (:options device)]
-                                                   (when (= (wire-id (:device-id payload))
-                                                            (wire-id (or (:mapping-id options) id))) options)))
-                                               @(:devices runtime))
-                                 profile (when options
-                                           {:id (get-in options [:profile :id])
-                                            :axes (keys (get-in options [:profile :capabilities :available-axes]))
-                                            :defaults (select-keys options [:mapping-policy :param-mappings :cue-mappings])})]
-                             (expressive/preview (:model @(:state runtime)) payload profile)))
+            :expressive! (partial show/expressive-preview runtime)
             :patch! #(:patch (show/snapshot runtime))
             :repl! #(show/repl-action! runtime %1 %2)
             :repl-eval! #(show/repl-eval! runtime %1 %2 %3)
@@ -184,12 +172,7 @@
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))
             :chat! (fn [payload emit! done!]
-                     (let [identity (select-keys (:model @(:state runtime)) [:epoch :show-id])]
-                       (agents/start-chat! (show/agent-manager runtime) payload
-                                           {:snapshot! #(show/snapshot runtime)
-                                            :dispatch! #(show/dispatch-tool! runtime %1 %2
-                                                                        (merge %3 identity {:expected-epoch (:epoch identity)}))
-                                            :emit! emit! :done! done!})))})))
+                     (show/start-chat! runtime payload {:emit! emit! :done! done!}))})))
 
 (defn listen!
   "Bind Studio to the selected show, returning the actual port (including port

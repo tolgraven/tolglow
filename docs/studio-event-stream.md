@@ -4,6 +4,8 @@ The headless owner gathers events alongside the immutable candidate show. Contro
 
 Each inspected row carries a sequence ID and a Transit Date for the wall time at commit. The separate `:time` map identifies show, epoch, frame, show time in milliseconds and musical beat. Source timestamps and confidence are included when provided by the actual producer. The inspector projects a small set of identifying and numeric fields. Full submitted commands, user source, arbitrary parameter strings, handler arguments and raw input histories stay outside the feed.
 
+For a custom effect intent, `:emitter` identifies the effect definition that produced it. The event's `:data` fills in omitted identity fields from the originating instance, including its definition version and cue when available. A one-shot can emit on its final frame and still appear under its effect and instance IDs.
+
 ## Subscribe
 
 Open a same-origin WebSocket at `/api/debug/events`. The server sends an initial Transit message even when the history is empty. An acknowledgement signals that the client has consumed all rows through that cursor.
