@@ -173,6 +173,7 @@
            {:runtime-id (:id runtime)
             :section-patterns-enabled? (some? (:section-patterns runtime))
             :frame-number (get model :frame-number 0)
+            :transport-generation (:transport-generation snapshot 0)
             :visualization-clock {:sample-period-ms (cue-pads/sample-period-ms (:cue-pad-previews runtime))}
             :spatial (get-in model [:variables :spatial])
             :reactive-faults (vec (concat (graph/faults (reactions runtime)) (get-in model [:variables :runtime :handler-faults])))
@@ -1748,6 +1749,7 @@
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state
                                    :checkpoint-results (checkpoint-results before message-receipts)
+                                   :transport-generation @(:presentation-clock runtime)
                                    :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
