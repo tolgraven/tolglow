@@ -9,7 +9,7 @@ import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {TexturePass} from 'three/addons/postprocessing/TexturePass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {displayTransform, EdgePass, FilmPass} from './film.js';
-import {TIERS, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
+import {TIERS, rasterBudget, rasterSizes, supportedSamples, sceneSamples, presentationHz, adjacentQuality, hdrDisplayAvailable, configureDisplayRange, GpuTimer} from './render-quality.js';
 import {createMaterials, disposeMaterials} from './materials.js';
 import {createRoom} from './room.js';
 import {createDiffuserTubes} from './diffuser-tubes.js';
@@ -353,7 +353,9 @@ export class SceneRenderer {
       const direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
       const next = adjacentQuality(this.quality, direction);
       if (next !== this.quality) {
-        this.renderScale = direction < 0 ? .65 : .9;
+        const sameRaster = rasterBudget(next, this.qualityChoice, this.softwareRenderer)
+          === rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer);
+        this.renderScale = direction < 0 ? (sameRaster ? scale : .65) : .9;
         this.scaleChangedAt = now; this.overBudget = this.underBudget = 0;
         this.applyTier(next);
         return;
@@ -380,7 +382,7 @@ export class SceneRenderer {
     }
     const pixelRatio = this.platform.worker ? bounds.pixelRatio : devicePixelRatio;
     const {scene: [width, height], display: [displayWidth, displayHeight]} = rasterSizes(
-      bounds.width, bounds.height, pixelRatio, this.options, this.renderScale, this.maxDimension);
+      bounds.width, bounds.height, pixelRatio, rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer), this.renderScale, this.maxDimension);
     this.camera.aspect = bounds.width / bounds.height; this.camera.updateProjectionMatrix();
     if (displayWidth !== this.displayWidth || displayHeight !== this.displayHeight) {
       this.renderer.setSize(displayWidth, displayHeight, false);
