@@ -30,7 +30,7 @@
     (fn [directory]
       (let [file (io/file directory "show.transit")]
         (is (= (.getAbsolutePath file) (recovery/write-source! file "last-good")))
-        (is (nil? (recovery/write-source! file "retired-generation" (constantly false))))
+        (is (nil? (recovery/write-source! file "retired-generation" (constantly nil))))
         (is (= "last-good" (slurp file)))
         (is (= ["show.transit"] (mapv #(.getName %) (.listFiles directory))))))))
 
@@ -41,12 +41,12 @@
             manual (io/file directory "named.transit")
             write! recovery/write-source!]
         (with-redefs [recovery/write-source!
-                      (fn [path source & [eligible?]]
+                      (fn [path source & [publish!]]
                         (when (and (= "recovery.transit" (.getName (io/file path)))
                                    (compare-and-set! first-write? true false))
                           (deliver entered true)
                           (deref finish 5000 nil))
-                        (write! path source (or eligible? (constantly true))))]
+                        (if publish! (write! path source publish!) (write! path source)))]
           (let [runtime (show/start! {:workspace-options nil :recovery {:directory directory :interval-ms 35}}
                                      (constantly nil))
                 owner @(:recovery runtime)
@@ -65,6 +65,8 @@
                 (is (await-result #(= 0.25 (stored-master))))
                 (recovery/close! owner)
                 (is (= manual (recovery/latest-file owner id :named)))
+                (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reserved for show recovery"
+                                      (show/save-show! runtime (recovery-file))))
                 (is (nil? (recovery/latest-file owner :another-show :recovery)))
                 (is (= :accepted (:status (deref (show/load-latest-show! runtime :named) 5000 {}))))
                 (is (= 1.0 (:master (model))))
@@ -126,3 +128,37 @@
             (is (= 0.3 (:master (show/snapshot reopened))))
             (is (await-result #(:last-saved (show/recovery-status reopened))))
             (finally (app/stop! reopened))))))))
+
+(deftest restoring-a-named-checkpoint-retires-a-staged-recovery-write
+  (with-directory
+    (fn [directory]
+      (let [named (io/file directory "manual.transit")
+            staged (promise) resume (promise) publication (promise)
+            write! recovery/write-source!]
+        (with-redefs [recovery/write-source!
+                      (fn [path source & [publish!]]
+                        (if (and publish! (= "recovery.transit" (.getName (io/file path)))
+                                 (= 0.6 (-> source persistence/read-string :model :master)))
+                          (write! path source
+                                  (fn [replace!]
+                                    (deliver staged true)
+                                    (deref resume 5000 nil)
+                                    (let [result (publish! replace!)]
+                                      (deliver publication result)
+                                      result)))
+                          (if publish! (write! path source publish!) (write! path source))))]
+          (let [runtime (show/start! {:workspace-options nil :recovery {:directory directory :interval-ms 35}}
+                                     (constantly nil))
+                owner @(:recovery runtime)
+                stored-master #(some-> (recovery/latest-file owner :main :recovery) slurp
+                                       persistence/read-string :model :master)]
+            (try
+              (show/save-show! runtime named)
+              (is (await-result #(= 1.0 (stored-master))))
+              (is (= :accepted (:status @(show/submit! runtime {:op :master/set :value 0.6}))))
+              (is (true? (deref staged 5000 false)))
+              (is (= :accepted (:status @(show/load-latest-show! runtime :named))))
+              (deliver resume true)
+              (is (nil? (deref publication 5000 :pending)))
+              (is (= 1.0 (stored-master)))
+              (finally (deliver resume true) (show/stop! runtime)))))))))

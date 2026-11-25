@@ -252,7 +252,7 @@ rules remain part of schema 2. Transit supplies the representation of its values
 
 ## Working recovery and manual checkpoints
 
-A scheduled show captures the last committed model and output every ten seconds. It serializes and replaces one local recovery file per show ID on a background worker. When a write runs long, the worker waits until it finishes before starting the next interval. Shutdown cancels the worker and keeps the last completed checkpoint. Named saves keep their own files and are bookmarked after a successful `save-show!`.
+A scheduled show captures the last committed model and output every ten seconds. A background worker serializes and forces the prepared file outside the frame owner. The final local rename is ordered with show replacement and shutdown. When a write runs long, the worker waits until it finishes before starting the next interval. Shutdown keeps the last completed checkpoint. Named saves keep their own files and are bookmarked after a successful `save-show!`.
 
 For a preview show, the same runtime can restore either file through the show owner's normal import operation.
 

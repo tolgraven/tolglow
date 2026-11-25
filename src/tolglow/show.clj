@@ -1775,6 +1775,14 @@
                           (assoc (select-keys model [:show-id :epoch :revision :frame-number])
                                  :source (persistence/write-string model output)))))
 
+(defn- publish-checkpoint! [runtime captured replace!]
+  ;; The prepared file is closed and forced. Only the same-directory rename
+  ;; must be ordered with a change of show ownership or shutdown.
+  (locking (:lock runtime)
+    (when (and @(:running runtime)
+               (= (show-identity captured) (show-identity (:model @(:state runtime)))))
+      (replace!))))
+
 (defn recovery-status
   "Report available checkpoints for the current show, including after restart."
   [runtime]
@@ -1791,9 +1799,11 @@
 (defn save-show!
   "Save a complete snapshot using a forced temporary file and atomic replacement."
   [runtime path]
-  (let [{:keys [show-id source]} (capture-checkpoint runtime)
+  (let [owner (some-> (:recovery runtime) deref)
+        path (if owner (recovery/manual-path! owner path) path)
+        {:keys [show-id source]} (capture-checkpoint runtime)
         saved (recovery/write-source! path source)]
-    (when-let [owner (some-> (:recovery runtime) deref)]
+    (when owner
       (recovery/remember-manual! owner show-id saved))
     saved))
 
@@ -2083,7 +2093,6 @@
        (reset! (:recovery runtime)
                (recovery/start! recovery-options (not defer-recovery?)
                                 #(when @(:running runtime) (capture-checkpoint runtime))
-                                #(and @(:running runtime)
-                                      (= (show-identity %) (show-identity (:model @(:state runtime)))))))
+                                (partial publish-checkpoint! runtime)))
        runtime
        (catch Throwable error (stop! runtime) (throw error))))))

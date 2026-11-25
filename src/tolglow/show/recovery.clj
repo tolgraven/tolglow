@@ -36,9 +36,9 @@
 
 (defn write-source!
   "Force a complete temporary file and publish it with one local atomic move.
-  An optional eligibility check runs after the expensive write."
-  ([path source] (write-source! path source (constantly true)))
-  ([path ^String source eligible?]
+  The optional publication callback owns whether and when to execute the move."
+  ([path source] (write-source! path source (fn [replace!] (replace!))))
+  ([path ^String source publish!]
    (let [file (.getAbsoluteFile (io/file path))]
      (io/make-parents file)
      (let [temp (Files/createTempFile (.toPath (.getParentFile file)) ".tolglow-show-" ".tmp"
@@ -47,28 +47,29 @@
          (with-open [stream (FileOutputStream. (.toFile temp))]
            (.write stream (.getBytes source StandardCharsets/UTF_8))
            (.force (.getChannel stream) true))
-         (when (eligible?)
-           (Files/move temp (.toPath file) (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
-                                                                  StandardCopyOption/REPLACE_EXISTING]))
-           (.getAbsolutePath file))
+         (publish! (fn []
+                     (Files/move temp (.toPath file) (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE
+                                                                            StandardCopyOption/REPLACE_EXISTING]))
+                     (.getAbsolutePath file)))
          (finally (Files/deleteIfExists temp)))))))
 
-(defn- autosave! [{:keys [directory status open? active?]} capture! current?]
+(defn- autosave! [{:keys [directory status open? active?]} capture! publish!]
   (try
     (when-let [{:keys [show-id source] :as captured} (when (and @open? @active?) (capture!))]
       (when-let [path (write-source! (checkpoint-file directory show-id "recovery.transit") source
-                                    #(and @open? (current? captured)))]
+                                    (fn [replace!]
+                                      (publish! captured #(when @open? (replace!)))))]
         (swap! status assoc :last-saved (assoc (dissoc captured :source) :path path) :last-error nil)))
     (catch Exception error
       (when @open? (swap! status assoc :last-error (ex-message error))))))
 
-(defn start! [{:keys [enabled? interval-ms] :as config} active? capture! current?]
+(defn start! [{:keys [enabled? interval-ms] :as config} active? capture! publish!]
   (let [owner (assoc config :open? (atom true) :active? (atom active?) :status (atom {}))]
     (if enabled?
       (let [factory (reify ThreadFactory
                       (newThread [_ task] (doto (Thread. task "tolglow-show-recovery") (.setDaemon true))))
             executor (ScheduledThreadPoolExecutor. 1 factory)]
-        (.scheduleWithFixedDelay executor ^Runnable #(autosave! owner capture! current?)
+        (.scheduleWithFixedDelay executor ^Runnable #(autosave! owner capture! publish!)
                                  interval-ms interval-ms TimeUnit/MILLISECONDS)
         (assoc owner :executor executor))
       owner)))
@@ -83,6 +84,15 @@
 
 (defn status [owner]
   (merge (select-keys owner [:enabled? :interval-ms]) (some-> owner :status deref)))
+
+(defn manual-path! [{:keys [directory]} path]
+  (let [file (.getCanonicalFile (io/file path))
+        parent (.getParentFile file)]
+    (when (and parent (#{"recovery.transit" "manual.edn"} (.getName file))
+               (re-matches #"[0-9a-f]{64}" (.getName parent))
+               (= (.getCanonicalFile directory) (.getParentFile parent)))
+      (throw (ex-info "This path is reserved for show recovery" {:code :reserved-recovery-path}))))
+  path)
 
 (defn remember-manual! [{:keys [directory status]} show-id path]
   (try
