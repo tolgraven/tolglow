@@ -1585,6 +1585,13 @@
     (is (nil? (get-in reply [:db :scene-draft-request])))
     (is (= "scene-draft/discard" (:op dropped)))
     (is (= [:studio/failure "Room draft: Stale draft"] (:dispatch failed)))
+    (testing "only a confirmed result is reported as done"
+      (let [confirmed (fn [request reply] (:dispatch (transition (:db request) (conj (:on-success (second (first (:fx request)))) reply))))]
+        (is (= [:studio/toast "Room draft applied to the show."] (confirmed applying {:status "accepted"})))
+        (is (= [:studio/toast "Room draft discarded."] (confirmed discarding {:status :accepted :discarded? true})))
+        (is (= [:studio/failure "Room draft: Command remains queued. Check the banner before trying again."]
+               (confirmed applying {:status "pending" :message "Command remains queued"})
+               (confirmed discarding {:status "pending" :message "Command remains queued"})))))
     (testing "only the Room renders the audition frame"
       (let [live {:head-1 {:emitted-color [1 0 0]}} drafted {:head-1 {:emitted-color [0 0 1]}}
             staged (:db (full-frame base (assoc view :output {:values live}

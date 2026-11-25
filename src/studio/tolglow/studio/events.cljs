@@ -656,12 +656,17 @@
     (scene-draft-fx db unique "scene-draft/discard" nil)))
 
 (rf/reg-event-fx :studio/scene-draft-result
-  (fn [{:keys [db]} [_ id {:keys [status due-beat discarded?]}]]
+  (fn [{:keys [db]} [_ id {:keys [status due-beat discarded? message]}]]
     (when (= id (get-in db [:scene-draft-request :id]))
       {:db (dissoc db :scene-draft-request)
-       :dispatch [:studio/toast (cond discarded? "Room draft discarded."
-                                      (#{:scheduled "scheduled"} status) (str "Room draft applies at beat " due-beat ".")
-                                      :else "Room draft applied to the show.")]})))
+       :dispatch (cond
+                   ;; A reply such as "pending" confirms nothing; the banner shows what the show did.
+                   (not (#{:accepted "accepted" :scheduled "scheduled"} status))
+                   [:studio/failure (str "Room draft: " (or message "The show has not confirmed this")
+                                         ". Check the banner before trying again.")]
+                   discarded? [:studio/toast "Room draft discarded."]
+                   (#{:scheduled "scheduled"} status) [:studio/toast (str "Room draft applies at beat " due-beat ".")]
+                   :else [:studio/toast "Room draft applied to the show."])})))
 
 (rf/reg-event-fx :studio/scene-draft-failed
   (fn [{:keys [db]} [_ id message]]
