@@ -98,6 +98,7 @@
 
 (defn- studio-post [runtime time]
   (let [app (web/app {:heartbeat! (constantly nil)
+                      :cue-variation-preview! #(show/cue-variation-preview runtime %)
                       :submit! (fn [operation payload]
                                  (let [receipt (show/submit! runtime operation payload)]
                                    (show/tick! runtime (swap! time inc))
@@ -190,6 +191,47 @@
       (accepted! runtime (swap! time inc) (configure (config "front")))
       (is (= ["front"] (ids)))
       (is (nil? (selected)))
+      (finally (show/stop! runtime)))))
+
+(deftest restored-cue-variations-keep-the-assigned-group-level
+  (let [effect [:registry :effects :first]
+        model (-> (model)
+                  (assoc-in (conj effect :params :level) {:type :number :default 0.5 :bounds [0 1]})
+                  (assoc-in (conj effect :outputs :dimmer) {:op :param :key :level}))
+        runtime (show/create-runtime {:model model :workspace-options nil})
+        time (atom 0)
+        post! (studio-post runtime time)
+        json! #(post! %1 "application/json" json/write-str %2)
+        command! #(post! "/api/command" "application/transit+json" transit/encode %)
+        preview! (fn [id]
+                   (let [[status preview] (json! "/api/cue-variations/preview" {:instance-id id :layout "rows"})]
+                     (is (= [200 :rows] [status (:layout preview)]))
+                     (select-keys preview [:basis :layout :seed :row-page :instance-id])))]
+    (try
+      (let [id (launch! runtime 0 :first)
+            group-level! #(json! "/api/command" {:op "effect-groups/level-set" :channel-id ["manual" "mix"] :value %})]
+        (is (= 200 (first (command! (configure {:manual [{:id :mix}]})))))
+        (is (= 200 (first (json! "/api/command" {:op "effect-groups/assign-instance"
+                                               :instance-id id :group-id "mix"}))))
+        (is (= 200 (first (group-level! 0.5))))
+        (is (= 64 (dmx runtime)))
+        (let [[status receipt] (command! (assoc (preview! id) :op :cue-variation/append))]
+          (is (= [200 0] [status (:slot receipt)])))
+        (is (= 200 (first (command! {:op :param/set :instance-id id :param :level :value 1.0}))))
+        (is (= 128 (dmx runtime)))
+        (let [source (show/export-show-source runtime)]
+          (is (= 200 (first (group-level! 0))))
+          (is (= 0 (dmx runtime)))
+          (let [restore (show/submit! runtime :import {:source source})]
+            (show/tick! runtime (swap! time inc))
+            (is (= :accepted (:status (deref restore 1000 ::missing)))))
+          (let [{:keys [instance-id manual-path member-level]} (first (:instances (show/effect-group-channels runtime)))]
+            (is (not= id instance-id))
+            (is (= [[:mix] 0.5] [manual-path member-level]))
+            (is (= 128 (dmx runtime)))
+            (is (= 200 (first (command! (assoc (preview! instance-id) :op :cue-variation/apply :position [0 0])))))
+            (is (= 0.5 (get-in (committed-model runtime) [:instances instance-id :params :level])))
+            (is (= 64 (dmx runtime))))))
       (finally (show/stop! runtime)))))
 
 (deftest group-levels-use-owner-receipts-and-preserve-interleaved-output
