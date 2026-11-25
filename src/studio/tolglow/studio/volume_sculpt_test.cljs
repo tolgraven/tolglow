@@ -106,6 +106,19 @@
           (is (= before (sculpt/model @rf-db/app-db)))))
       (finally (restore)))))
 
+(deftest combine-places-the-operand-at-the-scaled-and-translated-part
+  ;; Scale pivots on :position before :translation moves the part, so its
+  ;; world centre is [1 1 0] and the operand sits beside that centre.
+  (let [part {:shape :sphere :position [1 0 0] :radius 1 :scale [2 1 1] :translation [0 1 0]}
+        combined (geo/combine (assoc part :strength 0.5 :selection #{:beam}) :union :sphere)
+        [first-part new-part] (:parts combined)
+        near? (fn [a b] (every? #(< (abs %) 1e-9) (map - a b)))]
+    (is (= {:shape :union :strength 0.5 :selection #{:beam}} (dissoc combined :parts)))
+    (is (= part first-part))
+    (is (near? [1.6 1 0] (:position new-part)))
+    (is (not (contains? new-part :translation)))
+    (is ((:inside? (shape/prepare combined)) [1 1 0]))))
+
 (deftest drag-and-undo-stage-once-and-cancel-restores-the-original
   (let [start (sculpt/gesture db {:type "sculpt-begin" :token 7 :point [0 1 0]})
         move (sculpt/gesture start {:type "sculpt-move" :token 7 :point [2 1 1]})
