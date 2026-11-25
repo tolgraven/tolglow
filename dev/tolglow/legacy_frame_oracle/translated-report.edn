@@ -1,0 +1,107 @@
+{:source
+ {:tolglow "40c922664c6c330d9c5eab7f4b2974f5807e2b88",
+  :afterglow "d0ee56528aafb6d73cbe86b53d618a23b64c081e"},
+ :calibration {:pan [127 85], :tilt [0 -256]},
+ :matching-lifecycle-operations 16,
+ :stale-rejection :stale-epoch,
+ :difference-totals
+ {:htp-and-rgbw-extraction 6,
+  :implicit-dimmer 3,
+  :pan-word-encoding 10,
+  :rgbw-extraction 13,
+  :tilt-word-encoding 4,
+  :white-rounding 3},
+ :frames
+ [{:label :idle,
+   :epoch 0,
+   :time-ms 0,
+   :active [],
+   :tilt-bytes [0 0],
+   :aim-reachable? nil,
+   :byte-differences [[1 42 0 255 :implicit-dimmer]]}
+  {:label :base-with-override,
+   :epoch 0,
+   :time-ms 100,
+   :active [:raw-red :aim-front :base :dimmer :shutter],
+   :tilt-bytes [0 0],
+   :aim-reachable? false,
+   :byte-differences
+   [[1 37 132 131 :pan-word-encoding]
+    [1 38 7 138 :pan-word-encoding]
+    [1 45 146 115 :rgbw-extraction]
+    [1 46 31 0 :rgbw-extraction]
+    [1 47 31 32 :white-rounding]]}
+  {:label :overlapping-colors,
+   :epoch 0,
+   :time-ms 200,
+   :active [:aim-front :base :dimmer :shutter :accent],
+   :tilt-bytes [0 0],
+   :aim-reachable? false,
+   :byte-differences
+   [[1 37 132 131 :pan-word-encoding]
+    [1 38 7 138 :pan-word-encoding]
+    [1 44 42 76 :htp-and-rgbw-extraction]
+    [1 45 31 0 :rgbw-extraction]
+    [1 46 223 76 :htp-and-rgbw-extraction]
+    [1 47 31 147 :htp-and-rgbw-extraction]]}
+  {:label :equal-priority-cover,
+   :epoch 0,
+   :time-ms 300,
+   :active [:aim-front :base :dimmer :shutter :accent :cover],
+   :tilt-bytes [0 0],
+   :aim-reachable? false,
+   :byte-differences
+   [[1 37 132 131 :pan-word-encoding]
+    [1 38 7 138 :pan-word-encoding]
+    [1 44 255 0 :rgbw-extraction]
+    [1 45 255 0 :rgbw-extraction]
+    [1 46 255 0 :rgbw-extraction]]}
+  {:label :back-aim-with-history,
+   :epoch 0,
+   :time-ms 400,
+   :active [:aim-back :base :dimmer :shutter :accent],
+   :tilt-bytes [15 12],
+   :aim-reachable? true,
+   :byte-differences
+   [[1 38 93 53 :pan-word-encoding]
+    [1 39 14 15 :tilt-word-encoding]
+    [1 40 252 12 :tilt-word-encoding]
+    [1 44 42 76 :htp-and-rgbw-extraction]
+    [1 45 31 0 :rgbw-extraction]
+    [1 46 223 76 :htp-and-rgbw-extraction]
+    [1 47 31 147 :htp-and-rgbw-extraction]]}
+  {:label :base-revealed,
+   :epoch 0,
+   :time-ms 500,
+   :active [:aim-back :base :dimmer :shutter],
+   :tilt-bytes [15 12],
+   :aim-reachable? true,
+   :byte-differences
+   [[1 38 93 53 :pan-word-encoding]
+    [1 39 14 15 :tilt-word-encoding]
+    [1 40 252 12 :tilt-word-encoding]
+    [1 44 223 191 :rgbw-extraction]
+    [1 45 146 115 :rgbw-extraction]
+    [1 46 31 0 :rgbw-extraction]
+    [1 47 31 32 :white-rounding]]}
+  {:label :after-restart,
+   :epoch 1,
+   :time-ms 600,
+   :active [],
+   :tilt-bytes [0 0],
+   :aim-reachable? nil,
+   :byte-differences [[1 42 0 255 :implicit-dimmer]]}
+  {:label :relaunch-survives,
+   :epoch 1,
+   :time-ms 750,
+   :active [:aim-front :base],
+   :tilt-bytes [0 0],
+   :aim-reachable? false,
+   :byte-differences
+   [[1 37 132 131 :pan-word-encoding]
+    [1 38 7 138 :pan-word-encoding]
+    [1 42 0 255 :implicit-dimmer]
+    [1 44 223 191 :rgbw-extraction]
+    [1 45 146 115 :rgbw-extraction]
+    [1 46 31 0 :rgbw-extraction]
+    [1 47 31 32 :white-rounding]]}]}

@@ -313,6 +313,207 @@
           (is (empty? (:parameter-sources (instance restored-id))))))
       (finally (show/stop! rt)))))
 
+(deftest ring-moves-one-running-waveform-between-typed-destinations
+  (let [model (-> (live-model)
+                  (assoc-in [:registry :effects :wash :params :step] {:type :integer :bounds [1 5] :default 1})
+                  (assoc-in [:registry :effects :wash :params :hue] {:type :number :bounds [0 360] :default 60})
+                  (assoc-in [:registry :effects :wash :outputs :strobe]
+                            {:op :divide :args [{:op :param :key :step} 5]})
+                  (assoc-in [:rig :fixtures 0 :channels :strobe] 3)
+                  (assoc-in [:rig :fixtures 1 :channels :strobe] 3))
+        packet (atom nil)
+        rt (show/create-runtime {:model model :sink {:send! (fn [bytes _] (reset! packet (mapv #(bit-and 255 %) (take 3 (get bytes 1)))))}})
+        now (atom 0)
+        submit! (fn [op body] (let [ack (show/submit! rt op body)] (show/tick! rt @now) ack))
+        app (web/app {:submit! submit! :heartbeat! (constantly nil)})
+        post (fn [route data]
+               (:status (app {:request-method :post :uri (str "/api/modulation/" route)
+                              :headers {"host" "localhost" "content-type" "application/transit+json"}
+                              :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})))
+        launch (fn [target] (:instance-id @(submit! :command {:op :cue/launch :cue-id :wash :launch {:targets [target]}})))
+        projection (fn [id] (some #(when (= id (:id %)) %) (:instances (show/snapshot rt))))
+        committed (fn [id] (get-in @(:state rt) [:model :instances id]))]
+    (try
+      (let [left (launch :left) right (launch :right)
+            address {:instance-id left}
+            bind (fn [param binding] (post "bind" (assoc address :param param :binding binding)))
+            move (fn [from param lo hi]
+                   (post "bind" (assoc address :from-param from :param param :binding {:from lo :to hi}
+                                       :expected-source (get-in (projection left) [:parameter-sources from :sources 0 :identity]))))
+            binding (assoc saw :period {:beats 2} :phase 1/8 :phase-reference :launch)]
+        (reset! now 250)
+        (is (= 200 (bind :level binding)))
+        (is (= [96 64 51] @packet))
+        (is (= 200 (bind :hue (assoc saw :from 60 :to 60))))
+        (is (= 200 (bind :hue (assoc saw :from 90 :to 90))))
+        (is (= 90.0 (get-in (projection left) [:parameter-sources :hue :effective-value])))
+        (let [before (:parameter-bindings (committed left))]
+          (is (= 422 (move :level :hue 0 360)))
+          (is (= 422 (move :level :step 0.25 5)))
+          (is (= 422 (move :step :hue 0 360)))
+          (is (= 422 (move :level :level 0 1)))
+          (is (= before (:parameter-bindings (committed left))))
+          (is (= [96 64 51] @packet)))
+        (is (= 200 (post "hold" (assoc address :params [:level :step]))))
+        (is (= [64 64 51] @packet))
+        (let [owned-keys [:id :order :params :state :phase :timing-meter :started-at-beat :started-at-ms]
+              before (select-keys (committed left) owned-keys)
+              holds (get-in @(:state rt) [:model :modulation :holds])]
+          (reset! now 375)
+          (is (= 200 (move :level :step 1 5)))
+          (is (= before (select-keys (committed left) owned-keys)))
+          (is (= holds (get-in @(:state rt) [:model :modulation :holds])))
+          (is (= [64 64 51] @packet))
+          (is (= #{:hue :step} (set (keys (:parameter-sources (projection left))))))
+          (is (true? (get-in (projection left) [:parameter-sources :step :sources 0 :held?])))
+          (is (= 200 (post "resume" (assoc address :params [:step]))))
+          (is (= [64 64 153] @packet))
+          (is (= 3 (get-in (projection left) [:parameter-sources :step :effective-value])))
+          (is (empty? (:parameter-sources (projection right))))
+          (is (= 200 (post "unbind" (assoc address :param :hue))))
+          (reset! now 500)
+          (is (= 200 (move :step :hue 0 360)))
+          (is (= [64 64 51] @packet))
+          (is (= 225.0 (get-in (projection left) [:parameter-sources :hue :effective-value])))
+          (is (= (assoc binding :from 0 :to 360 :inputs {})
+                 (get-in (projection left) [:parameter-sources :hue :sources 0 :binding])))
+          (is (= #{:hue} (set (keys (:parameter-sources (projection left))))))))
+      (finally (show/stop! rt)))))
+
+(deftest moves-name-an-unknown-instance-before-checking-its-sources
+  (let [model (bind-to (fixture/model) :level saw)]
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown running instance or parameter"
+                          (sources/bind model {:instance-id "missing" :from-param :level :param :step
+                                               :expected-source nil :binding {:from 0 :to 1}})))))
+
+(deftest stale-queued-moves-reject-and-committed-receipts-survive-supersession
+  (let [model (assoc-in (live-model) [:registry :effects :wash :params :step]
+                        {:type :integer :bounds [1 5] :default 1})
+        rt (show/create-runtime {:model model})
+        enqueue! (partial show/submit! rt)
+        tick! #(show/tick! rt 250)
+        projection #(show/snapshot rt)
+        app (web/app {:submit! enqueue! :heartbeat! (constantly nil)})]
+    (try
+      (let [launch (enqueue! :command {:op :cue/launch :cue-id :wash :launch {:reload-policy :preserve-state}})
+            _ (tick!)
+            address {:instance-id (:instance-id @launch)}
+            bind (fn [waveform] (enqueue! :modulation-bind (assoc address :param :level :binding (assoc saw :waveform waveform))))
+            source (fn [] (get-in (projection) [:instances 0 :parameter-sources :level :sources 0]))
+            move (fn [id expected hi]
+                   (assoc address :param :step :from-param :level :expected-source expected
+                          :binding {:from 1 :to hi} :request-id id))
+            before (bind :saw)]
+        (tick!)
+        (is (= :accepted (:status @before)))
+        (let [visible (:identity (source))
+              replacement (bind :triangle)
+              stale (enqueue! :modulation-bind (move "stale-waveform" visible 5))]
+          (is (not (realized? stale)))
+          (tick!)
+          (is (= :accepted (:status @replacement)))
+          (is (= :rejected (:status @stale)))
+          (is (re-find #"source or its effect revision changed" (:message @stale)))
+          (is (= #{:level} (set (keys (get-in (projection) [:instances 0 :parameter-sources])))))
+          (is (= :triangle (get-in (source) [:binding :waveform]))))
+        (let [visible (:identity (source))
+              new-effect (-> (get-in model [:registry :effects :wash]) (assoc :version 2)
+                             (assoc-in [:params :step :bounds] [1 3]))
+              publish (enqueue! :definition {:kind :effects :definition new-effect})
+              stale (enqueue! :modulation-bind (move "stale-schema" visible 5))]
+          (tick!)
+          (is (= :accepted (:status @publish)) (pr-str @publish))
+          (is (= :rejected (:status @stale)))
+          (is (re-find #"source or its effect revision changed" (:message @stale)))
+          (is (= #{:level} (set (keys (get-in (projection) [:instances 0 :parameter-sources])))))
+          (is (= 2 (get-in (projection) [:instances 0 :effect-version]))))
+        (let [request (move "queued-invalid" (:identity (source)) 5)
+              response (app {:request-method :post :uri "/api/modulation/bind"
+                             :headers {"host" "localhost" "accept" "application/transit+json"
+                                       "content-type" "application/transit+json"}
+                             :body (ByteArrayInputStream. (.getBytes (transit/encode request) "UTF-8"))})]
+          (is (= 200 (:status response)))
+          (is (= :pending (:status (transit/decode (:body response)))))
+          (is (not-any? #(= "queued-invalid" (:request-id %)) (:parameter-source-outcomes (projection))))
+          (tick!)
+          (let [result (last (:parameter-source-outcomes (projection)))]
+            (is (= {:request-id "queued-invalid" :status :rejected :epoch 0}
+                   (select-keys result [:request-id :status :epoch])))
+            (is (re-find #"destination parameter schema" (:message result))))
+          (is (some? (source))))
+        (let [accepted (enqueue! :modulation-bind (move "committed-move" (:identity (source)) 3))
+              superseded (enqueue! :modulation-unbind (assoc address :param :step :request-id "superseding-edit"))]
+          (tick!)
+          (is (= :accepted (:status @accepted)))
+          (is (= :accepted (:status @superseded)))
+          (is (empty? (get-in (projection) [:instances 0 :parameter-sources])))
+          (is (= [{:request-id "committed-move" :status :accepted :epoch 0 :revision (:revision @accepted)}
+                  {:request-id "superseding-edit" :status :accepted :epoch 0 :revision (:revision @superseded)}]
+                 (take-last 2 (:parameter-source-outcomes (projection))))))
+        (let [restart (enqueue! :command {:op :show/restart})]
+          (tick!)
+          (is (= :accepted (:status @restart)))
+          (is (empty? (:parameter-source-outcomes (projection))))))
+      (finally (show/stop! rt)))))
+
+(deftest paused-moves-use-the-captured-schema-until-the-instance-resumes
+  (doseq [[captured-high published-high status dimmer]
+          [[3 5 :rejected 51] [5 3 :accepted 255]]]
+    (testing (str "publishing upper bound " published-high " while paused at " captured-high)
+      (let [model (-> (live-model)
+                      (assoc-in [:registry :effects :wash :params :step]
+                                {:type :integer :bounds [1 captured-high] :default 1})
+                      (assoc-in [:registry :effects :wash :outputs :dimmer]
+                                {:op :divide :args [{:op :param :key :step} 5]}))
+            packet (atom nil)
+            rt (show/create-runtime {:model model
+                                     :sink {:send! (fn [universes _]
+                                                     (reset! packet (bit-and 255 (aget ^bytes (get universes 1) 0))))}})
+            enqueue! (partial show/submit! rt)
+            tick! #(show/tick! rt 250)
+            submit! (fn [type payload]
+                      (let [receipt (enqueue! type payload)]
+                        (tick!)
+                        @receipt))
+            instance #(first (:instances (show/snapshot rt)))
+            source #(get-in (instance) [:parameter-sources % :sources 0])]
+        (try
+          (let [launch (submit! :command {:op :cue/launch :cue-id :wash
+                                          :launch {:reload-policy :preserve-state}})
+                address {:instance-id (:instance-id launch)}
+                move (fn [from to endpoints]
+                       (assoc address :from-param from :param to :expected-source (:identity (source from))
+                              :binding endpoints))
+                new-effect (-> (get-in model [:registry :effects :wash]) (assoc :version 2)
+                               (assoc-in [:params :step :bounds] [1 published-high]))]
+            (is (= :accepted (:status launch)))
+            (is (= :accepted (:status (submit! :modulation-bind (assoc address :param :level :binding saw)))))
+            (is (= :accepted (:status (submit! :command (assoc address :op :instance/pause)))))
+            (let [identity (:identity (source :level))]
+              (is (= :accepted (:status (submit! :definition {:kind :effects :definition new-effect}))))
+              (is (= 1 (:effect-version (instance))))
+              (is (= [1 captured-high] (get-in (instance) [:definition :params :step :bounds])))
+              (is (= identity (:identity (source :level))))
+              (is (= status (:status (submit! :modulation-bind (move :level :step {:from 5 :to 5})))))
+              (is (= dimmer @packet))
+              (if (= :accepted status)
+                (do (is (nil? (source :level)))
+                    (is (= 5 (get-in (instance) [:parameter-sources :step :effective-value]))))
+                (do (is (= identity (:identity (source :level))))
+                    (is (nil? (source :step))))))
+            (let [from (if (= :accepted status) :step :level)
+                  to (if (= :accepted status) :level :step)
+                  endpoints (if (= :accepted status) {:from 0.5 :to 0.5} {:from 2 :to 2})
+                  resume (enqueue! :command (assoc address :op :instance/resume))
+                  stale (enqueue! :modulation-bind (move from to endpoints))]
+              (tick!)
+              (is (= :accepted (:status @resume)))
+              (is (= :rejected (:status @stale)))
+              (is (re-find #"source or its effect revision changed" (:message @stale)))
+              (is (= 2 (:effect-version (instance))))
+              (is (= [1 published-high] (get-in (instance) [:definition :params :step :bounds])))))
+          (finally (show/stop! rt)))))))
+
 (deftest observed-source-types-and-static-projection-cost
   (let [base (fixture/model)
         older (get-in base [:instances "0:1"])

@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [afterglow.render.frame :as render]
             [afterglow.render.atmosphere :as atmosphere]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.rig.pixel-layout :as pixel-layout]
             [tolglow.rig.surfaces :as surfaces]))
 
@@ -53,8 +54,12 @@
           (for [[index fixture] (map-indexed vector fixtures) :when (not (map? fixture))]
             (error [:fixtures index] :invalid-fixture "Fixture must be a map"))
           :else
-          (map #(-> % (assoc :code :invalid-patch) (update :path (fn [path] (or path [:fixtures]))))
-               (render/validate-patch fixtures))))
+          (concat
+           (for [[index fixture] (map-indexed vector fixtures)
+                 {:keys [path message]} (bounds/errors fixture)]
+             (error (into [:fixtures index] path) :invalid-bounds message))
+           (map #(-> % (assoc :code :invalid-patch) (update :path (fn [path] (or path [:fixtures]))))
+                (render/validate-patch fixtures)))))
       (when (some #(contains? (:room rig) %) [:air-changes-per-hour :fog-half-life-s :measured-fog])
         (try (atmosphere/plan (:room rig) {:fixtures []}) nil
              (catch Exception e [(error [:room] :invalid-atmosphere (.getMessage e))])))

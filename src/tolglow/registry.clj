@@ -4,6 +4,7 @@
             [afterglow.runtime.keyframes.values :as keyframe-values]
             [afterglow.reactive.registry :as reactive-registry]
             [clojure.string :as str]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.fixtures.shutter :as shutter]
             [afterglow.time :as time]
             [afterglow.render.layers :as layers]
@@ -349,6 +350,7 @@
           :fixtures
           (let [channels (:channels definition)]
             (concat
+             (bounds/errors definition)
              (photometry/errors definition)
              (when-not (map? channels) [(error [:channels] "Fixture channels must be an attribute-to-offset map")])
              (when (map? channels)

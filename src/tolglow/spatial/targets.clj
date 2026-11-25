@@ -3,6 +3,7 @@
   (:require [afterglow.control.targets :as selection]
             [clojure.set :as set]
             [clojure.string :as str]
+            [tolglow.fixtures.bounds :as bounds]
             [tolglow.registry :as registry]))
 
 (def usage-path [:extensions ::usage])
@@ -21,6 +22,30 @@
 
 (defn volume-id [configured requested]
   (identify (keys configured) requested))
+
+(defn strip-segment-selector
+  "Select the heads of strip-id whose centres are within a reference's declared
+  extent on a world axis, inclusively. The reference can be a fixture or one of
+  its heads. Call with a current show snapshot before launching a cue."
+  [model {:keys [strip-id reference-id axis] :or {axis :x} :as request}]
+  (let [axis-index ({:x 0 :y 1 :z 2} axis)
+        fixtures (get-in model [:rig :fixtures])
+        by-id (into {} (map (juxt :id identity)) fixtures)
+        heads (group-by :fixture-id (filter :fixture-id fixtures))
+        strip (get heads (identify (keys heads) strip-id))
+        reference-key (identify (into (set (keys by-id)) (keys heads)) reference-id)
+        reference (get by-id reference-key)
+        anchor (when-not reference
+                 (some #(when (:fixture-bounds-m %) %) (get heads reference-key)))
+        box (or (:bounds-m reference) (:fixture-bounds-m anchor))]
+    (when-not axis-index (throw (ex-info "Strip selection axis must be :x, :y or :z" request)))
+    (when-not strip (throw (ex-info "Unknown strip or strip without heads" request)))
+    (when-not box (throw (ex-info "Reference fixture or head needs declared bounds" request)))
+    ;; A saved anchor without a body pose uses its head-relative bounds.
+    (let [pose (or reference (merge anchor (:fixture-bounds-pose anchor)))
+          [lo hi] (bounds/world-span pose box axis-index)]
+      {:fixture-ids (into [] (comp (filter #(<= lo (nth (or (:position %) [0 0 0]) axis-index) hi))
+                                   (map :id)) strip)})))
 
 (defn- groups [model]
   (merge (reduce (fn [gs {:keys [id groups]}]
