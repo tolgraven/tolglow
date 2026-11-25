@@ -2,6 +2,7 @@
   "The studio application is data + re-frame transitions. I/O lives in effects."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.fog-fields :as fog]
             [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
@@ -361,6 +362,10 @@
         page-id (get-in db [:ui :page-id])
         selected (get-in db [:ui :selected-instance])
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
+        checkpoint-view-changed? (and (:show-checkpoints db)
+                                      (or (not (get-in db [:connection :connected?]))
+                                          (not= (projection/identity-of (:view server))
+                                                (projection/identity-of (get-in db [:server-projection :view])))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     settle-history
@@ -368,6 +373,7 @@
                     (assoc-in [:ui :page-id] (if (some #(= page-id (:id %)) (:pages show)) page-id (:id (first (:pages show))))))
         updated (settle-connection-drafts updated (:server-presentation db) (get-in db [:server-projection :view]))
         updated (cond-> updated
+                  (checkpoints/replaces-rig-draft? db (:view server)) (assoc-in [:ui :rig-dirty?] false)
                   epoch-changed? (dissoc :ending-holds :section-pattern-request)
                   epoch-changed? (update-in [:ui :definition] dissoc :publishing? :publication)
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
@@ -382,7 +388,7 @@
                                          #(assoc (or % (get-in show [:rig :room])) :measured-fog current))
                       :else (update-in updated [:ui :rig-draft :room] dissoc :measured-fog)))
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
-    {:db updated
+    {:db (checkpoints/carry-restore-draft db updated)
      :fx (cond-> []
            (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
                 (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))
@@ -391,6 +397,9 @@
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
+           checkpoint-view-changed? (conj [:dispatch [:checkpoints/show-changed]])
+           (and (not checkpoint-view-changed?) (checkpoints/queued-result updated))
+           (conj [:dispatch [:checkpoints/receipt-pushed]])
            (and (get-in db [:connections :visible?])
                 (or epoch-changed?
                     (not (identical? (:connection-status presentation)
@@ -428,7 +437,9 @@
           :duplicate (cond-> {:db (-> db (dissoc :awaiting-full?) (assoc :connection {:connected? true}))
                               :studio/stream-reply [id {:op :ack :token (:token envelope)}]}
                        (and (:awaiting-full? db) (:recover-held? db))
-                       (assoc :fx [[:dispatch [:studio/reconcile-held]]])
+                       (update :fx (fnil conj []) [:dispatch [:studio/reconcile-held]])
+                       (and (:awaiting-full? db) (:show-checkpoints db))
+                       (update :fx (fnil conj []) [:dispatch [:checkpoints/show-changed]])
                        (and (:awaiting-full? db) (get-in db [:connections :visible?]))
                        (assoc :dispatch [:connections/pushed]))
           {:db (assoc db :awaiting-full? true)

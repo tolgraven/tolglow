@@ -127,6 +127,16 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- checkpoint-results [before message-receipts]
+  (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
+                         (when checkpoint-request
+                           (cond-> (merge checkpoint-request (select-keys ack [:status :epoch]))
+                             (contains? (:details ack) :received-epoch) (assoc :reason :stale-show-session))))
+                       message-receipts)]
+    (if (seq finished)
+      (vec (take-last 32 (concat (:checkpoint-results before) finished)))
+      (:checkpoint-results before))))
+
 (defn- scene-eligible-ids [runtime fixtures]
   (let [cache (:scene-eligible runtime)
         previous @cache]
@@ -1692,8 +1702,9 @@
                                                               (get-in message [:payload :source :adapter]))}))
                                   message-receipts)
                  ;; Confidence belongs to this live clock sample and its resource generation.
-                 next-state (assoc next-state :audio-clock-confidence
-                                   (when-not (or restored? @restarted-generation) audio-clock-confidence))
+                 next-state (assoc next-state
+                                   :checkpoint-results (checkpoint-results before message-receipts)
+                                   :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
@@ -1793,15 +1804,7 @@
 
       :else (deliver reply {:status :rejected :code :unknown-gesture :command-id (:command-id payload)}))))
 
-(defn submit!
-  "Enqueue an operation. Full restores are validated and resource-prepared off
-  the frame-owner lock, then committed atomically by the next owner cycle.
-  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
-  Host adapters pass authenticated operator authority as a separate argument.
-  Serialized payloads cannot confer operator privileges."
-  ([runtime payload] (submit! runtime :command payload))
-  ([runtime type payload] (submit! runtime type payload nil))
-  ([runtime type payload authority]
+(defn- enqueue! [runtime type payload authority checkpoint-request]
    (let [reply (promise) candidate (volatile! nil)]
      (try
        (let [before (:model @(:state runtime))
@@ -1844,7 +1847,8 @@
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
-                                                (and (= :command type) authority) (assoc :authority authority))]
+                                                (and (= :command type) authority) (assoc :authority authority)
+                                                checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
                                   (if (and (= :command type) (push-gesture-end? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     (.offer ^LinkedBlockingQueue queue message)))))]
@@ -1854,7 +1858,17 @@
          (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
            (deliver reply (cond-> (merge {:status :rejected} (error-data error))
                             command-id (assoc :command-id command-id))))))
-     reply)))
+     reply))
+
+(defn submit!
+  "Enqueue an operation. Full restores are validated and resource-prepared off
+  the frame-owner lock, then committed atomically by the next owner cycle.
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing.
+  Host adapters pass authenticated operator authority as a separate argument.
+  Serialized payloads cannot confer operator privileges."
+  ([runtime payload] (submit! runtime :command payload))
+  ([runtime type payload] (submit! runtime type payload nil))
+  ([runtime type payload authority] (enqueue! runtime type payload authority nil)))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -2170,13 +2184,14 @@
   "Report available checkpoints for the current show, including after restart."
   [runtime]
   (when-let [owner (some-> (:recovery runtime) deref)]
-    (let [show-id (get-in @(:state runtime) [:model :show-id])
+    (let [{:keys [show-id] :as identity} (show-identity (:model @(:state runtime)))
           status (recovery/status owner)
           checkpoints (into {} (keep (fn [kind]
                                        (when-let [file (recovery/latest-file owner show-id kind)]
                                          [kind {:modified-at-ms (.lastModified file)}])))
                             [:recovery :named :prior])]
-      (cond-> (assoc status :show-id show-id :checkpoints checkpoints :available (set (keys checkpoints)))
+      (cond-> (assoc (merge status identity) :runtime-id (:id runtime)
+                     :checkpoints checkpoints :available (set (keys checkpoints)))
         (not= show-id (get-in status [:last-saved :show-id])) (dissoc :last-saved)))))
 
 (defn save-show!
@@ -2197,27 +2212,40 @@
   [runtime path]
   (submit! runtime :import {:source (read-checkpoint-source path)}))
 
+(defn- capture-checkpoint-identity [runtime expected]
+  (let [identity (show-identity (:model @(:state runtime)))]
+    (when (and expected (not= (assoc identity :runtime-id (:id runtime)) expected))
+      (throw (ex-info "Checkpoint operation belongs to a previous show session" {:code :stale-checkpoint-session})))
+    identity))
+
 (defn load-latest-show!
-  "Load the active show's latest :recovery, :named, or prior-session checkpoint."
-  [runtime kind]
-  (let [{:keys [show-id epoch]} (:model @(:state runtime))
-        owner (some-> (:recovery runtime) deref)
-        source (when owner
-                 (if (= :prior kind)
-                   (recovery/read-prior owner show-id read-checkpoint-source)
-                   (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
-    (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-    (submit! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
-                              :expected-source-show-id show-id :source source})))
+  "Load the active show's latest :recovery, :named, or prior-session checkpoint.
+  A remote caller can supply the exact runtime/show/epoch it received in status
+  and a receipt ID for the committed result stream."
+  ([runtime kind] (load-latest-show! runtime kind nil))
+  ([runtime kind expected] (load-latest-show! runtime kind expected nil))
+  ([runtime kind expected receipt-id]
+   (let [{:keys [show-id epoch]} (capture-checkpoint-identity runtime expected)
+         owner (some-> (:recovery runtime) deref)
+         source (when owner
+                  (if (= :prior kind)
+                    (recovery/read-prior owner show-id read-checkpoint-source)
+                    (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
+     (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
+     (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                                :expected-source-show-id show-id :source source}
+               nil
+               (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))))
 
 (defn discard-prior-recovery!
   "Dismiss the active show's prior-session checkpoint. Working and named saves
   keep their files. Returns true when the dismissal was published."
-  [runtime]
-  (let [captured (show-identity (:model @(:state runtime)))]
-    (boolean
-      (when-let [owner (some-> (:recovery runtime) deref)]
-        (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured))))))
+  ([runtime] (discard-prior-recovery! runtime nil))
+  ([runtime expected]
+   (let [captured (capture-checkpoint-identity runtime expected)]
+     (boolean
+       (when-let [owner (some-> (:recovery runtime) deref)]
+         (recovery/discard-prior! owner (:show-id captured) (partial publish-checkpoint! runtime captured)))))))
 
 (defn activate-recovery!
   "Admit background checkpoints once the configured startup has settled."

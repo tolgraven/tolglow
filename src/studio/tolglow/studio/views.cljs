@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.chat :as chat]
+            [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
@@ -84,6 +85,7 @@
 (defn- file-actions [mobile?]
   [:<>
    [button (if mobile? "mobile-export" "export-show") "Export show" [:studio/export] "text-button"]
+   [button (if mobile? "mobile-restore-show" "restore-show") "Restore show" [:checkpoints/open] "text-button"]
    [:label.text-button.file-label {:id (when mobile? "mobile-import")} "Import show"
     [:input.studio-file-input {:id (if mobile? "mobile-import-show" "import-show") :type "file"
                                :accept ".transit,.edn,application/transit+json" :on-change import-selection!}]]])
@@ -912,6 +914,6 @@
        (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
        (when (= :debug (get-in db [:ui :view])) [debug/panel])
        [footer db]]]
-     [cue-actions db] [prompt-dialog db] [operator-history] [repl/console-view]
+     [cue-actions db] [prompt-dialog db] [checkpoints/panel (checkpoints/view-props db)] [operator-history] [repl/console-view]
      (when-let [toast (get-in db [:ui :toast])]
        [:div#toast.toast {:class (when (:error? toast) "error") :role "status" :aria-live "polite"} (:message toast)])]))
