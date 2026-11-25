@@ -15,14 +15,25 @@ import TolglowSensorCore
     private var phoneDeadline: Task<Void, Never>?
     private var ending = false
 
+    #if DEBUG && targetEnvironment(simulator)
+    static let interruptedStageFixture = ProcessInfo.processInfo.arguments.contains("--preview-audience-reconnection")
+    private var fixtureSeeded = false
+
+    func seedInterruptedStageFixture() {
+        guard Self.interruptedStageFixture, !fixtureSeeded else { return }
+        fixtureSeeded = true
+        route = .nearbyStage
+        selectedStage = stage.previewInterruptedStage()
+    }
+
+    var interruptedStageDiagnostics: String {
+        "route=\(route) reconnecting=\(stage.reconnecting) connecting=\(stage.connecting) " +
+        "joined=\(stage.joined) phoneJoined=\(phoneJoined) relay=\(phone.status)"
+    }
+    #endif
+
     init(phone: WatchRelay) {
         self.phone = phone
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("--preview-audience-reconnection") {
-            route = .nearbyStage
-            selectedStage = stage.previewInterruptedStage()
-        }
-        #endif
         stage.onJoin = { [weak self] in
             let ready = self?.whenJoined
             self?.whenJoined = nil
@@ -32,6 +43,10 @@ import TolglowSensorCore
             guard let self, !self.ending, self.route == .nearbyStage else { return }
             self.interrupted?(self.stage.status)
         }
+        #if DEBUG && targetEnvironment(simulator)
+        // The cancellation fixture renders a simulated stage with an inert relay.
+        if Self.interruptedStageFixture { return }
+        #endif
         phone.phoneFloorChanged = { [weak self] active in
             guard let self else { return }
             self.phoneJoined = active
