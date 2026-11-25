@@ -79,13 +79,14 @@
     (not (vector? value)) [(error path "Gradient must be a vector of stops")]
     (empty? value) [(error path "Gradient needs at least one stop")]
     :else
-    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))]
+    (let [position-ok? #(and (finite-number? %) (<= 0 % 1))
+          shape-ok? #(and (map? %) (= #{:position :color} (set (keys %))))]
       (vec
        (concat
         (mapcat (fn [index stop]
                   (let [stop-path (conj path index)]
                     (cond
-                      (not (and (map? stop) (= #{:position :color} (set (keys stop)))))
+                      (not (shape-ok? stop))
                       [(error stop-path "Gradient stop must be a map with only :position and :color")]
                       :else
                       (concat
@@ -95,8 +96,8 @@
                          [(error (conj stop-path :color) "Gradient stop color must be three linear RGB components within [0,1]")])))))
                 (range) value)
         (keep (fn [[index [previous stop]]]
-                (let [a (when (map? previous) (:position previous))
-                      b (when (map? stop) (:position stop))]
+                (let [a (when (shape-ok? previous) (:position previous))
+                      b (when (shape-ok? stop) (:position stop))]
                   (when (and (position-ok? a) (position-ok? b) (<= b a))
                     (error (conj path index :position)
                            "Gradient stop positions must strictly increase; duplicate positions are not allowed"))))
@@ -131,6 +132,8 @@
            [(error (conj path :values) "Enum needs distinct portable values")])
          (when (and (= type :vector) (not (and (integer? size) (pos? size))))
            [(error (conj path :size) "Vector needs a positive integer size")])
+         (when (and (not= type :vector) (contains? schema :size))
+           [(error (conj path :size) "Only vector parameters declare a size")])
          (when (and (contains? schema :default)
                     (not (valid-value? schema (:default schema))))
            (value-errors schema (:default schema) (conj path :default)
@@ -145,6 +148,8 @@
                     (not (and (finite-number? (:max-change random))
                               (not (neg? (:max-change random))))))
            [(error (conj path :random :max-change) "Maximum change must be finite and nonnegative")])
+         (when (and (= type :gradient) (map? random) (true? (:enabled? random)))
+           [(error (conj path :random :enabled?) "Gradient parameters do not support randomization")])
          (when-not (data? schema)
            [(error path "Parameter schema must contain portable data only")])))))))
 
