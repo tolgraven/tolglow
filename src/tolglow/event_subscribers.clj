@@ -400,7 +400,11 @@
   (and entry (not (or (excluded-roles (:role entry)) (excluded-roles (:kind entry))
                       (:scene-owner entry) (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
 
-(defn candidates [model {:keys [op select] :as action}]
+(defn candidates
+  "Eligible targets in stable order. An exact running instance ID addresses a
+  scene or show-control instance only for a human operator (:exact? true)."
+  ([model action] (candidates model action nil))
+  ([model {:keys [op select] :as action} {:keys [exact?]}]
   (let [{:keys [ids categories page-id]} select
         cues (get-in model [:registry :cues]) effects (get-in model [:registry :effects])
         by-page (when page-id (set (vals (get-in model [:pages page-id :cells]))))
@@ -414,14 +418,21 @@
         ids (when ids (set ids)) categories (when categories (set categories))]
     (->> rows
          (keep (fn [[id cue effect cue-id]]
-                 (when (and (or (and instances? ids (contains? ids id)) ; an exact running instance ID is explicit
+                 (when (and (or (and exact? instances? ids (contains? ids id)) ; a human's exact instance ID is explicit
                                 (and (musical-definition? effect) (or (nil? cue) (musical-definition? cue))))
                             (or (nil? by-page) (if cue-id (contains? by-page cue-id) (contains? page-effects (:id effect))))
                             (or (nil? ids) (contains? ids id)
                                 (and instances? (or (contains? ids cue-id) (contains? ids (:id effect)))))
                             (or (nil? categories) (some categories (registry/definition-categories effect))))
                    id)))
-         (sort-by pr-str) vec)))
+         (sort-by pr-str) vec))))
+
+(defn- protected-instance?
+  "A running scene-owner, show-control or code-cue instance stays with the operator."
+  [model id]
+  (when-let [instance (get-in model [:instances id])]
+    (let [cue (get-in model [:registry :cues (:cue-id instance)])]
+      (not (and (musical-definition? (:definition instance)) (or (nil? cue) (musical-definition? cue)))))))
 
 (defn- chosen [seed candidates pick]
   (cond (empty? candidates) [seed []]
@@ -727,7 +738,7 @@
   (reduce (fn [m [path v]]
             (cond
               (not (or (= [:master] path) (get-in m [:instances (second path)]))) m
-              (not (identical? v (get-in m path))) m
+              (not (same-value? v (get-in m path))) m
               (contains? (get-in committed (pop path)) (peek path)) (assoc-in m path (get-in committed path))
               :else (update-in m (pop path) dissoc (peek path))))
           result (overlay-entries overlays)))
@@ -759,15 +770,22 @@
 
 (defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
+        human? (human-source? (run-source run))
         [seed targets] (if (:targets run) [seed (:targets run)]
-                         (chosen seed (candidates model action) (get-in action [:select :pick])))
+                         (chosen seed (candidates model action {:exact? human?}) (get-in action [:select :pick])))
         offset (:offset run 0) stop (min (count targets) (+ offset budget))
         base (command-base model run now)
         model (reduce (fn [model n]
-                        (perform-target model run action (nth targets n) base (command-id model run n) now))
+                        (let [id (nth targets n)]
+                          ;; Checked again when due: a non-human poster never acts on a protected instance.
+                          (if (and (not human?) (instance-target? action) (protected-instance? model id))
+                            (report model run "Scene and show-control instances stay with the operator")
+                            (perform-target model run action id base (command-id model run n) now))))
                       (assoc-in model [:event-subscribers :seed] seed) (range offset stop))
         model (if (and (:scheduled run) (empty? targets))
-                (report model run "No current target matches this scheduled action")
+                (report model run (if (and (not human?) (some #(protected-instance? model %) (get-in action [:select :ids])))
+                                    "Scene and show-control instances stay with the operator"
+                                    "No current target matches this scheduled action"))
                 model)]
     [model (when (< stop (count targets)) (assoc run :targets targets :offset stop))
      (- budget (max 1 (- stop offset)))]))
@@ -946,6 +964,13 @@
          "Human master and blackout stay authoritative: agents cannot schedule master or blackout changes"
          {:op (:op action)}))
 
+(defn- check-protected [model source action]
+  ;; Scene-owner and show-control instances stay with the human operator.
+  (when (and (not (human-source? source)) (instance-target? action))
+    (doseq [id (get-in action [:select :ids])]
+      (check (not (protected-instance? model id))
+             "Scene and show-control instances stay with the operator" {:instance-id id}))))
+
 (defn- scheduled-ids
   "IDs that cannot be reused: pending events, running ramps and recent outcomes."
   [s]
@@ -966,6 +991,7 @@
       (check (or (nil? label) (and (string? label) (<= (count label) 128))) "Label must be text up to 128 characters" {})
       (check (not= :callback (:op action)) "Scheduled events use built-in actions; register middleware as a subscriber" {})
       (check-authority (:source command) action)
+      (check-protected model (:source command) action)
       (check-references model action)
       (let [[due anchor] (step-due action beat beat meter)]
         (check (or (not (contains? action :at)) (>= due beat))

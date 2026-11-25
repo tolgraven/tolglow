@@ -494,6 +494,72 @@
         (is (== 0.0 (get-in @(:state rt) [:model :instances id :system :opacity]))))
       (finally (show/stop! rt)))))
 
+(deftest a-stage-that-reboxes-an-equal-value-does-not-commit-the-overlay
+  (let [model (assoc-in (live-model) [:transport :beat] 0.0)
+        launched (:model (control/apply-command model {:op :cue/launch :cue-id :wash :source {:adapter :repl}
+                                                      :show-id (:show-id model) :epoch (:epoch model)
+                                                      :time-ms 0.0 :command-id "launch"}))
+        id (first (keys (:instances launched)))
+        ramped (-> (:model (control/apply-domain-command
+                            launched {:op :schedule/post :show-id (:show-id launched) :epoch (:epoch launched)
+                                      :time-ms 0.0 :command-id "post" :source agent
+                                      :events [{:id "r" :op :param/ramp :instance-id id :param :level :to 1.0 :over {:beats 8}}]}
+                            subscribers/apply-operation))
+                   (subscribers/advance 0.0 {})
+                   (assoc-in [:transport :beat] 4.0))
+        overlays (subscribers/frame-overlays ramped 2000.0)
+        staged (subscribers/with-frame-overlays ramped overlays)
+        ;; A stage rebuilds params with an equal value in a fresh box.
+        reboxed (update-in staged [:instances id :params :level] #(Double/valueOf (double %)))
+        restored (subscribers/without-frame-overlays reboxed ramped overlays)]
+    (is (== 0.5 (get-in staged [:instances id :params :level])))
+    (is (not (identical? (get-in staged [:instances id :params :level]) (get-in reboxed [:instances id :params :level]))))
+    (is (== 0.0 (get-in restored [:instances id :params :level])) "the committed start value is restored")
+    (is (= ["r"] (mapv :event-id (get-in (subscribers/advance-ramps restored 2000.0) [:event-subscribers :ramps])))
+        "the ramp continues")
+    (testing "a stage's genuine write is kept and cancels the ramp"
+      (let [written (subscribers/without-frame-overlays (assoc-in staged [:instances id :params :level] 0.7) ramped overlays)]
+        (is (== 0.7 (get-in written [:instances id :params :level])))
+        (is (empty? (get-in (subscribers/advance-ramps written 2000.0) [:event-subscribers :ramps])))))))
+
+(deftest non-human-posters-cannot-target-scene-or-show-control-instances
+  (let [rt (spatial-host/runtime false)
+        request {:op :spawn :id :orb :page-id :main :cell [2 1]
+                 :volume {:shape :ball :position [0 1 0] :velocity [0 0 0] :gravity [0 0 0]
+                          :radius 0.5 :restitution 0.75 :selection #{:position}
+                          :falloff {:inner-m 0.5 :outer-m 0.5 :curve :linear}}
+                 :paint {:red 1.0 :blue 0.0}}
+        ramp (fn [id] {:op :param/ramp :instance-id id :target :opacity :to 0.0 :over {:ms 500}})
+        post! (fn [now source events]
+                (let [reply (show/submit! rt {:op :schedule/post :source source :events events})]
+                  (spatial-host/tick rt now)
+                  (deref reply 1000 ::missing)))]
+    (try
+      (let [blue (:instance-id (spatial-host/submit rt 0 :command {:op :cue/launch :cue-id :blue}))
+            next-id (str (subs blue 0 (inc (.indexOf ^String blue ":")))
+                         (inc (parse-long (subs blue (inc (.indexOf ^String blue ":"))))))
+            ;; Posted before the scene instance exists, so only the fire-time check can stop it.
+            early (post! 5 agent [(merge (ramp next-id) {:id "early" :in {:beats 1}})])
+            orb (:instance-id (spatial-host/submit rt 10 :spatial-cue request))]
+        (is (= :accepted (:status early)))
+        (is (= next-id orb))
+        (testing "rejected at post when the instance exists"
+          (doseq [[source events] [[agent [(merge (ramp orb) {:id "a1"})]]
+                                   [{:adapter :reactive :session-id "rx"} [{:id "a2" :op :instance/kill :instance-id orb :in {:beats 1}}]]]]
+            (let [ack (post! 20 source events)]
+              (is (= :rejected (:status ack)) (pr-str source))
+              (is (re-find #"stay with the operator" (str (:message ack)))))))
+        (testing "rejected again when due"
+          (doseq [t [700 1300 1600]] (spatial-host/tick rt t))
+          (is (= {:event-id "early" :status :rejected :message "Scene and show-control instances stay with the operator"}
+                 (select-keys (last (filter #(= "early" (:event-id %)) (:recent (show/schedule rt))))
+                              [:event-id :status :message])))
+          (is (= 255 (first (spatial-host/output rt))) "the scene instance is untouched")
+          (is (some? (get-in @(:state rt) [:model :instances orb]))))
+        (testing "a human operator may address it by exact instance ID"
+          (is (= :accepted (:status (post! 1700 {:adapter :repl :session-id "fod"} [(merge (ramp orb) {:id "h1"})]))))))
+      (finally (show/stop! rt)))))
+
 (deftest numeric-recoercion-is-not-an-override
   (is (subscribers/same-value? 1 1.0))
   (is (subscribers/same-value? [1 0 0] [1.0 0.0 0.0]))

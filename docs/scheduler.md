@@ -103,10 +103,14 @@ place of a top-level timing key.
   model with the ramped master, opacity and parameters: spatial cues (their
   volume opacity and parameters), the engine and the output stage. Committed
   values are restored after each stage, unless the stage itself changed that
-  location. A variable reaches the frame's resolved variables. Override
-  detection compares committed values numerically, so `1` and `1.0` are the
-  same value. An exact `:instance-id` also addresses scene or show-control
-  instances, such as a spatial cue, which category and cue selectors skip. The
+  location to a different value (compared numerically, so re-boxing an equal
+  value is not a write). A variable reaches the frame's resolved variables.
+  Override detection also compares committed values numerically, so `1` and
+  `1.0` are the same value. Category and cue selectors skip scene-owner,
+  show-control and code-cue instances, such as a spatial cue. A human operator
+  surface may still address one by exact `:instance-id`. An agent, reactive
+  action or subscriber is refused, at post if the instance exists and again
+  when the event is due. The
   committed value, backups, saved cue parameters and revision-keyed consumers
   keep the start value until the ramp commits. There are no timers, per-frame
   client commands or extra RNG. Numeric values are constrained to their bounds,
