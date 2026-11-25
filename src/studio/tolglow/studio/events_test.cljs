@@ -222,8 +222,9 @@
         replacement (assoc view :frame-number 14 :cues [] :cue-launch-outcomes outcomes)
         reconnected (full-frame closed replacement)
         next-outcome (assoc fence :command-id "another" :cue-id nil :source (assoc source :adapter "web"))
-        next-snapshot (full-frame (:db reconnected) (assoc replacement :frame-number 15
-                                                         :cue-launch-outcomes [deleted next-outcome]))]
+        next-snapshot (stream-event (:db reconnected)
+                                   (assoc patch :token "next" :changes [[:set [:frame-number] 15]
+                                                                       [:set [:cue-launch-outcomes] [deleted next-outcome]]]))]
     (is (= ["violet haze missed its scheduled launch because the show clock changed. Ember wash missed its scheduled launch because the cue was removed."]
            (launch-failures reported)))
     (is (= "7:9" (get-in reported [:db :ui :selected-instance])))
@@ -231,6 +232,7 @@
     (is (nil? (:studio/http reported)))
     (is (empty? (launch-failures duplicate)))
     (is (empty? (launch-failures reconnected)))
+    (is (= ["connected" {:op :ack :token "next"}] (:studio/stream-reply next-snapshot)))
     (is (= ["Cue missed its scheduled launch because the show clock changed."] (launch-failures next-snapshot)))))
 
 (deftest missed-http-replies-defer-to-the-committed-stream
