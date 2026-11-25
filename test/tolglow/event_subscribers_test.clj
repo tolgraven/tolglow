@@ -289,7 +289,7 @@
       (is (not-any? #(= :music/section-pattern (:type %)) (:events result)))
       (is (empty? (:instances result))))))
 
-(defn- play-reference-boundary [interruption]
+(defn- play-reference-boundary [pattern interruption]
   (let [clock-ms (atom 27000)
         provenance {:source-id :local-player :session-id "test-session" :clock-id :physical}
         reference {:id "bass-arrangement" :version "sections-v1"}
@@ -301,7 +301,7 @@
                              :features {:signature {:bass-notes [40]}}}]}
         runtime (show/create-runtime {:workspace-options nil :physical-now-ms #(deref clock-ms)
                                       :section-patterns {:enabled? true :on :bar :show-seed 514
-                                                         :patterns [:warm :pulse :slow]}
+                                                         :patterns [pattern]}
                                       :section-reference {:profile profile :provenance provenance}})
         {:keys [publish! now-ms! state!]} (show/section-reference-callbacks runtime)
         position (atom (reference-position/new-state provenance))
@@ -315,11 +315,13 @@
       (show/attach-observer! runtime :reference-patterns
         (fn [] {:events! (fn [_ emitted _ _] (swap! events into emitted))
                 :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
-      (let [reply (show/register-event-subscriber! runtime
-                    {:id :reference-show :match {:type :music/section-pattern}
-                     :actions [{:op :effect/launch :select {:ids [:ember] :pick :first}}]})]
+      (let [replies (mapv (fn [[pattern effect]]
+                            (show/register-event-subscriber! runtime
+                              {:id pattern :match {:type :music/section-pattern :pattern pattern}
+                               :actions [{:op :effect/launch :select {:ids [effect] :pick :first}}]}))
+                          [[:slow :ember] [:pulse :ice]])]
         (show/tick! runtime 0)
-        (is (= :accepted (:status (deref reply 1000 ::timeout)))))
+        (is (= [:accepted :accepted] (mapv #(:status (deref % 1000 ::timeout)) replies))))
       (doseq [position-ms [3700 3750 3800]]
         (reset! clock-ms (+ 27000 position-ms))
         (is (observe :match {:match {:reference reference :position-ms position-ms
@@ -328,12 +330,18 @@
       (reset! clock-ms 30850)
       (show/tick! runtime 3850)
       (is (= :reference (get-in @(:state runtime) [:section-pattern-state :pending :mode])))
-      (when interruption
-        (let [stale @position]
-          (reset! clock-ms 30950)
-          (is (observe interruption {}))
-          (is (nil? (publish! stale)))
-          (is (= :unavailable (:status (state!))))))
+      (when interruption (reset! clock-ms 30950))
+      (case interruption
+        :seek (let [stale @position]
+                (is (observe :seek {}))
+                (is (nil? (publish! stale)))
+                (is (= :unavailable (:status (state!)))))
+        :override (let [reply (show/submit! runtime :settings
+                                {:scope :section-patterns :values {:override? true}})]
+                    (show/tick! runtime 3950)
+                    (is (= :accepted (:status (deref reply 1000 ::timeout))))
+                    (is (nil? (get-in @(:state runtime) [:section-pattern-state :pending]))))
+        nil)
       (doseq [time-ms [4000 4025 4100]]
         (reset! clock-ms (+ 27000 time-ms))
         (show/tick! runtime time-ms))
@@ -343,9 +351,11 @@
       (finally (show/stop! runtime)))))
 
 (deftest trusted-reference-uses-its-monotonic-clock-and-revokes-a-seeked-forecast
-  (let [first-run (play-reference-boundary nil)
-        repeated (play-reference-boundary nil)
-        seeked (play-reference-boundary :seek)
+  (let [first-run (play-reference-boundary :slow nil)
+        repeated (play-reference-boundary :slow nil)
+        different (play-reference-boundary :pulse nil)
+        seeked (play-reference-boundary :slow :seek)
+        overridden (play-reference-boundary :slow :override)
         [intent] (:patterns first-run)]
     (is (= 1 (count (:patterns first-run)) (count (:patterns repeated))))
     (is (= [:reference 8.0 4000 "bass-arrangement"]
@@ -355,8 +365,10 @@
            (select-keys (get-in repeated [:patterns 0 :data]) [:pattern :decision-seed :delivery-id])))
     (is (some #(= (:time %) (:time intent)) (:bars first-run)))
     (is (= [:ember] (:effects first-run) (:effects repeated)))
-    (is (empty? (:patterns seeked)))
-    (is (empty? (:effects seeked)))))
+    (is (= [:ice] (:effects different)))
+    (doseq [suppressed [seeked overridden]]
+      (is (empty? (:patterns suppressed)))
+      (is (empty? (:effects suppressed))))))
 
 (deftest middleware-can-update-variables-and-queue-actions-without-blocking-the-owner
   (let [entered (promise) release (promise)

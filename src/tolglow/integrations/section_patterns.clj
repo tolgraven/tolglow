@@ -14,6 +14,12 @@
 (defn- counter? [x] (and (integer? x) (<= 0 x)))
 (defn- id? [x] (or (keyword? x) (and (string? x) (seq x)) (integer? x) (uuid? x)))
 
+(defn override-settings [options]
+  (when-not (and (map? options) (= #{:override?} (set (keys options)))
+                 (boolean? (:override? options)))
+    (throw (ex-info "Section pattern override requires a boolean :override?" {})))
+  options)
+
 (defn- policy [input]
   (when-not (and (map? input) (every? (set (keys defaults)) (keys input)))
     (throw (ex-info "Invalid section pattern options" {})))

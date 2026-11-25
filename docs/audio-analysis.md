@@ -329,7 +329,8 @@ cue through the patchbay and checks its parameter and subsequent silence gate.
 ## Drive cue patterns from changes in track feel
 
 Set `:analyzer-options {:sections {}}` when starting capture to enable section
-detection. The detector compares repeated bass, accent and texture features
+detection. The detector compares repeated bass-note distributions and
+normalized accent patterns
 over musical windows. It publishes `:audio/section-change` after confirming a
 change. The event carries the earlier boundary beat, confirmation beat,
 confidence and capture run.
@@ -337,9 +338,13 @@ confidence and capture run.
 To turn those observations into show actions, create the show with an explicit
 pattern policy, for example `:section-patterns {:enabled? true :on :bar
 :show-seed 514 :patterns [:warm :pulse :slow]}`. Register a subscriber for
-`:music/section-pattern` and let it choose what to launch. Pattern decisions use
+`:music/section-pattern` and enter a **Pattern ID** such as `:slow` to route that
+choice to a specific cue. In the REPL use `:match {:type :music/section-pattern
+:pattern :slow}` on the same subscriber. Pattern decisions use
 the show's selected clock and wait for the configured beat, bar or phrase.
-Disabling that subscriber stops its actions.
+To pause the pattern source from the REPL, submit
+`(show/submit! runtime :settings {:scope :section-patterns :values {:override? true}})`.
+Set the same override to `false` to resume future decisions.
 
 For earlier detection with a known recording, use
 `tolglow.integrations.track-profile/analyze-file` with a local WAV and its beat

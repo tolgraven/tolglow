@@ -270,6 +270,8 @@
                             (reference-position/new-state (:provenance reference) (:position-options reference)))
          _ (lighting-scenes/validate-state! model)
          _ (lighting/validate! (:settings model))
+         _ (when (contains? (:settings model) :section-patterns)
+             (section-patterns/override-settings (get-in model [:settings :section-patterns])))
          _ (variable-blocks/compile-model model)
          _ (registry/validate-public-query-ids! (get-in model [:settings :studio :public-queries]))
          _ (when-let [config (get-in model [:settings :adaptive-keyframes] (:adaptive-keyframes options))]
@@ -737,6 +739,7 @@
             _ (when (= scope :variable-blocks)
                 (variable-blocks/compile-settings settings (prefabs/catalog model)))
             _ (when (= scope :adaptive-keyframes) (cadence/settings settings))
+            _ (when (= scope :section-patterns) (section-patterns/override-settings settings))
             _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
             _ (when (= scope :lighting-capacity) (capacity/settings settings))
             _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
@@ -1004,6 +1007,7 @@
                          (into #{} (map (comp keyword name :type))
                                (show-events/emitted {:before previous :after model})))
             metrics {:now-ms (:time-ms model) :causal-stream stream :causal-events causal-events
+                     :override? (get-in model [:settings :section-patterns :override?] false)
                      :transport {:show-epoch (:epoch model) :source (or source :manual)
                                  :source-epoch (or source-epoch 0) :session-id clock-session
                                  :playing? (boolean active-clock?) :beat beat :boundaries boundaries}}

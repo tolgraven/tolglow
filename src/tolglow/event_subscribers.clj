@@ -95,9 +95,13 @@
 (defn validate-definition [{:keys [id enabled? match actions] :as registration}]
   (check (and (only-keys? registration #{:id :enabled? :match :actions})
               (keyword? id) (instance? Boolean (get registration :enabled? true))
-              (only-keys? (or match {}) #{:type :category :emitter-id :volume-id :fixture-id})
+              (only-keys? (or match {}) #{:type :category :emitter-id :volume-id :fixture-id :pattern})
               (every? keyword? (vals (select-keys match [:type :category])))
               (every? identifier? (vals (select-keys match [:emitter-id :volume-id :fixture-id])))
+              (or (not (contains? match :pattern))
+                  (and (= :music/section-pattern (:type match))
+                       (let [pattern (:pattern match)]
+                         (or (identifier? pattern) (integer? pattern) (uuid? pattern)))))
               (vector? actions) (<= 1 (count actions) 32))
          "Invalid event subscriber definition" {:id id})
   (run! validate-action actions)
@@ -159,6 +163,7 @@
        (or (nil? (:category match)) (= category (:category match)))
        (or (nil? (:volume-id match)) (= (:volume-id data) (:volume-id match)))
        (or (nil? (:fixture-id match)) (= (:fixture-id data) (:fixture-id match)))
+       (or (not (contains? match :pattern)) (= (:pattern data) (:pattern match)))
        (or (nil? (:emitter-id match)) (= (:id emitter) (:emitter-id match)))))
 
 (defn- triggered? [{:keys [emitter data]}]

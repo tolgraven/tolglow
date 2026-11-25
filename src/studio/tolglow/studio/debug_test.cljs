@@ -73,6 +73,13 @@
     (is (thrown? js/Error (editor/clean-form (assoc form :actions []))))
     (is (thrown? js/Error (editor/clean-form (assoc-in form [:actions 1 :delay] {:beats "-1"}))))))
 
+(deftest a-track-pattern-selector-keeps-its-type-and-clears-for-unrelated-events
+  (let [form {:id "music/slow" :match {:type :music/section-pattern :pattern ":slow"}
+              :actions [(editor/new-action :cue/launch)]}]
+    (is (= {:type :music/section-pattern :pattern :slow} (:match (editor/clean-form form))))
+    (is (= "slow" (get-in (editor/clean-form (assoc-in form [:match :pattern] "slow")) [:match :pattern])))
+    (is (= {:type :audio/kick} (:match (editor/clean-form (assoc-in form [:match :type] :audio/kick)))))))
+
 (deftest late-subscriber-edit-cannot-target-replaced-show
   (let [db {:show {:runtime-id "new" :epoch 1}
             :debug {:handle "page" :editing-show {:runtime-id "old" :epoch 0}
