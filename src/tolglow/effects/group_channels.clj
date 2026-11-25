@@ -104,6 +104,33 @@
     (some (fn [[index group]] (when (= id (:id group)) [:overlays kind index]))
           (map-indexed vector (get overlays kind)))))
 
+(defn resolve-text-address
+  "Resolve an untyped JSON group ID using the owner model. A receipt retains
+  the original typed address if the same spelling is retried after a reconfigure."
+  [{:keys [op channel-id group-id] :as command} model previous]
+  (let [previous (when (= op (:op previous)) previous)
+        resolve-id (fn [kind text recorded]
+                     (let [key-id (keyword text)]
+                       (cond
+                         (or (= recorded text) (= recorded key-id)) recorded
+                         (group-path (configuration model) [kind text]) text
+                         :else key-id)))]
+    (case op
+      :effect-groups/level-set
+      (if (and (vector? channel-id) (= 2 (count channel-id))
+               (string? (second channel-id)) (seq (second channel-id)))
+        (let [[kind id] channel-id
+              [previous-kind previous-id] (:channel-id previous)]
+          (assoc command :channel-id [kind (resolve-id kind id (when (= kind previous-kind) previous-id))]))
+        command)
+
+      :effect-groups/assign-instance
+      (cond-> command
+        (and (string? group-id) (seq group-id))
+        (assoc :group-id (resolve-id :manual group-id (:group-id previous))))
+
+      command)))
+
 (defn- transition [before after event result]
   {:model after :result result
    :events (if (= before after) [] [(assoc result :type event)])})

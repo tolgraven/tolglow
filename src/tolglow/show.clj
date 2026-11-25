@@ -484,8 +484,11 @@
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
-   (let [time-ms (or (get-in model [:control :history (:command-id payload) :command :time-ms]) time-ms)
-         payload (prefabs/prepare-command model payload)
+   (let [previous (get-in model [:control :history (:command-id payload) :command])
+         time-ms (or (:time-ms previous) time-ms)
+         payload (cond-> (prefabs/prepare-command model payload)
+                   (::group-channels/text-addresses? (meta payload))
+                   (group-channels/resolve-text-address model previous))
          ;; Declarative code may use string identities (generated pages do).
          ;; JSON keyword normalization must still address those existing objects.
          payload (reduce (fn [p [field entries]]

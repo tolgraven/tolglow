@@ -1,12 +1,16 @@
 (ns tolglow.effects.group-channels-host-test
   (:require [afterglow.control.model :as control]
             [afterglow.render.frame :as render]
+            [clojure.data.json :as json]
             [clojure.test :refer [deftest is]]
             [tolglow.atmosphere.control :as fog-control]
             [tolglow.persistence :as persistence]
             [tolglow.show :as show]
-            [tolglow.spatial.cues :as spatial])
-  (:import [java.nio.file Files]
+            [tolglow.spatial.cues :as spatial]
+            [tolglow.studio.web :as web]
+            [tolglow.transit :as transit])
+  (:import [java.io StringReader]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- model []
@@ -91,6 +95,62 @@
           (is (= [255 0] (dmx-bytes runtime 2)))
           (is (= (if (= :restart policy) 40 10) (:started-at-ms (instance)))))
         (finally (show/stop! runtime))))))
+
+(deftest studio-json-commands-address-committed-groups
+  (let [runtime (show/create-runtime {:model (model) :workspace-options nil})
+        time (atom 0)
+        app (web/app {:heartbeat! (constantly nil)
+                      :submit! (fn [operation payload]
+                                 (let [receipt (show/submit! runtime operation payload)]
+                                   (show/tick! runtime (swap! time inc))
+                                   receipt))})
+        post! (fn [uri media encode payload]
+                (let [response (app {:request-method :post :uri uri
+                                     :headers {"host" "localhost" "accept" "application/transit+json"
+                                               "content-type" media}
+                                     :body (StringReader. (encode payload))})]
+                  [(:status response) (transit/decode (:body response))]))
+        command! #(post! "/api/command" "application/json" json/write-str %)
+        typed! #(post! "/api/command" "application/transit+json" transit/encode %)]
+    (try
+      (let [id (launch! runtime 0 :last)
+            config {:manual [{:id "looks/mix"}]
+                    :overlays {:fixtures [{:id "front" :fixture-ids ["head"]}]}
+                    :active-overlay "fixtures"}
+            level-command {:op "effect-groups/level-set" :channel-id ["manual" "looks/mix"]
+                           :command-id "mix-level" :value 0.5}]
+        (is (= :fixtures (get-in (command! {:op "effect-groups/configure" :config config}) [1 :active-overlay])))
+        (let [first-level (command! level-command)]
+          (is (= [200 [:manual :looks/mix]] [(first first-level) (get-in first-level [1 :channel-id])]))
+          (is (= 0.5 (get-in (show/effect-group-channels runtime) [:manual 0 :level])))
+          (is (= [:fixtures :front]
+                 (get-in (command! {:op "effect-groups/level-set" :channel-id ["fixtures" "front"] :value 0.25})
+                         [1 :channel-id])))
+          (is (= :looks/mix (get-in (command! {:op "effect-groups/assign-instance" :instance-id id :group-id "looks/mix"})
+                                  [1 :group-id])))
+          (is (= [:looks/mix] (get-in (show/effect-group-channels runtime) [:instances 0 :manual-path])))
+          (is (= 200 (first (command! {:op "effect-groups/assign-instance" :instance-id id :group-id nil}))))
+          (is (= [] (get-in (show/effect-group-channels runtime) [:instances 0 :manual-path])))
+          (is (= 200 (first (command! {:op "effect-groups/overlay-set" :overlay nil}))))
+          (is (= :fixtures (get-in (command! {:op "effect-groups/overlay-set" :overlay "fixtures"}) [1 :active-overlay])))
+          (is (= 200 (first (command! {:op "effect-groups/configure" :config-patch {:active-overlay nil}}))))
+          (is (= :fixtures (get-in (command! {:op "effect-groups/configure" :config-patch {:active-overlay "fixtures"}})
+                                  [1 :active-overlay])))
+          (is (= :fixtures (get-in (post! "/api/settings" "application/json" json/write-str
+                                          {:scope "effect-group-channels" :values {:active-overlay "fixtures"}})
+                                  [1 :active-overlay])))
+          (accepted! runtime (swap! time inc) (configure {:manual [{:id "looks/mix"}]}))
+          (is (= first-level (command! level-command)))
+          (is (= 1.0 (get-in (show/effect-group-channels runtime) [:manual 0 :level])))
+          (is (= [:manual "looks/mix"] (get-in (command! (assoc level-command :command-id "string-mix-level"))
+                                            [1 :channel-id])))
+          (is (= "looks/mix" (get-in (command! {:op "effect-groups/assign-instance" :instance-id id :group-id "looks/mix"})
+                                   [1 :group-id])))
+          (is (= 200 (first (typed! (level [:manual "looks/mix"] 0.65)))))
+          (is (= :unknown-group (get-in (typed! (level [:manual :looks/mix] 0.75)) [1 :code])))
+          (is (= :invalid-value (get-in (typed! (level ["manual" "looks/mix"] 0.75)) [1 :code])))
+          (is (= 0.65 (get-in (show/effect-group-channels runtime) [:manual 0 :level])))))
+      (finally (show/stop! runtime)))))
 
 (deftest group-levels-use-owner-receipts-and-preserve-interleaved-output
   (doseq [batch? [true false]]

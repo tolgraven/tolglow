@@ -5,6 +5,7 @@
             [tolglow.studio.origin :as origin]
             [clojure.data.json :as json]
             [tolglow.data :as data]
+            [tolglow.effects.group-channels :as group-channels]
             [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
@@ -103,6 +104,27 @@
              (#{"held-release" "operator-cancel"} (:reason data)))
         (update :reason keyword)))))
 
+(defn- normalize-active-overlay [config]
+  (cond-> config (string? (:active-overlay config)) (update :active-overlay keyword)))
+
+(defn- normalize-group-json [uri data]
+  (case uri
+    "/api/command"
+    (case (:op data)
+      :effect-groups/configure (cond-> data
+                                 (contains? data :config) (update :config normalize-active-overlay)
+                                 (contains? data :config-patch) (update :config-patch normalize-active-overlay))
+      :effect-groups/overlay-set (cond-> data (string? (:overlay data)) (update :overlay keyword))
+      :effect-groups/level-set (cond-> (vary-meta data assoc ::group-channels/text-addresses? true)
+                                 (string? (get-in data [:channel-id 0])) (update-in [:channel-id 0] keyword))
+      :effect-groups/assign-instance (vary-meta data assoc ::group-channels/text-addresses? true)
+      data)
+
+    "/api/settings"
+    (cond-> data (= :effect-group-channels (:scope data)) (update :values normalize-active-overlay))
+
+    data))
+
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -120,7 +142,8 @@
           params (cond
                    (str/starts-with? (:uri request) "/api/show/checkpoints/")
                    (assoc data ::text-checkpoint-id? (not transit?))
-                   form? (normalize-form (:uri request) data)
+                   form? (cond->> (normalize-form (:uri request) data)
+                           (not transit?) (normalize-group-json (:uri request)))
                    :else data)]
       (handler (assoc request :json-params params)))))
 
