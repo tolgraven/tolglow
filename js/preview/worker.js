@@ -70,7 +70,7 @@ function stop() {
 function afterCommit(done) {
   let frame = null, remaining = 2;
   const finish = () => {clearTimeout(timer); if (frame !== null) cancelAnimationFrame(frame); done();};
-  const timer = setTimeout(finish, 100);
+  const timer = setTimeout(finish, 200);
   const wait = () => {
     frame = null;
     if (!remaining--) return finish();
