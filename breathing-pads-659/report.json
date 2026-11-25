@@ -1,0 +1,671 @@
+{
+  "origin": "http://127.0.0.1:18659",
+  "startedAt": "2026-11-25T22:01:03.032Z",
+  "padStates": [
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 1, row 1, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 2, row 1"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 3, row 1, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 4, row 1"
+    },
+    {
+      "name": "Ice",
+      "classes": "cue-cell active running ",
+      "label": "Ice, column 5, row 1, running"
+    },
+    {
+      "name": "Indigo",
+      "classes": "cue-cell active running ",
+      "label": "Indigo, column 6, row 1, running"
+    },
+    {
+      "name": "Merlot",
+      "classes": "cue-cell ",
+      "label": "Merlot, column 7, row 1"
+    },
+    {
+      "name": "Moon",
+      "classes": "cue-cell active running ",
+      "label": "Moon, column 8, row 1, running"
+    },
+    {
+      "name": "Orchid",
+      "classes": "cue-cell active running ",
+      "label": "Orchid, column 1, row 2, running"
+    },
+    {
+      "name": "Sage",
+      "classes": "cue-cell active running ",
+      "label": "Sage, column 2, row 2, running"
+    },
+    {
+      "name": "Solitary",
+      "classes": "cue-cell active running ",
+      "label": "Solitary, column 3, row 2, running"
+    },
+    {
+      "name": "Slow sweep",
+      "classes": "cue-cell ",
+      "label": "Slow sweep, column 4, row 2"
+    },
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 5, row 2, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 6, row 2"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 7, row 2, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 8, row 2"
+    },
+    {
+      "name": "Ice",
+      "classes": "cue-cell active running ",
+      "label": "Ice, column 1, row 3, running"
+    },
+    {
+      "name": "Indigo",
+      "classes": "cue-cell active running ",
+      "label": "Indigo, column 2, row 3, running"
+    },
+    {
+      "name": "Merlot",
+      "classes": "cue-cell ",
+      "label": "Merlot, column 3, row 3"
+    },
+    {
+      "name": "Moon",
+      "classes": "cue-cell active running ",
+      "label": "Moon, column 4, row 3, running"
+    },
+    {
+      "name": "Orchid",
+      "classes": "cue-cell active running ",
+      "label": "Orchid, column 5, row 3, running"
+    },
+    {
+      "name": "Sage",
+      "classes": "cue-cell active running ",
+      "label": "Sage, column 6, row 3, running"
+    },
+    {
+      "name": "Solitary",
+      "classes": "cue-cell active running ",
+      "label": "Solitary, column 7, row 3, running"
+    },
+    {
+      "name": "Slow sweep",
+      "classes": "cue-cell ",
+      "label": "Slow sweep, column 8, row 3"
+    },
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 1, row 4, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 2, row 4"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 3, row 4, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 4, row 4"
+    },
+    {
+      "name": "Ice",
+      "classes": "cue-cell active running ",
+      "label": "Ice, column 5, row 4, running"
+    },
+    {
+      "name": "Indigo",
+      "classes": "cue-cell active running ",
+      "label": "Indigo, column 6, row 4, running"
+    },
+    {
+      "name": "Merlot",
+      "classes": "cue-cell ",
+      "label": "Merlot, column 7, row 4"
+    },
+    {
+      "name": "Moon",
+      "classes": "cue-cell active running ",
+      "label": "Moon, column 8, row 4, running"
+    },
+    {
+      "name": "Orchid",
+      "classes": "cue-cell active running ",
+      "label": "Orchid, column 1, row 5, running"
+    },
+    {
+      "name": "Sage",
+      "classes": "cue-cell active running ",
+      "label": "Sage, column 2, row 5, running"
+    },
+    {
+      "name": "Solitary",
+      "classes": "cue-cell active running ",
+      "label": "Solitary, column 3, row 5, running"
+    },
+    {
+      "name": "Slow sweep",
+      "classes": "cue-cell ",
+      "label": "Slow sweep, column 4, row 5"
+    },
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 5, row 5, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 6, row 5"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 7, row 5, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 8, row 5"
+    },
+    {
+      "name": "Ice",
+      "classes": "cue-cell active running ",
+      "label": "Ice, column 1, row 6, running"
+    },
+    {
+      "name": "Indigo",
+      "classes": "cue-cell active running ",
+      "label": "Indigo, column 2, row 6, running"
+    },
+    {
+      "name": "Merlot",
+      "classes": "cue-cell ",
+      "label": "Merlot, column 3, row 6"
+    },
+    {
+      "name": "Moon",
+      "classes": "cue-cell active running ",
+      "label": "Moon, column 4, row 6, running"
+    },
+    {
+      "name": "Orchid",
+      "classes": "cue-cell active running ",
+      "label": "Orchid, column 5, row 6, running"
+    },
+    {
+      "name": "Sage",
+      "classes": "cue-cell active running ",
+      "label": "Sage, column 6, row 6, running"
+    },
+    {
+      "name": "Solitary",
+      "classes": "cue-cell active running ",
+      "label": "Solitary, column 7, row 6, running"
+    },
+    {
+      "name": "Slow sweep",
+      "classes": "cue-cell ",
+      "label": "Slow sweep, column 8, row 6"
+    },
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 1, row 7, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 2, row 7"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 3, row 7, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 4, row 7"
+    },
+    {
+      "name": "Ice",
+      "classes": "cue-cell active running ",
+      "label": "Ice, column 5, row 7, running"
+    },
+    {
+      "name": "Indigo",
+      "classes": "cue-cell active running ",
+      "label": "Indigo, column 6, row 7, running"
+    },
+    {
+      "name": "Merlot",
+      "classes": "cue-cell ",
+      "label": "Merlot, column 7, row 7"
+    },
+    {
+      "name": "Moon",
+      "classes": "cue-cell active running ",
+      "label": "Moon, column 8, row 7, running"
+    },
+    {
+      "name": "Orchid",
+      "classes": "cue-cell active running ",
+      "label": "Orchid, column 1, row 8, running"
+    },
+    {
+      "name": "Sage",
+      "classes": "cue-cell active running ",
+      "label": "Sage, column 2, row 8, running"
+    },
+    {
+      "name": "Solitary",
+      "classes": "cue-cell active running ",
+      "label": "Solitary, column 3, row 8, running"
+    },
+    {
+      "name": "Slow sweep",
+      "classes": "cue-cell ",
+      "label": "Slow sweep, column 4, row 8"
+    },
+    {
+      "name": "Amber",
+      "classes": "cue-cell active running ",
+      "label": "Amber, column 5, row 8, running"
+    },
+    {
+      "name": "Breathe",
+      "classes": "cue-cell ",
+      "label": "Breathe, column 6, row 8"
+    },
+    {
+      "name": "Ember",
+      "classes": "cue-cell active running ",
+      "label": "Ember, column 7, row 8, running"
+    },
+    {
+      "name": "Flash",
+      "classes": "cue-cell ",
+      "label": "Flash, column 8, row 8"
+    }
+  ],
+  "phase": {
+    "samples": 24,
+    "meanAbsErrorBeats": 0.03791912183408074,
+    "maxAbsErrorBeats": 0.07619141600109502,
+    "meanRttMs": 10.824166667026779,
+    "overlayRange": [
+      0.1203,
+      0.71676
+    ],
+    "distinctPreviewColors": 1,
+    "rows": [
+      {
+        "rtt": 15.594999998807907,
+        "serverBeat": 465.80128975000105,
+        "serverPhase": 0.8012897500010467,
+        "bpm": 120,
+        "clientPhase": 0.759,
+        "breath": 0.5283,
+        "overlay": 0.43698,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 10.620000004768372,
+        "serverBeat": 466.0012895840011,
+        "serverPhase": 0.0012895840010855864,
+        "bpm": 120,
+        "clientPhase": 0.9598,
+        "breath": 0.9841,
+        "overlay": 0.71046,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 14.145000003278255,
+        "serverBeat": 466.2012914180011,
+        "serverPhase": 0.20129141800111938,
+        "bpm": 120,
+        "clientPhase": 0.1761,
+        "breath": 0.7239,
+        "overlay": 0.55434,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 11.46000000089407,
+        "serverBeat": 466.4012910840012,
+        "serverPhase": 0.40129108400117275,
+        "bpm": 120,
+        "clientPhase": 0.3766,
+        "breath": 0.143,
+        "overlay": 0.2058,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 13.320000000298023,
+        "serverBeat": 466.6012919180012,
+        "serverPhase": 0.6012919180012091,
+        "bpm": 120,
+        "clientPhase": 0.5748,
+        "breath": 0.0542,
+        "overlay": 0.15252,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 16.765000000596046,
+        "serverBeat": 466.80129108400115,
+        "serverPhase": 0.80129108400115,
+        "bpm": 120,
+        "clientPhase": 0.772,
+        "breath": 0.5689,
+        "overlay": 0.46134,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 8.535000003874302,
+        "serverBeat": 467.05129141800114,
+        "serverPhase": 0.05129141800114212,
+        "bpm": 120,
+        "clientPhase": 0.9766,
+        "breath": 0.9946,
+        "overlay": 0.71676,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 12.054999999701977,
+        "serverBeat": 467.2012915020012,
+        "serverPhase": 0.2012915020011974,
+        "bpm": 120,
+        "clientPhase": 0.178,
+        "breath": 0.7186,
+        "overlay": 0.55116,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 11.179999999701977,
+        "serverBeat": 467.40129150000115,
+        "serverPhase": 0.4012915000011503,
+        "bpm": 120,
+        "clientPhase": 0.3754,
+        "breath": 0.1456,
+        "overlay": 0.20736,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 12.679999999701977,
+        "serverBeat": 467.6012910840011,
+        "serverPhase": 0.6012910840011045,
+        "bpm": 120,
+        "clientPhase": 0.6091,
+        "breath": 0.113,
+        "overlay": 0.1878,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 6.875,
+        "serverBeat": 467.8012919180011,
+        "serverPhase": 0.801291918001084,
+        "bpm": 120,
+        "clientPhase": 0.776,
+        "breath": 0.5813,
+        "overlay": 0.46878,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 11.099999994039536,
+        "serverBeat": 468.0012914160011,
+        "serverPhase": 0.0012914160010950582,
+        "bpm": 120,
+        "clientPhase": 0.9251,
+        "breath": 0.9457,
+        "overlay": 0.68742,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 7.795000001788139,
+        "serverBeat": 468.1512905000011,
+        "serverPhase": 0.151290500001096,
+        "bpm": 120,
+        "clientPhase": 0.1766,
+        "breath": 0.7225,
+        "overlay": 0.5535,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 7.189999997615814,
+        "serverBeat": 468.351291000001,
+        "serverPhase": 0.35129100000102653,
+        "bpm": 120,
+        "clientPhase": 0.3092,
+        "breath": 0.3184,
+        "overlay": 0.31104,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 9.384999997913837,
+        "serverBeat": 468.5512895000011,
+        "serverPhase": 0.5512895000010758,
+        "bpm": 120,
+        "clientPhase": 0.507,
+        "breath": 0.0005,
+        "overlay": 0.1203,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 6.365000002086163,
+        "serverBeat": 468.75128966600107,
+        "serverPhase": 0.751289666001071,
+        "bpm": 120,
+        "clientPhase": 0.6758,
+        "breath": 0.2753,
+        "overlay": 0.28518,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 8.744999997317791,
+        "serverBeat": 468.90129083400114,
+        "serverPhase": 0.901290834001145,
+        "bpm": 120,
+        "clientPhase": 0.8756,
+        "breath": 0.8548,
+        "overlay": 0.63288,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 13.67000000178814,
+        "serverBeat": 469.10129166600115,
+        "serverPhase": 0.10129166600114559,
+        "bpm": 120,
+        "clientPhase": 0.0608,
+        "breath": 0.9639,
+        "overlay": 0.69834,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 15.269999995827675,
+        "serverBeat": 469.3012907520012,
+        "serverPhase": 0.3012907520011936,
+        "bpm": 120,
+        "clientPhase": 0.3086,
+        "breath": 0.3199,
+        "overlay": 0.31194,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 14.304999999701977,
+        "serverBeat": 469.5012915000011,
+        "serverPhase": 0.5012915000011162,
+        "bpm": 120,
+        "clientPhase": 0.5108,
+        "breath": 0.0011,
+        "overlay": 0.12066,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 5.975000001490116,
+        "serverBeat": 469.7012925000011,
+        "serverPhase": 0.7012925000011023,
+        "bpm": 120,
+        "clientPhase": 0.6264,
+        "breath": 0.1496,
+        "overlay": 0.20976,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 9.259999997913837,
+        "serverBeat": 469.90129166800114,
+        "serverPhase": 0.9012916680011358,
+        "bpm": 120,
+        "clientPhase": 0.826,
+        "breath": 0.7297,
+        "overlay": 0.55782,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 11.090000003576279,
+        "serverBeat": 470.0512915000011,
+        "serverPhase": 0.05129150000112759,
+        "bpm": 120,
+        "clientPhase": 0.0268,
+        "breath": 0.993,
+        "overlay": 0.7158,
+        "cueColor": "rgb(179,54,4)"
+      },
+      {
+        "rtt": 6.4000000059604645,
+        "serverBeat": 470.25129183400117,
+        "serverPhase": 0.25129183400116517,
+        "bpm": 120,
+        "clientPhase": 0.2087,
+        "breath": 0.6282,
+        "overlay": 0.49692,
+        "cueColor": "rgb(179,54,4)"
+      }
+    ]
+  },
+  "recording": {
+    "frames": 18,
+    "seconds": 4.62
+  },
+  "tempoChange": {
+    "bpm": 96,
+    "meanAbsErrorBeats": 0.03459599053447323,
+    "maxAbsErrorBeats": 0.07349131760140137
+  },
+  "frameCost": [
+    {
+      "label": "idle page, clock stopped",
+      "running": 0,
+      "frames": 300,
+      "wallSeconds": 4.999800000000003,
+      "rafMedianMs": 16.665000000000873,
+      "rafP95Ms": 16.67000000000189,
+      "perFrameMs": {
+        "recalcStyle": 0.76439,
+        "layout": 0.028380000000000002,
+        "script": 1.6934333333333333,
+        "task": 3.0941133333333335
+      },
+      "styleRecalcs": 163,
+      "layouts": 79
+    },
+    {
+      "label": "64 running pads breathing",
+      "running": 64,
+      "frames": 300,
+      "wallSeconds": 4.999805,
+      "rafMedianMs": 16.665000000000873,
+      "rafP95Ms": 16.67000000000189,
+      "perFrameMs": {
+        "recalcStyle": 1.4214999999999998,
+        "layout": 0.04607333333333333,
+        "script": 2.0423833333333334,
+        "task": 4.348226666666667
+      },
+      "styleRecalcs": 301,
+      "layouts": 131
+    }
+  ],
+  "reducedMotion": {
+    "distinctOverlay": [
+      "0.4"
+    ],
+    "distinctPhaseWrites": 1,
+    "samples": [
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      },
+      {
+        "phase": "",
+        "overlay": "0.4"
+      }
+    ]
+  },
+  "consoleErrors": []
+}
