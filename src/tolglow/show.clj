@@ -805,6 +805,7 @@
     :aim-path
     (let [definition (aim-paths/definition model payload)
           id (:id definition)
+          synchronized? (get-in definition [:editor :sync-arrival?])
           requested-cue-id (:cue-id payload id)
           wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
           previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
@@ -817,12 +818,16 @@
           _ (when (= :rejected (get-in published [:ack :status]))
               (throw (ex-info "Cannot publish aim path" (:ack published))))
           cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (aim-paths/next-version (:registry model) :cues cue-id) :reload-policy :preserve-state})
+                               :version (aim-paths/next-version (:registry model) :cues cue-id)
+                               :reload-policy (if synchronized? :pinned :preserve-state)})
           result (apply-message (:model published)
                                 {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
       (when (= :rejected (get-in result [:ack :status]))
         (throw (ex-info "Cannot publish aim path cue" (:ack result))))
-      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
+      (update result :ack merge
+              (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
+                synchronized?
+                (assoc :arrival-duration-ms (get-in definition [:editor :duration :ms])))))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])

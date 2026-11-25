@@ -1,6 +1,8 @@
 (ns tolglow.studio.aim-paths-host-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
+            [afterglow.control.model :as control]
+            [tolglow.aim-paths-test :as paths]
             [tolglow.show :as show]
             [tolglow.studio :as studio])
   (:import [java.io ByteArrayInputStream]))
@@ -117,4 +119,48 @@
         (is (= (:surface-aim (show/snapshot runtime)) (get-in saved [:model :variables :surface-aim])))
         (submit-at! runtime :command {:op :show/restart} 101)
         (is (empty? (:surface-aim (show/snapshot runtime)))))
+      (finally (show/stop! runtime)))))
+
+(defn- word [packet [coarse-universe coarse-index] [fine-universe fine-index]]
+  (+ (* 256 (get-in packet [coarse-universe coarse-index]))
+     (get-in packet [fine-universe fine-index])))
+
+(deftest calibrated-heads-reach-their-commanded-endpoints-on-the-same-captured-frame
+  (let [captured (atom nil)
+        parked {:id :parked :position [0 1 -1] :universe 2 :address 10 :channels {:pan [1 2] :tilt [3 4]}}
+        runtime (show/create-runtime
+                 {:workspace-options nil
+                  :model (control/new-show {:rig {:fixtures (conj paths/paired-heads parked)}})
+                  :sink {:send! (fn [universes _]
+                                  (reset! captured (update-vals universes #(mapv (partial bit-and 255) %))))}})
+        pan-words #(vector (word @captured [1 510] [2 0]) (word @captured [2 4] [2 5]))
+        angle-code #(Math/round (* 65535.0 (/ (+ % 180.0) 360.0)))
+        start (mapv angle-code [-45.0 -42.5])
+        end (mapv angle-code [45.0 2.5])]
+    (try
+      (let [spec (assoc paths/synchronized-spec :targets ["far-travel" "slow-motor"])
+            response (post! runtime "/api/aim-path" spec 0)
+            published (get-in @(:state runtime) [:model :registry])
+            baseline @captured]
+        (is (= "accepted" (get-in response [:data :status])))
+        (is (< (abs (- 2000.0 (get-in response [:data :arrival-duration-ms]))) 1.0e-9))
+        (is (empty? (get-in @(:state runtime) [:model :instances])))
+        (is (= [0 0] (pan-words)))
+        (is (= "rejected" (get-in (post! runtime "/api/aim-path" (assoc spec :targets ["parked"]) 0) [:data :status])))
+        (is (= published (get-in @(:state runtime) [:model :registry])))
+        (is (= baseline @captured))
+        (let [launch (submit-at! runtime :command {:op :cue/launch :cue-id :paired} 0)]
+          (is (= :accepted (:status launch)))
+          (is (= :pinned (get-in @(:state runtime) [:model :instances (:instance-id launch) :reload-policy])))
+          (is (= start (pan-words)))
+          (show/tick! runtime 1000)
+          (is (= (mapv angle-code [0.0 -20.0]) (pan-words)))
+          (show/tick! runtime 1975)
+          (is (every? true? (map < (pan-words) end)))
+          (show/tick! runtime 2000)
+          (is (= end (pan-words)))
+          (is (= (subvec (get baseline 2) 9 13) (subvec (get @captured 2) 9 13)))
+          (show/tick! runtime 2500)
+          (is (= end (pan-words)))
+          (is (nil? (get-in (show/snapshot runtime) [:status :error])))))
       (finally (show/stop! runtime)))))

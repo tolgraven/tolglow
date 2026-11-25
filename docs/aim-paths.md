@@ -33,3 +33,41 @@ not establish touch interaction, visual quality or physical aiming accuracy.
 
 The [3D editor guide](rig-editor.md) covers fixture placement, direct path drawing,
 explicit cue creation/launch and reopening paths from saved shows.
+
+## Calibrated paired arrival
+
+Publish an opt-in point-to-point move with `:sync-arrival? true` through
+`POST /api/aim-path` or the same `:aim-path` operation from a running REPL.
+Each selected fixture needs measured positive pan and tilt rates under its
+patched `:calibration :motor-rate-deg-per-sec`, for example
+`{:pan 90 :tilt 45}`. Supply two reachable world-space points. The move uses
+an open `:once` traversal with `:linear` easing. An optional `:duration {:ms n}`
+sets a lower bound on the travel time.
+
+```clojure
+(tolglow.show/submit! runtime :aim-path
+                      {:id :paired-arrival :sync-arrival? true
+                       :targets [:head-a :head-b]
+                       :points [[-1 0 0] [1 0 0]]})
+```
+
+Publication solves both endpoints with each fixture's mount and calibration.
+It chooses the destination pan wrap relative to the starting pose and takes
+the maximum of mechanical angular travel divided by calibrated rate across
+all heads and both axes. Pan and tilt then interpolate linearly in their
+mechanical coordinates for that common interval. The acknowledgement reports
+`:arrival-duration-ms` and the effect keeps the endpoint and timing data in
+ordinary saved show state.
+
+Preposition the heads at the first-point pose before launching. Launch the
+published cue normally from the Studio cue grid or REPL with
+`{:op :cue/launch :cue-id :paired-arrival}`. The cue traverses once and holds the
+endpoint until ended. Republish after changing a selected fixture's mount or
+calibration. Running instances keep their launch version. The 3D drawing
+editor handles musical world-space paths. Calibrated paired arrival is
+authored through the host operation and launched from the same cue grid.
+
+The timing describes scheduled pan/tilt commands. Physical arrival depends on
+the heads' acceleration, internal position control and DMX delivery, and
+requires a hardware measurement. Fixture-specific speed channels need their
+own calibration.

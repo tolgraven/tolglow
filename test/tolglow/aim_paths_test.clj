@@ -1,5 +1,6 @@
 (ns tolglow.aim-paths-test
   (:require [clojure.test :refer [deftest is]]
+            [afterglow.render.frame :as frame]
             [tolglow.aim-paths :as paths]
             [tolglow.compiler :as compiler]
             [tolglow.registry :as registry]
@@ -60,3 +61,73 @@
     (is (= 2 (:version (paths/definition updated (assoc path-spec :expected-version 1)))))
     (is (thrown? clojure.lang.ExceptionInfo (paths/definition updated (assoc path-spec :expected-version 0))))
     (is (thrown? clojure.lang.ExceptionInfo (paths/definition (assoc-in updated [:registry :effects :sweep :editor] nil) path-spec)))))
+
+(def paired-heads
+  [{:id :far-travel :universe 1 :address 511 :position [0 0 -1]
+    :channels {:pan [1 3] :tilt [2 4]}
+    :calibration {:motor-rate-deg-per-sec {:pan 90 :tilt 120}}}
+   {:id :slow-motor :universe 2 :address 5 :position [0 0 (- (+ 1 (Math/sqrt 2)))]
+    :rotation-deg [0 20 0] :channels {:pan [1 2] :tilt [3 4]}
+    :calibration {:motor-rate-deg-per-sec {:pan 22.5 :tilt 45}}}])
+
+(def synchronized-spec
+  {:id :paired :targets [:far-travel :slow-motor] :points [[-1 0 0] [1 0 0]] :sync-arrival? true})
+
+(defn- near? [expected actual]
+  (< (abs (- expected actual)) 1.0e-9))
+
+(defn- axis-endpoints [effect id axis]
+  (some (fn [{:keys [attribute targets value]}]
+          (when (and (= axis attribute) (= [id] targets))
+            (mapv :value (get-in value [:spec :keyframes]))))
+        (:outputs effect)))
+
+(deftest calibrated-arrival-uses-angular-travel-and-the-rate-limiting-head
+  (let [rig (assoc-in model [:rig :fixtures] paired-heads)
+        effect (paths/definition rig synchronized-spec)
+        duration (get-in effect [:editor :duration :ms])]
+    (is (empty? (registry/validate-definition :effects effect)))
+    (is (near? 2000.0 duration))
+    (is (nil? (:duration effect)) "The active cue holds the endpoint after one traversal")
+    (is (= [[{:ms 0} {:ms duration}]]
+           (into [] (comp (map #(mapv :at (get-in % [:value :spec :keyframes]))) (distinct)) (:outputs effect))))
+    (doseq [[fixture start end] (map vector paired-heads [-45.0 -42.5] [45.0 2.5])]
+      (let [[from to] (axis-endpoints effect (:id fixture) :pan)]
+        (is (near? start (:pan-deg (frame/fixture-pose fixture {:pan from :tilt 0.5}))))
+        (is (near? end (:pan-deg (frame/fixture-pose fixture {:pan to :tilt 0.5}))))))
+    (is (= 3000.0 (get-in (paths/definition rig (assoc synchronized-spec :duration {:ms 3000}))
+                          [:editor :duration :ms])))
+    (is (near? 2000.0 (get-in (paths/definition rig (assoc synchronized-spec :duration {:ms 250}))
+                            [:editor :duration :ms])))
+    (let [rig (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] 60)]
+      (is (near? 1000.0 (get-in (paths/definition rig synchronized-spec) [:editor :duration :ms]))))))
+
+(deftest calibrated-arrival-uses-the-selected-mechanical-wrap-and-all-axes
+  (let [head (-> (first paired-heads)
+                 (assoc :position [0 0 0])
+                 (assoc-in [:calibration :pan] {:min-deg -270 :max-deg 270})
+                 (assoc-in [:calibration :motor-rate-deg-per-sec :tilt] 15))
+        rig (assoc-in model [:rig :fixtures] [head])
+        point (fn [yaw y] (let [r (Math/toRadians yaw)] [(Math/sin r) y (Math/cos r)]))
+        effect (paths/definition rig (assoc synchronized-spec :targets [:far-travel]
+                                             :points [(point 170 0) (point -170 1)]))
+        [from to] (axis-endpoints effect :far-travel :pan)]
+    (is (near? 3000.0 (get-in effect [:editor :duration :ms])) "45 degrees of tilt at 15 degrees/s governs arrival")
+    (is (near? 170.0 (:pan-deg (frame/fixture-pose head {:pan from :tilt 0.5}))))
+    (is (near? 190.0 (:pan-deg (frame/fixture-pose head {:pan to :tilt 0.5}))))))
+
+(deftest synchronized-aim-path-rejects-incomplete-calibration-and-unsupported-paths
+  (let [rig (assoc-in model [:rig :fixtures] paired-heads)]
+    (doseq [spec [(assoc synchronized-spec :mode :ping-pong)
+                  (assoc synchronized-spec :closed? true)
+                  (assoc synchronized-spec :curve :sine)
+                  (assoc synchronized-spec :duration {:beats 1})
+                  (assoc synchronized-spec :points [[-1 0 0] [0 1 0] [1 0 0]])]]
+      (is (thrown? clojure.lang.ExceptionInfo (paths/definition rig spec))))
+    (doseq [invalid [nil 0 -1 ##Inf ##NaN]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"positive calibrated pan and tilt rates"
+                            (paths/definition (assoc-in rig [:rig :fixtures 1 :calibration :motor-rate-deg-per-sec :pan] invalid)
+                                              synchronized-spec))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot reach this aim point"
+                          (paths/definition (assoc-in rig [:rig :fixtures 0 :calibration :pan] {:min-deg -50 :max-deg 20})
+                                            synchronized-spec)))))
