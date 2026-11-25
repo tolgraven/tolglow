@@ -21,7 +21,7 @@
   :test-paths ["test"]
   :main tolglow.application
   :target-path "target/%s"
-  :jvm-opts ["-Djava.awt.headless=true"]
+  :jvm-opts ["-Djava.awt.headless=true" "-XX:+UseZGC"]
   :profiles {:dev {:source-paths ["dev"]}
              :embedded-host ^:leaky {:source-paths ["native/EmbeddedHost/src"]
                              :test-paths ["native/EmbeddedHost/test"]
@@ -30,8 +30,9 @@
                                                  [:profiles :native-gpu :dependencies])
                           :test-paths ["test-native"]}
              :benchmark {:source-paths [~(tolglow.build-manifest/fork-source "dev")]
-                         :jvm-opts ["-Xms768m" "-Xmx768m"]}
+                         :jvm-opts ["-Xms768m" "-Xmx768m" "-XX:-UseZGC"]}
              :cljs {:source-paths ^:replace ["src/studio" "src/shared" ~(tolglow.build-manifest/fork-source "src")]
+                    :jvm-opts ["-XX:-UseZGC"]
                     :dependencies ^:replace [[org.clojure/clojure "1.12.7"]
                                    [org.clojure/clojurescript "1.12.145"]
                                    [com.fasterxml.jackson.core/jackson-core "2.22.3"]

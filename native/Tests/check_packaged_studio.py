@@ -15,12 +15,17 @@ def exercise(java, jar, environment):
         folder = Path(path)
         # Require a second user namespace through the actual folder classloader.
         (folder / "fixture_setup.clj").write_text(
-            '(ns fixture-setup) (defn enabled [_ _] (spit "started" "loaded") {})')
+            '(ns fixture-setup (:import [java.lang.management ManagementFactory])) '
+            '(defn enabled [_ _] '
+            '(let [collectors (map #(.getName %) (ManagementFactory/getGarbageCollectorMXBeans))] '
+            '(when-not (some #(.startsWith % "ZGC") collectors) '
+            '(throw (ex-info "Expected ZGC in the bundled JVM" {:collectors (vec collectors)})))) '
+            '(spit "started" "loaded") {})')
         (folder / "show.clj").write_text(
             "(ns show) (def config {:init {:components [:show] :modules [:enabled :web-server] "
             ":search-in-namespaces [(quote fixture-setup)]}})")
         ready = folder / "port"
-        args = [str(java), "-Djava.awt.headless=true", "-cp", str(jar), "clojure.main",
+        args = [str(java), "-XX:+UseZGC", "-Djava.awt.headless=true", "-cp", str(jar), "clojure.main",
                 "-m", "tolglow.desktop", str(folder), str(ready)]
         with subprocess.Popen(args, stdin=subprocess.PIPE, cwd=folder, env=environment) as process:
             try:
