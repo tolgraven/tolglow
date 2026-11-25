@@ -299,12 +299,20 @@
                         #(if % (update % :count inc) (assoc (error-data error) :count 1)))
              readers))))
 
+(defn- interrupted-cause? [^Throwable error]
+  (boolean (some #(instance? InterruptedException %) (take-while some? (iterate #(.getCause ^Throwable %) error)))))
+
 (defn- response-samples-demanded? [runtime]
-  (boolean
-    (some (fn [[lease {:keys [demanded?]}]]
-            (try (demanded?)
-                 (catch Throwable error (record-response-sample-fault! runtime lease error) false)))
-          (some-> (:response-sample-readers runtime) deref))))
+  ;; Poll every lease so each failing reader is recorded. Errors such as
+  ;; StackOverflowError propagate to the tick as they would without a lease.
+  (reduce (fn [demanded? [lease {reader :demanded?}]]
+            (or (try (boolean (reader))
+                     (catch Exception error
+                       (when (interrupted-cause? error) (.interrupt (Thread/currentThread)))
+                       (record-response-sample-fault! runtime lease error)
+                       false))
+                demanded?))
+          false (some-> (:response-sample-readers runtime) deref)))
 
 (defn- compiler-context [fixtures batch? compute-owner]
   (let [options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}

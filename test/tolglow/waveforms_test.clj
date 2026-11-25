@@ -259,6 +259,7 @@
 
 (deftest a-throwing-response-sample-predicate-does-not-fault-the-tick
   (let [runtime (show/create-runtime {:model (response-show identity) :workspace-options nil :worker-timeout-ms 10000})
+        _ (show/lease-response-samples! runtime #(throw (ex-info "earlier reader failed" {:reader :earlier})))
         broken (show/lease-response-samples! runtime #(throw (ex-info "reader failed" {:reader :broken})))]
     (try
       (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
@@ -269,14 +270,32 @@
         (is (nil? (get-in snap [:status :error])))
         (is (= (+ 2 before) (get-in snap [:model :frame-number])) "the owner kept committing frames")
         (is (nil? (::waveforms/response-frame snap)) "a failing predicate counts as not demanded"))
-      (is (= [{:message "reader failed" :details {:reader :broken} :count 3}]
-             (show/response-sample-faults runtime)) "one bounded record per lease")
+      (is (= #{{:message "earlier reader failed" :details {:reader :earlier} :count 3}
+               {:message "reader failed" :details {:reader :broken} :count 3}}
+             (set (show/response-sample-faults runtime))) "one bounded record per lease")
       (let [release (show/lease-response-samples! runtime)]
         (show/tick! runtime 175)
         (is (some? (::waveforms/response-frame @(:state runtime))) "other leases still demand samples")
+        (is (= #{4} (set (map :count (show/response-sample-faults runtime))))
+            "every lease is polled even when one already demands samples")
         (release))
       (broken)
-      (is (empty? (show/response-sample-faults runtime)))
+      (is (= [:earlier] (map (comp :reader :details) (show/response-sample-faults runtime))))
+      (testing "an interrupted reader restores the thread's interrupt flag"
+        (let [release (show/lease-response-samples! runtime #(throw (ex-info "wrapped" {} (InterruptedException.))))]
+          (try
+            (show/tick! runtime 200)
+            (is (Thread/interrupted) "interrupt flag restored, then cleared here")
+            (finally (release)))))
+      (finally (show/stop! runtime)))))
+
+(deftest virtual-machine-errors-from-a-response-sample-predicate-propagate
+  (let [runtime (show/create-runtime {:model (response-show identity) :workspace-options nil :worker-timeout-ms 10000})]
+    (try
+      (is (= :accepted (:status (command-at! runtime 0 {:op :cue/launch :cue-id :ember}))))
+      (show/lease-response-samples! runtime #(throw (StackOverflowError.)))
+      (is (thrown? StackOverflowError (show/tick! runtime 125)))
+      (is (empty? (show/response-sample-faults runtime)) "an Error is not recorded as a reader fault")
       (finally (show/stop! runtime)))))
 
 (deftest forecast-and-fault-observations-keep-their-own-response-semantics
