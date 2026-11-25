@@ -736,7 +736,7 @@
         draft (get-in loaded [:ui :builder :reactive])
         form (assoc-in loaded [:ui :definition :mode] :form)
         unchanged (events/builder-definition (get-in form [:ui :builder]) 2)
-        edited (:db (transition form [:studio/builder-reactive (assoc draft :transition "1/2")]))
+        edited (:db (transition form [:studio/builder-reactive #(assoc % :transition "1/2")]))
         newer-owner (assoc-in edited [:show :effects 0 :version] 3)
         sent (transition newer-owner [:studio/definition-publish])
         publication (transition (:db sent) (:dispatch sent))

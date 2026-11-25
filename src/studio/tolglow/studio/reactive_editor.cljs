@@ -79,53 +79,63 @@
 
 (defn- text-value [event] (.. event -target -value))
 
-(defn- remove-row [rows i]
-  (into (subvec rows 0 i) (subvec rows (inc i))))
+(defn- set-row [field id values draft]
+  (update draft field
+          (fn [rows] (mapv #(if (= id (:id %)) (merge % values) %) rows))))
+
+(defn- remove-row [field id draft]
+  (update draft field (fn [rows] (filterv #(not= id (:id %)) rows))))
 
 (defn editor [draft busy? edit!]
   (let [{:keys [enabled? targets bindings dimmer transition base]} draft]
     [:fieldset.reactive-effect-editor {:disabled busy?}
      [:label.reactive-enable
       [:input {:type "checkbox" :checked (boolean enabled?)
-               :on-change #(edit! (if draft (assoc draft :enabled? (.. % -target -checked)) (new-draft)))}]
+               :on-change (fn [event]
+                            (let [enabled? (.. event -target -checked)
+                                  initial (when-not draft (new-draft))]
+                              (edit! #(assoc (or % initial) :enabled? enabled?))))}]
       "Evaluate when inputs change"]
      (when (and base (not enabled?))
        [:p.small.muted "Update this definition’s output expressions in EDN to turn off reactive evaluation."])
      (when enabled?
        [:div.reactive-fields
-        (for [[index target] (map-indexed vector targets)]
-          ^{:key (:id target)} [:div.reactive-target
-           [fixtures/choose (str "Target fixture " (inc index)) "Choose fixture" (:fixture-id target)
-            #(edit! (assoc-in draft [:targets index :fixture-id] %))]
+        (for [[index {:keys [id fixture-id]}] (map-indexed vector targets)]
+          ^{:key id} [:div.reactive-target
+           [fixtures/choose (str "Target fixture " (inc index)) "Choose fixture" fixture-id
+            #(edit! (partial set-row :targets id {:fixture-id %}))]
            [:button.button {:type "button" :aria-label (str "Remove target " (inc index))
-                            :on-click #(edit! (update draft :targets remove-row index))} "Remove"]])
-        [:button.button {:type "button" :on-click #(edit! (update draft :targets conj (target-row nil)))} "Add target"]
+                            :on-click #(edit! (partial remove-row :targets id))} "Remove"]])
+        [:button.button {:type "button"
+                         :on-click (fn [] (let [row (target-row nil)] (edit! #(update % :targets conj row))))} "Add target"]
         [:h3 "Input bindings"]
         (for [[index {:keys [id alias kind address]}] (map-indexed vector bindings)
-              :let [number (inc index) update! #(edit! (assoc-in draft [:bindings index %1] %2))]]
+              :let [number (inc index) update! #(edit! (partial set-row :bindings id %))]]
           ^{:key id} [:div.reactive-binding
            [:label "Alias" [:input {:aria-label (str "Input " number " alias") :value alias :placeholder "level"
-                                   :on-change #(update! :alias (text-value %))}]]
+                                   :on-change #(update! {:alias (text-value %)})}]]
            [:label "Signal" [:select {:aria-label (str "Input " number " signal type") :value (name kind)
-                                     :on-change #(edit! (update-in draft [:bindings index] assoc :kind (keyword (text-value %)) :address ""))}
+                                     :on-change #(update! {:kind (keyword (text-value %)) :address ""})}
                              [:option {:value "source"} "Ratom"]
                              [:option {:value "subscription"} "Subscription"]]]
            (let [label (if (= :source kind) "Ratom ID" "Subscription query")]
              [:label.reactive-address label
               [:input {:aria-label (str "Input " number " " label) :value address :spell-check false
                        :placeholder (if (= :source kind) ":wash/level" "[:wash/gain]")
-                       :on-change #(update! :address (text-value %))}]])
+                       :on-change #(update! {:address (text-value %)})}]])
            [:button.button {:type "button" :aria-label (str "Remove input " number)
-                            :on-click #(edit! (update draft :bindings remove-row index))} "Remove"]])
+                            :on-click #(edit! (partial remove-row :bindings id))} "Remove"]])
         [:button.button {:type "button" :disabled (>= (count bindings) 64)
-                         :on-click #(edit! (update draft :bindings conj (binding-row "" :subscription "")))} "Add input"]
+                         :on-click (fn []
+                                     (let [row (binding-row "" :subscription "")]
+                                       (edit! #(update % :bindings conj row))))} "Add input"]
         [:div.reactive-output-options
          (when-not base
            [:label "Dimmer input"
-            [:select {:value (or dimmer "") :on-change #(edit! (assoc draft :dimmer (text-value %)))}
+            [:select {:value (or dimmer "") :on-change #(edit! (fn [draft] (assoc draft :dimmer (text-value %))))}
              [:option {:value ""} "Choose input"]
              (for [[index {:keys [id alias]}] (map-indexed vector bindings)]
                ^{:key id} [:option {:value id} (if (str/blank? alias) (str "Input " (inc index)) alias)])]])
          [:label "Transition (beats)"
           [:input {:value transition :placeholder "Immediate" :spell-check false
-                   :on-change #(edit! (assoc draft :transition (text-value %)))}]]]])]))
+                   :on-change #(edit! (fn [draft] (assoc draft :transition (text-value %))))}]]]])]))

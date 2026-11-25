@@ -1089,9 +1089,9 @@
       (pr-str definition))))
 
 (rf/reg-event-db :studio/builder-reactive
-  (fn [db [_ draft]]
+  (fn [db [_ edit]]
     (if (get-in db [:ui :definition :publishing?]) db
-      (-> db (assoc-in [:ui :builder :reactive] draft)
+      (-> db (update-in [:ui :builder :reactive] edit)
           (update-in [:ui :definition] merge {:status "Unpublished changes" :result "" :error? false})))))
 
 (rf/reg-event-fx :studio/apply-block-source
