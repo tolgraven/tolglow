@@ -482,11 +482,11 @@
                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
                          command)
 
-    (= :cue/cancel-launch (:op payload))
-    (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
-
     (and (cue-timing/active? model) (cue-timing/receipt model (:command-id payload)))
     {:model model :ack {:status :rejected :reason :command-id-conflict :command-id (:command-id payload)}}
+
+    (= :cue/cancel-launch (:op payload))
+    (cue-timing/cancel-owned model (cue-clock-identity runtime model) time-ms payload command)
 
     :else (command model payload time-ms)))
 
