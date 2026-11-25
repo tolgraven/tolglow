@@ -24,13 +24,13 @@
          {:steps (:slots definition) :timebase (:timebase definition :beats)
           :mode (:loop definition :once) :seed (:seed definition 0)}))
 
-(defn- validate-slot! [model index slot]
+(defn- validate-cue-slot! [model index slot]
   (let [cue (get-in model [:registry :cues (:cue-id slot)])
         effect (registry/cue-effect (:registry model) cue)
         launch (:launch slot {})
         mode (:mode launch :persistent)]
-    (when-not (and (map? slot) (identifier? (:id slot)) cue effect)
-      (fail! [:slots index] "Slot needs an ID and a registered cue/effect reference"))
+    (when-not (and cue effect)
+      (fail! [:slots index] "Cue slot needs a registered cue/effect reference"))
     (when-not (and (map? (:params slot)) (map? launch)
                    (map? (:params launch {})) (#{:persistent :held :timed :one-shot} mode))
       (fail! [:slots index :launch] "Slot needs parameter maps and a supported launch mode"))
@@ -61,6 +61,15 @@
         (throw (ex-info "Invalid slot parameter values"
                         {:errors (mapv #(update % :path (fn [path] (into [:slots index] path))) errors)}))))))
 
+(defn- validate-slot! [model mode index slot]
+  (when-not (and (map? slot) (identifier? (:id slot)))
+    (fail! [:slots index :id] "Slot needs a stable ID"))
+  (let [empty? (= :empty (:kind slot))]
+    (when (and (= :macro mode) (or empty? (contains? slot :muted?)))
+      (fail! [:slots index] "Empty and muted steps require a sequence"))
+    (when-not empty?
+      (validate-cue-slot! model index slot))))
+
 (defn save
   "Validate and save a macro or sequence. New sequences default to one-beat slots.
   :duration maps support beats, bars, phrases and explicit milliseconds. Slot overrides and
@@ -85,7 +94,7 @@
                                         (not-any? #(contains? slot %) [:duration :duration-ms :duration-beats])) duration) slot))
                     (range) (:slots definition))
         definition (assoc definition :timebase timebase :slots slots)]
-    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model i slot))
+    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model (:mode definition) i slot))
     (if (= :sequence (:mode definition))
       (let [errors (sequence/validate-sequence (sequence-spec definition))]
         (when (seq errors) (throw (ex-info "Invalid sequence" {:errors errors}))))
@@ -153,7 +162,8 @@
   (time! time-ms)
   (let [definition (get-in model [:compositions id])]
     (when-not definition (fail! [:id] "Composition does not exist"))
-    (doseq [[i slot] (map-indexed vector (:slots definition))] (validate-slot! model i slot))
+    (doseq [[i slot] (map-indexed vector (:slots definition))]
+      (validate-slot! model (:mode definition) i slot))
     (let [model (stop model id time-ms)
           owner (str (:epoch model) ":" (:revision model) ":" (pr-str id))
           spec (sequence-spec definition)
@@ -215,7 +225,9 @@
                               :playback {:kind :sequence :timebase (:timebase spec :ms)
                                          :playing? (:playing? clock) :started? (not waiting?)
                                          :slot-count (count (:steps spec)) :index (:step-index state)
-                                         :slot-id (:id step) :cue-id (:cue-id step) :phase (some-> phase double)
+                                         :slot-id (:id step) :cue-id (:cue-id step)
+                                         :step-kind (when step (:kind step :cue)) :muted? (boolean (:muted? step))
+                                         :phase (some-> phase double)
                                          :remaining-ms (when (:playing? clock) (some-> remaining-ms double))
                                          :remaining-beats (some-> remaining-beats double) :done? done?}))))
 
