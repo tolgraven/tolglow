@@ -21,5 +21,59 @@ Use `fraction-value` to obtain a JavaScript number for display or animation.
 Send the original value when passing a fractional duration through an edit.
 For example, one third of a beat returns to the JVM as exactly `1/3`.
 
+## Native values
+
+Each tag below is stable. A reader rejects a malformed representation instead
+of constructing a partial value. The ClojureScript records live in
+`tolglow.transit`.
+
+| Tag | JVM | ClojureScript | Representation |
+| --- | --- | --- | --- |
+| `org.jogamp.vecmath/point3d.v1` | `Point3d` | `Point3d` record `{:x :y :z}` | `[x y z]` numbers |
+| `org.jogamp.vecmath/vector3d.v1` | `Vector3d` | `Vector3d` record `{:x :y :z}` | `[x y z]` numbers |
+| `tolglow/instant.v1` | `java.time.Instant` | `Instant` record `{:epoch-second :nano}` | `["<epoch seconds>" nano]` |
+| `m` (Transit) | `java.util.Date` | `js/Date` | epoch milliseconds |
+| `b` (Transit) | `byte[]` | `Uint8Array` | base64 |
+| `tolglow/byte-buffer.v1` | `ByteBuffer` | `ByteView` record `{:order :bytes}` | `["big"\|"little" <b>]` |
+| `tolglow/int8-array.v1` | `byte[]` (read only) | `Int8Array` | little-endian `<b>` |
+| `tolglow/uint8-clamped-array.v1` | `byte[]` (read only) | `Uint8ClampedArray` | `<b>` |
+| `tolglow/int16-array.v1` | `short[]` | `Int16Array` | little-endian `<b>` |
+| `tolglow/uint16-array.v1` | `char[]` | `Uint16Array` | little-endian `<b>` |
+| `tolglow/int32-array.v1` | `int[]` | `Int32Array` | little-endian `<b>` |
+| `tolglow/uint32-array.v1` | `int[]` (read only) | `Uint32Array` | little-endian `<b>` |
+| `tolglow/int64-array.v1` | `long[]` | `BigInt64Array` | little-endian `<b>` |
+| `tolglow/uint64-array.v1` | `long[]` (read only) | `BigUint64Array` | little-endian `<b>` |
+| `tolglow/float32-array.v1` | `float[]` | `Float32Array` | little-endian `<b>` |
+| `tolglow/float64-array.v1` | `double[]` | `Float64Array` | little-endian `<b>` |
+| `tolglow/queue.v1` | `PersistentQueue` | `PersistentQueue` | items in order |
+
+`<b>` is a nested standard Transit binary value. Vector components arrive as
+doubles on the JVM, so `[0,0,-1]` written by JavaScript reads as `-1.0`.
+
+**Timestamps.** An `Instant` keeps its full nanosecond field across both
+runtimes and back. The browser record satisfies `inst?`, and `inst-ms` floors
+sub-millisecond time to its containing millisecond, matching
+`Instant/toEpochMilli`. Use `(js/Date. (inst-ms t))` for display. Sub-millisecond
+digits remain in `:nano` and return unchanged to the JVM. The browser rejects
+an instant whose epoch second exceeds 2^53 − 1. A `Date` and `js/Date` carry
+milliseconds only. Event timestamps such as debug rows remain `Date`.
+
+**DMX and bytes.** JVM `byte[]` and `Uint8Array` share Transit's `b` tag. The
+bits are unchanged, so DMX level 255 is `255` in the browser and byte `-1` on
+the JVM. A `ByteBuffer` sends its remaining bytes and byte order without moving
+the source position. The JVM receives a writable heap buffer with position 0.
+Direct, read-only and offset characteristics are not carried.
+
+**Arrays.** The JVM has no unsigned arrays. `Int8Array`, `Uint8ClampedArray`,
+`Uint32Array` and `BigUint64Array` reach the JVM as the signed array of the
+same width with identical bits. A JVM reply returns the signed browser type.
+`boolean[]` and object arrays are written as Transit arrays and read as vectors.
+
+**Collections.** Maps, sets, vectors, lists and lazy sequences use standard
+Transit tags. Sorted maps and sets arrive as hash maps and sets because a
+comparator is not data.
+
 Message framing, maximum request sizes, authorization and command validation
-belong to the Ring and WebSocket endpoints. Existing show files use EDN.
+belong to the Ring and WebSocket endpoints. Show files use this codec but
+accept only the portable values listed in [show files](show-files.md); native
+vectors, instants, buffers and numeric arrays are rejected there.
