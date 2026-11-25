@@ -126,6 +126,16 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- checkpoint-results [before receipts]
+  (let [finished (keep (fn [[_ ack _ checkpoint-request]]
+                         (when checkpoint-request
+                           (cond-> (merge checkpoint-request (select-keys ack [:status :epoch]))
+                             (contains? (:details ack) :received-epoch) (assoc :reason :stale-show-session))))
+                       receipts)]
+    (if (seq finished)
+      (vec (take-last 32 (concat (:checkpoint-results before) finished)))
+      (:checkpoint-results before))))
+
 (defn- scene-eligible-ids [runtime fixtures]
   (let [cache (:scene-eligible runtime)
         previous @cache]
@@ -1411,7 +1421,7 @@
                  [clock-model audio-clock-confidence] (source-clock-model runtime (:model before) time-ms)
                  [model receipts restored? restored-output]
                  (reduce
-                  (fn [[model receipts restored? restored-output] {:keys [reply] :as message}]
+                  (fn [[model receipts restored? restored-output] {:keys [reply] ::keys [checkpoint-request] :as message}]
                     (try
                       (let [result (apply-message model message (if restored? (:time-ms model) time-ms) runtime)]
                         (when-let [candidate (:candidate result)]
@@ -1424,11 +1434,11 @@
                           (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
-                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message))])
+                        [(:model result) (conj receipts [reply (:ack result) (when (= :command (:type message)) (:payload message)) checkpoint-request])
                          (or restored? (:restore? result))
                          (if (:restore? result) (:restored-output result) restored-output)])
                       (catch Exception error
-                        [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message))])
+                        [model (conj receipts [reply (merge {:status :rejected} (error-data error)) (when (= :command (:type message)) (:payload message)) checkpoint-request])
                          restored? restored-output])))
                   [(-> (consume-sync! runtime (consume-audio! runtime (staging/collect (staging/begin clock-model)
                                                        :reactive {:kind :runtime :id :reactive} (:pending-reactive-faults before)) time-ms))
@@ -1634,8 +1644,9 @@
                                     :ack ack :emitter-id (get-in message [:payload :source :adapter])})
                                  messages receipts)
                  ;; Confidence belongs to this live clock sample and its resource generation.
-                 next-state (assoc next-state :audio-clock-confidence
-                                   (when-not (or restored? @restarted-generation) audio-clock-confidence))
+                 next-state (assoc next-state
+                                   :checkpoint-results (checkpoint-results before receipts)
+                                   :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
                  next-state (if (seq fired-outcomes) (update next-state :model cue-timing/clear-fired-outcomes) next-state)
                  next-state (advance-section-patterns runtime before next-state (or restored? @restarted-generation))
@@ -1711,12 +1722,7 @@
     (:cue-release-queue runtime)
     (:queue runtime)))
 
-(defn submit!
-  "Enqueue an operation. Full restores are validated and resource-prepared off
-  the frame-owner lock, then committed atomically by the next owner cycle.
-  Use :cue-schedule and :cue-cancel for explicit musical launch timing."
-  ([runtime payload] (submit! runtime :command payload))
-  ([runtime type payload]
+(defn- enqueue! [runtime type payload checkpoint-request]
    (let [reply (promise) candidate (volatile! nil)]
      (try
        (let [before (:model @(:state runtime))
@@ -1758,15 +1764,23 @@
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (.offer ^LinkedBlockingQueue queue
-                                        {:type type :payload payload :reply reply :expected-epoch epoch
-                                         :ingress-order (vswap! (:ingress-order runtime) inc)})))]
+                                        (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
+                                                 :ingress-order (vswap! (:ingress-order runtime) inc)}
+                                          checkpoint-request (assoc ::checkpoint-request checkpoint-request)))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
          (let [command-id (or (:command-id payload) (get-in payload [:command :command-id]))]
            (deliver reply (cond-> (merge {:status :rejected} (error-data error))
                             command-id (assoc :command-id command-id))))))
-     reply)))
+     reply))
+
+(defn submit!
+  "Enqueue an operation. Full restores are validated and resource-prepared off
+  the frame-owner lock, then committed atomically by the next owner cycle.
+  Use :cue-schedule and :cue-cancel for explicit musical launch timing."
+  ([runtime payload] (submit! runtime :command payload))
+  ([runtime type payload] (enqueue! runtime type payload nil)))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -2112,9 +2126,11 @@
 
 (defn load-latest-show!
   "Load the active show's latest :recovery, :named, or prior-session checkpoint.
-  A remote caller can supply the exact runtime/show/epoch it received in status."
+  A remote caller can supply the exact runtime/show/epoch it received in status
+  and a receipt ID for the committed result stream."
   ([runtime kind] (load-latest-show! runtime kind nil))
-  ([runtime kind expected]
+  ([runtime kind expected] (load-latest-show! runtime kind expected nil))
+  ([runtime kind expected receipt-id]
    (let [{:keys [show-id epoch]} (capture-checkpoint-identity runtime expected)
          owner (some-> (:recovery runtime) deref)
          source (when owner
@@ -2122,8 +2138,9 @@
                     (recovery/read-prior owner show-id read-checkpoint-source)
                     (some-> (recovery/latest-file owner show-id kind) read-checkpoint-source)))]
      (when-not source (throw (ex-info "Show checkpoint is unavailable" {:kind kind :show-id show-id})))
-     (submit! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
-                               :expected-source-show-id show-id :source source}))))
+     (enqueue! runtime :import {:runtime-id (:id runtime) :expected-epoch epoch
+                                :expected-source-show-id show-id :source source}
+               (when receipt-id {:id receipt-id :identity {:runtime-id (:id runtime) :show-id show-id :epoch epoch}})))))
 
 (defn discard-prior-recovery!
   "Dismiss the active show's prior-session checkpoint. Working and named saves

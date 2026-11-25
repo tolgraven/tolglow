@@ -36,7 +36,9 @@
   "Common Studio fields for a committed show state. A client leases spatial
   signals or membership separately through the state stream's query controls."
   [runtime state]
-  (dissoc (show/project-snapshot runtime state) :spatial))
+  (let [view (dissoc (show/project-snapshot runtime state) :spatial)
+        results (filterv #(= (:show-id view) (get-in % [:identity :show-id])) (:checkpoint-results state))]
+    (cond-> view (seq results) (assoc :checkpoint-results results))))
 
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id
@@ -107,6 +109,8 @@
        (keep #(get-in % [:state-stream :client-faults])) (mapcat deref)
        (sort-by :at) (take-last 64) vec))
 
+(def ^:private checkpoint-wait-ms 5000)
+
 (defn- checkpoint-action! [runtime action payload]
   (try
     (let [current-id (get-in @(:state runtime) [:model :show-id])
@@ -121,9 +125,10 @@
                      (:recovery "recovery") :recovery
                      (:named "named") :named
                      (:prior "prior") :prior
-                     (throw (ex-info "Unknown show checkpoint kind" {})))]
-          (deref (show/load-latest-show! runtime kind identity) 5000
-                 {:status :pending :message "Restore remains queued"}))
+                     (throw (ex-info "Unknown show checkpoint kind" {})))
+              receipt-id (str (random-uuid))]
+          (deref (show/load-latest-show! runtime kind identity receipt-id) checkpoint-wait-ms
+                 {:status :pending :receipt-id receipt-id :message "Restore remains queued"}))
         :discard-prior
         (if (show/discard-prior-recovery! runtime identity)
           {:status :accepted}

@@ -47,6 +47,12 @@
 (defn- same-show? [a b]
   (= (dissoc a :epoch) (dissoc b :epoch)))
 
+(defn queued-result [db]
+  (let [{:keys [identity phase receipt-id]} (get-in db [:show-checkpoints :operation])]
+    (when (and (= :queued phase) (same-show? identity (identity-of db)))
+      (some #(when (and (= receipt-id (:id %)) (= identity (:identity %))) %)
+            (get-in db [:server-projection :view :checkpoint-results])))))
+
 (defn replaces-rig-draft? [db view]
   (let [{:keys [action identity phase epoch]} (get-in db [:show-checkpoints :operation])]
     (and (= :restore action) (= :awaiting-view phase) (= identity (identity-of db))
@@ -122,6 +128,7 @@
       (when (and (= identity (identity-of db)) (actionable? db action kind))
         {:db (update-panel db #(-> % (dissoc :confirmation :feedback)
                                   (assoc :operation operation)))
+         :dispatch-later [{:ms 60000 :dispatch [:checkpoints/expire unique]}]
          :studio/http {:path (if (= :restore action) "/api/show/checkpoints/restore"
                                  "/api/show/checkpoints/discard-prior")
                        :typed? true :raw-response? true :timeout-ms 12000
@@ -134,19 +141,31 @@
     (assoc effect :dispatch [:checkpoints/refresh])
     effect))
 
+(defn- restore-result [db {:keys [status epoch message reason]}]
+  (let [{:keys [kind identity]} (get-in db [:show-checkpoints :operation])
+        current (identity-of db)]
+    (if (and (#{:accepted "accepted"} status) (integer? epoch) (< (:epoch identity) epoch))
+      (cond
+        (= current (assoc identity :epoch epoch)) (with-refresh (restored db kind))
+        (= current identity) {:db (update-in db [:show-checkpoints :operation]
+                                             assoc :phase :awaiting-view :epoch epoch)}
+        :else (finish db "The show changed before Studio could confirm the restored view." true))
+      (finish db (cond
+                   (= :stale-show-session reason) "The show changed before the queued restore could run."
+                   (not= identity current) "The show changed before Studio received the checkpoint result."
+                   :else (or message "The show rejected the checkpoint restore.")) true))))
+
 (rf/reg-event-fx :checkpoints/result
-  (fn [{:keys [db]} [_ id {:keys [status epoch message]}]]
-    (let [{request-id :id :keys [action kind identity]} (get-in db [:show-checkpoints :operation])
+  (fn [{:keys [db]} [_ id {:keys [status receipt-id message] :as result}]]
+    (let [{request-id :id :keys [action identity]} (get-in db [:show-checkpoints :operation])
           current (identity-of db)]
       (when (= id request-id)
         (cond
-          (and (= :restore action) (#{:accepted "accepted"} status) (integer? epoch)
-               (< (:epoch identity) epoch))
-          (cond
-            (= current (assoc identity :epoch epoch)) (with-refresh (restored db kind))
-            (= current identity) {:db (update-in db [:show-checkpoints :operation]
-                                                 assoc :phase :awaiting-view :epoch epoch)}
-            :else (finish db "The show changed before Studio could confirm the restored view." true))
+          (= :restore action)
+          (if (and (#{:pending "pending"} status) (string? receipt-id) (same-show? identity current))
+            (let [queued (update-in db [:show-checkpoints :operation] assoc :phase :queued :receipt-id receipt-id)]
+              (if-let [receipt (queued-result queued)] (restore-result queued receipt) {:db queued}))
+            (restore-result db result))
 
           (not= identity current)
           (finish db "The show changed before Studio received the checkpoint result." true)
@@ -154,10 +173,16 @@
           (and (= :discard action) (#{:accepted "accepted"} status))
           (with-refresh (finish db "Previous session checkpoint discarded." false))
 
-          (and (= :restore action) (#{:pending "pending"} status))
-          {:db (assoc-in db [:show-checkpoints :operation :phase] :queued)}
-
           :else (finish db (or message "The show did not acknowledge the checkpoint action.") true))))))
+
+(rf/reg-event-fx :checkpoints/receipt-pushed
+  (fn [{:keys [db]} _]
+    (when-let [receipt (queued-result db)] (restore-result db receipt))))
+
+(rf/reg-event-fx :checkpoints/expire
+  (fn [{:keys [db]} [_ id]]
+    (when (= id (get-in db [:show-checkpoints :operation :id]))
+      (finish db "Studio could not confirm the checkpoint action. Check the active show before retrying." true))))
 
 (rf/reg-event-fx :checkpoints/failed
   (fn [{:keys [db]} [_ id message]]
@@ -172,11 +197,12 @@
       (let [{:keys [identity action kind phase epoch]} operation
             current (identity-of db)
             db (update-panel db dissoc :confirmation :catalog :catalog-request)
+            receipt (queued-result db)
             effect (cond
+                     receipt (restore-result db receipt)
                      (or (nil? operation) (= identity current)) {:db db}
                      (and (= :awaiting-view phase) (= current (assoc identity :epoch epoch))) (restored db kind)
-                     (and (= :sending phase) (= :restore action) (same-show? identity current)) {:db db}
-                     (= :queued phase) (finish db "Studio received a newer show while the restore was queued." false)
+                     (and (#{:sending :queued} phase) (= :restore action) (same-show? identity current)) {:db db}
                      :else (finish db "The show changed while the checkpoint action was in progress." true))]
         (if open? (with-refresh effect) effect)))))
 
@@ -210,10 +236,10 @@
           [:button.icon-button {:type "button" :aria-label "Close show checkpoints" :on-click close-dialog!} "×"]]
          [:p.small.checkpoint-status {:role "status" :class (when (or catalog-error (:error? feedback)) "checkpoint-error")}
           (cond
+            (not connected?) "Connect to the show to view its checkpoints."
             (= :sending (:phase operation)) (if (= :restore (:action operation)) "Restoring checkpoint…" "Discarding checkpoint…")
             (= :queued (:phase operation)) "Restore is queued."
             (= :awaiting-view (:phase operation)) "Restore accepted. Waiting for Studio to receive the restored show."
-            (not connected?) "Connect to the show to view its checkpoints."
             catalog-request "Loading checkpoints…"
             catalog-error catalog-error
             feedback (:message feedback)

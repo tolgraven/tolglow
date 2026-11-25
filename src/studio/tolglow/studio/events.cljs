@@ -242,6 +242,10 @@
         page-id (get-in db [:ui :page-id])
         selected (get-in db [:ui :selected-instance])
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
+        checkpoint-view-changed? (and (:show-checkpoints db)
+                                      (or (not (get-in db [:connection :connected?]))
+                                          (not= (projection/identity-of (:view server))
+                                                (projection/identity-of (get-in db [:server-projection :view])))))
         updated (-> db (assoc :show show :snapshot-order order :drafts drafts :connection {:connected? true}
                              :server-projection server :server-presentation presentation)
                     spatial-drafts/settle
@@ -272,11 +276,9 @@
            epoch-changed? (conj [:dispatch [:studio/release-pointers]] [:dispatch [:chat/runtime-change]]
                                         [:dispatch [:fixtures/runtime-change]] [:dispatch [:connections/runtime-change]] [:dispatch [:sensors/runtime-change]] [:dispatch [:modulation/runtime-change]] [:dispatch [:patchbay/runtime-change]] [:dispatch [:waveform/runtime-change]] [:dispatch [:repl/runtime-change]] [:dispatch [:performance/runtime-change]] [:dispatch [:workspace/runtime-change]] [:dispatch [:subscribers/runtime-change]]
                                         (notice "Show restarted; controls follow the new epoch."))
-           (and (:show-checkpoints db)
-                (or (not (get-in db [:connection :connected?]))
-                    (not= (projection/identity-of (:view server))
-                          (projection/identity-of (get-in db [:server-projection :view])))))
-           (conj [:dispatch [:checkpoints/show-changed]])
+           checkpoint-view-changed? (conj [:dispatch [:checkpoints/show-changed]])
+           (and (not checkpoint-view-changed?) (checkpoints/queued-result updated))
+           (conj [:dispatch [:checkpoints/receipt-pushed]])
            (and (get-in db [:connections :visible?])
                 (or epoch-changed?
                     (not (identical? (:connection-status presentation)
