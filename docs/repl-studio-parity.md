@@ -336,7 +336,9 @@ ID, revision and number of staged operations. Only the Room renders the
 draft's private frames, published in the snapshot as `:draft-output` with the
 draft ID and revision. `:output` and every other preview stay live. **Apply**, **Apply on next bar** and **Discard** send the same commands
 with the displayed revision. A stale revision, changed rig or registry, or a
-retired instance is refused and reported in both places.
+retired instance is refused and reported in both places. The banner names a
+stale draft's changed dependency and keeps a missed scheduled apply with its
+reason, which `show/scene-draft` returns as `:stale` and `:last-outcome`.
 
 The audition renders through the live frame function with its own clock,
 instance state, keyframes, modulation and response history, on the CPU with
@@ -352,15 +354,31 @@ frame or more.
 
 A quantized apply fires where grid cue launches fire, after the cycle's queued
 input, so an earlier Discard or instance end is applied first. A clock source
-change or a backward beat jump reports the apply as missed. If the rig changes
-after staging, the draft shows `:stale` and stops rendering; applying it would
-be refused. Stage it again to audition the new rig.
+change or a backward beat jump reports the apply as missed. The audition itself
+follows the jump: its private musical anchors take the same rebase as the live
+show's. While an apply is scheduled, Discard is the only way to cancel it.
+
+The draft is a snapshot of the show at staging. Only the transport, master and
+blackout follow the live show afterwards; a later live launch, parameter edit
+or settings change is not in the Room until you stage again. If the rig, any
+cue or effect definition, or the material library changes after staging, the
+draft shows `:stale` with the code an apply would be refused with
+(`:stale-patch`, `:stale-registry`, `:stale-prefabs`) and stops rendering.
+Stage it again to audition the changed show. A restart or a restore drops the
+draft and its scheduled apply.
+
+A retried apply returns its first receipt. An apply that reuses the command ID
+of anything else is refused with `:command-id-conflict`.
 
 Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531):
 
 - Studio cannot compose a draft yet. Stage it from the REPL or another adapter;
   Studio shows, applies and discards it. Acceptance: compose and revise a draft
   from the cue grid, then inspect the same revision with `show/scene-draft`.
+- A staged operation must name a cue by the ID type the registry holds. A live
+  `:cue/launch` also finds a text-ID cue addressed by keyword, as JSON adapters
+  send it; inside a draft that launch is refused with `:unknown-cue`.
+  Acceptance: the same launch stages and applies from `/api/command`.
 - The Push simulator and rig views still show the live frame. Acceptance: the
   Push Room shows the draft frames and a draft indicator.
 - There is no structural undo for launches and definitions anywhere in the
