@@ -1,0 +1,126 @@
+{
+  "revision": "c7d700195406600d36227bb8f7614a892fdb1802",
+  "platform": "Apple M4, AGXAccelerator PerformanceStatistics",
+  "scope": "System-wide readouts sampled every roughly 400 ms. Preview used hidden hardware Chrome and a synthetic 60 Hz clock. The scheduler generated capture-only CPU ArtDMX output without a native compute backend.",
+  "previewFps": {
+    "only": 59.787237595833105,
+    "concurrent": 59.793229001378826
+  },
+  "phases": [
+    {
+      "phase": "idle",
+      "samples": 15,
+      "devicePercent": {
+        "median": 18,
+        "p95": 20,
+        "minimum": 0,
+        "maximum": 20
+      },
+      "rendererPercent": {
+        "median": 18,
+        "p95": 19,
+        "minimum": 0,
+        "maximum": 19
+      },
+      "tilerPercent": {
+        "median": 18,
+        "p95": 20,
+        "minimum": 0,
+        "maximum": 20
+      }
+    },
+    {
+      "phase": "preview-only",
+      "samples": 14,
+      "devicePercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      },
+      "rendererPercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      },
+      "tilerPercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      }
+    },
+    {
+      "phase": "show-only",
+      "samples": 14,
+      "devicePercent": {
+        "median": 18,
+        "p95": 26,
+        "minimum": 17,
+        "maximum": 26
+      },
+      "rendererPercent": {
+        "median": 18,
+        "p95": 26,
+        "minimum": 17,
+        "maximum": 26
+      },
+      "tilerPercent": {
+        "median": 18,
+        "p95": 26,
+        "minimum": 17,
+        "maximum": 26
+      }
+    },
+    {
+      "phase": "show-and-graphics-replay",
+      "samples": 14,
+      "devicePercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      },
+      "rendererPercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      },
+      "tilerPercent": {
+        "median": 99,
+        "p95": 100,
+        "minimum": 97,
+        "maximum": 100
+      }
+    },
+    {
+      "phase": "show-only-after",
+      "samples": 14,
+      "devicePercent": {
+        "median": 18,
+        "p95": 20,
+        "minimum": 0,
+        "maximum": 20
+      },
+      "rendererPercent": {
+        "median": 18,
+        "p95": 19,
+        "minimum": 0,
+        "maximum": 19
+      },
+      "tilerPercent": {
+        "median": 18,
+        "p95": 20,
+        "minimum": 0,
+        "maximum": 20
+      }
+    }
+  ],
+  "runtime": {
+    "processors": 9,
+    "heapMaxBytes": 4294967296,
+    "collector": "ZGC Minor Cycles"
+  }
+}
