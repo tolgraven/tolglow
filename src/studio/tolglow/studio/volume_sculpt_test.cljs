@@ -81,6 +81,31 @@
           (is (= draft (sculpt/model @rf-db/app-db)))))
       (finally (restore)))))
 
+(deftest intersection-places-the-new-part-next-to-the-translated-attachment
+  (let [restore (rf/make-restore-fn)
+        volume (merge (:volume sculpt/initial) (geo/primitive :rounded-box)
+                      {:position [0 1.5 0] :size [0.5 0.5 0.5]})
+        draft (assoc sculpt/initial :volume volume)]
+    (try
+      (reset! rf-db/app-db (drafts/update-ui db assoc :sculpt draft))
+      (rf/dispatch-sync [::sculpt/moving true])
+      (doseq [path [[] [:geometry]]]
+        (rf/dispatch-sync [::sculpt/set [:path] path])
+        (let [{ball :volume :as before} (sculpt/model @rf-db/app-db)]
+          (rf/dispatch-sync [::sculpt/combine :intersection])
+          (let [{combined :volume selected :path} (sculpt/model @rf-db/app-db)
+                [first-part new-part] (get-in combined [:geometry :parts])
+                {:keys [inside?]} (shape/prepare combined)]
+            (is (= [:geometry :parts 1] selected))
+            (is (= (dissoc ball :geometry) (dissoc combined :geometry)))
+            (is (= (:geometry ball) first-part))
+            (is (= [0.6 0 0] (:position new-part)))
+            (is (inside? [0 1.5 0]))
+            (is (seq (:surface (geo/guides combined)))))
+          (rf/dispatch-sync [::sculpt/undo])
+          (is (= before (sculpt/model @rf-db/app-db)))))
+      (finally (restore)))))
+
 (deftest drag-and-undo-stage-once-and-cancel-restores-the-original
   (let [start (sculpt/gesture db {:type "sculpt-begin" :token 7 :point [0 1 0]})
         move (sculpt/gesture start {:type "sculpt-move" :token 7 :point [2 1 1]})
