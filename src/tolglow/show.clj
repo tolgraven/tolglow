@@ -206,6 +206,7 @@
             :effect-selection (effect-selection/projection model)
             :pending-cue-launches (cue-timing/pending model)
             :cue-launch-outcomes (cue-timing/outcomes model)
+            :schedule (subscribers/schedule-view model)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -542,6 +543,34 @@
 
       :else result)))
 
+(def ^:private human-adapters #{:web "web" :studio :push-2 :push-3 :x-touch :xtouch :midi :osc :sensor})
+
+(def ^:private gesture-ops #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel})
+
+(defn- override-ramps
+  "A committed write outside the scheduler cancels running ramps on the same
+  destination. Gestures and human surfaces record :human-override; other
+  sources (agents, REPL, reactive actions) record :superseded."
+  [result {:keys [op source instance-id param command-id]} authority]
+  (if-not (seq (get-in result [:model :event-subscribers :ramps]))
+    result
+    (let [destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
+                                            (case type
+                                              :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
+                                              :master/changed {:target :master}
+                                              :instance/system-changed
+                                              (when (#{:instance/opacity-set :instance/opacity-toggle :group/apply} op)
+                                                {:target :opacity :instance-id (:instance-id event)})
+                                              nil))
+                                          (:events result)))
+                         (= :gesture/begin op) (conj {:target :param :instance-id instance-id :param param}))
+          human? (or (some? authority) (gesture-ops op) (human-adapters (:adapter source)))]
+      (if (seq destinations)
+        (update result :model subscribers/override destinations (if human? :human-override :superseded)
+                (cond-> {:op op :command-id command-id}
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+        result))))
+
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
@@ -568,6 +597,8 @@
                   variation? (variations/apply-command model envelope)
                   (group-channels/operation? operation)
                   (control/apply-domain-command model envelope group-channels/apply-operation)
+                  (subscribers/operations operation)
+                  (control/apply-domain-command model envelope subscribers/apply-operation)
                   :else (spatial/apply-command model envelope authority))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
@@ -583,7 +614,9 @@
                                             {:kind :command :id (or (get-in payload [:source :adapter]) :studio)}
                                             (:events result))))))
 
-       (and accepted? (not variation?)) (hold-manual-params model result payload authority)
+       (and accepted? (not variation?))
+       (-> (hold-manual-params model result payload authority)
+           (override-ramps envelope authority))
        :else result))))
 
 (defn- apply-sensor-result [result time-ms]
@@ -685,6 +718,9 @@
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
+    (subscribers/schedulable? payload)
+    (command model (subscribers/as-post payload) time-ms authority)
+
     (and (= :cue/launch (:op payload)) (contains? payload :grid))
     (cue-timing/schedule model (cue-clock-identity runtime model) time-ms
                          (assoc (select-keys payload [:grid :raw]) :command (dissoc payload :grid :raw))
@@ -2081,6 +2117,29 @@
   [runtime command-id]
   (cue-timing/receipt (:model @(:state runtime)) command-id))
 
+(defn schedule
+  "Read the beat-clock schedule Studio shows: upcoming events (scheduled and
+  subscriber steps), active ramps and recent outcomes. Pass :compact for the
+  low-token agent form. See docs/scheduler.md."
+  ([runtime] (subscribers/schedule-view (:model @(:state runtime))))
+  ([runtime form]
+   (case form
+     :compact (subscribers/compact-view (:model @(:state runtime)))
+     :full (schedule runtime))))
+
+(defn post-events!
+  "Validate and enqueue a batch of beat-clock events atomically. Returns the
+  receipt promise from submit!, whose :event-ids lists the scheduled events."
+  ([runtime events] (post-events! runtime events {}))
+  ([runtime events envelope]
+   (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} envelope
+                           {:op :schedule/post :events (vec events)}))))
+
+(defn cancel-events!
+  "Cancel scheduled events and running ramps by :event-ids, :source, :label or :destination."
+  [runtime selection]
+  (submit! runtime (merge {:source {:adapter :repl :session-id "repl"}} selection {:op :schedule/cancel})))
+
 (defn register-event-subscriber!
   "Register show data from the REPL. A raw :middleware function is bound to its
   callback identity in this runtime. Use a Var or source for portable code."
@@ -2206,6 +2265,11 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
+          "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
+          "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
+                                              (when (:mine? arguments) {:posted-by (:source envelope)})
+                                              {:op :schedule/cancel})]
+          "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
@@ -2214,6 +2278,7 @@
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type
       :inspect (agent-inspection runtime state #(project-snapshot runtime state))
+      :inspect-schedule (agent-inspection runtime state #(subscribers/compact-view model))
       :inspect-lighting (agent-inspection runtime state
                           (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))

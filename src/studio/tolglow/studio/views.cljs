@@ -245,6 +245,37 @@
                                    :disabled (not (get-in db [:connection :connected?]))
                                    :on-click #(send! [:studio/cancel-queued-cue command-id])} "Cancel"])])]])))
 
+(defn- ramp-target-label [to]
+  (if (number? to) (numeric/number-label to) (str to)))
+
+(defn scheduled-events
+  "Beat-clock schedule from the shared :schedule projection (docs/scheduler.md):
+  pending scheduled events and running ramps, each cancellable by event ID."
+  [db]
+  (let [{:keys [upcoming ramps]} (get-in db [:show :schedule])
+        scheduled (filterv #(= "scheduled" (events/wire-id (:origin %))) upcoming)
+        connected? (get-in db [:connection :connected?])
+        cancel! (fn [event-id] #(send! [:studio/command "schedule/cancel" {:event-ids [event-id]}]))]
+    (when (or (seq scheduled) (seq ramps))
+      [:section.queued-launches.scheduled-events {:aria-label "Scheduled events"}
+       [:strong "Scheduled"]
+       [:ul
+        (for [{:keys [event-id label op due-beat category]} scheduled
+              :let [title (or label (events/wire-id op))]]
+          ^{:key (str "event-" event-id)}
+          [:li {:data-event-id event-id :data-category (events/wire-id category)}
+           [:span (str title " · beat " (numeric/number-label due-beat))]
+           [:button.text-button {:type "button" :aria-label (str "Cancel scheduled " title)
+                                 :disabled (not connected?) :on-click (cancel! event-id)} "Cancel"]])
+        (for [{:keys [event-id label to progress end destination]} ramps
+              :let [title (or label event-id)]]
+          ^{:key (str "ramp-" event-id "-" (pr-str destination))}
+          [:li {:data-ramp-id event-id}
+           [:span (str title " → " (ramp-target-label to) " by beat " (numeric/number-label end))]
+           [:progress {:max 1 :value (or progress 0) :aria-label (str title " progress")}]
+           [:button.text-button {:type "button" :aria-label (str "Stop ramp " title)
+                                 :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])]])))
+
 (defn- cue-grid [db]
   (let [view (get-in db [:server-projection :view]) ui (:ui db)
         authored-pages (:pages view)
@@ -280,6 +311,7 @@
                                              (get-in db [:connection :connected?]))
        cue-cell db page]]
      [queued-cues db]
+     [scheduled-events db]
      [:div.grid-footer [:span#gesture-hint (cond (and (:edit? ui) (not selected-recent)) "Choose a cell to edit its actions."
                                                (and (= "held" (:launch-mode ui)) (not= "off" (:launch-grid ui)))
                                                "Hold through the grid boundary to play. Release to cancel or fade out."

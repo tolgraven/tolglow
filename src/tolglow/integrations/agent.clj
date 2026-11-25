@@ -86,7 +86,24 @@
                  :required ["op" "group-id"] :additionalProperties false}}
    {:name "configure_auto" :description "Configure automatic show selection policy using validated cue ids, timing and constraints."
     :parameters {:type "object" :properties {:configuration {:type "object"}}
-                 :required ["configuration"] :additionalProperties false}}])
+                 :required ["configuration"] :additionalProperties false}}
+   {:name "schedule_events"
+    :description (str "Post up to 64 show events ahead of time on the beat clock in one atomic batch; one invalid event rejects all. "
+                      "Each event is an action {op, ...} with optional id, label and one timing key: at {bar|beat|phrase} (zero-based transport position), "
+                      "in {beats|bars|phrases} from now, or grid {bars:1} for the next boundary. Ops: cue/launch {cue-id, launch}, instance/end {instance-id}, "
+                      "param/set {instance-id|cue-id, param, value}, param/ramp {instance-id|cue-id, param, to, over {beats:8}, curve} "
+                      "(target master|opacity|variable instead of param), master/set {value}, blackout/set {value}, macro/run {macro-id}. "
+                      "Curves: linear, ease-in, ease-out, ease-in-out, sine, smoothstep, step. A ramp starts from the current value; the show animates it.")
+    :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}}
+                 :required ["events"] :additionalProperties false}}
+   {:name "cancel_scheduled"
+    :description "Cancel pending scheduled events and running ramps by event-ids, label, destination {target, instance-id, param}, or mine?=true for everything this run posted. A cancelled ramp holds its current value."
+    :parameters {:type "object" :properties {:event-ids {:type "array" :items id-schema} :label {:type "string"}
+                                             :destination {:type "object"} :mine? {:type "boolean"}}
+                 :additionalProperties false}}
+   {:name "inspect_schedule"
+    :description "Compact read-back of the beat clock: current beat/bar, upcoming events [due-beat id op label], active ramps [id destination progress value to end-beat] and recent outcomes [id status reason]."
+    :parameters {:type "object" :properties {} :additionalProperties false}}])
 
 (defn- field [m k] (if (contains? m k) (get m k) (get m (name k))))
 

@@ -566,6 +566,27 @@
     (is (empty? (transition unqueued [:studio/cancel-queued-cue "own"])))
     (is (nil? (views/queued-cues unqueued)))))
 
+(deftest schedule-projection-lists-events-and-ramps-with-cancel-by-id
+  (let [schedule {:beat 2.0 :upcoming [{:event-id "drop" :origin :scheduled :op :cue/launch :category :cue
+                                        :label "Drop" :due-beat 8.0}
+                                       {:event-id "subscriber/kicks/3" :origin :subscriber :op :cue/launch
+                                        :category :cue :due-beat 2.5}]
+                  :ramps [{:event-id "swell" :label "Swell" :to 0.8 :progress 0.25 :end 10.0
+                           :destination {:target :param :instance-id "1:1" :param :level}}]
+                  :recent []}
+        installed (:db (full-frame base (assoc (:show base) :show-id :main :runtime-id "host" :schedule schedule)))
+        html (renderToStaticMarkup (r/as-element [views/scheduled-events installed]))
+        cancel (first-command (transition installed [:studio/command "schedule/cancel" {:event-ids ["drop"]}]))]
+    (is (str/includes? html "Scheduled"))
+    (is (str/includes? html "Drop · beat 8"))
+    (is (not (str/includes? html "subscriber/kicks")) "subscriber steps stay in Debug")
+    (is (str/includes? html "Swell → 0.8 by beat 10"))
+    (is (str/includes? html "Cancel scheduled Drop"))
+    (is (str/includes? html "Stop ramp Swell"))
+    (is (= "schedule/cancel" (:op cancel)))
+    (is (= {:event-ids ["drop"]} (select-keys (:fields cancel) [:event-ids])))
+    (is (nil? (views/scheduled-events (assoc-in installed [:show :schedule] {:upcoming [] :ramps []}))))))
+
 (defn- launch-failures [effects]
   (keep (fn [[kind [event message]]]
           (when (and (= :dispatch kind) (= :studio/failure event)) message)) (:fx effects)))
