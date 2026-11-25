@@ -34,8 +34,9 @@ advances an oscillator, opens a device, or creates synthetic readings.
 - The Studio compact graph follows a registered selector when the captured
   effect output has a single identifiable musical phase expression. The host
   samples the selected registry shape one bar either side of the committed
-  beat, including supplied discontinuities. If the signal is constant or its
-  phase is ambiguous, the picker shows the existing cycle plot. The full
+  beat, including supplied discontinuities. A flat part of that window keeps
+  following the beat so the next change can move back into view. When the
+  effect has no identifiable musical phase, the picker shows the cycle plot. The full
   derivative view remains cycle-based. The timing marks have separate styles
   and a fixed center marker, and samples from another clock source or source
   epoch are hidden.

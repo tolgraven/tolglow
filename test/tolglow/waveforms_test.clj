@@ -22,19 +22,21 @@
 
 (defn near? [a b] (< (Math/abs (double (- a b))) 1.0e-8))
 
-(defn fixture []
-  (let [registered (signals/new-registry)
-        schema (signals/selector-schema registered [{:id :pulse :params {:duty (fx/param :width)}} :sine])
-        effect (fx/effect :shape {:params {:waveform schema :width (fx/parameter 0.25 {:bounds [0 1]})}}
-                          (fx/intensity (signals/select-waveform registered (fx/param :waveform) (:choices schema)
-                                                                 {:phase (fx/cycles {:beats 1})})))
-        instance {:id "0:1" :effect-id :shape :effect-version 1 :definition effect :cue-id :shape
-                  :phase :running :params {:waveform 0.0 :width 0.25} :state {:ticks 3} :started-at-ms 0
-                  :started-at-beat 0 :system {:last-clock {:time-ms 250 :beat 0.5}}}]
-    {:model {:epoch 0 :time-ms 250 :transport {:bpm 120 :beat 0.5 :playing? true}
-             :waveforms registered :instances {"0:1" instance}
-             :registry {:effects {:shape effect} :cues {:shape {:id :shape :effect-id :shape}}}}
-     :modulation-view {:overrides {}}}))
+(defn fixture
+  ([] (fixture 1))
+  ([period]
+   (let [registered (signals/new-registry)
+         schema (signals/selector-schema registered [{:id :pulse :params {:duty (fx/param :width)}} :sine])
+         effect (fx/effect :shape {:params {:waveform schema :width (fx/parameter 0.25 {:bounds [0 1]})}}
+                           (fx/intensity (signals/select-waveform registered (fx/param :waveform) (:choices schema)
+                                                                  {:phase (fx/cycles {:beats period})})))
+         instance {:id "0:1" :effect-id :shape :effect-version 1 :definition effect :cue-id :shape
+                   :phase :running :params {:waveform 0.0 :width 0.25} :state {:ticks 3} :started-at-ms 0
+                   :started-at-beat 0 :system {:last-clock {:time-ms 250 :beat 0.5}}}]
+     {:model {:epoch 0 :time-ms 250 :transport {:bpm 120 :beat 0.5 :playing? true}
+              :waveforms registered :instances {"0:1" instance}
+              :registry {:effects {:shape effect} :cues {:shape {:id :shape :effect-id :shape}}}}
+      :modulation-view {:overrides {}}})))
 
 (deftest live-waveform-uses-captured-parameters-and-the-real-effect-ir
   (let [snapshot (fixture) request {:instance-id "0:1" :parameter "waveform" :options {:samples 9}}
@@ -76,9 +78,27 @@
     (is (= [18 19] (mapv :transport-generation [first rebase])))
     (is (= (:samples first) (:samples rebase)))
     (is (not= (:ticks first) (:ticks rebase)))
-    (is (nil? static))
+    (is (= #{0.0} (into #{} (map :value) (:samples static))))
     (is (nil? (project (assoc-in snapshot [:model :instances "0:1" :definition :outputs] {:dimmer 0.5}))))
     (is (nil? (:timeline (waveforms/preview snapshot {:id :pulse :options {:live-timing? true}}))))))
+
+(deftest compact-timeline-keeps-refreshing-through-a-flat-part-of-a-long-cycle
+  (let [snapshot (fixture 16)
+        request {:instance-id "0:1" :parameter :waveform :options {:live-timing? true}}
+        sample (fn [beat]
+                 (let [time-ms (* beat 500)]
+                   (:timeline (waveforms/preview
+                               (-> snapshot
+                                   (assoc-in [:model :transport :beat] beat)
+                                   (assoc-in [:model :instances "0:1" :system :last-clock]
+                                             {:time-ms time-ms :beat beat}))
+                               request))))
+        middle (sample 9)
+        next-pulse (sample 14)]
+    (is (= 9 (:beat middle)))
+    (is (= #{0.0} (into #{} (map :value) (:samples middle))))
+    (is (= 14 (:beat next-pulse)))
+    (is (= #{0.0 1.0} (into #{} (map :value) (:samples next-pulse))))))
 
 (deftest transport-timeline-samples-the-composed-registry-wave-at-the-emitted-phase
   (let [base (fixture)

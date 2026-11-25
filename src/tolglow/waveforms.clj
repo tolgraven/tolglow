@@ -167,7 +167,8 @@
                                 (map (fn [coordinate]
                                        [(/ (- coordinate phase) radius) (sample coordinate)]))
                                 (concat grid edges sides))]
-              (when (and (<= 2 (count samples) 2048) (some #(not= (val (first samples)) %) (vals samples)))
+              ;; A long pulse can stay flat for the whole window.
+              (when (<= 2 (count samples) 2048)
                 {:beat beat :now-value (sample phase) :transport-generation (or transport-generation 0)
                  :transport (select-keys transport [:source :source-epoch :source-selection-epoch :playing? :meter])
                  :ticks (musical-ticks transport beat span)

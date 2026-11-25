@@ -121,6 +121,7 @@
 (defn clock-bound? [value]
   (boolean (some #(and (map? %) (contains? #{"time" "time-seconds" "beat" "bar" "phrase"} (wire (:op %))))
                  (tree-seq coll? seq value))))
+
 (defn- transport-key [transport]
   (update (select-keys transport [:source :source-epoch :source-selection-epoch :playing? :meter :generation]) :source wire))
 
