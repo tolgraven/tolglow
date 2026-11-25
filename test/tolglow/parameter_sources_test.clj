@@ -216,21 +216,26 @@
                         edit (bind! 1500 (:instance-id left) (assoc binding :inputs {:duty 1/4} :phase 1/8))
                         fade (submit! 1500 :command {:op :master/set :value 0.6})
                         faded (timeline (range 1525 2001 25))
-                        blackout (submit! 2000 :command {:op :blackout/set :value true})
-                        dark (timeline [2025 2050])
+                        repatch (submit! 2000 :rig (assoc-in (:rig (show/snapshot rt)) [:fixtures 0 :address] 6))
+                        moved (timeline [2025])
+                        blackout (submit! 2025 :command {:op :blackout/set :value true})
+                        dark (timeline [2050])
                         reset (submit! 2075 :command {:op :show/restart})
                         lit (submit! 2075 :command {:op :blackout/set :value false})
                         relaunched (launch! 2075 :left)
                         rebound (bind! 2075 (:instance-id relaunched) (assoc binding :phase-reference :launch))
                         restarted (timeline (range 2100 2601 25))]
-                    {:receipts [left right bound tempo edit fade blackout reset lit relaunched rebound]
-                     :frames [initial changing faded dark restarted]})
+                    {:receipts [left right bound tempo edit fade repatch blackout reset lit relaunched rebound]
+                     :frames [initial changing faded moved dark restarted]})
                   (finally (show/stop! rt)))))
         replay (run)
         reference (without-cycle-replay run)]
     (is (every? #(= :accepted (:status %)) (:receipts replay)) (pr-str (:receipts replay)))
     (is (every? (comp seq first) (mapcat identity (:frames replay))))
     (is (= #{0.2 0.8} (set (keep first (map second (first (:frames replay)))))))
+    (let [packet (get-in replay [:frames 3 0 0 1])]
+      (is (zero? (nth packet 18)))
+      (is (pos? (bit-and 255 (nth packet 23)))))
     (is (= replay reference))))
 
 (deftest ring-through-render-two-instances-base-hold-and-transit-restore
