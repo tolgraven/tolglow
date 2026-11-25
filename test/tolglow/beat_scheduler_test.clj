@@ -566,3 +566,33 @@
   (is (subscribers/same-value? [{:position 0 :color [1 0 0]}] [{:position 0.0 :color [1.0 0.0 0.0]}]))
   (is (not (subscribers/same-value? 1 1.01)))
   (is (not (subscribers/same-value? [1 0] [1 0 0]))))
+
+(deftest a-ramp-whose-endpoints-cannot-interpolate-is-refused-and-the-owner-keeps-running
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent :params {:level 1.0}}}))]
+        (at! rt 100 {:op :variable/set :variable :energy :value [0.0 0.0 0.0] :source agent})
+        (is (= :accepted (:status (at! rt 200 {:op :param/ramp :event-id "bad" :target :variable :variable :energy
+                                              :to 1.0 :over {:beats 4} :source agent})))
+            "a variable's shape is only known when the ramp fires")
+        (is (nil? (get-in @(:state rt) [:status :error])) "the owner frame completes")
+        (is (= {:event-id "bad" :status :rejected :message "Ramp endpoints need equal shapes"}
+               (select-keys (last (recent rt)) [:event-id :status :message])))
+        (is (empty? (:upcoming (show/schedule rt))) "the refused event does not stay due")
+        (is (= [0.0 0.0 0.0] (get-in @(:state rt) [:model :variables :energy])))
+        (at! rt 400 {:op :param/set :instance-id id :param :level :value 0.5 :source {:adapter :repl :session-id "r"}})
+        (is (<= 127 (dimmer (peek @packets)) 128) "later frames still render"))
+      (finally (show/stop! rt))))
+  (testing "a stored ramp that cannot be sampled is cancelled instead of failing every owner tick"
+    (let [model (-> (live-model)
+                    (assoc-in [:variables :energy] [0.0 0.0])
+                    (assoc :event-subscribers
+                           {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0
+                            :ramps [{:event-id "stored" :destination {:target :variable :variable :energy}
+                                     :from [0.0 0.0] :to 1.0 :base [0.0 0.0] :curve :linear
+                                     :unit :beats :start 0.0 :end 4.0}]}))
+          settled (subscribers/advance-ramps model 0.0)]
+      (is (empty? (get-in settled [:event-subscribers :ramps])))
+      (is (= [["stored" :cancelled :invalid-endpoints]]
+             (mapv (juxt :event-id :status :reason) (get-in settled [:event-subscribers :recent]))))
+      (is (= {} (subscribers/frame-overlays settled 0.0))))))

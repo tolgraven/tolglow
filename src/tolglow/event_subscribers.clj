@@ -531,6 +531,11 @@
     (= :gradient (:type schema)) (gradient-interpolate from to fraction)
     :else (modulation/interpolate-value schema from to fraction)))
 
+(defn- same-shape?
+  "A number interpolates with a number, a vector with a vector of equal length."
+  [a b]
+  (if (vector? a) (and (vector? b) (= (count a) (count b))) (not (vector? b))))
+
 (defn- progress [{:keys [start end]} clock]
   (double (max 0 (min 1 (/ (- clock start) (- end start))))))
 
@@ -600,8 +605,9 @@
                (and (numeric-value? from) (numeric-value? to)))
            "Ramp endpoints must satisfy the destination type" {:destination destination :from from :to to})
     (check (< (count (get-in model [:event-subscribers :ramps])) ramp-limit) "Too many active ramps" {})
-    (when (and (vector? from) (vector? to) (not= :gradient (:type schema)))
-      (check (= (count from) (count to)) "Ramp endpoints need equal shapes" {}))
+    ;; A scalar cannot move to a vector: every later sample would throw on the owner.
+    (when-not (= :gradient (:type schema))
+      (check (same-shape? from to) "Ramp endpoints need equal shapes" {:from from :to to}))
     (-> model
         (supersede destination event-id)
         (update-in [:event-subscribers :ramps] (fnil conj [])
@@ -691,13 +697,19 @@
                        more kept))
 
               :else
-              (let [[p value] (sample-ramp model ramp beat now)]
-                (if (>= p 1.0)
+              (let [[p value] (try (sample-ramp model ramp beat now) (catch Exception _ nil))]
+                (cond
+                  ;; A ramp that cannot be sampled would otherwise fail every owner tick.
+                  (nil? p)
+                  (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints})) more kept)
+
+                  (>= p 1.0)
                   (recur (-> (assoc-in model [:event-subscribers :ramps] (into kept more))
                              (commit-ramp ramp now)
                              (remember (ramp-entry model ramp :completed {:value value})))
                          more kept)
-                  (recur model more (conj kept ramp)))))))))))
+
+                  :else (recur model more (conj kept ramp)))))))))))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}
