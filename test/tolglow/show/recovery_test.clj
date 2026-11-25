@@ -10,7 +10,8 @@
             [tolglow.studio :as studio]
             [tolglow.transit :as wire])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+           [java.nio.file.attribute FileAttribute]
+           [java.util.concurrent ScheduledThreadPoolExecutor TimeUnit]))
 
 (defn- with-directory [f]
   (let [directory (.toFile (Files/createTempDirectory "tolglow-recovery-test-" (make-array FileAttribute 0)))]
@@ -53,13 +54,14 @@
           (let [runtime (show/start! {:workspace-options nil :recovery {:directory directory :interval-ms 35}}
                                      (constantly nil))
                 owner @(:recovery runtime)
-                model #(-> @(:state runtime) :model)]
+                model #(-> @(:state runtime) :model)
+                frame-number #(get (model) :frame-number 0)]
             (try
               (is (true? (deref entered 5000 false)))
-              (let [frame (:frame-number (model))]
+              (let [frame (frame-number)]
                 (show/save-show! runtime manual)
                 (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value 0.25}) 5000 {}))))
-                (is (await-result #(> (:frame-number (model)) frame)))
+                (is (await-result #(> (frame-number) frame)))
                 (is (nil? (:last-saved (show/recovery-status runtime)))))
               (deliver finish true)
               (let [id (:show-id (model))
@@ -310,6 +312,67 @@
             (is (= ["recovery.transit" "prior.checkpoint"] @reads))
             (is (= "working" (slurp (recovery/latest-file after :test :recovery))))
             (finally (recovery/close! after))))))))
+
+(deftest closing-recovery-finishes-staged-file-cleanup-before-reopening
+  (with-directory
+    (fn [directory]
+      (let [options (recovery/options {:directory directory :interval-ms 20})
+            publish! (fn [_ replace!] (replace!))
+            prior (recovery/start! options true (constantly {:show-id :test :source "previous"}) publish!)]
+        (try
+          (is (await-result #(:last-saved (recovery/status prior))))
+          (finally (recovery/close! prior)))
+        (let [source (atom "last-good")
+              owner-ready (promise) staged (promise) interrupted (promise) resume (promise)
+              write! recovery/write-source!
+              staging-files #(filter (fn [file] (re-matches #"\.tolglow-show-.*\.tmp" (.getName file)))
+                                     (file-seq directory))]
+          (with-redefs [recovery/write-source!
+                        (fn [path source publish!]
+                          (write! path source
+                            (if (= "retired" source)
+                              (fn [replace!]
+                                (deliver staged true)
+                                (try
+                                  (deref resume 5000 nil)
+                                  (catch InterruptedException _
+                                    ;; Keep the staged file live after cancellation, then exercise worker reentry.
+                                    (deliver interrupted true)
+                                    (deref resume 5000 nil)
+                                    (recovery/close! @owner-ready)
+                                    (.interrupt (Thread/currentThread))))
+                                (publish! replace!))
+                              publish!)))]
+            (let [owner (recovery/start! options true #(hash-map :show-id :test :source @source) publish!)]
+              (deliver owner-ready owner)
+              (try
+                (is (await-result #(:last-saved (recovery/status owner))))
+                (reset! source "retired")
+                (is (true? (deref staged 5000 false)))
+                (is (= 1 (count (staging-files))))
+                (let [closing (future (recovery/close! owner))]
+                  (is (true? (deref interrupted 5000 false)))
+                  (is (= :closing (deref closing 100 :closing)))
+                  (let [closing-again (future (recovery/close! owner))]
+                    (is (= :closing (deref closing-again 100 :closing)))
+                    (is (try
+                          (.interrupt (Thread/currentThread))
+                          (recovery/close! owner)
+                          (.isInterrupted (Thread/currentThread))
+                          (finally (Thread/interrupted))))
+                    (deliver resume true)
+                    (is (nil? (deref closing 5000 :closing)))
+                    (is (nil? (deref closing-again 5000 :closing)))))
+                (is (empty? (staging-files)))
+                (let [reopened (recovery/start! (assoc options :enabled? false) false nil nil)]
+                  (try
+                    (is (= "previous" (slurp (recovery/latest-file reopened :test :prior))))
+                    (is (= "last-good" (slurp (recovery/latest-file reopened :test :recovery))))
+                    (finally (recovery/close! reopened))))
+                (finally
+                  (deliver resume true)
+                  (recovery/close! owner)
+                  (is (.awaitTermination ^ScheduledThreadPoolExecutor (:executor owner) 5 TimeUnit/SECONDS)))))))))))
 
 (deftest restoring-a-named-checkpoint-retires-a-staged-recovery-write
   (with-directory
