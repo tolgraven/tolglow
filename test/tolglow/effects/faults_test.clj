@@ -38,6 +38,7 @@
       (finally (future-cancel result)))))
 
 (defn fault-sequence [context _] (get-in @(:db context) [:variables :runtime :event-sequence] 0))
+
 (defn fault-action [_ value _] (when (pos? value) {:op :master/set :value 0.8}))
 
 (defn- register-watcher! [runtime]

@@ -8,9 +8,11 @@
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (def attrs (make-array FileAttribute 0))
+
 (defn command! [cwd argv]
   (let [result (workspace/run-trusted-process! {:cwd (str cwd) :argv argv :timeout-ms 5000 :max-output-bytes 32768})]
     (when-not (= 0 (:exit-code result)) (throw (ex-info "Temporary repository fixture failed" result))) result))
+
 (defn repo! [^Path parent name]
   (let [root (.resolve parent name)]
     (Files/createDirectory root attrs)
@@ -23,11 +25,13 @@
     (command! root ["git" "add" "."])
     (command! root ["git" "-c" "user.name=Workspace test" "-c" "user.email=workspace@example.invalid" "commit" "-m" (str "Initial test fixture " name)])
     root))
+
 (defn delete-tree! [^Path root]
   (when (Files/exists root (make-array LinkOption 0))
     (with-open [paths (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
       (doseq [^Path p (reverse (sort-by #(.getNameCount ^Path %) (iterator-seq (.iterator paths))))]
         (Files/deleteIfExists p)))))
+
 (defn with-workspace [options f]
   (let [root (Files/createTempDirectory "tolglow-workspace-test-" attrs)
         first (repo! root "original-tolglow") second (repo! root "original-afterglow")

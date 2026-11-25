@@ -8,11 +8,17 @@
            [java.util.concurrent.atomic AtomicBoolean]))
 
 (def path "/tolglow/sensor/v1")
+
 (def max-packet-bytes 60000)
+
 (defn- fail! [message] (throw (ex-info message {:sensor/error :invalid-packet})))
+
 (defn- finite? [x] (and (number? x) (Double/isFinite (double x))))
+
 (defn- identifier? [x] (and (string? x) (<= 1 (count x) 128)))
+
 (defn- field? [x] (and (string? x) (boolean (re-matches #"[a-z][a-z0-9-]{0,63}" x))))
+
 (defn- keyword-field [x] (when-not (field? x) (fail! "Invalid sensor field name")) (keyword x))
 
 (defn validate-observation
@@ -93,6 +99,7 @@
 (defn- encode-string [^String source]
   (let [data (.getBytes source StandardCharsets/UTF_8), size (* 4 (quot (+ (alength data) 4) 4)), result (byte-array size)]
     (System/arraycopy data 0 result 0 (alength data)) result))
+
 (defn encode [observation]
   (let [data (validate-observation observation)
         parts (mapv encode-string [path ",s" (json/write-str data)])

@@ -6,6 +6,7 @@
             [re-frame.core :as rf]))
 
 (defonce engines (atom {}))
+
 (defn- message [error] (or (.-message error) (str error)))
 
 (defn preview-engine [registered owner]

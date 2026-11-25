@@ -2,7 +2,9 @@
   "Causal section evidence from completed audio analysis hops on a supplied beat grid.")
 
 (def ^:private slots-per-beat 2)
+
 (def ^:private max-hop-gap-beats 0.125)
+
 (def ^:private min-pitch-coverage 0.45)
 
 (defn- finite? [value]

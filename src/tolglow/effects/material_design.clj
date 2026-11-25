@@ -25,6 +25,7 @@
                                                                   (dissoc entries id))}}})))
 
 (def ^:private columns 40)
+
 (def ^:private rows 18)
 
 (defn- rgb [v]

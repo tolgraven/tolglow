@@ -5,7 +5,9 @@
             [tolglow.studio.events :as events]))
 
 (defonce stream (atom nil))
+
 (defn- text [event] (.. event -target -value))
+
 (defn- input! [path value] (rf/dispatch-sync [:studio/ui-set path value]))
 
 (rf/reg-fx :studio/chat-stream
@@ -151,6 +153,7 @@
                                                    (assoc :conversation-id (get-in db [:chat :conversation-id])))}}))))
 (defn- current-entry [db f]
   (update-in db [:chat :entries] (fn [entries] (mapv #(if (= (:id %) (get-in db [:chat :current-id])) (f %) %) entries))))
+
 (defn apply-chat-event [db token event]
     (if (not= token (get-in db [:chat :current-id])) db
       (let [db (cond-> db (:conversation-id event) (assoc-in [:chat :conversation-id] (:conversation-id event)))]

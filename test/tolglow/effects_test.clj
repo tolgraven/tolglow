@@ -22,9 +22,12 @@
    :instance {:id "i" :phase :running :started-at-ms 0.0 :started-at-beat 0.0 :params {}
               :timing-meter {:beats-per-bar 4 :bars-per-phrase 4}}
    :state {:counter 3} :assignments [] :contributions [] :intents [] :done? false})
+
 (defn frame [step input]
   (render/resolve-contributions fixtures (:contributions (runtime/append-contributions (step input) []))))
+
 (defn close? [expected actual] (< (Math/abs (- (double expected) (double actual))) 1.0e-10))
+
 (defn frame-bytes [output] (into {} (map (fn [[universe values]] [universe (vec values)])) (:universes output)))
 
 (deftest oscillator-quarter-cycles-use-real-scalar-and-typed-compilers

@@ -2,8 +2,11 @@
   "Update built-in audio signal references when restoring a saved show.")
 
 (def ^:private old-variable [:audio :features :energy-envelope])
+
 (def ^:private old-event-field [:data :energy-envelope])
+
 (def ^:private old-port "audio/energy-envelope")
+
 (def ^:private port "audio/energy")
 
 (defn- group-target [scene]

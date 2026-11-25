@@ -13,22 +13,30 @@
   (get (:parameter-sources instance) (keyword (events/wire-id param))))
 
 (defn bound? [instance param] (boolean (seq (:sources (reading instance param)))))
+
 (defn- driving-source? [{:keys [held? pending? error]}] (not (or held? pending? error)))
+
 (defn driven? [instance param]
   (let [{:keys [sources error]} (reading instance param)]
     (and (nil? error) (boolean (some driving-source? sources)))))
+
 (defn- driving-block [source]
   (some #(when (and (driving-source? %) (= :blocks (keyword (:type %)))) %) (:sources source)))
 
 (defn- source-of [source kind]
   (some #(when (= kind (keyword (:type %))) %) (:sources source)))
+
 (defn- selected-parameter [db id] (get-in db [:ui :parameter-source id]))
+
 (defn- editor-parameters [param components]
   (if (seq components) (mapv first components) [param]))
+
 (defn- editor-open? [selected params] (boolean (some #{selected} params)))
 
 (defn- trigger-id [id param] (str "source-" id "-" (events/wire-id param)))
+
 (defn- editor-id [id param] (str "source-editor-" id "-" (events/wire-id param)))
+
 (defn- heading-id [id param] (str "source-editor-heading-" id "-" (events/wire-id param)))
 
 (defn- selection-effects [db id params param]
@@ -68,6 +76,7 @@
     (some #(when (= id (:id %)) %) (get-in db [:server-projection :view :instances]))))
 
 (defn- context [db] ((juxt :runtime-id :epoch) (:show db)))
+
 (defn- request-key [db id param] [(context db) id param])
 (rf/reg-sub ::request (fn [db [_ id param]] (get-in db [:ui :source-requests (request-key db id param)])))
 
@@ -179,6 +188,7 @@
 
 (defn- options [schema]
   (or (when (seq (:choices schema)) (mapv :value (:choices schema))) (:values schema) (:options schema)))
+
 (defn- bounds [schema base]
   (let [[lo hi] (or (:bounds schema) (:recommended schema) [0 1])]
     (cond

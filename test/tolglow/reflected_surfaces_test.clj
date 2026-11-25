@@ -11,6 +11,7 @@
                     :beam-angle angle :lens-radius-m 0.1 :universe 1 :address address
                     :channels {:pan [1 2] :tilt [3 4] :red 5 :green 6 :blue 7}})
                  [:one :two] [-2 1] [1 12] [25 22]))
+
 (defn- edge-x [spot sign]
   (+ (first (:center spot))
      (* sign (Math/hypot (* (:major-radius-m spot) (first (:major-axis spot)))

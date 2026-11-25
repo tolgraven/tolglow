@@ -3,9 +3,11 @@
   (:require [tolglow.linux.audience.wire :as wire]))
 
 (def capacity 128)
+
 (def initial {:pending 0 :guests {}})
 
 (defn delta [a b] (bit-and (- a b) 0xffffffff))
+
 (defn newer? [a b] (<= 1 (delta a b) 0x7fffffff))
 
 (defn expire [floor now]

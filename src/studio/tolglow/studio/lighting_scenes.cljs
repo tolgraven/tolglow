@@ -6,13 +6,17 @@
             [tolglow.studio.projection :as projection]))
 
 (defn- view [db] (get-in db [:server-projection :view]))
+
 (defn- identity-key [db] (projection/identity-of (view db)))
+
 (defn- form [db]
   (let [stored (:lighting-scene-ui db) identity (identity-key db)]
     (if (= identity (:identity stored)) stored {:identity identity})))
 
 (defn- label [id] (str/replace (events/wire-id id) #"-" " "))
+
 (defn- option-key [id] (str (if (keyword? id) "group:" "group-string:") (events/wire-id id)))
+
 (defn eligible-fixtures [fixtures eligible-ids]
   (let [ids (set eligible-ids)]
     (filterv #(contains? ids (:id %)) fixtures)))
@@ -110,6 +114,7 @@
       (if (= token (:pending state)) (assoc db :lighting-scene-ui (-> state (dissoc :pending) (assoc :error (str error)))) db))))
 
 (defn- edit! [path value] (rf/dispatch-sync [::edit path value]))
+
 (defn- custom-fields [state fixtures]
   (let [search (str/lower-case (str/trim (:search state "")))
         matches (filter #(str/includes? (str/lower-case (str (:name %) " " (events/wire-id (:id %)))) search) fixtures)
@@ -128,6 +133,7 @@
       (when (seq (drop 40 matches)) [:p.small.muted "Search to narrow the fixture list."])]]))
 
 (defn- percent-text [n] (when (number? n) (str (js/Math.round (* 100 n)) "%")))
+
 (def status-label {:at-target "At target" :seeking "Adjusting" :limited "Output limited"
                    :over-target "Other light exceeds target" :unlit "No light available"})
 

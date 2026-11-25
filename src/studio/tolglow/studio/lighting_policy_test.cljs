@@ -5,6 +5,7 @@
             [tolglow.studio.lighting-response :as response]))
 
 (def identity-key {:epoch 2 :runtime-id "show-process" :show-id :club})
+
 (def db {:connection {:connected? true} :server-projection {:view identity-key}})
 
 (deftest budget-edits-are-typed-and-local-to-the-selected-scope

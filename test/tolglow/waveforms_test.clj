@@ -20,6 +20,7 @@
            [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn near? [a b] (< (Math/abs (double (- a b))) 1.0e-8))
+
 (defn fixture []
   (let [registered (signals/new-registry)
         schema (signals/selector-schema registered [{:id :pulse :params {:duty (fx/param :width)}} :sine])
@@ -89,6 +90,7 @@
 
 (defn sine [hz n & [offset]]
   (double-array (map #(* 0.75 (Math/sin (* 2 Math/PI hz (/ (+ (or offset 0) %) 48000.0)))) (range n))))
+
 (defn block [samples start & [extra]]
   (merge {:samples samples :sample-rate 48000 :channels 1 :source-id "capture" :started-at-ms start} extra))
 

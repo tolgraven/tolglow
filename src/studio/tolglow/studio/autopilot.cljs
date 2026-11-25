@@ -9,6 +9,7 @@
             [tolglow.studio.modulation :as modulation]))
 
 (def hdr-defaults {:gain 1 :white-mix 1 :spill 0 :spill-white-mix 1 :radius 1 :max-excess 1 :falloff :linear})
+
 (def defaults
   {:scope :global :targets {:brightness 0.5 :activity 0.4} :window {:bars 2} :interval {:beats 1}
    :duration {:bars 1} :strategy :gradual :preference :parameters :step 0.1 :tolerance 0.025
@@ -120,7 +121,9 @@
            (or name (events/wire-id id))])])]))
 
 (def unit-opts {:min 0 :max 1 :step 0.005 :percent? true})
+
 (def gain-opts {:min 0 :max 4 :step 0.025})
+
 (defn- bound [section controls signals path label opts]
   [signal/field [section path] label (get-in controls path) opts signals #(edit! section path %)])
 

@@ -11,20 +11,27 @@
 
 (def fixtures [{:id :a :universe 1 :address 1 :channels {:dimmer 1}}
                {:id :b :universe 1 :address 2 :channels {:dimmer 1}}])
+
 (def effect {:id :wash :version 1 :params {:level {:type :number :bounds [0 1] :default 0.5}}
              :outputs {:dimmer {:op :param :key :level}}})
+
 (def cue {:id :wash-cue :effect-id :wash :version 1})
+
 (defn model []
   (assoc (control/new-show {:registry {:effects {:wash effect} :cues {:wash-cue cue}}})
          :rig {:fixtures fixtures}))
+
 (defn command [model cmd time-ms]
   (control/apply-command model (merge {:command-id (str (random-uuid)) :source :manual
                                        :show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms} cmd)))
+
 (defn initial []
   (let [m (model)] {:model m :state (actions/initial-state m :floor)}))
+
 (defn advance [{:keys [model state]} op & [edits]]
   (actions/apply-decision model state (merge {:op op :domain :brightness :direction :up :amount 0.2
                                                :fixture-ids [:a :b] :duration {:beats 1}} edits) 0 command))
+
 (defn stop [{:keys [model state]}] (actions/stop model state 0 command))
 
 (deftest only-admitted-register-entries-and-manual-takeover

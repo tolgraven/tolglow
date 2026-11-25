@@ -28,7 +28,9 @@
    :state {:owned true} :assignments [] :contributions [] :intents [] :done? false})
 
 (defn blocks [result] (:contributions (runtime/append-contributions result [])))
+
 (defn frame-bytes [frame] (into {} (map (fn [[id values]] [id (vec values)])) (:universes frame)))
+
 (defn compiled-frame [definition input compile]
   (render/resolve-contributions fixtures (blocks ((compile definition) input))
                                 {:include-values? false :compact-values? true}))

@@ -18,6 +18,7 @@
       (finally (.disconnect conn)))))
 
 (defn- buffer [s] (ByteArrayInputStream. (.getBytes ^String s "UTF-8")))
+
 (defn- scenario! [service]
   (let [{:keys [url writer playback-path]} (relay/start! service "127.0.0.1")
         handler (web/app {:airplay-media (partial relay/studio-media service)})

@@ -5,10 +5,14 @@
             [tolglow.integrations.reference-position :as position]))
 
 (def ^:private provenance {:source-id :mpv :session-id "local-player-1" :clock-id :host-monotonic})
+
 (def ^:private a {:id "sha256:track-a" :version "sha256:profile-a"})
+
 (def ^:private b {:id "sha256:track-b" :version "sha256:profile-b"})
+
 (def ^:private catalog {"/tracks/A.wav" {:reference a :duration-ms 12000.0}
                        "/tracks/B.wav" {:reference b :duration-ms 15000.0}})
+
 (def ^:private baseline
   {"path" "/tracks/./A.wav" "stream-open-filename" "/tracks/A.wav"
    "pause" false "speed" 1.0 "seeking" false "paused-for-cache" false
@@ -16,7 +20,9 @@
    "remaining-file-loops" 0})
 
 (defn- wire [messages] (apply str (map #(str (json/write-str %) "\n") messages)))
+
 (defn- receive [state now & messages] (mpv/receive state now (wire messages)))
+
 (defn- snapshot [state now] (position/snapshot (:alignment state) now))
 
 (defn- reply [message value]
@@ -39,6 +45,7 @@
     (mpv/receive state received-at (wire (responses lines values)))))
 
 (defn- event [name] {:event name})
+
 (defn- property [id name data] {:event "property-change" :id id :name name :data data})
 
 (defn- locked []

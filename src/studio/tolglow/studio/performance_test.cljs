@@ -18,12 +18,16 @@
                 :instances [{:id "4:1" :cue-id "user/wash" :system {:opacity 0.8 :paused? false}}
                             {:id "4:2" :cue-id "user/sweep" :system {:opacity 0.6 :paused? true :release {:beats 2}}}
                             {:id "4:3" :cue-id "user/aim" :system {:opacity 1 :paused? false}}]}))
+
 (def instance-target {:instance-id "4:1"})
+
 (def group-target {:selector {:categories ["color" "movement"] :match "any"}})
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                (registrar/get-handler :event (first event))))))
+
 (defn command [result] (second (first (:fx result))))
 
 (deftest visible-membership-comes-from-server-groups-and-never-infers-output-tags

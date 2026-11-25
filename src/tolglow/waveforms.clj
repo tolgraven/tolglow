@@ -11,6 +11,7 @@
             [tolglow.signals :as signals]))
 
 (defn- fail! [message data] (throw (ex-info message (assoc data :type ::invalid-projection))))
+
 (defn- resolve-key [entries key]
   (cond (contains? entries key) key
         (and (string? key) (contains? entries (keyword key))) (keyword key)
@@ -102,6 +103,7 @@
                              :selection-digest (str (hash selection)) :context-digest (str (hash environment)) :options options})))
 
 (defn create-cache [] (atom {:entries {} :order []}))
+
 (defn cached-preview
   "Bounded off-deadline cache. Exact immutable inputs are keys; the public digest
   is only a UI identity, never a cache correctness decision."

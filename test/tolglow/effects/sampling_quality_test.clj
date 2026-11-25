@@ -4,8 +4,11 @@
             [tolglow.effects.cadence :as cadence]))
 
 (def dynamic {:op :floor :args [{:op :add :args [0.125 {:op :fract :args [{:op :beat}]}]}]})
+
 (def static {:op :floor :args [{:op :position :axis :x}]})
+
 (defn definition [expression] {:id :pulse :version 1 :outputs {:dimmer expression}})
+
 (defn captured [defn] {:effect-id (:id defn) :effect-version (:version defn) :definition defn})
 
 (deftest changing-values-in-a-separate-subtree-do-not-make-a-static-edge-dynamic

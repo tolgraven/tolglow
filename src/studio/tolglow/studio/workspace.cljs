@@ -13,35 +13,50 @@
    :profiles [] :runner-ready? false :selected-id nil :repo "tolglow" :trees {} :files {}
    :active-file nil :editor :text :pane :files :filter "" :new-path "" :diffs {}
    :create {:id "" :tolglow "HEAD" :afterglow "HEAD"} :creating? false :notice nil})
+
 (defonce resources (atom {}))
+
 (defn state [db] (merge defaults (get-in db [:ui :workspace])))
+
 (defn- store [db s] (assoc-in db [:ui :workspace] s))
+
 (defn- wire [x] (events/wire-id x))
+
 (defn token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn- current? [db t] (= t (token db)))
+
 (defn dirty? [file] (and file (not= (:source file) (:baseline file))))
+
 (defn- encode [x] (js/encodeURIComponent (str x)))
+
 (defn api-url [operation params]
   (str "/api/workspaces" (when operation (str "/" (name operation)))
        (when (seq params) (str "?" (str/join "&" (map (fn [[k v]] (str (encode (name k)) "=" (encode v))) params))))))
+
 (defn file-key [id repo path] [(wire id) (wire repo) path])
+
 (defn file-type [path]
   (case (str/lower-case (last (str/split path #"\.")))
     ("clj" "cljs" "cljc" "edn") "clojure" ("js" "mjs" "cjs" "jsx") "javascript"
     ("ts" "tsx") "typescript" "css" "css" "html" "html" "json" "json"
     ("md" "markdown") "markdown" "py" "python" ("sh" "bash") "sh"
     ("yaml" "yml") "yaml" "xml" "xml" "toml" "toml" "text"))
+
 (defn relative-path [raw]
   (let [path (str/trim raw) parts (str/split path #"/" -1)]
     (when (or (str/blank? path) (str/starts-with? path "/") (re-find #"[\\\x00-\x1f]" path)
               (some #(or (#{"" "." ".."} %) (= ".git" (str/lower-case %))) parts))
       (throw (js/Error. "Use a relative file path inside an existing repository directory."))) path))
+
 (defn- valid-source [source]
   (when-not (and (string? source) (<= (.-length (.encode (js/TextEncoder.) source)) 2097152))
     (throw (js/Error. "Text files are limited to 2 MiB."))) source)
+
 (defn profiles [value]
   (if (map? value) (mapv (fn [[id profile]] (assoc profile :id (wire id))) value)
       (mapv #(update % :id wire) value)))
+
 (defn change-summary [repo]
   (let [paths (vec (remove str/blank? (str/split-lines (:status repo ""))))
         counts (reduce (fn [result line]
@@ -53,6 +68,7 @@
                            :else result)) {:hunk? false :added 0 :removed 0} (str/split-lines (:diff repo "")))]
     {:paths paths :files (count paths) :untracked (count (filter #(str/starts-with? % "??") paths))
      :added (:added counts) :removed (:removed counts)}))
+
 (defn- request [db key operation params body context]
   (let [s (state db) serial (inc (:serial s)) t (token db)]
     {:db (store db (-> s (assoc :serial serial) (assoc-in [:pending key] serial) (update :errors dissoc key)))
@@ -61,7 +77,9 @@
                    :timeout-ms (if (= operation :create) 65000 15000)
                    :on-success [:workspace/result t key serial operation context]
                    :on-failure [:workspace/failure t key serial]}}))
+
 (defn- fail [db key error] {:db (store db (assoc-in (state db) [:errors key] (events/error-message error)))})
+
 (defn- accept-file [s key data reload?]
   (let [old (get-in s [:files key])]
     (if (and reload? (dirty? old))
@@ -69,6 +87,7 @@
       (assoc-in s [:files key]
                 (merge old data {:source (:content data) :baseline (:content data)
                                 :buffer-version (inc (:buffer-version old 0)) :disk nil :editor-ready? false})))))
+
 (defn- set-source [s key source]
   (valid-source source)
   (if (get-in s [:files key]) (-> s (assoc-in [:files key :source] source) (update :errors dissoc [:file key])) s))
@@ -321,12 +340,18 @@
 (rf/reg-event-fx :workspace/editor-input (fn [_ [_ keys]] {:workspace/editor-input keys}))
 
 (defn- set-field! [path event] (rf/dispatch-sync [:workspace/set path (.. event -target -value)]))
+
 (defn- navigate! [action] (rf/dispatch [:workspace/navigate action]))
+
 (defn- lookup [m key] (or (get m key) (get m (keyword (wire key))) (get m (wire key))))
+
 (defn- error-box [s key]
   (when-let [error (get-in s [:errors key])] [:p.workspace-error {:role "alert"} error]))
+
 (defn- short-hash [hash] (when (string? hash) (subs hash 0 (min 12 (count hash)))))
+
 (defn- status-label [value] (if value (str/replace (wire value) "-" " ") "Not run"))
+
 (defn- create-form [s]
   (let [busy? (boolean (get-in s [:pending :create]))]
     [:section.workspace-create-fields {:aria-label "Create a paired workspace"}
@@ -342,6 +367,7 @@
      [error-box s :create]
      [:button.button.primary {:type "button" :disabled busy? :on-click #(rf/dispatch [:workspace/create])}
       (if busy? "Creating paired branches…" "Create workspace")]]))
+
 (defn- tree-panel [s]
   (let [id (:selected-id s) repo (:repo s) tree (get-in s [:trees [id repo]])
         term (str/lower-case (:filter s))
@@ -376,6 +402,7 @@
        [:input {:type "text" :value (:new-path s) :placeholder "tolglow/new_effect.clj" :on-change #(set-field! [:new-path] %)}]]
       [error-box s :new-file]
       [:button.button {:type "button" :on-click #(navigate! [:workspace/new-file])} "Open new buffer"]]]))
+
 (defn- disk-review [key file]
   (when-let [disk (:disk file)]
     [:div.workspace-conflict
@@ -386,6 +413,7 @@
       [:button.button {:type "button" :disabled (boolean (:binary? disk)) :on-click #(rf/dispatch [:workspace/resolve-disk key :replace])} "Replace buffer with disk"]
       [:button.button {:type "button" :disabled (boolean (:binary? disk)) :on-click #(rf/dispatch [:workspace/resolve-disk key :baseline])} "Use disk as merge base"]
       [:button.button {:type "button" :on-click #(rf/dispatch [:workspace/resolve-disk key :discard-disk])} "Keep editing"]]]))
+
 (defn- editor-panel [s t]
   (let [key (:active-file s) file (get-in s [:files key]) saving? (boolean (get-in s [:pending [:write key]]))
         nvim? (= :neovim (:editor s))]
@@ -422,6 +450,7 @@
                   ^{:key label} [:button.button {:type "button" :on-click #(rf/dispatch [:workspace/editor-input keys])} label])]
            [:p.small.muted (:editor-status file "Starting actual Neovim…")]])
         [disk-review key file]])]))
+
 (defn- diff-panel [s]
   (let [id (:selected-id s) diff (get-in s [:diffs id]) busy? (boolean (get-in s [:pending [:diff id]]))]
     [:section.workspace-diffs {:aria-label "Paired workspace changes"}
@@ -445,6 +474,7 @@
                                                      (str/starts-with? line "+") "diff-added"
                                                      (str/starts-with? line "-") "diff-removed" :else nil)} (str line "\n")])]])
         (when (> (count lines) 6000) [:p.small.muted "Showing the first 6,000 diff lines. The full changes remain in the worktree."])])]))
+
 (defn- checks-panel [s]
   (let [id (:selected-id s) status (get-in s [:statuses id]) running (:running-checks status)
         preview (:preview status)]
@@ -552,6 +582,7 @@
             :terminal [:div.workspace-terminal-slot {:data-workspace-id selected-id :data-repository (:repo s)}
                        [terminal/panel selected-id (keyword (:repo s))]]
             nil)]))]))
+
 (def panel
   (r/create-class
    {:display-name "Development workspace"

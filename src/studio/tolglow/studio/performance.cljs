@@ -16,21 +16,30 @@
 
 (def defaults {:generation 0 :serial 0 :requests {} :errors {} :opacity {} :envelopes {}
                :group {:scope "categories" :categories [] :match "any" :envelope-open? false}})
+
 (defn- wire [value] (events/wire-id value))
+
 (defn visible-cue-rows [page full?]
   (if full? 8 (max 2 (min 8 (inc (reduce max 0 (keep :y (:cells page))))))))
+
 (defn card-definition [show instance]
   (or (:definition instance)
       (some #(when (= (wire (:id %)) (wire (:effect-id instance))) %) (:effects show))))
+
 (defn- state [db] (merge defaults (get-in db [:ui :performance])))
+
 (defn- store [db value] (assoc-in db [:ui :performance] value))
+
 (defn request-token [db] [(get-in db [:show :runtime-id]) (get-in db [:show :epoch]) (:generation (state db))])
+
 (defn target-key [target] (if-let [id (:instance-id target)] [:instance (wire id)] [:group (:selector target)]))
+
 (defn group-selector [form]
   (case (:scope form)
     "all" {}
     "categories" {:categories (vec (distinct (map wire (:categories form)))) :match (:match form "any")}
     {:categories [] :match "any"}))
+
 (defn selected-instances
   "Project current server group membership for a visible target list. The host
   remains responsible for validating and applying the eventual selector."
@@ -42,11 +51,13 @@
             sets (map #(get groups % #{}) wanted)
             ids (if (seq sets) (apply (if (= "all" (:match form)) set/intersection set/union) sets) #{})]
         (filterv #(ids (wire (:id %))) instances)))))
+
 (defn envelope-duration [value unit]
   (let [n (modulation/number-value value "Envelope duration")]
     (when-not (and (not (neg? n)) (#{"beats" "bars" "phrases" "ms"} unit))
       (throw (js/Error. "Use a nonnegative duration in beats, bars, phrases or explicit milliseconds.")))
     {(keyword unit) n}))
+
 (defn command-payload [target operation fields]
   (when-not (#{"instance/pause" "instance/resume" "instance/end" "instance/remove"
                "instance/opacity-set" "instance/opacity-toggle" "instance/envelope-set"} operation)
@@ -55,30 +66,37 @@
     (:instance-id target) [operation (assoc fields :instance-id (wire (:instance-id target)))]
     (map? (:selector target)) ["group/apply" {:selector (:selector target) :action (assoc fields :op operation)}]
     :else (throw (js/Error. "Choose a running instance or category group."))))
+
 (defn- target-instances [db target]
   (if-let [id (:instance-id target)]
     (filterv #(= (wire id) (wire (:id %))) (get-in db [:show :instances]))
     (let [selector (:selector target)]
       (selected-instances (:show db) {:scope (if (empty? selector) "all" "categories")
                                      :categories (:categories selector) :match (wire (:match selector "any"))}))))
+
 (defn- require-targets [db target]
   (when-not (seq (target-instances db target))
     (throw (js/Error. "No running instances match this selection."))))
+
 (defn opacity-value [show draft instances]
   (if (and draft (or (nil? (:revision draft)) (< (:revision show 0) (:revision draft))))
     (:value draft)
     (let [values (set (map #(get-in % [:system :opacity] 1) instances))]
       (when (= 1 (count values)) (first values)))))
+
 (defn- duration-form [duration]
   (if-let [[unit value] (when (map? duration) (first duration))]
     {:value (str value) :unit (wire unit)} {:value "0" :unit "beats"}))
+
 (defn envelope-form [s key stage instances]
   (let [values (set (map #(get-in % [:system stage]) instances))
         duration (when (= 1 (count values)) (first values))]
     (merge (duration-form duration) (get-in s [:envelopes key stage])
            {:current duration :mixed? (> (count values) 1)})))
+
 (defn- fail [db key error]
   {:db (store db (assoc-in (state db) [:errors key] (events/error-message error)))})
+
 (defn- send-action [db target operation fields]
   (require-targets db target)
   (let [s (state db) key (target-key target) serial (inc (:serial s)) token (request-token db)
@@ -189,12 +207,14 @@
 
 (defn- action-button [target operation label options]
   [:button.button (merge {:type "button" :on-click #(rf/dispatch [:performance/action target operation {}])} options) label])
+
 (defn- opacity-control [target value disabled?]
   [:div.performance-opacity
    [:label [:span "Opacity"] [:output (if (some? value) (str (js/Math.round (* 100 value)) "%") "Mixed")]]
    [:input {:type "range" :min 0 :max 1 :step 0.01 :value (or value 1) :disabled disabled?
             :aria-label "Effect opacity" :aria-valuetext (if (some? value) (str (js/Math.round (* 100 value)) " percent") "Mixed opacity values")
             :on-change #(rf/dispatch-sync [:performance/opacity target (.. % -target -value)])}]])
+
 (defn- envelope-stage [s key target stage instances disabled?]
   (let [form (envelope-form s key stage instances)
         title (str/capitalize (name stage))
@@ -220,6 +240,7 @@
                                   :on-click #(edit! :value value)} label])])
      [:button.button {:type "button" :disabled disabled? :on-click #(rf/dispatch [:performance/envelope-apply target stage])}
       (str "Apply " (str/lower-case title))]]))
+
 (defn- envelope-controls [s key target instances disabled?]
   (let [open? (boolean (get-in s [:envelopes key :open?]))]
     [:div.performance-envelope
@@ -231,6 +252,7 @@
         [:div.performance-envelope-grid
          [envelope-stage s key target :attack instances disabled?]
          [envelope-stage s key target :release instances disabled?]]])]))
+
 (defn instance-controls [instance & [options]]
   (when (:id instance)
     (let [{:keys [state key target instances opacity error]} @(rf/subscribe [:performance/instance (:id instance)])

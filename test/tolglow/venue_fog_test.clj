@@ -8,13 +8,17 @@
 
 (def fixture {:id :jet :universe 1 :address 12 :position [1 0 2] :channels {:fog 1}
               :fogger {:flow-m3-min 60 :mixing-seconds 2}})
+
 (def model (assoc (control/new-show {:registry {:effects {:jet {:id :jet :name "Fog" :version 1
                                                               :targets [:jet] :params {} :outputs {:fog 1}}}
                                               :cues {:go {:id :go :name "Activate" :version 1 :effect-id :jet}}}})
                   :rig {:fixtures [fixture] :room {:width 10 :height 5 :depth 4}}))
+
 (defn- command! [rt cmd t]
   (let [reply (show/submit! rt cmd)] (show/tick! rt t) @reply))
+
 (defn- state [rt] (get-in (show/snapshot rt) [:output :atmosphere]))
+
 (defn- amount [rt k] (get-in (state rt) [:sources 0 k]))
 
 (deftest simulated-dmx-controls-emission-and-show-restore-rebases-the-clock

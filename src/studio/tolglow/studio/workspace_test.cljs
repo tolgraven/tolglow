@@ -11,15 +11,20 @@
   (-> (events/initial-db "workspace-session")
       (assoc :show {:runtime-id "runtime-a" :epoch 4})
       (assoc-in [:ui :workspace] (assoc workspace/defaults :selected-id "lighting" :open? true))))
+
 (def active-key ["lighting" "tolglow" "tolglow/scene.clj"])
+
 (def file {:path "tolglow/scene.clj" :repo "tolglow" :hash "hash-a" :source "original" :baseline "original"
            :content "original" :binary? false :buffer-version 1})
+
 (def editing (-> base (assoc-in [:ui :workspace :active-file] active-key)
                  (assoc-in [:ui :workspace :files active-key] file)))
+
 (defn transition [db event]
   (reset! rf-db/app-db db)
   (:effects (interceptor/execute event (remove #(= :do-fx (:id %))
                                                (registrar/get-handler :event (first event))))))
+
 (defn success [result data]
   (transition (:db result) (conj (get-in result [:studio/http :on-success]) data)))
 

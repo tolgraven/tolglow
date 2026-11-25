@@ -18,14 +18,19 @@
             RejectedExecutionException TimeUnit]))
 
 (defn- fail! [code message] (throw (ex-info message {:app-agent/error code})))
+
 (defn- bounded-int? [x lo hi] (and (integer? x) (<= lo x hi)))
+
 (defn- bounded-text? [s limit] (and (string? s) (<= 1 (count s) limit) (not (str/includes? s "\u0000"))))
+
 (defn- clip [s limit] (let [s (str s)] (if (> (count s) limit) (str (subs s 0 limit) "…") s)))
+
 (defn- redact [value secret]
   (cond (string? value) (if (seq secret) (str/replace value secret "[REDACTED]") value)
         (map? value) (into {} (map (fn [[k v]] [k (redact v secret)])) value)
         (vector? value) (mapv #(redact % secret) value)
         :else value))
+
 (defn- task [manager id]
   (or (get-in @(:state manager) [:runs id]) (fail! :unknown-task "Unknown application-agent task")))
 
@@ -97,7 +102,9 @@
   ([manager id] @(:public (task manager id))))
 
 (def ^:private no-links (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
 (def ^:private private-file (into-array FileAttribute [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]))
+
 (defn- check-config-path! [^Path path]
   (loop [p path]
     (when p

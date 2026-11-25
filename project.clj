@@ -51,6 +51,7 @@
    :docker (fn [metadata]
              (= 'tolglow.studio.terminal-docker-test (ns-name (:ns metadata))))}
   :aliases {"check-requests" ["run" "-m" "tolglow.check-requests"]
+            "check-definition-spacing" ["run" "-m" "definition-spacing"]
             "test-pure" ["run" "-m" "tolglow.test-runner" "pure"]
             "test-parity" ["run" "-m" "tolglow.test-runner" "parity"]}
   :min-lein-version "2.13.1")

@@ -7,13 +7,18 @@
            :sources {:drums {:kind :midi :range [0 127] :timeout {:beats 8}}}
            :destinations {:wash {:cue-id :wash :param :level :range [0 1] :combine :max}}
            :routes [{:id :velocity :source :drums :destination :wash}]})
+
 (defn clock [beat] {:time-ms (* 500.0 beat) :beat beat :bpm 120 :playing? true :meter {:beats-per-bar 4 :bars-per-phrase 4}})
+
 (defn sample [id beat value gate?]
   {:source-id :drums :event-id id :epoch 3 :clock (clock beat) :value value :gate? gate? :confidence 1.0 :origin :live-playback})
+
 (defn frame [beat observations]
   {:epoch 3 :clock (clock beat) :observations observations :bindings {:wash :wash-1} :active-instances #{:wash-1}
    :envelope {:show-id :show :epoch 3 :command-id (str "frame-" beat)}})
+
 (defn near? [a b] (< (Math/abs (double (- a b))) 1.0e-8))
+
 (defn output [result] (get-in result [:values [:wash :wash-1]]))
 
 (deftest calibration-curves-inversion-quantization-and-bounds

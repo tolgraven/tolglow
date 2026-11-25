@@ -3,7 +3,9 @@
   (:require [afterglow.spatial.shape :as shape]))
 
 (def max-visible 12)
+
 (def resolution 30)
+
 (def grid-padding 1.24)
 
 (defn- body-shape [spec]

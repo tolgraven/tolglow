@@ -5,6 +5,7 @@
   (:import [java.lang.management ManagementFactory]))
 
 (def strides [1 2 4 8])
+
 (defn- op [name & args] {:op name :args (vec args)})
 
 (defn- spatial-target [depth]

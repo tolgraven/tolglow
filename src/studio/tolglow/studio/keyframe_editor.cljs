@@ -7,9 +7,13 @@
             [tolglow.transit :as transit]))
 
 (def defaults {:interval {:beats 1} :curve :linear})
+
 (def curve-types [:linear :smoothstep :sine :ease-in :ease-out :ease-in-out :step :cubic-bezier :spring])
+
 (defn- title [k] (-> (name k) (str/replace "-" " ") str/capitalize))
+
 (defn- text [e] (.. e -target -value))
+
 (defn- limit [lo x hi] (max lo (min x hi)))
 
 (defn- choose-curve [kind]

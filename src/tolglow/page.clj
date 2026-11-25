@@ -29,7 +29,9 @@
            [org.jogamp.vecmath Point3d Vector3d]))
 
 (def led-strips (at :fixture-type :strip))
+
 (def moving-heads (at :fixture-type :moving))
+
 (def all-groups (cfg :fixtures :groups))
 
 (defn create "Wrap builder functions"
@@ -71,6 +73,7 @@
     (apply create (name fn-key) x y opts))) )
 
 (defn far "Top/far end of page" [yb] (+ yb 7))
+
 (defn dummy [xb yb & {:keys [groups]}] (println xb yb groups))
 
 
@@ -259,6 +262,7 @@
 
 ;; (defonce draw-fn (atom nil))
 (defonce count-draw (atom 1))
+
 (defn draw [show snapshot & s]
  (swap! count-draw inc)
 ;;  (Thread/sleep 1000)
