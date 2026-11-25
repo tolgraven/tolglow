@@ -359,6 +359,24 @@
     (when-not queue (fail! :not-running "Terminal is not ready for input"))
     (when-not (.offer queue message) (fail! :input-capacity "Terminal input queue is full; wait for the reader"))))
 
+(defn- await-container-start! [manager id name ^Process process]
+  ;; Launching the local bridge does not mean Docker has started the shell.
+  ;; Studio fits the viewport immediately after opening, so Docker must already
+  ;; be able to execute the resize in the container by then.
+  (let [deadline (+ (System/nanoTime) (.toNanos TimeUnit/SECONDS 10))]
+    (loop []
+      (when (or (:closed? @(:state manager)) (= :closed (:state (session manager id))))
+        (throw (InterruptedException. "Terminal opening was cancelled")))
+      (when-not (.isAlive process)
+        (fail! :start-failed "The terminal bridge exited before Docker started the shell"))
+      (when (>= (System/nanoTime) deadline)
+        (fail! :start-timeout "Docker did not start the shell within the terminal startup budget"))
+      (let [{:keys [exit-code output timed-out?]}
+            (run-host! manager ["inspect" "--type" "container" "--format" "{{.State.Running}}" name] 1000)]
+        (when-not (and (not timed-out?) (= 0 exit-code) (= "true" (str/trim output)))
+          (Thread/sleep 50)
+          (recur))))))
+
 (defn open!
   "Open a real Docker/zsh PTY for an owned workspace. No input is evaluated on
   the host. Explicit operation; ordinary status/snapshot calls never open it."
@@ -385,6 +403,10 @@
       (when (= :closed (:state (session manager id))) (throw (InterruptedException. "Terminal opening was cancelled")))
       (let [argv (start-argv manager name)
             process (.start (ProcessBuilder. ^java.util.List [(:python manager) bridge-path (json/write-str {:argv argv :rows rows :cols cols})]))
+            _ (try (await-container-start! manager id name process)
+                   (catch Throwable error
+                     (.destroyForcibly process)
+                     (throw error)))
             writer (OutputStreamWriter. (.getOutputStream process) StandardCharsets/UTF_8)
             input-queue (ArrayBlockingQueue. 8)
             input-thread (Thread. (fn []
@@ -422,10 +444,9 @@
             (.destroyForcibly process)
             (throw (InterruptedException. "Terminal opening was cancelled")))
           (swap! (:state manager) update-in [:sessions id] assoc :state :running :process process :writer writer :reader reader
-                 :input-queue input-queue :input-thread input-thread))
-        (.setDaemon input-thread true) (.start input-thread)
-        (.setDaemon reader true) (.start reader)
-        (when (:closed? @(:state manager)) (send! (session manager id) {:op "close"}))
+                 :input-queue input-queue :input-thread input-thread)
+          (.setDaemon input-thread true) (.start input-thread)
+          (.setDaemon reader true) (.start reader))
         (public-session (session manager id)))
       (catch Throwable error
         (swap! (:state manager) update-in [:sessions id]
@@ -482,8 +503,10 @@
     observation/unavailable))
 
 (defn close-session! [manager id]
-  (let [s (session manager id)]
-    (swap! (:state manager) update-in [:sessions id] assoc :state :closed :closed-at-ms (System/currentTimeMillis))
+  (let [s (locking (:lock manager)
+            (let [s (session manager id)]
+              (swap! (:state manager) update-in [:sessions id] assoc :state :closed :closed-at-ms (System/currentTimeMillis))
+              s))]
     (when (:writer s) (try (send! s {:op "close"}) (catch Exception _)))
     (cleanup-container! manager (:container-name s))
     (when-let [^Process p (:process s)] (when-not (.waitFor p 1000 TimeUnit/MILLISECONDS) (.destroyForcibly p)))

@@ -148,6 +148,65 @@
         (is (= ["created" "removed"] (clojure.string/split-lines (slurp operations))))
         (.join worker 1000)))))
 
+(defn- with-delayed-terminal-start [f]
+  (fixtures/with-workspace {}
+    (fn [{:keys [manager root]}]
+      (workspace/create! manager {:id "delayed-start"})
+      (let [script (.toFile (.resolve ^Path root "docker-start-fixture"))
+            pending (.toFile (.resolve ^Path root "start-probed"))
+            allow (.toFile (.resolve ^Path root "allow-start"))
+            started (.toFile (.resolve ^Path root "started"))
+            removed (.toFile (.resolve ^Path root "removed"))
+            _ (spit script (str "#!/usr/bin/python3\nimport pathlib,sys,time\np=pathlib.Path(__file__).parent\na=sys.argv[1:]\n"
+                                "if a[:2]==['image','inspect'] or a[0]=='create': print('fixture')\n"
+                                "elif a[0]=='start':\n"
+                                " while not (p/'allow-start').exists() and not (p/'removed').exists(): time.sleep(.01)\n"
+                                " if not (p/'removed').exists(): (p/'started').touch()\n"
+                                " while not (p/'removed').exists(): time.sleep(.01)\n"
+                                "elif a[0]=='inspect':\n"
+                                " if not (p/'started').exists(): (p/'start-probed').touch()\n"
+                                " print(str((p/'started').exists()).lower())\n"
+                                "elif a[0]=='exec': sys.exit(0 if (p/'started').exists() else 1)\n"
+                                "elif a[0]=='rm': (p/'removed').touch()\n"
+                                "else: sys.exit(2)\n"))
+            _ (.setExecutable script true)
+            terminal (terminal/create-manager {:resolve-workspace #(workspace/runtime-paths manager %)
+                                               :docker (str script)})
+            result (promise)
+            worker (Thread. (fn [] (deliver result (try (terminal/open! terminal {:workspace-id "delayed-start"})
+                                                        (catch Throwable error error)))))]
+        (try
+          (.start worker)
+          (is (eventually #(or (.exists pending) (realized? result))))
+          (f {:terminal terminal :result result :allow allow :started started})
+          (finally
+            (terminal/close! terminal)
+            (.join worker 5000)
+            (is (not (.isAlive worker)))
+            (is (.exists removed))
+            (is (empty? (:pending-containers (terminal/status terminal))))))))))
+
+(deftest terminal-open-waits-for-the-container-to-accept-resize
+  (with-delayed-terminal-start
+    (fn [{:keys [terminal result allow started]}]
+      (is (not (realized? result)) "Opening must wait while Docker is still starting")
+      (is (= :starting (:state (first (:sessions (terminal/status terminal))))))
+      (spit allow "ready")
+      (let [{:keys [session-id state] :as opened} (deref result 5000 :timeout)]
+        (is (= :running state) (str opened))
+        (is (.exists started) "The open acknowledgement follows container startup")
+        (is (= [31 101] ((juxt :rows :cols) (terminal/resize! terminal session-id 31 101))))
+        (is (= :closed (:state (terminal/close-session! terminal session-id))))))))
+
+(deftest closing-a-terminal-during-start-cancels-the-open-acknowledgement
+  (with-delayed-terminal-start
+    (fn [{:keys [terminal result started]}]
+      (let [id (:session-id (first (:sessions (terminal/status terminal))))]
+        (is (= :closed (:state (terminal/close-session! terminal id))))
+        (is (instance? InterruptedException (deref result 5000 :timeout)))
+        (is (= :closed (:state (terminal/read-output terminal id 0))))
+        (is (not (.exists started)))))))
+
 (deftest terminal-output-leases-isolate-the-owned-repository-and-publish-bounded-byte-pages
   (let [bytes (.getBytes (apply str (repeat 70000 "x")) java.nio.charset.StandardCharsets/UTF_8)
         base {:chunks [] :state :running :first-cursor 0 :cursor 0 :workspace-id "lighting" :repo :tolglow}
