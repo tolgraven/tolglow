@@ -48,6 +48,28 @@ compare the tab with the committed page in the snapshot.
 (:recent-page (show/snapshot runtime))
 ```
 
+## Suspend automatic section patterns
+
+When the show starts with an enabled section pattern policy, open **Perform**
+and find **Section patterns** above the live controls. On a narrow screen, first
+select **Live**. **Suspend** and **Resume** send the shared show settings
+operation. **Override active** means the show has committed the suspension.
+**Override off** allows automatic patterns when the policy's timing and input
+conditions are met.
+
+After clicking **Suspend**, read the committed setting in the running REPL.
+Clear it there and verify that the open Studio view returns to **Override off**.
+Use `true` in the same command to suspend patterns from the REPL.
+
+```clojure
+(require '[tolglow.show :as show])
+
+(get-in (show/snapshot runtime) [:settings :section-patterns :override?] false)
+
+@(show/submit! runtime :settings
+               {:scope :section-patterns :values {:override? false}})
+```
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.
