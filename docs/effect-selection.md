@@ -95,6 +95,9 @@ restore. Commands with `:additive? false` and with the field omitted verify
 that a preceding additive action has no effect on later commands.
 [Replay and lifecycle tests](../test/tolglow/effects/selection_test.clj)
 
-The remaining operator work covers binding Solo and Mute controls in Studio and
-Push and checking the adapter's modifier release and device disconnect.
+Studio Perform provides Solo and Mute for individual running effects, category
+filters, and compound layers. Use Shift for an additive click or Add once on a
+touchscreen. The header exposes both defaults and each row displays its own
+selection and suppression state. Push bindings, modifier release, and device
+disconnect still need controller verification.
 [REPL and Studio parity](repl-studio-parity.md) · [Issue #532](https://github.com/tolgraven/tolglow/issues/532)
