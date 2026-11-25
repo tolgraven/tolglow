@@ -180,6 +180,22 @@
         (is (empty? (:instances (model runtime)))))
       (finally (show/stop! runtime)))))
 
+(deftest an-earlier-release-wins-across-the-two-ingress-queues
+  (let [runtime (show/create-runtime {:workspace-options nil})
+        source {:adapter :web :session-id "main"}
+        up {:op :cue/cancel-launch :command-id "release-first" :launch-command-id "down"
+            :reason :held-release :source source}
+        down {:op :cue/launch :cue-id :ember :command-id "down" :gesture-id "down"
+              :grid :off :launch {:mode :held} :source source}]
+    (try
+      (let [release (show/submit! runtime up)
+            press (show/submit! runtime down)]
+        (show/tick! runtime 500)
+        (is (= :cancelled (:status (deref release 1000 nil))))
+        (is (= :cancelled (:status (deref press 1000 nil))))
+        (is (empty? (:instances (model runtime)))))
+      (finally (show/stop! runtime)))))
+
 (deftest clock-selection-round-trip-invalidates-the-old-queue
   (let [runtime (show/create-runtime {:workspace-options nil})
         manager (connections/sync (:connections runtime))

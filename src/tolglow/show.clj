@@ -320,7 +320,7 @@
                     :output (render/resolve-frame patch [] {:include-values? (not batch?) :compact-values? batch?})
                     :status {}})
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
-      :lock (Object.) :running (atom true)
+      :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
       :clock clock :sink sink :pause-layer-cache (volatile! nil)
       :adaptive-keyframes (:adaptive-keyframes options) :cue-pad-previews (cue-pads/manager)
@@ -1091,6 +1091,11 @@
                                    options (or (pause-look/blackout? model) (zero? (:master model)))
                                    (assoc slot :timeline-id clock-id :output-context @(:patch runtime)))))
 
+(def ^:private ingress-order
+  (reify java.util.Comparator
+    (compare [_ left right]
+      (Long/compare (:ingress-order left) (:ingress-order right)))))
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -1110,8 +1115,10 @@
                  time-ms (max target (get-in before [:model :time-ms]))
                  messages (java.util.ArrayList.)
                  inline-registrations (volatile! {})
-                 _ (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
-                 _ (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
+                 ordinary-count (.drainTo ^LinkedBlockingQueue (:queue runtime) messages 256)
+                 release-count (.drainTo ^LinkedBlockingQueue (:cue-release-queue runtime) messages 256)
+                 _ (when (and (pos? ordinary-count) (pos? release-count))
+                     (.sort messages ingress-order))
                  _ (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) messages)))
                  reactive-error (volatile! nil)
                  actions (try (connections/drain-actions! (:connections runtime))
@@ -1466,7 +1473,8 @@
                accepted? (locking (:lock runtime)
                            (and @(:running runtime) (= epoch (get-in @(:state runtime) [:model :epoch]))
                                 (.offer ^LinkedBlockingQueue queue
-                                        {:type type :payload payload :reply reply :expected-epoch epoch})))]
+                                        {:type type :payload payload :reply reply :expected-epoch epoch
+                                         :ingress-order (vswap! (:ingress-order runtime) inc)})))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
