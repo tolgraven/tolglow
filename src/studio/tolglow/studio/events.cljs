@@ -182,6 +182,34 @@
       (and (get-in db [:audio-returns owner]) (not= old-routing new-routing))
       (update-in [:audio-returns owner] dissoc :baseline :submitted))))
 
+(defn- missed-cue-launches [db previous outcomes]
+  (when-not (identical? previous outcomes)
+    (let [own-miss? #(and (#{"missed" :missed} (:status %)) (owns-cue-launch? db %))
+          seen (into #{} (comp (filter own-miss?) (keep :command-id)) previous)]
+      ;; The owner publishes an ordered, bounded suffix of terminal receipts.
+      ;; Compare to the installed view, which survives stream reconnects.
+      (second (reduce (fn [[seen missed :as acc] {:keys [command-id] :as outcome}]
+                        (if (and command-id (not (contains? seen command-id)) (own-miss? outcome))
+                          [(conj seen command-id) (conj missed outcome)]
+                          acc)) [seen []] outcomes)))))
+
+(defn- cue-miss-cause [{:keys [reason code]}]
+  (cond
+    (#{"clock-changed" :clock-changed} reason) "the show clock changed"
+    (#{"unknown-cue" :unknown-cue} code) "the cue was removed"))
+
+(defn- cue-miss-message [db previous outcomes]
+  (let [by-cause (group-by cue-miss-cause outcomes)]
+    (str/join " " (for [cause (distinct (map cue-miss-cause outcomes))
+                       :let [launches (get by-cause cause)
+                             cue-id (:cue-id (first launches))
+                             cue-name (or (:name (cue db cue-id)) (:name (cue previous cue-id))
+                                          (some-> cue-id wire-id (str/replace #"[-_]" " ")) "Cue")]]
+                    (str (if (= 1 (count launches))
+                           (str cue-name " missed its scheduled launch")
+                           (str (count launches) " scheduled launches missed"))
+                         (when cause (str " because " cause)) ".")))))
+
 (defn- install-show [db server]
   (let [presentation (projection/presentation (:view server)
                                               (get-in db [:server-projection :view]) (:server-presentation db))
@@ -189,6 +217,9 @@
         drafts (if runtime-changed? {} (outstanding-drafts (:drafts db) presentation))
         order (snapshot-order presentation)
         show (apply-drafts presentation drafts)
+        previous (when (= (projection/identity-of show) (projection/identity-of (:server-presentation db)))
+                   (:server-presentation db))
+        missed (missed-cue-launches db (:cue-launch-outcomes previous) (:cue-launch-outcomes show))
         page-id (get-in db [:ui :page-id])
         selected (get-in db [:ui :selected-instance])
         epoch-changed? (or runtime-changed? (and (:show db) (not= (get-in db [:show :epoch]) (:epoch show))))
@@ -232,7 +263,8 @@
            (and (nil? (:show db)) (get-in updated [:ui :workspace :open?]))
            (conj [:dispatch [:workspace/list]])
            (or epoch-changed? (not (:settings-loaded? db)))
-           (conj [:dispatch [:studio/settings-received (or (:settings show) {})]]))}))
+           (conj [:dispatch [:studio/settings-received (or (:settings show) {})]])
+           (seq missed) (conj [:dispatch [:studio/failure (cue-miss-message updated {:show previous} missed)]]))}))
 
 (rf/reg-event-db :studio/stream-opening
   (fn [db [_ session id]]
@@ -369,11 +401,9 @@
         (and (= mode "toggle") (seq instances)) {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) instances)}
         :else {:fx [(launch-fx db cue-id mode [:studio/launched owner] {:grid grid :command-id unique})]}))))
 (rf/reg-event-fx :studio/launched
-  (fn [{:keys [db]} [_ owner {:keys [instance-id status]}]]
-    (when (current-show? (:show db) owner)
-      (cond
-        instance-id {:db (assoc-in db [:ui :selected-instance] instance-id)}
-        (#{"missed" :missed} status) {:dispatch [:studio/failure "The scheduled cue could not launch."]}))))
+  (fn [{:keys [db]} [_ owner {:keys [instance-id]}]]
+    (when (and instance-id (current-show? (:show db) owner))
+      {:db (assoc-in db [:ui :selected-instance] instance-id)})))
 (rf/reg-event-fx :studio/end-all
   (fn [{:keys [db]} _] {:fx (mapv #(command db "instance/end" {:instance-id (:id %)}) (get-in db [:show :instances]))}))
 
@@ -483,12 +513,11 @@
        :dispatch [:studio/reconcile-held]})))
 
 (rf/reg-event-fx :studio/held-launched
-  (fn [{:keys [db]} [_ {:keys [pointer-id press-id grid] :as owner} {:keys [instance-id status]}]]
+  (fn [{:keys [db]} [_ {:keys [pointer-id press-id grid] :as owner} {:keys [instance-id]}]]
     (let [pressed? (and (current-show? (:show db) owner) (= press-id (get-in db [:pointers pointer-id :press-id])))]
       (cond
         (and pressed? instance-id) {:db (-> db (assoc-in [:pointers pointer-id :instance-id] instance-id)
                                             (assoc-in [:ui :selected-instance] instance-id))}
-        (and grid pressed? (#{"missed" :missed} status)) {:dispatch [:studio/failure "The scheduled cue could not launch."]}
         ;; Grid holds release by command ID, even if the launch reply arrives late.
         grid nil
         (nil? instance-id) {:db (assoc db :recover-held? true) :dispatch [:studio/reconcile-held]}

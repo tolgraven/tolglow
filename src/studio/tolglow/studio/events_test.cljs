@@ -195,6 +195,53 @@
     (is (empty? (transition unqueued [:studio/cancel-queued-cue "own"])))
     (is (nil? (views/queued-cues unqueued)))))
 
+(defn- launch-failures [effects]
+  (keep (fn [[kind [event message]]]
+          (when (and (= :dispatch kind) (= :studio/failure event)) message)) (:fx effects)))
+
+(deftest committed-cue-misses-notify-the-owning-session-once-through-reconnect
+  (let [session (:session base)
+        source {:adapter :web :session-id session}
+        fence {:status :missed :command-id "clock" :cue-id :violet-haze :reason :clock-changed :source source}
+        deleted {:status :missed :command-id "deleted" :cue-id :ember :code :unknown-cue :source source}
+        outcomes [fence deleted
+                  (assoc-in fence [:source :session-id] "different-ipad")
+                  (assoc-in (assoc deleted :command-id "midi") [:source :adapter] :push-3)
+                  (assoc fence :status :fired :command-id "fired" :instance-id "7:unrelated")
+                  (assoc fence :status :cancelled :command-id "cancelled")]
+        view (-> (:show base)
+                 (assoc :runtime-id "host" :show-id :main :cue-launch-outcomes [])
+                 (assoc-in [:cues 0 :name] "Ember wash"))
+        installed (:db (full-frame base view))
+        patch {:protocol projection/protocol :kind :patch :base-token "full" :token "misses"
+               :identity (projection/identity-of view)
+               :changes [[:set [:frame-number] 13] [:set [:cues] []] [:set [:cue-launch-outcomes] outcomes]]}
+        reported (stream-event installed patch)
+        duplicate (stream-event (:db reported) patch)
+        closed (:db (transition (:db duplicate) [:studio/stream-closed session "connected" "interrupted"]))
+        replacement (assoc view :frame-number 14 :cues [] :cue-launch-outcomes outcomes)
+        reconnected (full-frame closed replacement)
+        next-outcome (assoc fence :command-id "another" :cue-id nil :source (assoc source :adapter "web"))
+        next-snapshot (full-frame (:db reconnected) (assoc replacement :frame-number 15
+                                                         :cue-launch-outcomes [deleted next-outcome]))]
+    (is (= ["violet haze missed its scheduled launch because the show clock changed. Ember wash missed its scheduled launch because the cue was removed."]
+           (launch-failures reported)))
+    (is (= "7:9" (get-in reported [:db :ui :selected-instance])))
+    (is (= ["connected" {:op :ack :token "misses"}] (:studio/stream-reply reported)))
+    (is (nil? (:studio/http reported)))
+    (is (empty? (launch-failures duplicate)))
+    (is (empty? (launch-failures reconnected)))
+    (is (= ["Cue missed its scheduled launch because the show clock changed."] (launch-failures next-snapshot)))))
+
+(deftest missed-http-replies-defer-to-the-committed-stream
+  (let [db (-> base (assoc-in [:show :runtime-id] "host") (assoc-in [:ui :selected-instance] "7:9"))
+        launch (first-command (transition db [:studio/launch "ember" "one-shot" {:grid "off"}]))
+        held (transition (-> db (assoc-in [:ui :launch-mode] "held") (assoc-in [:ui :launch-grid] "bar"))
+                         [:studio/gesture-down {:pointer-id 7 :cue-id "ember"}])
+        reply {:status "missed" :code "unknown-cue"}]
+    (is (empty? (transition db (conj (:on-success launch) reply))))
+    (is (empty? (transition (:db held) (conj (:on-success (first-command held)) reply))))))
+
 (deftest only-the-current-press-can-open-its-cue-actions
   (let [pad {:pointer-id 1 :cue-id "ember" :x 0 :y 0 :client-x 5 :client-y 5}
         down (transition base [:studio/gesture-down pad])
