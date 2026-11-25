@@ -22,6 +22,19 @@
   (is (= [:params :unknown] (:path (first (registry/validate-params (:params effect) {:unknown 3})))))
   (is (thrown? clojure.lang.ExceptionInfo (registry/resolve-params (:params effect) {:level 2}))))
 
+(deftest gradients-publish-and-resolve-with-ordered-typed-stops
+  (let [red {:position 0 :color [1 0 0]}
+        blue {:position 1 :color [0 0 1]}
+        schema {:type :gradient :default [red blue]}
+        effect (assoc-in effect [:params :gradient] schema)
+        published (registry/publish {} :effects effect)]
+    (is (= [red blue] (:gradient (registry/resolve-params
+                                   (get-in published [:effects :red :params]) {}))))
+    (is (= [blue] (:gradient (registry/resolve-params
+                               (get-in published [:effects :red :params]) {:gradient [blue]}))))
+    (doseq [invalid [[] [1] [blue red] [red red] [(assoc blue :color [0 -1 1])]]]
+      (is (seq (registry/validate-parameter (assoc schema :default invalid)))))))
+
 (deftest malformed-schemas-have-diagnostics
   (doseq [schema [nil [] {:type :enum :values 5 :default :a}
                   {:type :number :default 0 :bounds [5 1]}

@@ -53,7 +53,7 @@
 
 (defn valid-value?
   "Test a parameter value against a normalized schema. Does not coerce types."
-  [{:keys [type bounds values size]} value]
+  [{:keys [type bounds values size] :as schema} value]
   (let [numeric? #(and (finite-number? %) (bounded? bounds %))]
     (case type
       :number (numeric? value)
@@ -62,6 +62,7 @@
       :enum (and (vector? values) (boolean (some #(= value %) values)))
       :color (and (vector? value) (= 3 (count value))
                   (every? #(and (numeric? %) (<= 0 % 1)) value))
+      :gradient (params/valid-value? schema value)
       :vector (and (vector? value) (= size (count value)) (every? numeric? value))
       :range (and (ordered-pair? value) (every? numeric? value))
       false)))
@@ -76,7 +77,7 @@
            numeric-types #{:number :integer :color :vector :range}]
        (vec
         (concat
-         (when-not (#{:number :integer :boolean :enum :color :vector :range} type)
+         (when-not (#{:number :integer :boolean :enum :color :gradient :vector :range} type)
            [(error (conj path :type) "Unsupported parameter type")])
          (when-not (contains? schema :default)
            [(error (conj path :default) "Parameter needs an explicit default")])
