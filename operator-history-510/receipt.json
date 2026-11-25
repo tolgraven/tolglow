@@ -1,0 +1,29 @@
+{
+  "sourceRevisions": {
+    "tolglow": "ed7f1f1902b5ec99e79aa28b7ddd0625e5f908bf",
+    "afterglow": "db5031d8eb7ca9be7b008aece7407b0d95d6f618"
+  },
+  "optimizedAssetSha256": "315f72f4c622ec2ca7014b91e8412fd81a392233b6a182f07a46a25ee3e99ab4",
+  "transport": {
+    "midi": "simulated Push 2 with SysEx LED replies",
+    "dmx": "in-process capture sink"
+  },
+  "frameCount": 71,
+  "browserErrors": [],
+  "deviceErrors": [],
+  "actions": [
+    "Five captured MIDI detents changed the live level during touch",
+    "Knob release grouped five samples into one Studio-visible edit",
+    "Second Push turn committed an independent edit",
+    "Undo restored the first turn",
+    "Redo restored the original second turn",
+    "A new Push turn forked history and kept the original branch",
+    "Cue filtering retained branch ancestors",
+    "Keyboard selected a read-only alternate preview",
+    "Apply traversed both sides of the fork and committed captured output",
+    "Redo at the fork required choosing a child",
+    "Escape closed the modal and restored launcher focus",
+    "390px touch view kept the branch, preview and controls within the viewport",
+    "390px touch applied the alternate branch and closed the modal"
+  ]
+}
