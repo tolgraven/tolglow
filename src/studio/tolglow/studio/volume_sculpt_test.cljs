@@ -1,6 +1,8 @@
 (ns tolglow.studio.volume-sculpt-test
   (:require [cljs.test :refer-macros [deftest is]]
             [afterglow.spatial.shape :as shape]
+            [re-frame.core :as rf]
+            [re-frame.db :as rf-db]
             [tolglow.studio.spatial-drafts :as drafts]
             [tolglow.studio.volume-geometry :as geo]
             [tolglow.studio.volume-sculpt :as sculpt]))
@@ -50,6 +52,34 @@
         (doseq [p points]
           (is (= ((:inside? before) p) ((:inside? after) p)))
           (is (< (abs (- ((:distance before) p) ((:distance after) p))) 1e-10)))))))
+
+(deftest combining-the-whole-ball-edits-its-attached-shape
+  (let [restore (rf/make-restore-fn)
+        ball {:shape :ball :position [2 3 1] :radius 0.9 :velocity [1 2 0] :restitution 0.6
+              :scale [2 1 1] :translation [0.5 0 0] :falloff {:outer-m 0.3} :selection #{:position}}
+        points [[0.9 3 1] [3.1 3 1] [5.3 3 1] [6.5 3 1]]]
+    (try
+      (doseq [attached [nil (geo/primitive :rounded-box)]
+              [operation included] [[:union [true true true false]]
+                                    [:intersection [false true false false]]
+                                    [:difference [true false false false]]]]
+        (let [volume (cond-> ball attached (assoc :geometry attached))
+              draft (assoc sculpt/initial :volume volume)]
+          (reset! rf-db/app-db (drafts/update-ui db assoc :sculpt draft))
+          (rf/dispatch-sync [::sculpt/combine operation])
+          (let [{composed :volume :keys [path]} (sculpt/model @rf-db/app-db)
+                {:keys [inside?]} (shape/prepare composed)
+                publication (sculpt/publish @rf-db/app-db :cue "combine")]
+            (is (= ball (dissoc composed :geometry)))
+            (is (= operation (get-in composed [:geometry :shape])))
+            (is (= (or attached (assoc (geo/primitive :sphere) :radius (:radius ball)))
+                   (get-in composed [:geometry :parts 0])))
+            (is (= [:geometry :parts 1] path))
+            (is (= included (mapv inside? points)))
+            (is (= composed (get-in publication [:studio/http :body :volume]))))
+          (rf/dispatch-sync [::sculpt/undo])
+          (is (= draft (sculpt/model @rf-db/app-db)))))
+      (finally (restore)))))
 
 (deftest drag-and-undo-stage-once-and-cancel-restores-the-original
   (let [start (sculpt/gesture db {:type "sculpt-begin" :token 7 :point [0 1 0]})
