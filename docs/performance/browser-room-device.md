@@ -89,3 +89,5 @@ The browser sample prepares the pass collector first and starts it on the same s
 | `ROOM_KEEP_PAGE=1` | Leaves the benchmark tab open after the run. |
 
 `simple-fixed-loop` removes the adaptive plume subdivision from the production fog integrator and nothing else. `no-composite-fallback` removes the composite's empty-gather fallback raymarch. `full-no-timers` keeps the timer extension enabled and issues no queries. The composite and attribution comparisons don't request the timer extension at all. The probes rewrite exact fog shader source, and `test/js/preview/room-pass-browser.test.mjs` fails if those rewrites stop matching `js/preview/fog.js`.
+
+The manual preview's local fog field decays toward empty air with a 100-second time constant (`js/preview/fog-field.js`). The comparisons were first run on the superseded #489 branch, which retained a constant background haze. On master each later sample in a sequence renders a thinner medium than the one before it. `policySamples` records the mean and maximum density every second. Check that the two `full` samples agree before attributing a difference to the sample between them.
