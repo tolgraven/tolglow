@@ -653,6 +653,20 @@
             (is (== 0.35 (get-in by-id [affected :system :opacity]))))))
       (finally (show/stop! runtime)))))
 
+(deftest callback-error-details-keep-nested-locations-and-rethrow-owner-failures
+  (let [inner (ex-info "Gain lookup failed" {:path [:variables :qa :gain] :secret "omit-this"})
+        details (sub/error-details (RuntimeException. "Callback wrapper" inner))]
+    (is (= "java.lang.RuntimeException" (:class details)))
+    (is (seq (:stacktrace details)))
+    (is (= [{:class "clojure.lang.ExceptionInfo" :message "Gain lookup failed"
+             :location {:path [:variables :qa :gain]}}]
+           (:causes details))))
+  (is (not (contains? (sub/error-details (ex-info "No location" {:secret "omit-this"})) :causes)))
+  (doseq [owner [(InterruptedException. "Cancelled")
+                 (ex-info "Wrapped cancellation" {:path [:x]} (InterruptedException. "Cancelled"))
+                 (StackOverflowError.)]]
+    (is (identical? owner (try (sub/error-details owner) nil (catch Throwable thrown thrown))))))
+
 (defn- play-kick! [runtime]
   (let [model #(:model @(:state runtime))
         start (:time-ms (model))]
