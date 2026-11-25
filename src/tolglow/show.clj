@@ -60,6 +60,7 @@
             [afterglow.reactive.registry :as reactive-registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.cues :as spatial-cues]
+            [tolglow.spatial.sampling :as spatial-sampling]
             [tolglow.spatial.targets :as targets]
             [tolglow.authoring.output-patch :as output-patch]
             [tolglow.authoring.variation-control :as variations]
@@ -381,7 +382,12 @@
                                                                              (rdm/register-status! rdm-state) (spatial/register! nil)))))
          worker-pool (try (executor/create {:workers workers :queue-size 64
                                             :timeout-ms (:worker-timeout-ms options 500)})
-                          (catch Exception error (connections/close! owned) (throw error)))]
+                          (catch Exception error (connections/close! owned) (throw error)))
+         field-sampler (try (spatial-sampling/create (:spatial-sampling options))
+                            (catch Exception error
+                              (.close ^java.io.Closeable worker-pool)
+                              (connections/close! owned)
+                              (throw error)))]
      (let [development (try (development/create
                              (when-let [workspace-options (if (contains? options :workspace-options)
                                                             (:workspace-options options) (development/default-options))]
@@ -389,6 +395,7 @@
                                       (assoc (merge (:app-agent-options workspace-options) (:app-agent-options options))
                                              :credential-store (get-in owned [:options :agent-options :credential-store])))))
                             (catch Exception error
+                              (.close ^java.io.Closeable field-sampler)
                               (.close ^java.io.Closeable worker-pool)
                               (connections/close! owned)
                               (throw error)))
@@ -426,6 +433,7 @@
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
       :independent-output? (boolean (:independent-output? options))
       :executor worker-pool
+      :spatial-sampling field-sampler
       :leases (atom {})
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
@@ -463,6 +471,8 @@
   "Create an unscheduled show. The CPU backend is the default. Explicit
   :compute-backend :native-gpu acquires one session owned by this show.
   :worker-timeout-ms sets the per-frame effect worker deadline (default 500).
+  :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
+  workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
   capture at owner boundaries. :section-reference can supply a versioned
   :profile, initial source :provenance and :position-options. Reconnect a
@@ -531,6 +541,18 @@
               result (:events result))
 
       :else result)))
+
+(defn- committed-values
+  "ID -> row lookup into the last committed frame, rich or compact. Rows are
+  projected only when looked up, so ordinary launches pay nothing. tick! binds
+  it to aim-paths/*committed-values* for its owner cycle only."
+  [runtime]
+  (when-let [{:keys [values compact]} (some-> runtime :state deref :output)]
+    (let [indices (delay (when compact (zipmap (:target-order compact) (range))))]
+      (fn [id]
+        (or (get values id)
+            (when-let [index (and compact (get @indices id))]
+              (first (render/project-compact compact [index]))))))))
 
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
@@ -875,8 +897,9 @@
                 (update :revision inc)) :ack {:status :accepted}}
     :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
-    (let [definition (aim-paths/definition model payload)
+    (let [definition (aim-paths/definition model payload aim-paths/*committed-values*)
           id (:id definition)
+          synchronized? (get-in definition [:editor :sync-arrival?])
           requested-cue-id (:cue-id payload id)
           wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
           previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
@@ -889,12 +912,17 @@
           _ (when (= :rejected (get-in published [:ack :status]))
               (throw (ex-info "Cannot publish aim path" (:ack published))))
           cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (aim-paths/next-version (:registry model) :cues cue-id) :reload-policy :preserve-state})
+                               :version (aim-paths/next-version (:registry model) :cues cue-id)
+                               :reload-policy (if synchronized? :pinned :preserve-state)})
           result (apply-message (:model published)
                                 {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
       (when (= :rejected (get-in result [:ack :status]))
         (throw (ex-info "Cannot publish aim path cue" (:ack result))))
-      (update result :ack assoc :effect-id id :cue-id cue-id :version (:version definition)))
+      (update result :ack merge
+              (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
+                synchronized?
+                (assoc :arrival-duration (get-in definition [:editor :arrival-duration])
+                       :arrival-duration-ms (get-in definition [:editor :arrival-duration-ms])))))
     :modulation-cue
     (let [id (:id payload) config (:modulation payload)
           previous (get-in model [:registry :effects id])
@@ -1593,9 +1621,14 @@
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
          restoring-device (volatile! nil)
          committed-fault-events (volatile! [])
-         author-request (volatile! nil)]
+         author-request (volatile! nil)
+         committed-bound? (volatile! false)]
      (try
        (locking (:lock runtime)
+         ;; Launch checks read the last committed frame only on this owner
+         ;; thread, under the lock and before the next frame is resolved.
+         (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)})
+         (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
                  time-ms (max target (get-in before [:model :time-ms]))
@@ -1713,7 +1746,8 @@
                                           (:modulation-view before))
                            patch (patch! runtime (get-in model [:rig :fixtures]))
                            space (when (or (get-in model [:settings :spatial :enabled?]) (get-in model spatial/state-path) (spatial-cues/needed? model))
-                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command))
+                                   (spatial/advance model (assoc before :modulation-view control-view) time-ms (reactions runtime) command
+                                                    (:spatial-sampling runtime)))
                            model (or (:model space) model)
                            conductor? (autopilot-config/enabled? model)
                            calibrating? (or photo-session (calibration/current model) (get-in model [:extensions :tolglow.rig.fog-calibration/session]))
@@ -1955,6 +1989,7 @@
                  (swap! (:state runtime) assoc :cadence
                         (cadence/finish (assoc sampling :defer-live-slowdown? defer?) (:model next-state) elapsed)))))))
        (finally
+         (when @committed-bound? (pop-thread-bindings))
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
@@ -2142,6 +2177,7 @@
                                        (reset! (:devices runtime) {})))
 
                               #(.close ^java.io.Closeable (:executor runtime))
+                              #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
                               (fn [] (when-let [close! (get-in runtime [:sink :close!])] (close!)))])]
         (try (cleanup) (catch Exception error
                          (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))))

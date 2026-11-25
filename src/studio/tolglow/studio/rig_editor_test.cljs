@@ -112,6 +112,44 @@
         (is (= "draw" (:tool state))))
       (finally (restore)))))
 
+(deftest synchronized-paths-are-listed-reopened-and-sent-with-an-explicit-flag
+  (let [restore (rf/make-restore-fn)]
+    (try
+      (let [synced {:id "paired" :version 3 :name "Paired" :targets ["head"]
+                    :editor {:type "synchronized-aim-path" :points [[1 0 0] [2 1 0]] :duration {:bars 2}
+                             :mode "once" :curve "linear" :closed? false :sync-arrival? true}}
+            plain {:id "sweep" :version 1 :targets ["head"]
+                   :editor {:type "aim-path" :points [[1 0 0] [2 1 0]] :duration {:beats 4} :mode "loop" :curve "sine" :closed? false}}
+            db (-> base (assoc-in [:show :effects] [synced plain {:id "other" :editor {:type "keyframes"}}])
+                   (assoc-in [:show :cues] [{:id "paired-cue" :effect-id "paired"}]))
+            loaded (:db (transition db [:rig-editor/load-path "paired"]))
+            request (editor/publish-request loaded true "next")
+            converted (editor/publish-request
+                       (editor/put-editor loaded (-> (editor/editor loaded) (assoc-in [:path :sync-arrival?] false)
+                                                     (assoc-in [:path :mode] "loop") (assoc-in [:path :duration-unit] "beats")))
+                       false "back")
+            plain-request (editor/publish-request (:db (transition db [:rig-editor/load-path "sweep"])) false "plain")]
+        (is (= ["paired" "sweep"] (mapv :id (editor/path-effects db))))
+        (is (true? (get-in (editor/editor loaded) [:path :sync-arrival?])))
+        (is (= {:bars 2} (get-in request [:body :duration])))
+        (is (= [true "once" "linear" false] ((juxt :sync-arrival? :mode :curve :closed?) (:body request))))
+        (is (= 3 (get-in request [:body :expected-version])))
+        (is (= "persistent" (nth (:on-success request) 3)) "A synchronized move holds its endpoint after Create + run")
+        (is (= [false "loop" {:beats 2}] ((juxt :sync-arrival? :mode :duration) (:body converted)))
+            "Studio can convert a synchronized path back to an ordinary musical path")
+        (is (false? (get-in plain-request [:body :sync-arrival?])))
+        (let [zero (-> (editor/editor loaded) (assoc-in [:path :duration-value] 0) (assoc-in [:path :duration-unit] "beats"))
+              toggled (:db (transition (editor/put-editor loaded zero) [:rig-editor/sync-arrival false]))]
+          (is (= [false 4 "bars"] ((juxt :sync-arrival? :duration-value :duration-unit) (:path (editor/editor toggled))))
+              "Leaving sync with the default zero minimum restores a positive musical duration")
+          (is (= {:bars 4} (get-in (editor/publish-request toggled false "zero") [:body :duration]))))
+        (is (= [2 "bars"] ((juxt :duration-value :duration-unit)
+                           (:path (editor/editor (:db (transition loaded [:rig-editor/sync-arrival false]))))))
+            "A positive minimum is kept")
+        (is (= "Aim path cue created. Heads arrive together after 4.00 s at the current tempo."
+               (editor/published-message {:arrival-duration-ms 4000}))))
+      (finally (restore)))))
+
 (deftest surface-aim-keeps-target-order-and-binds-commands-to-the-displayed-show
   (let [state (assoc (editor/editor base) :tool "aim" :targets ["rig/first" "second"] :along "negative-u")
         db (editor/put-editor base state)
