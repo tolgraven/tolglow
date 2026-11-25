@@ -135,6 +135,13 @@ dependency=$(git rev-parse HEAD)
 change native/macOS/Studio.swift
 expect 'A mobile target imports a macOS source' true true pull_request "$dependency" HEAD
 
+git switch --quiet -c mobile-prefixed-dependency "$base"
+sed -i '/  TolglowPhone:/a\    settings:\n      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/macOS/Bridge.h' native/project.yml
+git commit --quiet -am 'Point the phone bridge at a prefixed macOS path'
+dependency=$(git rev-parse HEAD)
+change native/macOS/Bridge.h
+expect 'A build setting can use a project-relative macOS source' true true pull_request "$dependency" HEAD
+
 git switch --quiet -c local-package "$base"
 printf '\npackages:\n  DesktopCore:\n    path: macOS\n' >> native/project.yml
 git commit --quiet -am 'Add a local macOS package to the shared project'

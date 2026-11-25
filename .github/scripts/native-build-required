@@ -79,7 +79,8 @@ def references_desktop(node):
         return STUDIO in node or any(references_desktop(value) for value in node.values())
     if isinstance(node, list):
         return any(references_desktop(value) for value in node)
-    return node[0] == STUDIO or node[0].startswith(("macOS/", "./macOS/"))
+    value = node[0]
+    return STUDIO in value or re.search(r"(?<![\w.-])macOS/|/macOS(?![\w./-])", value) is not None
 
 
 def non_studio_project(revision):
@@ -99,6 +100,8 @@ def non_studio_project(revision):
     if studio["platform"][0] != "macOS" or paths(studio) != {"macOS"}:
         raise ValueError("Expected the Studio target to own only macOS sources")
     # The Studio target must be isolated from the native regression schemes.
+    if references_desktop(project.get("settings", {})):
+        raise ValueError("Shared build settings use Studio sources")
     packages = project.get("packages", {})
     if not isinstance(packages, dict) or any(
         not isinstance(package, dict) or ("path" in package and source_root(package["path"]) == "macOS")
