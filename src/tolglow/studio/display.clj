@@ -220,22 +220,32 @@
   :sink maps. One capture is in flight and one latest pending view is retained.
   With :project! or :pre-project!, the last immutable view is re-projected at
   the bounded cadence. :pre-project! runs before :project!, and :presented!
-  receives the final view after the sink renders. All run on the display worker.
+  receives the final view after the sink renders. With :presentation-receipts?,
+  the same hook also reports to the device. An asynchronously presenting sink
+  supplies :render-with-receipt! so its transfer worker can complete the receipt.
   Session :render! only submits a view. Failures are visible through status!;
   resources close on the worker. close! waits at most :shutdown-timeout-ms."
-  [{:keys [capture sink max-fps shutdown-timeout-ms project! pre-project! presented!]
+  [{:keys [capture sink max-fps shutdown-timeout-ms project! pre-project! presented! presentation-receipts?]
     :or {max-fps 20 shutdown-timeout-ms 1000}}]
   (when-not (and (map? capture) (every? ifn? (map capture [:open! :capture! :close!]))
                  (map? sink) (every? ifn? (map sink [:open! :render! :close!]))
                  (number? max-fps) (Double/isFinite (double max-fps)) (<= 1 max-fps 60)
-                 (every? #(or (nil? %) (ifn? %)) [project! pre-project! presented!]))
+                 (every? #(or (nil? %) (ifn? %))
+                         [project! pre-project! presented! (:render-with-receipt! sink)]))
     (throw (ex-info "Display needs capture/sink operations and max-fps in 1..60" {})))
   (positive-ms! shutdown-timeout-ms :shutdown-timeout-ms)
   (let [stop-token (Object.)
+        presented! (if (true? presentation-receipts?)
+                     (fn [view]
+                       (presentation/presented! view)
+                       (when presented! (presented! view)))
+                     presented!)
+        render-with-receipt! (when (true? presentation-receipts?) (:render-with-receipt! sink))
         project-view! (cond
                         (and project! pre-project!) (comp project! pre-project!)
                         :else (or project! pre-project!))]
-    {:open!
+    {:presentation-receipts? (true? presentation-receipts?)
+     :open!
      (fn []
        ;; Startup belongs to explicit device connection, before live input.
        (let [capture-handle ((:open! capture))
@@ -264,8 +274,11 @@
                                           view (if project-view! (validate-view! (project-view! (:view entry))) (:view entry))
                                           frame ((:capture! capture) capture-handle view)]
                                       (when (= :active (:status @(:state handle)))
-                                        ((:render! sink) sink-handle frame)
-                                        (when presented! (presented! view))
+                                        (if render-with-receipt!
+                                          (render-with-receipt! sink-handle frame
+                                            #(when (= :active (:status @(:state handle))) (presented! view)))
+                                          (do ((:render! sink) sink-handle frame)
+                                              (when presented! (presented! view))))
                                         (change! handle #(-> % (update :captured inc)
                                                             (assoc :last-sequence (:sequence entry)
                                                                    :last-render-ms (/ (- (System/nanoTime) started) 1.0e6)))))

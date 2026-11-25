@@ -238,6 +238,31 @@
           (is (= :preview (:status (host/preview runtime [] (selection current (row current (:key entry)))))))))
       (finally (show/stop! other) (show/stop! runtime)))))
 
+(deftest admitted-device-restore-is-refused-if-the-input-session-disconnects
+  (with-directory
+    (fn [directory]
+      (let [runtime (manual-runtime directory)
+            lease (Object.)
+            reopened (promise)]
+        (try
+          (show/save-show! runtime (io/file directory "named.transit"))
+          (show/connect-device! runtime :midi {:session-id "checkpoint-button" ::show/restore-lease lease
+                                               :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
+                                                           :close! (fn [_])}})
+          (let [before (:epoch (show/snapshot runtime))
+                confirmation (:confirmation (preview-file runtime [] :main :named))
+                restore (host/confirm-load! runtime [] confirmation
+                                            {:session-id "checkpoint-button" :lease lease
+                                             :after-restore! #(deliver reopened %)})]
+            (is (= :submitted (:status restore)))
+            (show/disconnect-device! runtime "checkpoint-button")
+            (show/tick! runtime 0)
+            (is (= :rejected (:status @(:receipt restore))))
+            (is (= before (:epoch (show/snapshot runtime))))
+            (is (empty? @(:device-reconnects runtime)))
+            (is (not (realized? reopened))))
+          (finally (show/stop! runtime)))))))
+
 (deftest a-checkpoint-observed-across-a-session-change-is-omitted
   (with-directory
     (fn [directory]
