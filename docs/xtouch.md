@@ -171,12 +171,11 @@ The fader commits the same `:effect-groups/level-set` command used by Studio.
 Group and cue faders in this view require touch. A held fader keeps the channel
 it was touching across bank changes, then returns to the current bank's
 committed value on release. Flip and encoders apply to the cue channels. Use
-`(show/effect-group-channels runtime)` or the Studio group view to inspect
-membership and the effective levels of member instances.
+`(show/effect-group-channels runtime)` to inspect membership and the effective
+levels of member instances. Studio's command endpoint updates the same levels.
 
 Suspend and reconnect clear touches. A standalone session reinitializes its
 configured bank and a coordinated extender follows the group's current bank.
-Group expansion and the exact membership list are available in Studio.
 
 ## Verification and remaining work
 
