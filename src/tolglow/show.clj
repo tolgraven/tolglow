@@ -2109,9 +2109,10 @@
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
   expression modes and bindings; imported namespaces never acquire devices.
-  Push 2 and Push 3 accept :operator-gestures? true to record held scalar
-  encoder edits. Set :temporary-encoder-modifier to :shift, a button CC on
-  Push 2, or a captured button ID on Push 3 to restore the value on release.
+  On Push 2 and Push 3, hold Accent as you touch a cue encoder to make a
+  temporary edit that restores the previous value on lift. Shift adjusts
+  the step size. Override Accent with :temporary-encoder-modifier in the
+  connection options, using a button CC on Push 2 or a button ID on Push 3.
   Temporary edits cover typed cue params on Push 2 and numeric params on Push 3.
   Push 2 accepts :native-display? true for the Wayang parameter display.
   An explicit :display transport takes precedence."
@@ -2121,7 +2122,7 @@
     (locking (:devices runtime)
       (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
       (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
-      (let [push-source (when (and (#{:push-2 :push-3} kind) (true? (:operator-gestures? options)))
+      (let [push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
             open! (case kind :push-2 devices/open-push-2! :push-3 devices/open-push-3!
@@ -2129,7 +2130,8 @@
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
             options (cond-> options
-                      (#{:push-2 :push-3} kind) (assoc :target-search targets/search :launch-receipt cue-timing/receipt)
+                      push-source (assoc :operator-gestures? true :target-search targets/search
+                                         :launch-receipt cue-timing/receipt)
                       (and (= kind :push-2) (:native-display? options) (not (:display options)))
                       (assoc :display (push-native-display runtime))
                       (and (= kind :push-2) (not (contains? options :feedback-source)))
