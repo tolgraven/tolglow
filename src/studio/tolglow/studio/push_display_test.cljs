@@ -29,6 +29,19 @@
   (is (= 1 (widgets/proportion {:bounds [0 1]} 2)))
   (is (nil? (widgets/proportion {:bounds [1 1]} 1))))
 
+(deftest saved-show-catalog-is-a-bounded-passive-display-view
+  (let [view {:display-mode "saved-shows"
+              :saved-show-catalog {:page 0 :page-count 2 :total 10 :confirmation "private"
+                                   :rows (repeat 10 {:name "Tour" :source {:path "private"}})
+                                   :preview {:name "Tour" :path "private"
+                                             :sources [{:label "Latest named" :path "private"}]}}}
+        normalized (display/normalize-view view)]
+    (is (= (repeat 8 {:name "Tour"}) (get-in normalized [:saved-show-catalog :rows])))
+    (is (= {:name "Tour" :sources [{:label "Latest named"}]}
+           (get-in normalized [:saved-show-catalog :preview])))
+    (is (= "saved-shows" (:display-mode normalized)))
+    (is (not (contains? (:saved-show-catalog normalized) :confirmation)))))
+
 (deftest web-and-push-widgets-render-the-shared-color-record
   (let [v (color/rgba 1 0 0 0.5)]
     (is (= [1 0 0 0.5] (widgets/color-components v)))
