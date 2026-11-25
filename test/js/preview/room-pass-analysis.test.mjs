@@ -66,3 +66,16 @@ test('legacy immediate sampling remains available and early failure clears prepa
     assert.equal(presenter.transferFromImageBitmap, original);
   });
 });
+
+test('a headless browser sample is recorded but cannot qualify as a foreground display', async () => {
+  await withPresentationBoundary(async ({present}) => {
+    const sample = async () => {
+      const pending = measureRoom(0);
+      present(); present();
+      return (await pending).invalid;
+    };
+    assert.deepEqual(await sample(), []);
+    navigator.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36';
+    assert.deepEqual(await sample(), ['headless browser has no foreground display']);
+  });
+});

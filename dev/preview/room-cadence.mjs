@@ -44,6 +44,8 @@ export async function measureRoom(durationMs) {
     raf = requestAnimationFrame(observeRaf);
   };
   const invalid = [];
+  // Headless Chrome reports focus and visibility without presenting to a display.
+  if (/\bHeadlessChrome\b/.test(navigator.userAgent)) invalid.push('headless browser has no foreground display');
   const focusChange = () => { if (document.hidden || !document.hasFocus()) invalid.push('backgrounded'); };
   document.addEventListener('visibilitychange', focusChange);
   window.addEventListener('blur', focusChange);
