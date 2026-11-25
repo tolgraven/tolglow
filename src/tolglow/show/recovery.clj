@@ -2,15 +2,18 @@
   "An independently scheduled working file and one prior-session slot per show."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
-  (:import [java.io FileOutputStream OutputStream]
+            [clojure.string :as str]
+            [tolglow.persistence :as persistence])
+  (:import [java.io FileOutputStream OutputStream Reader]
            [java.nio.channels FileChannel]
            [java.nio.charset StandardCharsets]
-           [java.nio.file CopyOption Files OpenOption StandardCopyOption StandardOpenOption]
-           [java.nio.file.attribute FileAttribute]
-           [java.security DigestInputStream MessageDigest]
+           [java.nio.file CopyOption Files LinkOption OpenOption Path StandardCopyOption StandardOpenOption]
+           [java.nio.file.attribute BasicFileAttributes FileAttribute]
+           [java.security DigestInputStream MessageDigest SecureRandom]
            [java.util HexFormat]
-           [java.util.concurrent ScheduledThreadPoolExecutor ThreadFactory TimeUnit]))
+           [java.util.concurrent ScheduledThreadPoolExecutor ThreadFactory TimeUnit]
+           [javax.crypto Mac]
+           [javax.crypto.spec SecretKeySpec]))
 
 (defn- default-directory []
   (let [home (System/getProperty "user.home")]
@@ -59,6 +62,58 @@
          (.write stream (.getBytes source StandardCharsets/UTF_8))
          (.force (.getChannel stream) true)))
      publish!)))
+
+(defn- read-document [^Reader reader]
+  (let [buffer (char-array 8192) source (StringBuilder.)]
+    (loop []
+      (let [n (.read reader buffer)]
+        (when (pos? n)
+          (when (> (+ (.length source) n) persistence/max-document-characters)
+            (throw (ex-info "Show file exceeds the document character limit" {})))
+          (.append source buffer 0 n)
+          (recur))))
+    (str source)))
+
+(defn read-source [path]
+  (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
+    (read-document reader)))
+
+(def ^:private link-options (make-array LinkOption 0))
+(def ^:private source-open-options (into-array OpenOption [LinkOption/NOFOLLOW_LINKS]))
+(def ^:private confirmation-key
+  (delay (let [bytes (byte-array 32)]
+           (.nextBytes (SecureRandom.) bytes)
+           (SecretKeySpec. bytes "HmacSHA256"))))
+
+(defn- source-identity [file]
+  (when file
+    (let [path (.toRealPath (.toPath (io/file file)) link-options)
+          attrs (Files/readAttributes path BasicFileAttributes link-options)]
+      (when (and (.isRegularFile attrs) (.fileKey attrs))
+        {:path path :identity [(str path) (str (.fileKey attrs)) (.size attrs)
+                               (str (.creationTime attrs)) (str (.lastModifiedTime attrs))]}))))
+
+(defn- source-token [identity]
+  (let [mac (doto (Mac/getInstance "HmacSHA256") (.init @confirmation-key))]
+    (.formatHex (HexFormat/of) (.doFinal mac (.getBytes (pr-str identity) StandardCharsets/UTF_8)))))
+
+(defn read-selected-source
+  "Return a bounded in-memory show source and opaque proof for a trusted file
+  resolver and selection scope. Return nil when a stable, identifiable local
+  file cannot be captured. The caller compares the token before admitting the
+  captured bytes to the show owner. Resolution and reads run off the frame lock."
+  [resolve-file scope]
+  (try
+    (when-let [{:keys [^Path path identity]} (source-identity (resolve-file))]
+      (let [digest (MessageDigest/getInstance "SHA-256")
+            source (with-open [input (DigestInputStream. (Files/newInputStream path source-open-options) digest)
+                               reader (io/reader input :encoding "UTF-8")]
+                     (read-document reader))]
+        (when (= identity (:identity (source-identity (resolve-file))))
+          {:source source
+           :token (source-token [scope identity (.formatHex (HexFormat/of) (.digest digest))])})))
+    (catch java.io.IOException _ nil)
+    (catch clojure.lang.ExceptionInfo _ nil)))
 
 (def ^:private prior-name "prior.checkpoint")
 (def ^:private discard-prefix "tolglow-discarded-sha256 ")

@@ -2042,17 +2042,7 @@
       (recovery/remember-manual! owner show-id saved))
     saved))
 
-(defn- read-checkpoint-source [path]
-  (with-open [reader (io/reader (io/file path) :encoding "UTF-8")]
-    (let [buffer (char-array 8192) source (StringBuilder.)]
-      (loop []
-        (let [n (.read reader buffer)]
-          (when (pos? n)
-            (when (> (+ (.length source) n) persistence/max-document-characters)
-              (throw (ex-info "Show file exceeds the document character limit" {})))
-            (.append source buffer 0 n)
-            (recur))))
-      (str source))))
+(defn- read-checkpoint-source [path] (recovery/read-source path))
 
 (defn load-show!
   "Read a bounded full show file and enqueue its atomic restore; returns a receipt."

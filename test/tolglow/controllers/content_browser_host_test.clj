@@ -1,11 +1,12 @@
 (ns tolglow.controllers.content-browser-host-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
+            [tolglow.demo :as demo]
             [tolglow.controllers.content-browser-host :as host]
             [tolglow.show :as show]
             [tolglow.show.recovery :as recovery])
-  (:import [java.nio.file Files]
+  (:import [java.nio.file Files LinkOption]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- with-directory [f]
@@ -28,6 +29,21 @@
 
 (defn- selection [projection entry]
   {:runtime-id (:runtime-id projection) :selection (:selection entry)})
+
+(defn- preview-file [runtime saves show-id kind]
+  (let [projection (host/project runtime saves {:kind :show})
+        entry (row projection [:show show-id])]
+    (host/preview runtime saves (assoc (selection projection entry) :source (get-in entry [:sources kind])))))
+
+(defn- tick-command! [runtime command]
+  (let [receipt (show/submit! runtime command)]
+    (show/tick! runtime 0)
+    @receipt))
+
+(defn- manual-runtime [directory]
+  (assoc (show/create-runtime {:workspace-options nil :workers 1})
+         :recovery (atom (recovery/start! (recovery/options {:enabled? false :directory directory})
+                                         false (constantly nil) identity))))
 
 (defn- control-state [runtime]
   {:ingress-order @(:ingress-order runtime)
@@ -53,7 +69,9 @@
                 projection (host/project runtime saves {:kind :show})
                 active (row projection [:show :main])
                 configured (row projection [:show :tour])
-                preview (host/preview runtime saves (assoc (selection projection active) :op :load))]
+                preview (host/preview runtime saves (assoc (selection projection active) :op :load))
+                recovery-preview (preview-file runtime saves :main :recovery)
+                named-preview (preview-file runtime saves :main :named)]
             (is (= 2 (:total projection)))
             (is (= "Night studies" (:name active)))
             (is (= :checkpoint/named (get-in active [:sources :named :handle])))
@@ -64,10 +82,100 @@
                    (get-in active [:sources :recovery :revision])))
             (is (= "tour-manual" (get-in configured [:sources :named :handle])))
             (is (= {:status :preview :entry active} preview))
+            (is (= :preview (:status recovery-preview) (:status named-preview)))
+            (is (not= (get-in recovery-preview [:confirmation :token]) (get-in named-preview [:confirmation :token])))
+            (is (= {:status :rejected :reason :stale-save-source}
+                   (host/confirm-load! runtime saves (assoc (:confirmation recovery-preview)
+                                                        :token (get-in named-preview [:confirmation :token])))))
             (is (= before (control-state runtime)))
             (is (= (:checkpoints status) (:checkpoints (show/recovery-status runtime))))
-            (is (not (str/includes? (pr-str [projection preview]) (str directory)))))
+            (is (not (str/includes? (pr-str [projection preview recovery-preview named-preview]) (str directory))))
+            (is (= :accepted (-> (host/confirm-load! runtime saves (:confirmation recovery-preview))
+                                 :receipt (deref 5000 {}) :status))))
           (finally (show/stop! runtime)))))))
+
+(deftest named-confirmation-checks-the-exact-file-and-its-bytes
+  (with-directory
+    (fn [directory]
+      (let [runtime (manual-runtime directory)
+            file (io/file directory "manual.transit")
+            path (.toPath file)
+            rejected {:status :rejected :reason :stale-save-source}]
+        (try
+          (is (= :accepted (:status (tick-command! runtime {:op :master/set :value 0.2}))))
+          (show/save-show! runtime file)
+          (let [modified (Files/getLastModifiedTime path (make-array LinkOption 0))
+                original (slurp file)
+                initial (preview-file runtime [] :main :named)
+                confirmation (:confirmation initial)]
+            (is (= :preview (:status initial)))
+            (is (string? (:token confirmation)))
+            (is (= :accepted (:status (tick-command! runtime {:op :master/set :value 0.7}))))
+            (let [before (control-state runtime)]
+              (testing "an atomic replacement with the same bytes and modification time"
+                (recovery/write-source! file original)
+                (Files/setLastModifiedTime path modified)
+                (is (= rejected (host/confirm-load! runtime [] confirmation)))
+                (is (= before (control-state runtime))))
+              (let [current (-> (preview-file runtime [] :main :named) :confirmation)
+                    replacement (str/replace-first original "0.2" "0.9")]
+                (testing "an in-place rewrite with the same size and modification time"
+                  (is (not= original replacement))
+                  (is (= (count original) (count replacement)))
+                  (spit file replacement :encoding "UTF-8")
+                  (Files/setLastModifiedTime path modified)
+                  (is (= rejected (host/confirm-load! runtime [] current)))
+                  (is (= before (control-state runtime))))))
+            (show/save-show! runtime file)
+            (let [confirmation (:confirmation (preview-file runtime [] :main :named))]
+              (is (= :accepted (:status (tick-command! runtime {:op :master/set :value 0.4}))))
+              (let [result (host/confirm-load! runtime [] confirmation)]
+                (is (= :submitted (:status result)))
+                (is (= 0.4 (:master (show/snapshot runtime))))
+                (show/save-show! runtime file)
+                (show/tick! runtime 0)
+                (is (= :accepted (:status @(:receipt result))))
+                (is (= 0.7 (:master (show/snapshot runtime))))
+                (is (= {:status :rejected :reason :stale-session}
+                       (host/confirm-load! runtime [] confirmation))))))
+          (finally (show/stop! runtime)))))))
+
+(deftest configured-saves-resolve-trusted-paths-and-fence-the-frame-owner
+  (with-directory
+    (fn [directory]
+      (let [runtime (manual-runtime directory)
+            saved (show/create-runtime {:workspace-options nil :workers 1
+                                        :model (assoc (demo/model) :show-id :tour :master 0.45)})
+            file (io/file directory "tour.transit")
+            other-file (io/file directory "other.transit")
+            saves [{:show-id :tour :name "Tour" :source-kind :named :handle "tour-save" :path file}]]
+        (try
+          (show/save-show! saved file)
+          (recovery/write-source! other-file (slurp file))
+          (let [preview (preview-file runtime saves :tour :named)
+                confirmation (:confirmation preview)
+                before (control-state runtime)]
+            (is (= :preview (:status preview)))
+            (is (not (str/includes? (pr-str preview) (str directory))))
+            (is (= {:status :rejected :reason :confirmation-required}
+                   (host/confirm-load! runtime saves (dissoc confirmation :token))))
+            (is (= {:status :rejected :reason :stale-save-source}
+                   (host/confirm-load! runtime [(assoc (first saves) :path other-file)] confirmation)))
+            (is (= before (control-state runtime)))
+            (let [restart (show/submit! runtime {:op :show/restart})
+                  restore (host/confirm-load! runtime saves confirmation)]
+              (is (= :submitted (:status restore)))
+              (show/tick! runtime 0)
+              (is (= :accepted (:status @restart)))
+              (is (= :rejected (:status @(:receipt restore))))
+              (is (= :main (:show-id (show/snapshot runtime)))))
+            (let [confirmed (:confirmation (preview-file runtime saves :tour :named))
+                  restore (host/confirm-load! runtime saves (assoc confirmed :path other-file))]
+              (is (= :submitted (:status restore)))
+              (show/tick! runtime 0)
+              (is (= :accepted (:status @(:receipt restore))))
+              (is (= [:tour 0.45] ((juxt :show-id :master) (show/snapshot runtime))))))
+          (finally (show/stop! saved) (show/stop! runtime)))))))
 
 (deftest previews-fence-the-runtime-and-the-exact-show-epoch
   (let [runtime (show/create-runtime {:workspace-options nil :workers 1})
