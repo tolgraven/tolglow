@@ -9,6 +9,7 @@
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
+            [tolglow.studio.operator-history :as history]
             [tolglow.studio.projection :as projection]
             [tolglow.studio.spatial :as spatial]
             [tolglow.studio.spatial-drafts :as spatial-drafts]
@@ -45,6 +46,125 @@
                  :identity (projection/identity-of view) :view view}))
 
 (defn first-command [effects] (second (first (:fx effects))))
+
+(defn- history-frame [db runtime epoch revision cursor position & [outcomes]]
+  (let [view {:runtime-id runtime :show-id "history-show" :epoch epoch :revision revision :frame-number revision
+              :history-command-outcomes (or outcomes [])
+              :operator-history {:identity [runtime "history-show" epoch] :current-id cursor :position position
+                                 :nodes [{:id 0 :parent-id nil}
+                                         {:id 1 :parent-id 0 :parameter :gain :before 0.25 :after 0.8}
+                                         {:id 2 :parent-id 0 :parameter :gain :before 0.25 :after 0.4}]}}]
+    (:db (stream-event db {:protocol projection/protocol :kind :full :token (str runtime "-" revision)
+                           :identity (projection/identity-of view) :view view}))))
+
+(defn- history-command [db op]
+  (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+    [:operator-history/navigate op (get (history/commands projection view-state apply-status) op)]))
+
+(deftest history-preview-is-local-and-apply-waits-for-a-committed-frame
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        inspected (transition open [:operator-history/inspect [:preview 2]])
+        apply-step (history-command (:db inspected) :history/select)
+        submitted (transition (:db inspected) apply-step)
+        pending (:db submitted)
+        command (first-command submitted)
+        receipt (conj (:on-success command) {:status "accepted" :command-id (get-in command [:fields :command-id])
+                                            :epoch 7 :revision 4 :history-cursor 2 :history-position 9})
+        confirmed (:db (transition pending receipt))
+        state-first (history-frame pending "runtime" 7 4 2 9)
+        both-ways [(history-frame confirmed "runtime" 7 4 2 9)
+                   (:db (transition state-first receipt))]]
+    (is (empty? (:fx inspected)))
+    (is (= :history/select (:op command)))
+    (is (= {:node-id 2 :expected-cursor 1 :expected-history-position 8 :expected-epoch 7}
+           (dissoc (:fields command) :command-id)))
+    (is (= "runtime" (:runtime-id command)))
+    (is (string? (get-in command [:fields :command-id])))
+    (is (empty? (:fx (transition pending apply-step))))
+    (is (= 1 (get-in (events/history-inspector confirmed) [:projection :current-id])))
+    (is (get-in (events/history-inspector confirmed) [:apply-status :pending?]))
+    (doseq [db both-ways]
+      (let [{:keys [projection view-state apply-status]} (events/history-inspector db)]
+        (is (= 2 (:current-id projection)))
+        (is (nil? (:preview view-state)))
+        (is (false? (:pending? apply-status)))
+        (is (= "History step applied." (:message apply-status)))))))
+
+(deftest pending-history-http-and-transport-timeouts-wait-for-matching-pushed-results
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        preview (:db (transition open [:operator-history/inspect [:preview 2]]))
+        submitted (transition preview (history-command preview :history/select))
+        pending (:db submitted)
+        command (first-command submitted)
+        id (get-in command [:fields :command-id])
+        identity {:command-id id :epoch 7}
+        pending-http (conj (:on-success command) (assoc identity :status "pending"))
+        pending-reply (:db (transition pending pending-http))
+        uncertain (:db (transition pending (:on-uncertain command)))
+        deadline (:dispatch (first (:dispatch-later submitted)))
+        accepted (merge identity {:status :accepted :revision 4 :history-cursor 2 :history-position 9})
+        rejected (merge identity {:status :rejected :revision 3 :code :history-conflict
+                                  :message "The parameter changed after this edit."})
+        unrelated (history-frame pending-reply "runtime" 7 4 2 9
+                                 [(assoc accepted :command-id "different") (assoc accepted :epoch 6)])]
+    (is (= 7000 (:timeout-ms command)))
+    (doseq [db [pending-reply uncertain unrelated]]
+      (let [{:keys [apply-status view-state]} (events/history-inspector db)]
+        (is (:pending? apply-status))
+        (is (= "Waiting for the live show to confirm the history command." (:message apply-status)))
+        (is (= 2 (get-in view-state [:preview :target-id])))))
+    (doseq [[result current position] [[accepted 2 9] [rejected 1 8]]]
+      (let [deliver #(history-frame % "runtime" 7 4 current position [result])
+            stream-first (deliver pending)]
+        (is (= stream-first (:db (transition stream-first pending-http))))
+        (is (= stream-first (:db (transition stream-first (:on-uncertain command)))))
+        (doseq [db [(deliver pending-reply) (deliver uncertain) stream-first]]
+          (let [{:keys [apply-status view-state]} (events/history-inspector db)]
+            (is (false? (:pending? apply-status)))
+            (if (= :accepted (:status result))
+              (do (is (= "History step applied." (:message apply-status)))
+                  (is (nil? (:preview view-state))))
+              (do (is (= (:message rejected) (:message apply-status) (:conflict apply-status)))
+                  (is (:error? apply-status))
+                  (is (= 2 (get-in view-state [:preview :target-id])))))))))
+    (let [expired (:db (transition uncertain deadline))
+          restored (history-frame uncertain "runtime" 8 5 1 0 [accepted])]
+      (is (false? (get-in (events/history-inspector expired) [:apply-status :pending?])))
+      (is (str/includes? (get-in (events/history-inspector expired) [:apply-status :message]) "could not be confirmed"))
+      (is (false? (get-in (events/history-inspector restored) [:apply-status :pending?])))
+      (is (= restored (:db (transition restored pending-http))))
+      (is (= restored (:db (transition restored (:on-uncertain command)))))
+      (is (= restored (:db (transition restored deadline)))))))
+
+(deftest stale-or-rejected-history-commands-preserve-the-stream-projection
+  (let [live (history-frame (with-stream base) "runtime" 7 3 1 8)
+        open (:db (transition live [:operator-history/open]))
+        preview (:db (transition open [:operator-history/inspect [:preview 2]]))
+        apply-step (history-command preview :history/select)
+        submitted (transition preview apply-step)
+        pending (:db submitted)
+        failure (conj (:on-failure (first-command submitted)) "The parameter changed after this edit.")
+        declined (:db (transition pending failure))
+        unrelated (history-frame preview "runtime" 7 4 1 8)
+        moved (history-frame unrelated "runtime" 7 5 0 9)
+        returned (history-frame moved "runtime" 7 6 1 10)
+        stale (transition moved apply-step)
+        replaced (history-frame pending "new-runtime" 8 5 1 1)
+        late (:db (transition replaced failure))]
+    (is (empty? (:fx stale)))
+    (is (seq (:fx (transition unrelated apply-step))))
+    (is (empty? (:fx (transition returned apply-step))))
+    (is (= 0 (get-in (events/history-inspector (:db stale)) [:projection :current-id])))
+    (is (= 1 (get-in (events/history-inspector declined) [:projection :current-id])))
+    (is (= "The parameter changed after this edit." (get-in (events/history-inspector declined) [:apply-status :message])))
+    (is (nil? (last (history-command declined :history/select))))
+    (is (some? (last (history-command (:db (transition declined [:operator-history/inspect [:preview 2]])) :history/select))))
+    (is (get-in (events/history-inspector late) [:open?]))
+    (is (nil? (get-in (events/history-inspector late) [:view-state :preview])))
+    (is (false? (get-in (events/history-inspector late) [:apply-status :pending?])))
+    (is (nil? (get-in (events/history-inspector late) [:apply-status :message])))))
 
 (deftest section-pattern-override-follows-committed-show-settings
   (let [view (assoc (:show base) :runtime-id "pattern-owner" :show-id :main

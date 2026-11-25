@@ -14,7 +14,10 @@
             [tolglow.demo :as demo]
             [tolglow.agents :as agents]
             [tolglow.fixtures.definitions :as fixture-library]
-            [tolglow.persistence :as files]))
+            [tolglow.persistence :as files]
+            [tolglow.show :as show])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
 (defn command [model n payload]
   (let [result (control/apply-command model
@@ -61,6 +64,212 @@
            :extensions {:vendor/plugin {:opaque-id id :preferences {:theme "dim"}}})))
 
 (defn restored [model] (files/thaw (assoc (demo/model) :epoch 9 :revision 200 :time-ms 9000) (files/freeze model)))
+
+(defn- operator-command [model id payload]
+  (control/apply-command model
+                         (merge {:show-id (:show-id model) :epoch (:epoch model) :time-ms (:time-ms model)
+                                 :command-id id :source :test-controller}
+                                payload)
+                         {:operator-id :front-of-house}))
+
+(defn- operator-edit [model id payload]
+  (let [{:keys [ack model]} (operator-command model id payload)]
+    (is (= :accepted (:status ack)) (pr-str ack))
+    model))
+
+(defn- gesture [instance-id gesture-id]
+  {:instance-id instance-id :param :level :control-id :encoder-1 :gesture-id gesture-id})
+
+(defn- sample-gesture [model gesture value]
+  (let [id (name (:gesture-id gesture))]
+    (-> model
+        (operator-edit (str id "-begin") (assoc gesture :op :gesture/begin))
+        (operator-edit (str id "-sample") (assoc gesture :op :gesture/sample :sequence 1 :value value)))))
+
+(defn- commit-gesture [model gesture value]
+  (-> model
+      (sample-gesture gesture value)
+      (operator-edit (str (name (:gesture-id gesture)) "-end") (assoc gesture :op :gesture/end :last-sequence 1))))
+
+(defn- history [model] (get-in model [:control :edit-history]))
+
+(deftest open-gesture-is-sealed-in-the-saved-branch-only
+  (let [{:keys [model ack]} (command (demo/model) "launch" {:op :cue/launch :cue-id :ember
+                                                          :launch {:params {:level 0.2}}})
+        id (:instance-id ack)
+        target [:instance-param id :level]
+        live (-> model
+                 (commit-gesture (gesture id :first-turn) 0.3)
+                 (commit-gesture (gesture id :second-turn) 0.4)
+                 (operator-edit "step-back" {:op :history/undo :expected-cursor 2 :expected-history-position 2})
+                 (sample-gesture (gesture id :open-turn) 0.6))
+        document (files/read-string (files/write-string live))
+        saved (:model document)
+        reloaded (files/thaw (assoc (demo/model) :epoch 9) document)
+        new-id (first (keys (:instances reloaded)))
+        new-target [:instance-param new-id :level]
+        undone (operator-edit reloaded "undo-restored" {:op :history/undo :expected-cursor 3 :expected-history-position 4})
+        redone (operator-edit undone "alternate-restored" {:op :history/redo :expected-cursor 1
+                                                           :expected-history-position 5 :node-id 2})
+        selected (operator-edit redone "switch-restored" {:op :history/select :expected-cursor 2
+                                                         :expected-history-position 6 :node-id 3})]
+    (is (= document (files/freeze live)))
+    (is (= 1 (:cursor (history live))))
+    (is (= :open-turn (get-in (history live) [:open target :gesture-id])))
+    (is (= 1 (get-in live [:control :history "open-turn-sample" :command :sequence])))
+    (is (= ["launch" "step-back"] (get-in saved [:control :history-order])))
+    (is (= (select-keys (get-in live [:control :history]) ["launch" "step-back"])
+           (get-in saved [:control :history])))
+    (is (nil? (:open (history saved))))
+    (is (= [3 4 4 5 6 7] (mapv (comp :position history) [live saved reloaded undone redone selected])))
+    (is (= {:parent 1 :target target :actor :front-of-house :control-id :encoder-1
+            :before 0.3 :after 0.6 :generation 0
+            :target-display {:cue-id :ember :cue-label "Ember" :effect-id :ember :effect-label "Ember"}}
+           (get-in (history saved) [:nodes 3])))
+    (is (= 1 (get-in (history saved) [:nodes 2 :parent])))
+    (is (= 3 (:cursor (history reloaded))))
+    (is (nil? (:open (history reloaded))))
+    (is (= {new-target 0} (:generations (history reloaded))))
+    (is (every? #(= new-target (get-in (history reloaded) [:nodes % :target])) [1 2 3]))
+    (is (= [0.6 0.3 0.4 0.6]
+           (mapv #(get-in % [:instances new-id :params :level]) [reloaded undone redone selected])))))
+
+(deftest save-keeps-external-writes-and-seals-only-current-gestures
+  (let [{:keys [model ack]} (command (demo/model) :launch-ember {:op :cue/launch :cue-id :ember
+                                                                :launch {:params {:level 0.2}}})
+        ember (:instance-id ack)
+        {:keys [model ack]} (command model :launch-ice {:op :cue/launch :cue-id :ice
+                                                         :launch {:params {:level 0.1}}})
+        ice (:instance-id ack)
+        live (-> model
+                 (commit-gesture (gesture ember :earlier-turn) 0.3)
+                 (sample-gesture (gesture ember :conflicted-turn) 0.5)
+                 (sample-gesture (gesture ice :current-turn) 0.7)
+                 (command :external-change {:op :param/set :instance-id ember :param :level :value 0.6}) :model
+                 (command :external-return {:op :param/set :instance-id ember :param :level :value 0.5}) :model)
+        saved (files/freeze live)
+        reloaded (files/thaw (demo/model) saved)
+        [new-ember new-ice] (mapv :id (sort-by :order (vals (:instances reloaded))))
+        undone (operator-edit reloaded "undo-current" {:op :history/undo :expected-cursor 2 :expected-history-position 2})
+        rejected (operator-command undone "undo-conflicted" {:op :history/undo :expected-cursor 1
+                                                              :expected-history-position 3})]
+    (is (= #{[:instance-param ember :level] [:instance-param ice :level]} (set (keys (:open (history live))))))
+    (is (= #{0 1 2} (set (keys (:nodes (history reloaded))))))
+    (is (= {[:instance-param new-ember :level] 2 [:instance-param new-ice :level] 0}
+           (:generations (history reloaded))))
+    (is (= [:instance-param new-ice :level] (get-in (history reloaded) [:nodes 2 :target])))
+    (is (= 0.5 (get-in undone [:instances new-ember :params :level])))
+    (is (= 0.1 (get-in undone [:instances new-ice :params :level])))
+    (is (= :history-conflict (get-in rejected [:ack :code])))
+    (is (identical? undone (:model rejected)))))
+
+(deftest missing-history-target-cannot-attach-to-a-new-instance
+  (let [{:keys [model ack]} (command (demo/model) :launch-old {:op :cue/launch :cue-id :ember
+                                                              :launch {:params {:level 0.2}}})
+        old-id (:instance-id ack)
+        live (-> model
+                 (commit-gesture (gesture old-id :old-turn) 0.4)
+                 (command :end-old {:op :instance/end :instance-id old-id :force? true}) :model
+                 (command :launch-replacement {:op :cue/launch :cue-id :ember :launch {:params {:level 0.4}}}) :model)
+        future-id "10:1"
+        raw-target [:instance-param future-id :level]
+        document (-> (files/freeze live)
+                     (assoc-in [:model :control :edit-history :nodes 1 :target] raw-target)
+                     (assoc-in [:model :control :edit-history :generations] {raw-target 0}))
+        reloaded (files/thaw (assoc (demo/model) :epoch 9) document)
+        reloaded-again (files/thaw reloaded (files/read-string (files/write-string reloaded)))
+        archived [:unavailable-instance-param future-id :level 10]
+        rejected (operator-command reloaded "undo-ended" {:op :history/undo :expected-cursor 1
+                                                           :expected-history-position 1})]
+    (is (= #{future-id} (set (keys (:instances reloaded)))))
+    (is (= 0.4 (get-in reloaded [:instances future-id :params :level])))
+    (is (= #{0 1} (set (keys (:nodes (history reloaded))))))
+    (is (= archived (get-in (history reloaded) [:nodes 1 :target])))
+    (is (= {archived 0} (:generations (history reloaded))))
+    (is (= (history reloaded) (history reloaded-again)))
+    (is (= :target-unavailable (get-in rejected [:ack :code])))
+    (is (identical? reloaded (:model rejected)))))
+
+(deftest show-file-restores-an-undoable-gesture-and-its-output
+  (let [file (Files/createTempFile "tolglow-edit-history" ".transit" (make-array FileAttribute 0))]
+    (try
+      (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})
+            model #(:model @(:state runtime))
+            emitted #(first (get-in (show/snapshot runtime) [:output :values :head-1 :emitted-color]))
+            run-command (fn [time payload]
+                          (let [receipt (show/submit! runtime :command payload {:operator-id :front-of-house})]
+                            (show/tick! runtime time)
+                            (let [ack (deref receipt 1000 ::missing)]
+                              (is (= :accepted (:status ack)) (pr-str ack))
+                              ack)))]
+        (try
+          (let [id (:instance-id (run-command 0 {:op :cue/launch :cue-id :ember :launch {:params {:level 0.2}}}))
+                turn (gesture id :held-while-saving)
+                target [:instance-param id :level]]
+            (run-command 20 (assoc turn :op :gesture/begin))
+            (run-command 40 (assoc turn :op :gesture/sample :sequence 1 :value 0.7))
+            (let [saved-emission (emitted)]
+              (show/save-show! runtime (str file))
+              (is (= 0 (:cursor (history (model)))))
+              (is (= :held-while-saving (get-in (history (model)) [:open target :gesture-id])))
+              (let [receipt (show/load-show! runtime (str file))]
+                (show/tick! runtime 60)
+                (is (= :accepted (:status (deref receipt 1000 ::missing)))))
+              (let [new-id (first (keys (:instances (model))))
+                    level #(get-in (model) [:instances new-id :params :level])]
+                (is (not= id new-id))
+                (is (= 0.7 (level)))
+                (is (= saved-emission (emitted)))
+                (is (= 0 (:history-cursor (run-command 80 {:op :history/undo :expected-cursor 1
+                                                          :expected-history-position 1}))))
+                (is (== 0.2 (level) (emitted))))))
+          (finally (show/stop! runtime))))
+      (finally (Files/deleteIfExists file)))))
+
+(deftest malformed-edit-history-is-rejected-before-restore
+  (let [{:keys [model ack]} (command (demo/model) :launch {:op :cue/launch :cue-id :ember
+                                                          :launch {:params {:level 0.2}}})
+        id (:instance-id ack)
+        target [:instance-param id :level]
+        model (-> model
+                  (commit-gesture (gesture id :first-turn) 0.4)
+                  (commit-gesture (gesture id :second-turn) 0.5))
+        doc (files/freeze model)
+        path [:model :control :edit-history]]
+    (is (nil? (history (files/thaw model (update-in doc [:model :control] dissoc :edit-history)))))
+    (let [legacy (-> doc
+                     (update-in path dissoc :position)
+                     (update-in (into path [:nodes]) update-vals #(dissoc % :target-display)))
+          restored (files/thaw model legacy)
+          undone (operator-edit restored "undo-legacy" {:op :history/undo :expected-cursor 2
+                                                        :expected-history-position 0})]
+      (is (= [1 1] ((juxt :cursor :position) (history undone)))))
+    (doseq [[suffix value] [[[] '(:malformed)]
+                            [[:limit] 129] [[:limit] 2] [[:nodes] {}]
+                            [[:cursor] 77] [[:next-id] 2] [[:next-id] Long/MAX_VALUE]
+                            [[:position] -1] [[:position] 1.5] [[:position] nil] [[:position] Long/MAX_VALUE]
+                            [[:nodes 0] {:parent 2}] [[:nodes 1] {:parent nil}]
+                            [[:nodes 1 :parent] 2] [[:nodes 1 :parent] 1] [[:nodes 1 :parent] 77]
+                            [[:nodes 1] '(:malformed)]
+                            [[:nodes 1 :actor] {:session-id "opaque"}] [[:nodes 1 :control-id] ""]
+                            [[:nodes 1 :before] :invalid] [[:nodes 1 :after] 0.2]
+                            [[:nodes 1 :target] [:unrecognized id :level]]
+                            [[:nodes 1 :target-display] {:cue-id :ember}]
+                            [[:nodes 1 :target-display] {:effect-id :ember :effect-label 42}]
+                            [[:nodes 1 :target-display :private] "opaque"]
+                            [[:nodes 1 :gesture-id] :unexpected]
+                            [[:nodes 1 :generation] 1] [[:generations target] -1]
+                            [[:generations] {}]
+                            [[:generations] {target 0 [:instance-param id :unused] 0}]
+                            [[:generations] {[:unavailable-instance-param id :level 99] 0}]
+                            [[:open] {target {:actor :front-of-house :last-sequence 1}}]]]
+      (testing (pr-str suffix value)
+        (let [broken (assoc-in doc (into path suffix) value)
+              failure (try (files/thaw model broken)
+                           (catch clojure.lang.ExceptionInfo error (ex-data error)))]
+          (is (= :invalid-show (:persistence/error failure))))))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (files/read-string (wire/encode (assoc-in doc (into path [:cursor]) 99)))))))
 
 (deftest cue-presets-survive-roundtrip-and-reject-invalid-file-values
   (let [launched (command (demo/model) :preset-launch {:op :cue/launch :cue-id :ember

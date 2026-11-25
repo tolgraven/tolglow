@@ -1,5 +1,6 @@
 (ns tolglow.render.workers-test
   (:require [afterglow.render.distributed :as pool]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [ring.adapter.jetty :as jetty]
             [tolglow.render.workers :as workers]
@@ -41,6 +42,28 @@
                                                     (assoc-in [:headers "origin"] "https://other.example"))))))
       (is (= 403 (:status (workers/response hub (-> request (assoc ::access/operator? true)
                                                     (update :headers dissoc "origin"))))))
+      (finally (workers/close! hub)))))
+
+(deftest remote-compute-keeps-authentication-distinct-from-operator-authority
+  (let [hub (workers/create (pool/create) token)
+        handler (fn [request]
+                  (assoc (workers/response hub request) :authority (access/operator-authority request)))
+        app (access/authenticated handler token)
+        trusted-lan (access/listener-handler handler {:host "0.0.0.0" :trusted-lan? true})
+        request {:remote-addr "192.0.2.1" :scheme :https
+                 :headers {"host" "studio.example" "origin" "https://studio.example"}}
+        signed (app (assoc-in request [:headers "authorization"] (str "Bearer " token)))
+        cookie (first (str/split (get-in signed [:headers "Set-Cookie"]) #";"))
+        browser (app (assoc-in request [:headers "cookie"] cookie))
+        trusted (trusted-lan request)]
+    (try
+      (is (= 401 (:status (app request))))
+      (is (= 426 (:status signed)))
+      (is (= 426 (:status browser)))
+      (is (= (:authority signed) (:authority browser)))
+      (is (string? (get-in browser [:authority :operator-id])))
+      (is (= 403 (:status trusted)))
+      (is (string? (get-in trusted [:authority :operator-id])))
       (finally (workers/close! hub)))))
 
 (deftest real-transit-upgrade-pairs-only-after-authentication-and-releases-a-closed-client
