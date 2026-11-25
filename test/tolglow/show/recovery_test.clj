@@ -136,6 +136,40 @@
 (defn- set-master! [runtime value]
   (is (= :accepted (:status (deref (show/submit! runtime {:op :master/set :value value}) 5000 {})))))
 
+(deftest manual-save-protects-recovery-slots-through-symbolic-links
+  (with-directory
+    (fn [directory]
+      (let [storage (io/file directory "storage")
+            recovery-dir (io/file directory "recovery")
+            relocated (io/file directory "prior.checkpoint")
+            alias (io/file directory "alias-to-working.transit")
+            attributes (make-array FileAttribute 0)]
+        (.mkdir storage)
+        (Files/createSymbolicLink (.toPath recovery-dir) (.toPath storage) attributes)
+        (try
+          (let [runtime (show/start! {:workspace-options nil :recovery {:directory recovery-dir :enabled? false}}
+                                     (constantly nil))
+                prior (#'recovery/checkpoint-file recovery-dir :main "prior.checkpoint")
+                working (#'recovery/checkpoint-file recovery-dir :main "recovery.transit")
+                ordinary (io/file (.getParentFile prior) "show.transit")]
+            (try
+              (set-master! runtime 0.3)
+              (show/save-show! runtime relocated)
+              (recovery/write-source! working (show/export-show-source runtime))
+              (Files/createSymbolicLink (.toPath prior) (.toPath relocated) attributes)
+              (Files/createSymbolicLink (.toPath alias) (.toPath working) attributes)
+              (set-master! runtime 0.8)
+              (doseq [path [prior alias]]
+                (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reserved for show recovery"
+                                      (show/save-show! runtime path))))
+              (is (Files/isSymbolicLink (.toPath prior)))
+              (is (Files/isSymbolicLink (.toPath alias)))
+              (is (= [0.3 0.3] (mapv #(checkpoint-master runtime %) [:prior :recovery])))
+              (is (= (.getAbsolutePath ordinary) (show/save-show! runtime ordinary)))
+              (is (= 0.8 (checkpoint-master runtime :named)))
+              (finally (show/stop! runtime))))
+          (finally (Files/deleteIfExists (.toPath recovery-dir))))))))
+
 (deftest unresolved-prior-survives-new-autosaves-and-another-restart
   (with-directory
     (fn [directory]

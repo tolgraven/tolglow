@@ -175,12 +175,20 @@
 (defn status [owner]
   (merge (select-keys owner [:enabled? :interval-ms]) (some-> owner :status deref)))
 
+(defn- fixed-checkpoint-path? [directory file]
+  (when-let [parent (some-> file .getParentFile)]
+    (and (contains? #{"recovery.transit" "manual.edn" prior-name} (.getName file))
+         (re-matches #"[0-9a-f]{64}" (.getName parent))
+         (= directory (.getParentFile parent)))))
+
 (defn manual-path! [{:keys [directory]} path]
-  (let [file (.getCanonicalFile (io/file path))
-        parent (.getParentFile file)]
-    (when (and parent (contains? #{"recovery.transit" "manual.edn" prior-name} (.getName file))
-               (re-matches #"[0-9a-f]{64}" (.getName parent))
-               (= (.getCanonicalFile directory) (.getParentFile parent)))
+  (let [file (.getAbsoluteFile (io/file path))
+        directory (.getCanonicalFile directory)
+        ;; An atomic move replaces the final directory entry, even if it is a symlink.
+        destination (when-let [parent (.getParentFile file)]
+                      (io/file (.getCanonicalFile parent) (.getName file)))]
+    (when (or (fixed-checkpoint-path? directory destination)
+              (fixed-checkpoint-path? directory (.getCanonicalFile file)))
       (throw (ex-info "This path is reserved for show recovery" {:code :reserved-recovery-path}))))
   path)
 
